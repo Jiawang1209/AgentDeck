@@ -23,9 +23,11 @@ from agentdeck.providers.cli_subprocess import (
     ClaudeCliProvider,
     CliLeaderProviderError,
     CodexCliProvider,
+    cli_native_schema_ready,
 )
 from agentdeck.providers.plan_schema import (
     LEADER_PLAN_SCHEMA_VERSION,
+    build_leader_plan_schema,
     canonical_leader_plan_schema_hash,
 )
 
@@ -89,6 +91,371 @@ def _valid_plan() -> dict[str, object]:
             },
         ],
     }
+
+
+def _claude_envelope(
+    structured_output: object | None = None,
+    **metadata: object,
+) -> dict[str, object]:
+    return {
+        "type": "result",
+        "subtype": "success",
+        "is_error": False,
+        "structured_output": (
+            _valid_plan() if structured_output is None else structured_output
+        ),
+        **metadata,
+    }
+
+
+def test_claude_plan_result_uses_native_schema_envelope_and_private_stdout(
+    tmp_path: Path, monkeypatch
+) -> None:
+    request = _request(tmp_path)
+    seen: dict[str, object] = {}
+    real_create = ClaudeCliProvider._create_private_output
+
+    def tracking_create(path: str):
+        seen["output_path"] = Path(path)
+        return real_create(path)
+
+    def fake_run(command, **kwargs):
+        seen["command"] = command
+        seen["kwargs"] = kwargs
+        output_stat = os.fstat(kwargs["stdout"].fileno())
+        assert stat.S_IMODE(output_stat.st_mode) == 0o600
+        assert stat.S_IMODE(Path(seen["output_path"]).parent.stat().st_mode) == 0o700
+        os.write(
+            kwargs["stdout"].fileno(),
+            json.dumps(_claude_envelope()).encode("utf-8"),
+        )
+        return subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr(
+        ClaudeCliProvider, "_create_private_output", staticmethod(tracking_create)
+    )
+    monkeypatch.setattr("agentdeck.providers.cli_subprocess.subprocess.run", fake_run)
+
+    result = ClaudeCliProvider().plan_result(request)
+
+    schema = json.dumps(
+        build_leader_plan_schema(request),
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    command = seen["command"]
+    assert command == [
+        "claude",
+        "--model",
+        "gpt-test",
+        "--print",
+        "--output-format",
+        "json",
+        "--permission-mode",
+        "plan",
+        "--json-schema",
+        schema,
+    ]
+    assert seen["kwargs"]["stderr"] is subprocess.DEVNULL
+    assert "capture_output" not in seen["kwargs"]
+    assert result.plan["goal"] == "ship safely"
+    assert result.leader_generation["constraint_mode"] == "native_json_schema"
+    assert result.leader_generation["attempt_count"] == 1
+    assert not Path(seen["output_path"]).exists()
+
+
+@pytest.mark.parametrize(
+    ("provider", "command", "help_text"),
+    [
+        (
+            "codex-cli",
+            ["codex", "exec", "--help"],
+            "usage: codex exec --output-schema PATH --output-last-message PATH",
+        ),
+        (
+            "claude-cli",
+            ["claude", "--help"],
+            "usage: claude --json-schema JSON --output-format json",
+        ),
+    ],
+)
+def test_cli_native_schema_probe_detects_required_help_flags_read_only(
+    tmp_path: Path, monkeypatch, provider: str, command: list[str], help_text: str
+) -> None:
+    seen: dict[str, object] = {}
+
+    def fake_run(actual_command, **kwargs):
+        seen["command"] = actual_command
+        seen["kwargs"] = kwargs
+        assert kwargs["stdout"] is kwargs["stderr"]
+        os.write(kwargs["stdout"].fileno(), help_text.encode("utf-8"))
+        return subprocess.CompletedProcess(actual_command, 0)
+
+    monkeypatch.setattr("agentdeck.providers.cli_subprocess.subprocess.run", fake_run)
+
+    assert cli_native_schema_ready(provider) == (True, None)
+    assert seen["command"] == command
+    assert seen["kwargs"]["timeout"] == 5
+    assert seen["kwargs"]["check"] is False
+    assert "cwd" not in seen["kwargs"]
+    assert "input" not in seen["kwargs"]
+    assert "capture_output" not in seen["kwargs"]
+
+
+@pytest.mark.parametrize(
+    ("provider", "scenario", "expected"),
+    [
+        (
+            "unknown-cli",
+            "unknown",
+            "Leader CLI native JSON schema is unsupported",
+        ),
+        (
+            "claude-cli",
+            "missing_executable",
+            "Leader CLI executable is not available",
+        ),
+        (
+            "claude-cli",
+            "missing_flag",
+            "Leader CLI native JSON schema capability is unavailable",
+        ),
+        (
+            "claude-cli",
+            "timeout",
+            "Leader CLI native JSON schema capability is unavailable",
+        ),
+        (
+            "claude-cli",
+            "nonzero",
+            "Leader CLI native JSON schema capability is unavailable",
+        ),
+        (
+            "claude-cli",
+            "oserror",
+            "Leader CLI native JSON schema capability is unavailable",
+        ),
+    ],
+)
+def test_cli_native_schema_probe_returns_only_fixed_blockers(
+    monkeypatch, provider: str, scenario: str, expected: str
+) -> None:
+    calls = 0
+
+    def fake_run(command, **kwargs):
+        nonlocal calls
+        calls += 1
+        if scenario == "missing_executable":
+            raise FileNotFoundError("SECRET_PATH")
+        if scenario == "timeout":
+            raise subprocess.TimeoutExpired(
+                command, 5, output="SECRET_HELP", stderr="SECRET_HELP"
+            )
+        if scenario == "oserror":
+            raise OSError("SECRET_HELP")
+        os.write(kwargs["stdout"].fileno(), b"--json-schema SECRET_HELP")
+        return subprocess.CompletedProcess(command, 9 if scenario == "nonzero" else 0)
+
+    monkeypatch.setattr("agentdeck.providers.cli_subprocess.subprocess.run", fake_run)
+
+    ready, blocker = cli_native_schema_ready(provider)
+
+    assert ready is False
+    assert blocker == expected
+    assert "SECRET" not in repr((ready, blocker))
+    assert calls == (0 if scenario == "unknown" else 1)
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        "missing_structured_output",
+        "outer_array",
+        "wrong_type",
+        "wrong_subtype",
+        "wrong_is_error",
+        "wrong_structured_output",
+        "malformed",
+        "duplicate_outer_key",
+        "nan",
+        "multiple_objects",
+        "huge_integer",
+        "deep_nesting",
+    ],
+)
+def test_claude_rejects_invalid_native_output_envelopes(
+    tmp_path: Path, monkeypatch, case: str
+) -> None:
+    request = _request(tmp_path)
+    envelope = _claude_envelope()
+    if case == "missing_structured_output":
+        del envelope["structured_output"]
+        payload = json.dumps(envelope)
+    elif case == "outer_array":
+        payload = json.dumps([envelope])
+    elif case == "wrong_type":
+        envelope["type"] = "assistant"
+        payload = json.dumps(envelope)
+    elif case == "wrong_subtype":
+        envelope["subtype"] = "error"
+        payload = json.dumps(envelope)
+    elif case == "wrong_is_error":
+        envelope["is_error"] = 0
+        payload = json.dumps(envelope)
+    elif case == "wrong_structured_output":
+        envelope["structured_output"] = []
+        payload = json.dumps(envelope)
+    elif case == "malformed":
+        payload = '{"type":"result"'
+    elif case == "duplicate_outer_key":
+        payload = json.dumps(envelope).replace(
+            '"type": "result"',
+            '"type": "SECRET", "type": "result"',
+            1,
+        )
+    elif case == "nan":
+        payload = json.dumps(envelope).replace('"risk": "needs review"', '"risk": NaN', 1)
+    elif case == "huge_integer":
+        payload = '{"type":"result","subtype":"success","is_error":false,' \
+            '"structured_output":' + "9" * 5000 + "}"
+    elif case == "deep_nesting":
+        payload = '{"type":"result","subtype":"success","is_error":false,' \
+            '"structured_output":' + "[" * 10_000 + "0" + "]" * 10_000 + "}"
+    else:
+        payload = json.dumps(envelope) + json.dumps(envelope)
+
+    def fake_run(command, **kwargs):
+        os.write(kwargs["stdout"].fileno(), payload.encode("utf-8"))
+        return subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr("agentdeck.providers.cli_subprocess.subprocess.run", fake_run)
+
+    with pytest.raises(CliLeaderProviderError) as raised:
+        ClaudeCliProvider().plan_result(request)
+
+    assert raised.value.stage == "json_parse"
+    assert raised.value.diagnostic_code == "invalid_output_envelope"
+    assert payload not in repr(_exception_values(raised.value))
+
+
+def test_claude_bounds_native_stdout_and_never_calls_fenced_parser(
+    tmp_path: Path, monkeypatch
+) -> None:
+    request = _request(tmp_path)
+
+    def fake_run(command, **kwargs):
+        os.write(kwargs["stdout"].fileno(), b"x" * (MAX_CLI_LEADER_OUTPUT_BYTES + 1))
+        return subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr("agentdeck.providers.cli_subprocess.subprocess.run", fake_run)
+    monkeypatch.setattr(
+        ClaudeCliProvider,
+        "_load_json_plan",
+        lambda *_args: pytest.fail("Claude native output must not use fenced parser"),
+    )
+
+    with pytest.raises(CliLeaderProviderError) as raised:
+        ClaudeCliProvider().plan_result(request)
+
+    assert raised.value.stage == "oversize"
+
+
+def test_claude_ignores_official_envelope_metadata_without_persisting_secrets(
+    tmp_path: Path, monkeypatch
+) -> None:
+    request = _request(tmp_path)
+    secret = "SECRET_CLAUDE_SESSION_METADATA"
+
+    def fake_run(command, **kwargs):
+        payload = _claude_envelope(
+            result=secret,
+            session_id=secret,
+            duration_ms=123,
+            total_cost_usd=4.5,
+        )
+        os.write(kwargs["stdout"].fileno(), json.dumps(payload).encode("utf-8"))
+        return subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr("agentdeck.providers.cli_subprocess.subprocess.run", fake_run)
+    monkeypatch.setattr(
+        ClaudeCliProvider,
+        "_load_json_plan",
+        lambda *_args: pytest.fail("Claude native output must not use fenced parser"),
+    )
+
+    result = ClaudeCliProvider().plan_result(request)
+
+    assert result.plan == {
+        **_valid_plan(),
+        "approval_required": True,
+        "dispatch_ready": False,
+    }
+    assert secret not in repr(result)
+
+
+@pytest.mark.parametrize("scenario", ["timeout", "nonzero", "oserror"])
+def test_claude_subprocess_failures_are_fixed_and_cleanup_private_stdout(
+    tmp_path: Path, monkeypatch, scenario: str
+) -> None:
+    request = replace(_request(tmp_path), task="SECRET_CLAUDE_TASK")
+    tracked: dict[str, Path] = {}
+    real_create = ClaudeCliProvider._create_private_output
+
+    def tracking_create(path: str):
+        tracked["temp"] = Path(path).parent
+        return real_create(path)
+
+    def fake_run(command, **kwargs):
+        if scenario == "timeout":
+            raise subprocess.TimeoutExpired(
+                command, 180, output="SECRET_STDOUT", stderr="SECRET_STDERR"
+            )
+        if scenario == "oserror":
+            raise OSError("SECRET_OSERROR")
+        os.write(kwargs["stdout"].fileno(), b"SECRET_OUTPUT")
+        return subprocess.CompletedProcess(command, 7)
+
+    monkeypatch.setattr(ClaudeCliProvider, "_create_private_output", staticmethod(tracking_create))
+    monkeypatch.setattr("agentdeck.providers.cli_subprocess.subprocess.run", fake_run)
+
+    with pytest.raises(CliLeaderProviderError) as raised:
+        ClaudeCliProvider().plan_result(request)
+
+    assert raised.value.stage == ("timeout" if scenario == "timeout" else "nonzero")
+    _assert_exception_graph_redacted(
+        raised.value,
+        ("SECRET", "claude", str(tmp_path)),
+    )
+    assert not tracked["temp"].exists()
+
+
+def test_claude_plan_remains_dict_and_orchestrator_accepts_native_provenance(
+    tmp_path: Path, monkeypatch
+) -> None:
+    request = _request(tmp_path)
+
+    def fake_run(command, **kwargs):
+        os.write(
+            kwargs["stdout"].fileno(),
+            json.dumps(_claude_envelope()).encode("utf-8"),
+        )
+        return subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr("agentdeck.providers.cli_subprocess.subprocess.run", fake_run)
+    provider = ClaudeCliProvider()
+
+    assert isinstance(provider.plan(request), dict)
+    result = LeaderOrchestrator(request.config, provider).plan_result(
+        request.task,
+        request.model,
+        selected_agent_ids=request.selected_agent_ids,
+        step_count=request.step_count,
+        timeout_seconds=request.timeout_seconds,
+    )
+    assert result.leader_generation["provider"] == "claude-cli"
+    assert result.leader_generation["constraint_mode"] == "native_json_schema"
+    assert result.leader_generation["attempt_count"] == 1
 
 
 def test_codex_plan_result_uses_native_schema_file_and_cleans_temp_files(
@@ -250,6 +617,7 @@ def test_native_failures_remove_secret_bearing_exception_chains(
         LeaderGateway(
             provider_factory=lambda _name: CodexCliProvider(),
             which=lambda _name: "/safe/codex",
+            leader_cli_probe=lambda _provider: (True, None),
         ).generate_mission(
             LeaderRequest(
                 config,
@@ -292,6 +660,7 @@ def test_gateway_removes_generic_provider_exception_context(
         LeaderGateway(
             provider_factory=lambda _name: FailedProvider(),
             which=lambda _name: "/safe/codex",
+            leader_cli_probe=lambda _provider: (True, None),
         ).generate_mission(
             LeaderRequest(
                 config,
@@ -497,7 +866,7 @@ def test_codex_discards_subprocess_diagnostics_at_the_os_boundary(
     assert isinstance(seen["input"], str)
 
 
-def test_codex_native_prompt_matches_schema_while_claude_keeps_legacy_prompt(
+def test_native_cli_prompts_match_schema_and_normalize_control_flags_locally(
     tmp_path: Path,
 ) -> None:
     request = _request(tmp_path)
@@ -509,8 +878,10 @@ def test_codex_native_prompt_matches_schema_while_claude_keeps_legacy_prompt(
     assert "approval_required and dispatch_ready are normalized locally" in codex_prompt
     assert "must not be output" in codex_prompt
     assert "Required schema: goal, summary, steps, approval_required, dispatch_ready." not in codex_prompt
-    assert "Required schema: goal, summary, steps, approval_required, dispatch_ready." in claude_prompt
-    assert "must not be output" not in claude_prompt
+    assert "Required schema: goal, summary, steps." in claude_prompt
+    assert "approval_required and dispatch_ready are normalized locally" in claude_prompt
+    assert "must not be output" in claude_prompt
+    assert "Required schema: goal, summary, steps, approval_required, dispatch_ready." not in claude_prompt
 
 
 @pytest.mark.parametrize(

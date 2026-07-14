@@ -15,7 +15,7 @@ from agentdeck.providers import (
     OpenAICompatibleProvider,
     leader_provider,
 )
-from agentdeck.providers.cli_subprocess import CliLeaderProviderError
+from agentdeck.providers.cli_subprocess import CliLeaderProvider, CliLeaderProviderError
 
 
 class FakeResponse:
@@ -154,6 +154,20 @@ def write_codex_result(command: list[str], payload: str) -> Path:
     assert not result_path.exists()
     result_path.write_text(payload, encoding="utf-8")
     return result_path
+
+
+def write_claude_result(output, payload: str, *, strip_controls: bool = True) -> None:
+    plan = json.loads(payload)
+    if strip_controls and isinstance(plan, dict):
+        plan.pop("approval_required", None)
+        plan.pop("dispatch_ready", None)
+    envelope = {
+        "type": "result",
+        "subtype": "success",
+        "is_error": False,
+        "structured_output": plan,
+    }
+    output.write(json.dumps(envelope).encode("utf-8"))
 
 
 def unsafe_control_flags_plan_stdout() -> str:
@@ -433,7 +447,7 @@ def test_legacy_provider_constraint_modes_match_transport_guarantees() -> None:
     assert leader_provider("deepseek").constraint_mode == "json_object"
     assert leader_provider("openai-compatible").constraint_mode == "json_object"
     assert leader_provider("codex-cli").constraint_mode == "native_json_schema"
-    assert leader_provider("claude-cli").constraint_mode == "prompt_only"
+    assert leader_provider("claude-cli").constraint_mode == "native_json_schema"
 
 
 def test_deepseek_provider_uses_deepseek_env_and_openai_compatible_plan_shape(tmp_path, monkeypatch) -> None:
@@ -561,11 +575,14 @@ def test_claude_cli_provider_runs_print_command_and_parses_json_plan(tmp_path, m
     config = load_config(root)
     seen: dict[str, object] = {}
 
-    def fake_run(command, input, text, capture_output, cwd, timeout, check):
+    def fake_run(command, input, text, stdout, stderr, cwd, timeout, check):
         seen["command"] = command
         seen["input"] = input
         seen["cwd"] = cwd
-        return subprocess.CompletedProcess(command, 0, stdout=cli_plan_stdout(), stderr="")
+        seen["stdout"] = stdout
+        seen["stderr"] = stderr
+        write_claude_result(stdout, codex_plan_stdout())
+        return subprocess.CompletedProcess(command, 0)
 
     monkeypatch.setattr("agentdeck.providers.cli_subprocess.subprocess.run", fake_run)
     monkeypatch.setattr("agentdeck.providers.cli_subprocess.shutil.which", lambda name: f"/usr/bin/{name}")
@@ -575,12 +592,21 @@ def test_claude_cli_provider_runs_print_command_and_parses_json_plan(tmp_path, m
 
     assert isinstance(provider, ClaudeCliProvider)
     assert provider.doctor() == (True, "claude is available")
-    assert seen["command"] == ["claude", "--print", "--output-format", "text", "--permission-mode", "plan"]
+    assert seen["command"][:6] == [
+        "claude",
+        "--print",
+        "--output-format",
+        "json",
+        "--permission-mode",
+        "plan",
+    ]
+    assert seen["command"][-2] == "--json-schema"
     assert "Return only a JSON object plan" in str(seen["input"])
     assert "You are the logical Leader Agent with agent_id=leader" in str(seen["input"])
     assert "Do not reuse worker tmux panes or claim a dedicated Leader pane" in str(seen["input"])
     assert "让 Claude 做 Leader" in str(seen["input"])
     assert seen["cwd"] == str(root)
+    assert seen["stderr"] is subprocess.DEVNULL
     assert plan["goal"] == "CLI Leader"
 
 
@@ -591,25 +617,27 @@ def test_claude_cli_provider_passes_requested_model_to_local_command(tmp_path, m
     config = load_config(root)
     seen: dict[str, object] = {}
 
-    def fake_run(command, **_kwargs):
+    def fake_run(command, **kwargs):
         seen["command"] = command
-        return subprocess.CompletedProcess(command, 0, stdout=cli_plan_stdout(), stderr="")
+        write_claude_result(kwargs["stdout"], codex_plan_stdout())
+        return subprocess.CompletedProcess(command, 0)
 
     monkeypatch.setattr("agentdeck.providers.cli_subprocess.subprocess.run", fake_run)
 
     provider = ClaudeCliProvider()
     provider.plan(LeaderPlanRequest(task="指定 Claude 模型", config=config, model="claude-sonnet-4-5"))
 
-    assert seen["command"] == [
+    assert seen["command"][:8] == [
         "claude",
         "--model",
         "claude-sonnet-4-5",
         "--print",
         "--output-format",
-        "text",
+        "json",
         "--permission-mode",
         "plan",
     ]
+    assert seen["command"][-2] == "--json-schema"
 
 
 def test_cli_provider_extracts_fenced_json_plan_from_local_cli_output(tmp_path, monkeypatch) -> None:
@@ -628,7 +656,7 @@ def test_cli_provider_extracts_fenced_json_plan_from_local_cli_output(tmp_path, 
 
     monkeypatch.setattr("agentdeck.providers.cli_subprocess.subprocess.run", fake_run)
 
-    provider = ClaudeCliProvider()
+    provider = CliLeaderProvider()
     plan = provider.plan(LeaderPlanRequest(task="解析 CLI fenced JSON", config=config))
 
     assert plan["goal"] == "CLI Leader"
@@ -652,7 +680,7 @@ def test_cli_provider_rejects_multiple_fenced_json_plans(tmp_path, monkeypatch) 
 
     monkeypatch.setattr("agentdeck.providers.cli_subprocess.subprocess.run", fake_run)
 
-    provider = ClaudeCliProvider()
+    provider = CliLeaderProvider()
 
     with pytest.raises(CliLeaderProviderError) as raised:
         provider.plan(LeaderPlanRequest(task="多个 JSON plan", config=config))
@@ -665,8 +693,9 @@ def test_cli_provider_normalizes_missing_plan_control_flags(tmp_path, monkeypatc
     write_default_config(root)
     config = load_config(root)
 
-    def fake_run(command, **_kwargs):
-        return subprocess.CompletedProcess(command, 0, stdout=cli_plan_stdout_without_control_flags(), stderr="")
+    def fake_run(command, **kwargs):
+        write_claude_result(kwargs["stdout"], codex_plan_stdout())
+        return subprocess.CompletedProcess(command, 0)
 
     monkeypatch.setattr("agentdeck.providers.cli_subprocess.subprocess.run", fake_run)
 
@@ -685,16 +714,21 @@ def test_cli_provider_forces_approval_gates_when_provider_returns_unsafe_control
     write_default_config(root)
     config = load_config(root)
 
-    def fake_run(command, **_kwargs):
-        return subprocess.CompletedProcess(command, 0, stdout=unsafe_control_flags_plan_stdout(), stderr="")
+    def fake_run(command, **kwargs):
+        write_claude_result(
+            kwargs["stdout"],
+            unsafe_control_flags_plan_stdout(),
+            strip_controls=False,
+        )
+        return subprocess.CompletedProcess(command, 0)
 
     monkeypatch.setattr("agentdeck.providers.cli_subprocess.subprocess.run", fake_run)
 
     provider = ClaudeCliProvider()
-    plan = provider.plan(LeaderPlanRequest(task="收敛 CLI provider flags", config=config))
-
-    assert plan["approval_required"] is True
-    assert plan["dispatch_ready"] is False
+    with pytest.raises(CliLeaderProviderError) as raised:
+        provider.plan(LeaderPlanRequest(task="收敛 CLI provider flags", config=config))
+    assert raised.value.stage == "json_parse"
+    assert raised.value.diagnostic_code == "invalid_output_envelope"
 
 
 def test_cli_provider_rejects_plan_steps_missing_required_schema_fields(tmp_path, monkeypatch) -> None:
@@ -703,8 +737,9 @@ def test_cli_provider_rejects_plan_steps_missing_required_schema_fields(tmp_path
     write_default_config(root)
     config = load_config(root)
 
-    def fake_run(command, **_kwargs):
-        return subprocess.CompletedProcess(command, 0, stdout=cli_plan_stdout_missing_step_agent_id(), stderr="")
+    def fake_run(command, **kwargs):
+        write_claude_result(kwargs["stdout"], cli_plan_stdout_missing_step_agent_id())
+        return subprocess.CompletedProcess(command, 0)
 
     monkeypatch.setattr("agentdeck.providers.cli_subprocess.subprocess.run", fake_run)
 
@@ -712,7 +747,8 @@ def test_cli_provider_rejects_plan_steps_missing_required_schema_fields(tmp_path
 
     with pytest.raises(CliLeaderProviderError) as raised:
         provider.plan(LeaderPlanRequest(task="拒绝缺字段 CLI plan", config=config))
-    assert raised.value.stage == "schema"
+    assert raised.value.stage == "json_parse"
+    assert raised.value.diagnostic_code == "invalid_output_envelope"
 
 
 def test_cli_provider_rejects_plan_missing_required_top_level_fields(tmp_path, monkeypatch) -> None:
@@ -721,8 +757,9 @@ def test_cli_provider_rejects_plan_missing_required_top_level_fields(tmp_path, m
     write_default_config(root)
     config = load_config(root)
 
-    def fake_run(command, **_kwargs):
-        return subprocess.CompletedProcess(command, 0, stdout=cli_plan_stdout_missing_goal(), stderr="")
+    def fake_run(command, **kwargs):
+        write_claude_result(kwargs["stdout"], cli_plan_stdout_missing_goal())
+        return subprocess.CompletedProcess(command, 0)
 
     monkeypatch.setattr("agentdeck.providers.cli_subprocess.subprocess.run", fake_run)
 
@@ -730,7 +767,8 @@ def test_cli_provider_rejects_plan_missing_required_top_level_fields(tmp_path, m
 
     with pytest.raises(CliLeaderProviderError) as raised:
         provider.plan(LeaderPlanRequest(task="拒绝缺顶层字段 CLI plan", config=config))
-    assert raised.value.stage == "schema"
+    assert raised.value.stage == "json_parse"
+    assert raised.value.diagnostic_code == "invalid_output_envelope"
 
 
 def test_cli_provider_rejects_blank_top_level_display_fields(tmp_path, monkeypatch) -> None:
@@ -739,8 +777,9 @@ def test_cli_provider_rejects_blank_top_level_display_fields(tmp_path, monkeypat
     write_default_config(root)
     config = load_config(root)
 
-    def fake_run(command, **_kwargs):
-        return subprocess.CompletedProcess(command, 0, stdout=cli_plan_stdout_blank_goal(), stderr="")
+    def fake_run(command, **kwargs):
+        write_claude_result(kwargs["stdout"], cli_plan_stdout_blank_goal())
+        return subprocess.CompletedProcess(command, 0)
 
     monkeypatch.setattr("agentdeck.providers.cli_subprocess.subprocess.run", fake_run)
 
@@ -757,8 +796,9 @@ def test_cli_provider_rejects_steps_for_unconfigured_agents(tmp_path, monkeypatc
     write_default_config(root)
     config = load_config(root)
 
-    def fake_run(command, **_kwargs):
-        return subprocess.CompletedProcess(command, 0, stdout=cli_plan_stdout_unknown_agent(), stderr="")
+    def fake_run(command, **kwargs):
+        write_claude_result(kwargs["stdout"], cli_plan_stdout_unknown_agent())
+        return subprocess.CompletedProcess(command, 0)
 
     monkeypatch.setattr("agentdeck.providers.cli_subprocess.subprocess.run", fake_run)
 
@@ -775,8 +815,9 @@ def test_cli_provider_rejects_non_positive_step_numbers(tmp_path, monkeypatch) -
     write_default_config(root)
     config = load_config(root)
 
-    def fake_run(command, **_kwargs):
-        return subprocess.CompletedProcess(command, 0, stdout=cli_plan_stdout_non_positive_step_number(), stderr="")
+    def fake_run(command, **kwargs):
+        write_claude_result(kwargs["stdout"], cli_plan_stdout_non_positive_step_number())
+        return subprocess.CompletedProcess(command, 0)
 
     monkeypatch.setattr("agentdeck.providers.cli_subprocess.subprocess.run", fake_run)
 
@@ -793,8 +834,9 @@ def test_cli_provider_rejects_duplicate_step_numbers(tmp_path, monkeypatch) -> N
     write_default_config(root)
     config = load_config(root)
 
-    def fake_run(command, **_kwargs):
-        return subprocess.CompletedProcess(command, 0, stdout=cli_plan_stdout_duplicate_step_numbers(), stderr="")
+    def fake_run(command, **kwargs):
+        write_claude_result(kwargs["stdout"], cli_plan_stdout_duplicate_step_numbers())
+        return subprocess.CompletedProcess(command, 0)
 
     monkeypatch.setattr("agentdeck.providers.cli_subprocess.subprocess.run", fake_run)
 
@@ -811,13 +853,11 @@ def test_cli_provider_rejects_non_contiguous_step_numbers(tmp_path, monkeypatch)
     write_default_config(root)
     config = load_config(root)
 
-    def fake_run(command, **_kwargs):
-        return subprocess.CompletedProcess(
-            command,
-            0,
-            stdout=cli_plan_stdout_non_contiguous_step_numbers(),
-            stderr="",
+    def fake_run(command, **kwargs):
+        write_claude_result(
+            kwargs["stdout"], cli_plan_stdout_non_contiguous_step_numbers()
         )
+        return subprocess.CompletedProcess(command, 0)
 
     monkeypatch.setattr("agentdeck.providers.cli_subprocess.subprocess.run", fake_run)
 
@@ -834,8 +874,9 @@ def test_cli_provider_rejects_role_that_does_not_match_agent(tmp_path, monkeypat
     write_default_config(root)
     config = load_config(root)
 
-    def fake_run(command, **_kwargs):
-        return subprocess.CompletedProcess(command, 0, stdout=cli_plan_stdout_mismatched_agent_role(), stderr="")
+    def fake_run(command, **kwargs):
+        write_claude_result(kwargs["stdout"], cli_plan_stdout_mismatched_agent_role())
+        return subprocess.CompletedProcess(command, 0)
 
     monkeypatch.setattr("agentdeck.providers.cli_subprocess.subprocess.run", fake_run)
 

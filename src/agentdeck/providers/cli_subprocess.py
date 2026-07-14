@@ -7,6 +7,7 @@ import shutil
 import stat
 import subprocess
 import tempfile
+from typing import BinaryIO
 from json import JSONDecodeError
 
 from .base import (
@@ -240,6 +241,8 @@ class CodexCliProvider(CliLeaderProvider):
     constraint_mode = "native_json_schema"
     command_name = "codex"
     command = ["codex", "exec", "--sandbox", "read-only", "-"]
+    native_help_command = ("codex", "exec", "--help")
+    native_required_flags = ("--output-schema", "--output-last-message")
 
     def _prompt(self, request: LeaderPlanRequest) -> str:
         return super()._prompt(request).replace(
@@ -388,6 +391,18 @@ class CodexCliProvider(CliLeaderProvider):
     def _read_native_plan(
         self, path: str, request: LeaderPlanRequest
     ) -> dict[str, object]:
+        payload = self._read_secure_payload(path, normalize_mode=True)
+        decode_failed = False
+        plan: object = None
+        try:
+            plan = _strict_json_decode(payload)
+        except _StrictJsonError:
+            decode_failed = True
+        if decode_failed or not isinstance(plan, dict):
+            raise CliLeaderProviderError("json_parse", "invalid_output_envelope")
+        return self._validate_native_plan(plan, request)
+
+    def _read_secure_payload(self, path: str, *, normalize_mode: bool) -> bytes:
         nofollow = getattr(os, "O_NOFOLLOW", None)
         if nofollow is None:
             raise CliLeaderProviderError("json_parse", "invalid_output_envelope")
@@ -422,7 +437,8 @@ class CodexCliProvider(CliLeaderProvider):
                 raise _NativeOutputError(
                     "json_parse", "invalid_output_envelope"
                 )
-            os.fchmod(descriptor, 0o600)
+            if normalize_mode:
+                os.fchmod(descriptor, 0o600)
             baseline_stat = os.fstat(descriptor)
             if (
                 not stat.S_ISREG(baseline_stat.st_mode)
@@ -475,14 +491,12 @@ class CodexCliProvider(CliLeaderProvider):
             )
         if pending_error is not None:
             raise pending_error
-        decode_failed = False
-        plan: object = None
-        try:
-            plan = _strict_json_decode(payload)
-        except _StrictJsonError:
-            decode_failed = True
-        if decode_failed or not isinstance(plan, dict):
-            raise CliLeaderProviderError("json_parse", "invalid_output_envelope")
+        return payload
+
+    @staticmethod
+    def _validate_native_plan(
+        plan: dict[str, object], request: LeaderPlanRequest
+    ) -> dict[str, object]:
         if set(plan) != _NATIVE_PLAN_FIELDS:
             raise CliLeaderProviderError("json_parse", "invalid_output_envelope")
         steps = plan.get("steps")
@@ -512,5 +526,242 @@ class CodexCliProvider(CliLeaderProvider):
 
 class ClaudeCliProvider(CliLeaderProvider):
     name = "claude-cli"
+    constraint_mode = "native_json_schema"
     command_name = "claude"
-    command = ["claude", "--print", "--output-format", "text", "--permission-mode", "plan"]
+    command = ["claude", "--print", "--output-format", "json", "--permission-mode", "plan"]
+    native_help_command = ("claude", "--help")
+    native_required_flags = ("--json-schema", "--output-format")
+
+    def _prompt(self, request: LeaderPlanRequest) -> str:
+        return super()._prompt(request).replace(
+            "Required schema: goal, summary, steps, approval_required, dispatch_ready.",
+            "Required schema: goal, summary, steps.\n"
+            "Output only those top-level fields; approval_required and dispatch_ready "
+            "are normalized locally and must not be output.",
+        )
+
+    def plan_result(self, request: LeaderPlanRequest) -> LeaderPlanResult:
+        schema = build_leader_plan_schema(request)
+        schema_argument = json.dumps(
+            schema,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        prompt = self._prompt(request)
+        with tempfile.TemporaryDirectory(prefix="agentdeck-leader-") as temp_dir:
+            self._require_private_temp_directory(temp_dir)
+            output_path = os.path.join(temp_dir, "claude-output.json")
+            output = self._create_private_output(output_path)
+            process_error: CliLeaderProviderError | None = None
+            completed: subprocess.CompletedProcess[str] | None = None
+            try:
+                command = [
+                    *self._command_for_request(request),
+                    "--json-schema",
+                    schema_argument,
+                ]
+                try:
+                    completed = subprocess.run(
+                        command,
+                        input=prompt,
+                        text=True,
+                        stdout=output,
+                        stderr=subprocess.DEVNULL,
+                        cwd=request.config.root,
+                        timeout=(
+                            request.timeout_seconds
+                            if request.timeout_seconds is not None
+                            else self.timeout
+                        ),
+                        check=False,
+                    )
+                except subprocess.TimeoutExpired:
+                    process_error = CliLeaderProviderError("timeout")
+                except OSError:
+                    process_error = CliLeaderProviderError("nonzero")
+                if (
+                    process_error is None
+                    and completed is not None
+                    and completed.returncode != 0
+                ):
+                    process_error = CliLeaderProviderError("nonzero")
+                if process_error is None:
+                    try:
+                        output.flush()
+                        os.fsync(output.fileno())
+                    except OSError:
+                        process_error = CliLeaderProviderError(
+                            "json_parse", "invalid_output_envelope"
+                        )
+            finally:
+                close_failed = False
+                try:
+                    output.close()
+                except OSError:
+                    close_failed = True
+                if close_failed and process_error is None:
+                    process_error = CliLeaderProviderError(
+                        "json_parse", "invalid_output_envelope"
+                    )
+            if process_error is not None:
+                raise process_error
+            if completed is None:
+                raise CliLeaderProviderError("nonzero")
+            payload = CodexCliProvider()._read_secure_payload(
+                output_path, normalize_mode=False
+            )
+            plan = self._decode_envelope(payload, request)
+        return LeaderPlanResult(
+            plan=plan,
+            leader_generation=build_leader_generation_provenance(
+                request=request,
+                provider=self.name,
+                constraint_mode=self.constraint_mode,
+                schema=schema,
+                attempt_count=1,
+            ),
+        )
+
+    @staticmethod
+    def _require_private_temp_directory(path: str) -> None:
+        directory_stat: os.stat_result | None = None
+        try:
+            directory_stat = os.stat(path, follow_symlinks=False)
+        except OSError:
+            pass
+        if (
+            directory_stat is None
+            or not stat.S_ISDIR(directory_stat.st_mode)
+            or directory_stat.st_uid != os.geteuid()
+            or stat.S_IMODE(directory_stat.st_mode) != 0o700
+        ):
+            raise CliLeaderProviderError("json_parse", "invalid_output_envelope")
+
+    @staticmethod
+    def _create_private_output(path: str) -> BinaryIO:
+        nofollow = getattr(os, "O_NOFOLLOW", None)
+        if nofollow is None:
+            raise CliLeaderProviderError("json_parse", "invalid_output_envelope")
+        descriptor: int | None = None
+        try:
+            descriptor = os.open(
+                path,
+                os.O_WRONLY | os.O_CREAT | os.O_EXCL | nofollow,
+                0o600,
+            )
+            file_stat = os.fstat(descriptor)
+            named_stat = os.lstat(path)
+            if (
+                not stat.S_ISREG(file_stat.st_mode)
+                or file_stat.st_uid != os.geteuid()
+                or file_stat.st_nlink != 1
+                or stat.S_IMODE(file_stat.st_mode) != 0o600
+                or named_stat.st_dev != file_stat.st_dev
+                or named_stat.st_ino != file_stat.st_ino
+            ):
+                raise OSError
+            return os.fdopen(descriptor, "wb")
+        except OSError:
+            if descriptor is not None:
+                try:
+                    os.close(descriptor)
+                except OSError:
+                    pass
+            raise CliLeaderProviderError(
+                "json_parse", "invalid_output_envelope"
+            ) from None
+
+    @staticmethod
+    def _decode_envelope(
+        payload: bytes, request: LeaderPlanRequest
+    ) -> dict[str, object]:
+        envelope: object = None
+        try:
+            envelope = _strict_json_decode(payload)
+        except _StrictJsonError:
+            pass
+        if (
+            not isinstance(envelope, dict)
+            or type(envelope.get("type")) is not str
+            or envelope.get("type") != "result"
+            or type(envelope.get("subtype")) is not str
+            or envelope.get("subtype") != "success"
+            or envelope.get("is_error") is not False
+            or not isinstance(envelope.get("structured_output"), dict)
+        ):
+            raise CliLeaderProviderError("json_parse", "invalid_output_envelope")
+        plan = envelope["structured_output"]
+        assert isinstance(plan, dict)
+        return CodexCliProvider._validate_native_plan(plan, request)
+
+
+_CLI_NATIVE_SCHEMA_UNSUPPORTED = "Leader CLI native JSON schema is unsupported"
+_CLI_EXECUTABLE_UNAVAILABLE = "Leader CLI executable is not available"
+_CLI_NATIVE_SCHEMA_UNAVAILABLE = (
+    "Leader CLI native JSON schema capability is unavailable"
+)
+
+
+def cli_native_schema_ready(provider: str) -> tuple[bool, str | None]:
+    probe = {
+        "codex-cli": (
+            CodexCliProvider.native_help_command,
+            CodexCliProvider.native_required_flags,
+        ),
+        "claude-cli": (
+            ClaudeCliProvider.native_help_command,
+            ClaudeCliProvider.native_required_flags,
+        ),
+    }.get(provider)
+    if probe is None:
+        return False, _CLI_NATIVE_SCHEMA_UNSUPPORTED
+    command, required_flags = probe
+    with tempfile.TemporaryDirectory(prefix="agentdeck-leader-probe-") as temp_dir:
+        try:
+            ClaudeCliProvider._require_private_temp_directory(temp_dir)
+            output_path = os.path.join(temp_dir, "help-output.txt")
+            output = ClaudeCliProvider._create_private_output(output_path)
+        except CliLeaderProviderError:
+            return False, _CLI_NATIVE_SCHEMA_UNAVAILABLE
+        process_failed = False
+        executable_missing = False
+        completed: subprocess.CompletedProcess[bytes] | None = None
+        try:
+            try:
+                completed = subprocess.run(
+                    list(command),
+                    stdout=output,
+                    stderr=output,
+                    timeout=5,
+                    check=False,
+                )
+            except FileNotFoundError:
+                executable_missing = True
+            except (subprocess.TimeoutExpired, OSError):
+                process_failed = True
+            if not executable_missing and not process_failed:
+                try:
+                    output.flush()
+                    os.fsync(output.fileno())
+                except OSError:
+                    process_failed = True
+        finally:
+            try:
+                output.close()
+            except OSError:
+                process_failed = True
+        if executable_missing:
+            return False, _CLI_EXECUTABLE_UNAVAILABLE
+        if process_failed or completed is None or completed.returncode != 0:
+            return False, _CLI_NATIVE_SCHEMA_UNAVAILABLE
+        try:
+            payload = CodexCliProvider()._read_secure_payload(
+                output_path, normalize_mode=False
+            )
+            help_text = payload.decode("utf-8", errors="strict")
+        except (CliLeaderProviderError, UnicodeDecodeError):
+            return False, _CLI_NATIVE_SCHEMA_UNAVAILABLE
+        if not all(flag in help_text for flag in required_flags):
+            return False, _CLI_NATIVE_SCHEMA_UNAVAILABLE
+    return True, None

@@ -10,7 +10,10 @@ from ..mission_orchestration import LeaderMissionCandidate
 from ..models import LeaderConfig, ProjectConfig
 from ..orchestration.leader import LeaderOrchestrator
 from ..providers import LeaderProvider, leader_provider
-from ..providers.cli_subprocess import CliLeaderProviderError
+from ..providers.cli_subprocess import (
+    CliLeaderProviderError,
+    cli_native_schema_ready,
+)
 from ..runtime.acp import AcpTransport
 from ..runtime.acp_client import AgentDeckAcpClient, PermissionDecision
 from ..runtime.acp_mapping import ensure_turn_within_bounds
@@ -143,12 +146,16 @@ class LeaderGateway:
         *,
         provider_factory: Callable[[str], LeaderProvider] = leader_provider,
         which: Callable[[str], str | None] = shutil.which,
+        leader_cli_probe: Callable[[str], tuple[bool, str | None]] = (
+            cli_native_schema_ready
+        ),
         request_timeout: float = 30.0,
     ) -> None:
         if type(request_timeout) not in {int, float} or request_timeout <= 0:
             raise ValueError("request_timeout must be positive")
         self._provider_factory = provider_factory
         self._which = which
+        self._leader_cli_probe = leader_cli_probe
         self._request_timeout = float(request_timeout)
 
     async def _generate_acp_plan(self, request: LeaderRequest) -> dict[str, object]:
@@ -209,8 +216,17 @@ class LeaderGateway:
             executable = {"codex-cli": "codex", "claude-cli": "claude"}.get(
                 leader.provider
             )
-            if executable is None or self._which(executable) is None:
+            if executable is not None and self._which(executable) is None:
                 blockers.append("Leader CLI executable is not available")
+            else:
+                native_ready, native_blocker = self._leader_cli_probe(leader.provider)
+                if native_ready:
+                    capabilities = ("plan", "native_json_schema")
+                else:
+                    blockers.append(
+                        native_blocker
+                        or "Leader CLI native JSON schema capability is unavailable"
+                    )
         else:
             capabilities = ("plan",)
         return LeaderBackendStatus(

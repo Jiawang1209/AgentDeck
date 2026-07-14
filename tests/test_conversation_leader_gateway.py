@@ -74,7 +74,15 @@ def _config(tmp_path: Path):
 
 def test_legacy_leader_config_derives_explicit_backend_identity(tmp_path: Path) -> None:
     config = _config(tmp_path)
-    gateway = LeaderGateway(which=lambda _name: "/bin/tool")
+    probe_calls: list[str] = []
+
+    def ready_probe(provider: str) -> tuple[bool, str | None]:
+        probe_calls.append(provider)
+        return True, None
+
+    gateway = LeaderGateway(
+        which=lambda _name: "/bin/tool", leader_cli_probe=ready_probe
+    )
 
     api = gateway.describe(config.leader)
     cli = gateway.describe(replace(config.leader, provider="codex-cli", model="gpt-5.5"))
@@ -87,6 +95,79 @@ def test_legacy_leader_config_derives_explicit_backend_identity(tmp_path: Path) 
     )
     assert api.fallback == {"automatic": False, "transport": None}
     assert cli.fallback == {"automatic": False, "transport": None}
+    assert cli.capabilities == ("plan", "native_json_schema")
+    assert probe_calls == ["codex-cli"]
+
+
+def test_cli_subprocess_native_probe_blocks_without_constructing_provider(
+    tmp_path: Path,
+) -> None:
+    config = _config(tmp_path)
+    config = replace(
+        config,
+        leader=replace(config.leader, provider="claude-cli", model="claude-test"),
+    )
+    blocker = "Leader CLI native JSON schema capability is unavailable"
+    constructed: list[str] = []
+    gateway = LeaderGateway(
+        provider_factory=lambda name: constructed.append(name),  # type: ignore[arg-type,return-value]
+        which=lambda _name: "/bin/claude",
+        leader_cli_probe=lambda provider: (False, blocker),
+    )
+
+    status = gateway.describe(config.leader)
+
+    assert status.readiness == "blocked"
+    assert status.capabilities == ("plan",)
+    assert status.blockers == (blocker,)
+    with pytest.raises(LeaderGatewayError) as raised:
+        gateway.generate_mission(
+            LeaderRequest(config, "mission", "structured mission task", 180, None),
+            CancellationToken(),
+        )
+    assert raised.value.stage == "backend_blocked"
+    assert constructed == []
+
+
+def test_cli_subprocess_missing_executable_skips_native_probe(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    leader = replace(config.leader, provider="codex-cli", model="gpt-test")
+
+    status = LeaderGateway(
+        which=lambda _name: None,
+        leader_cli_probe=lambda _provider: pytest.fail(
+            "native probe must not run without executable"
+        ),
+    ).describe(leader)
+
+    assert status.readiness == "blocked"
+    assert status.capabilities == ("plan",)
+    assert status.blockers == ("Leader CLI executable is not available",)
+
+
+def test_unknown_cli_provider_uses_fixed_unsupported_probe_blocker(
+    tmp_path: Path,
+) -> None:
+    config = _config(tmp_path)
+    leader = replace(
+        config.leader,
+        provider="future-cli",
+        model="future-test",
+        backend_kind="agent_cli",
+        transport="cli_subprocess",
+    )
+
+    status = LeaderGateway(
+        which=lambda _name: pytest.fail("unknown provider has no executable mapping"),
+        leader_cli_probe=lambda provider: (
+            False,
+            "Leader CLI native JSON schema is unsupported",
+        ),
+    ).describe(leader)
+
+    assert status.readiness == "blocked"
+    assert status.capabilities == ("plan",)
+    assert status.blockers == ("Leader CLI native JSON schema is unsupported",)
 
 
 def test_explicit_acp_leader_requires_nonempty_command(tmp_path: Path) -> None:
@@ -521,7 +602,11 @@ def test_gateway_failure_never_tries_another_backend(tmp_path: Path) -> None:
         return provider
 
     with pytest.raises(LeaderGatewayError, match="Leader backend failed") as raised:
-        LeaderGateway(provider_factory=factory, which=lambda _name: "/bin/codex").generate_mission(
+        LeaderGateway(
+            provider_factory=factory,
+            which=lambda _name: "/bin/codex",
+            leader_cli_probe=lambda _provider: (True, None),
+        ).generate_mission(
             LeaderRequest(config, "mission", "structured mission task", 180, None),
             CancellationToken(),
         )
