@@ -486,6 +486,30 @@ def _verify_project_state_anchor(root: Path, deck_fd: int, state_fd: int) -> Non
             raise ValueError("migration state directory changed during confirmation")
 
 
+def _verify_project_root_anchor(root: Path, root_fd: int) -> None:
+    """Fail if the canonical project root no longer names the guarded inode."""
+    try:
+        current_fd = os.open(root, _MIGRATION_DIRECTORY_FLAGS)
+    except OSError as exc:
+        raise ValueError("project root changed during state mutation") from exc
+    try:
+        guarded = os.fstat(root_fd)
+        current = os.fstat(current_fd)
+        if (guarded.st_dev, guarded.st_ino) != (current.st_dev, current.st_ino):
+            raise ValueError("project root changed during state mutation")
+    finally:
+        os.close(current_fd)
+
+
+def _verify_mutation_anchor(
+    root: Path,
+    root_fd: int,
+    anchored: tuple[int, int],
+) -> None:
+    _verify_project_root_anchor(root, root_fd)
+    _verify_project_state_anchor(root, anchored[0], anchored[1])
+
+
 _STATE_SOURCE_TOKEN_KEY = "__agentdeck_transient_state_source__"
 
 
@@ -2439,11 +2463,9 @@ class StateStore:
         key = str(self.root.resolve())
         entry = _state_lock_entries().get(key)
         if entry is not None:
-            anchored = entry["anchored"]
-            assert isinstance(anchored, tuple)
-            _verify_project_state_anchor(self.root.resolve(), *anchored)
-            source = _read_event_journal_at(int(anchored[1]))
-            _verify_project_state_anchor(self.root.resolve(), *anchored)
+            _deck_fd, state_fd = self._verify_current_mutation_anchor()
+            source = _read_event_journal_at(state_fd)
+            self._verify_current_mutation_anchor()
             return source
         try:
             with _secure_project_state_directory(self.root.resolve()) as anchored:
@@ -2457,14 +2479,28 @@ class StateStore:
                 return None
             raise
 
+    def _verify_current_mutation_anchor(self) -> tuple[int, int]:
+        entry = _state_lock_entries().get(str(self.root.resolve()))
+        if entry is None:
+            raise RuntimeError("state mutation anchor is not held")
+        anchored = entry["anchored"]
+        root_fd = entry["root_fd"]
+        assert isinstance(anchored, tuple)
+        assert isinstance(root_fd, int)
+        _verify_mutation_anchor(self.root.resolve(), root_fd, anchored)
+        return int(anchored[0]), int(anchored[1])
+
+    def _append_event_bytes_locked(self, encoded: bytes) -> None:
+        _deck_fd, state_fd = self._verify_current_mutation_anchor()
+        _append_event_journal_at(state_fd, encoded)
+        self._verify_current_mutation_anchor()
+
     def append_event(self, event: EventRecord) -> None:
         encoded = (
             json.dumps(asdict(event), ensure_ascii=False, sort_keys=True) + "\n"
         ).encode("utf-8")
-        with self._protocol_mutation_lock() as anchored:
-            _verify_project_state_anchor(self.root.resolve(), *anchored)
-            _append_event_journal_at(anchored[1], encoded)
-            _verify_project_state_anchor(self.root.resolve(), *anchored)
+        with self._protocol_mutation_lock():
+            self._append_event_bytes_locked(encoded)
 
     def record_governance_preview(
         self,
@@ -3730,14 +3766,11 @@ class StateStore:
                 if validate_daemon_event_record(item) not in durable_ids
             ]
             if pending:
-                entry = _state_lock_entries()[str(self.root.resolve())]
-                anchored = entry["anchored"]
-                assert isinstance(anchored, tuple)
                 encoded = "".join(
                     json.dumps(item, ensure_ascii=False, sort_keys=True) + "\n"
                     for item in pending
                 ).encode("utf-8")
-                _append_event_journal_at(int(anchored[1]), encoded)
+                self._append_event_bytes_locked(encoded)
             state["daemon_event_outbox"] = []
             self._atomic_save(state)
             return {
@@ -3752,12 +3785,12 @@ class StateStore:
             with self._protocol_mutation_lock():
                 self._atomic_save(state)
             return
-        anchored = entry["anchored"]
-        assert isinstance(anchored, tuple)
-        state_fd = int(anchored[1])
+        _deck_fd, state_fd = self._verify_current_mutation_anchor()
         _atomic_save_state_at(state_fd, state)
+        self._verify_current_mutation_anchor()
         installed = _read_state_bytes_at(state_fd)
         assert installed is not None
+        self._verify_current_mutation_anchor()
         self._remember_loaded_state(
             state,
             "sha256:" + hashlib.sha256(installed).hexdigest(),
@@ -3963,71 +3996,82 @@ class StateStore:
             return
         if entries:
             raise RuntimeError("nested cross-project state mutations are forbidden")
-        with _secure_project_state_directory(
-            self.root.resolve(), create_state=True
-        ) as anchored:
-            _deck_fd, state_fd = anchored
-            flags = os.O_RDWR | getattr(os, "O_NOFOLLOW", 0)
-            lock_fd: int | None = None
-            directory_locked = False
-            try:
-                fcntl.flock(state_fd, fcntl.LOCK_EX)
-                directory_locked = True
-                _verify_project_state_anchor(
-                    self.root.resolve(), _deck_fd, state_fd
-                )
+        canonical_root = self.root.resolve()
+        try:
+            root_fd = os.open(canonical_root, _MIGRATION_DIRECTORY_FLAGS)
+        except OSError as exc:
+            raise ValueError("project root is unsafe for state mutation") from exc
+        root_locked = False
+        try:
+            fcntl.flock(root_fd, fcntl.LOCK_EX)
+            root_locked = True
+            _verify_project_root_anchor(canonical_root, root_fd)
+            with _secure_project_state_directory(
+                canonical_root, create_state=True
+            ) as anchored:
+                _deck_fd, state_fd = anchored
+                flags = os.O_RDWR | getattr(os, "O_NOFOLLOW", 0)
+                lock_fd: int | None = None
+                legacy_locked = False
                 try:
                     try:
-                        lock_fd = os.open(
-                            "protocol-mutation.lock",
-                            flags | os.O_CREAT | os.O_EXCL,
-                            0o600,
-                            dir_fd=state_fd,
-                        )
-                    except FileExistsError:
-                        lock_fd = os.open(
-                            "protocol-mutation.lock", flags, dir_fd=state_fd
-                        )
-                except OSError as exc:
-                    raise ValueError("protocol mutation lock is unsafe") from exc
-                _verify_regular_file_at(
-                    state_fd,
-                    "protocol-mutation.lock",
-                    lock_fd,
-                    error="protocol mutation lock is unsafe",
-                )
-                fcntl.flock(lock_fd, fcntl.LOCK_EX)
-                _verify_regular_file_at(
-                    state_fd,
-                    "protocol-mutation.lock",
-                    lock_fd,
-                    error="protocol mutation lock changed after acquisition",
-                )
-                _verify_project_state_anchor(self.root.resolve(), _deck_fd, state_fd)
-            except BaseException:
-                if lock_fd is not None:
+                        try:
+                            lock_fd = os.open(
+                                "protocol-mutation.lock",
+                                flags | os.O_CREAT | os.O_EXCL,
+                                0o600,
+                                dir_fd=state_fd,
+                            )
+                        except FileExistsError:
+                            lock_fd = os.open(
+                                "protocol-mutation.lock", flags, dir_fd=state_fd
+                            )
+                    except OSError as exc:
+                        raise ValueError("protocol mutation lock is unsafe") from exc
+                    _verify_regular_file_at(
+                        state_fd,
+                        "protocol-mutation.lock",
+                        lock_fd,
+                        error="protocol mutation lock is unsafe",
+                    )
+                    fcntl.flock(lock_fd, fcntl.LOCK_EX)
+                    legacy_locked = True
+                    _verify_regular_file_at(
+                        state_fd,
+                        "protocol-mutation.lock",
+                        lock_fd,
+                        error="protocol mutation lock changed after acquisition",
+                    )
+                    _verify_mutation_anchor(
+                        canonical_root, root_fd, anchored
+                    )
+                    entries[key] = {
+                        "depth": 1,
+                        "anchored": anchored,
+                        "lock_fd": lock_fd,
+                        "root_fd": root_fd,
+                    }
                     try:
-                        fcntl.flock(lock_fd, fcntl.LOCK_UN)
+                        yield anchored
                     finally:
-                        os.close(lock_fd)
-                if directory_locked:
-                    fcntl.flock(state_fd, fcntl.LOCK_UN)
-                raise
-            assert lock_fd is not None
-            entries[key] = {"depth": 1, "anchored": anchored, "lock_fd": lock_fd}
-            try:
-                yield anchored
-            finally:
-                entry = entries.pop(key)
-                if entry["depth"] != 1:
-                    raise RuntimeError("state mutation lock depth is unbalanced")
-                try:
-                    fcntl.flock(lock_fd, fcntl.LOCK_UN)
+                        entry = entries.pop(key)
+                        if entry["depth"] != 1:
+                            raise RuntimeError(
+                                "state mutation lock depth is unbalanced"
+                            )
                 finally:
-                    try:
-                        os.close(lock_fd)
-                    finally:
-                        fcntl.flock(state_fd, fcntl.LOCK_UN)
+                    if lock_fd is not None:
+                        try:
+                            if legacy_locked:
+                                fcntl.flock(lock_fd, fcntl.LOCK_UN)
+                        finally:
+                            os.close(lock_fd)
+        finally:
+            try:
+                if root_locked:
+                    fcntl.flock(root_fd, fcntl.LOCK_UN)
+            finally:
+                os.close(root_fd)
 
     def _protocol_event_ids(self) -> set[str]:
         event_ids: set[str] = set()

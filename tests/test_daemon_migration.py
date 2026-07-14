@@ -10,6 +10,7 @@ import gc
 import hashlib
 import json
 import os
+import shutil
 import stat
 import subprocess
 import sys
@@ -535,6 +536,173 @@ def test_protocol_mutation_directory_guard_prevents_post_proof_lock_split(
         "first-writer",
         "second-writer",
     ]
+
+
+@pytest.mark.parametrize("destination", ["project", "external"])
+def test_project_guard_blocks_state_directory_replacement_after_lock_proof(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    destination: str,
+) -> None:
+    store = StateStore(tmp_path)
+    state_dir = tmp_path / ".agentdeck" / "state"
+    detached = (
+        tmp_path / ".agentdeck" / "state.detached"
+        if destination == "project"
+        else tmp_path.parent / f"{tmp_path.name}-external-state-detached"
+    )
+    proof_reached = threading.Event()
+    release_first = threading.Event()
+    second_finished = threading.Event()
+    errors: list[tuple[str, BaseException]] = []
+    first_thread_id: int | None = None
+    original_verify = state_module._verify_regular_file_at
+
+    def pause_after_lock_proof(
+        directory_fd: int,
+        name: str,
+        descriptor: int,
+        *,
+        error: str,
+    ) -> None:
+        original_verify(directory_fd, name, descriptor, error=error)
+        if (
+            error == "protocol mutation lock changed after acquisition"
+            and threading.get_ident() == first_thread_id
+        ):
+            proof_reached.set()
+            assert release_first.wait(timeout=2)
+
+    monkeypatch.setattr(
+        state_module, "_verify_regular_file_at", pause_after_lock_proof
+    )
+
+    def first_writer() -> None:
+        nonlocal first_thread_id
+        first_thread_id = threading.get_ident()
+        try:
+            store.record_chat_turn("status", "detached-writer", None, None)
+        except BaseException as exc:
+            errors.append(("first", exc))
+
+    def second_writer() -> None:
+        try:
+            StateStore.open_existing(tmp_path).record_chat_turn(
+                "status", "canonical-writer", None, None
+            )
+        except BaseException as exc:
+            errors.append(("second", exc))
+        finally:
+            second_finished.set()
+
+    first = threading.Thread(target=first_writer, daemon=True)
+    second: threading.Thread | None = None
+    try:
+        first.start()
+        assert proof_reached.wait(timeout=1)
+        state_dir.rename(detached)
+        shutil.copytree(detached, state_dir)
+        second = threading.Thread(target=second_writer, daemon=True)
+        second.start()
+
+        assert not second_finished.wait(timeout=0.2), (
+            "replacing state must not split the project mutation guard"
+        )
+    finally:
+        release_first.set()
+        first.join(timeout=2)
+        if second is not None:
+            second.join(timeout=2)
+
+    assert not first.is_alive()
+    assert second is not None and not second.is_alive()
+    assert len(errors) == 1
+    assert errors[0][0] == "first"
+    assert isinstance(errors[0][1], ValueError)
+    assert "state directory changed" in str(errors[0][1])
+    canonical_messages = [
+        item["message"]
+        for item in StateStore.open_existing(tmp_path).load()["chat_turns"]
+    ]
+    assert canonical_messages == ["canonical-writer"]
+    if destination == "external":
+        shutil.rmtree(detached)
+
+
+def test_daemon_outbox_state_detach_after_journal_proof_never_reports_success(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = StateStore(tmp_path)
+    event = EventRecord.create("pending_state_detach", {})
+    state = store.load()
+    state["daemon_event_outbox"] = [asdict(event)]
+    store.save(state)
+    state_dir = tmp_path / ".agentdeck" / "state"
+    detached = tmp_path.parent / f"{tmp_path.name}-outbox-state-detached"
+    original_write = state_module.os.write
+    raced = False
+
+    def detach_state_during_journal_effect(
+        fd: int, payload: bytes | memoryview
+    ) -> int:
+        nonlocal raced
+        if not raced:
+            state_dir.rename(detached)
+            shutil.copytree(
+                detached,
+                state_dir,
+                ignore=shutil.ignore_patterns(".events.jsonl.*"),
+            )
+            raced = True
+        return original_write(fd, payload)
+
+    monkeypatch.setattr(
+        state_module.os, "write", detach_state_during_journal_effect
+    )
+    try:
+        with pytest.raises(ValueError, match="state directory changed"):
+            store.flush_daemon_event_outbox()
+
+        assert raced is True
+        assert StateStore.open_existing(tmp_path).load()[
+            "daemon_event_outbox"
+        ] == [asdict(event)]
+    finally:
+        shutil.rmtree(detached)
+
+
+def test_atomic_save_state_detach_after_precheck_never_reports_success(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = StateStore(tmp_path)
+    state_dir = tmp_path / ".agentdeck" / "state"
+    detached = tmp_path.parent / f"{tmp_path.name}-atomic-state-detached"
+    original_save = state_module._atomic_save_state_at
+    raced = False
+
+    def detach_state_during_atomic_save(
+        state_fd: int, state: dict[str, object]
+    ) -> None:
+        nonlocal raced
+        if not raced:
+            state_dir.rename(detached)
+            shutil.copytree(detached, state_dir)
+            raced = True
+        original_save(state_fd, state)
+
+    monkeypatch.setattr(
+        state_module, "_atomic_save_state_at", detach_state_during_atomic_save
+    )
+    try:
+        with pytest.raises(ValueError, match="state directory changed"):
+            store.record_chat_turn("status", "must-not-be-canonical", None, None)
+
+        assert raced is True
+        assert StateStore.open_existing(tmp_path).load()["chat_turns"] == []
+    finally:
+        shutil.rmtree(detached)
 
 
 def test_legacy_state_lock_inode_blocks_new_authoritative_writer(
