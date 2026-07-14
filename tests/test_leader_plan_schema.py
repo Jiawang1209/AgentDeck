@@ -13,6 +13,7 @@ from agentdeck.providers.base import LeaderPlanRequest
 from agentdeck.providers.plan_schema import (
     LEADER_PLAN_SCHEMA_VERSION,
     ProviderPlanValidationError,
+    build_leader_generation_provenance,
     build_leader_plan_schema,
     canonical_leader_plan_schema_hash,
     leader_plan_authority,
@@ -257,3 +258,125 @@ def test_legacy_validation_keeps_human_readable_exception_text() -> None:
 
     assert raised.value.code == "missing_required_field"
     assert str(raised.value) == "provider plan step 1 missing required field: agent_id"
+
+
+def _four_step_request() -> LeaderPlanRequest:
+    config = _config()
+    config = replace(
+        config,
+        agents=config.agents
+        + (AgentSpec("writer", "documentation", "claude-cli", "claude"),),
+    )
+    return LeaderPlanRequest(
+        task="Complete a four-step mission",
+        config=config,
+        model="leader-model-v1",
+        selected_agent_ids=("builder", "reviewer", "planner", "writer"),
+        step_count=4,
+    )
+
+
+def test_generation_provenance_normalizes_exact_authority_and_schema() -> None:
+    request = _four_step_request()
+    schema = build_leader_plan_schema(request)
+
+    assert build_leader_generation_provenance(
+        request=request,
+        provider="codex-cli",
+        constraint_mode="native_json_schema",
+        schema=schema,
+        attempt_count=1,
+    ) == {
+        "provider": "codex-cli",
+        "model": "leader-model-v1",
+        "constraint_mode": "native_json_schema",
+        "schema_version": "leader-plan/v1",
+        "schema_hash": canonical_leader_plan_schema_hash(schema),
+        "attempt_count": 1,
+        "regeneration_used": False,
+        "selected_agent_ids": ["builder", "reviewer", "planner", "writer"],
+        "step_count": 4,
+    }
+
+
+def test_generation_provenance_supports_schema_free_local_legacy_mode() -> None:
+    request = LeaderPlanRequest(task="Legacy local plan", config=_config())
+
+    assert build_leader_generation_provenance(
+        request=request,
+        provider="fake",
+        constraint_mode="local",
+    ) == {
+        "provider": "fake",
+        "model": None,
+        "constraint_mode": "local",
+        "schema_version": None,
+        "schema_hash": None,
+        "attempt_count": 1,
+        "regeneration_used": False,
+        "selected_agent_ids": ["planner", "reviewer", "builder"],
+        "step_count": 3,
+    }
+
+
+def test_generation_provenance_records_one_regeneration() -> None:
+    request = _four_step_request()
+
+    provenance = build_leader_generation_provenance(
+        request=request,
+        provider="claude-cli",
+        constraint_mode="prompt_only",
+        attempt_count=2,
+    )
+
+    assert provenance["attempt_count"] == 2
+    assert provenance["regeneration_used"] is True
+
+
+class _StringSubclass(str):
+    pass
+
+
+@pytest.mark.parametrize(
+    ("overrides", "message"),
+    [
+        ({"provider": ""}, "leader generation provider must be a non-empty string"),
+        ({"provider": 7}, "leader generation provider must be a non-empty string"),
+        (
+            {"provider": _StringSubclass("codex-cli")},
+            "leader generation provider must be a non-empty string",
+        ),
+        ({"constraint_mode": "unknown"}, "leader generation constraint mode is invalid"),
+        (
+            {"constraint_mode": _StringSubclass("local")},
+            "leader generation constraint mode is invalid",
+        ),
+        ({"schema": []}, "leader generation schema must be a JSON object or null"),
+        ({"schema": "mismatch"}, "leader generation schema does not match request authority"),
+        ({"attempt_count": 0}, "leader generation attempt count is invalid"),
+        ({"attempt_count": 3}, "leader generation attempt count is invalid"),
+        ({"attempt_count": True}, "leader generation attempt count is invalid"),
+    ],
+)
+def test_generation_provenance_rejects_invalid_inputs_without_echoing_values(
+    overrides: dict[str, object], message: str
+) -> None:
+    request = _four_step_request()
+    schema = build_leader_plan_schema(request)
+    values: dict[str, object] = {
+        "request": request,
+        "provider": "codex-cli",
+        "constraint_mode": "native_json_schema",
+        "schema": schema,
+        "attempt_count": 1,
+    }
+    if overrides.get("schema") == "mismatch":
+        mismatched_schema = deepcopy(schema)
+        mismatched_schema["properties"]["steps"]["maxItems"] = 3
+        overrides = {"schema": mismatched_schema}
+    values.update(overrides)
+
+    with pytest.raises(ValueError) as raised:
+        build_leader_generation_provenance(**values)
+
+    assert str(raised.value) == message

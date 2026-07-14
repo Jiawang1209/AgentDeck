@@ -115,6 +115,40 @@ def canonical_leader_plan_schema_hash(schema: dict[str, object]) -> str:
     return f"sha256:{hashlib.sha256(canonical).hexdigest()}"
 
 
+def build_leader_generation_provenance(
+    *,
+    request: LeaderPlanRequest,
+    provider: str,
+    constraint_mode: str,
+    schema: dict[str, object] | None = None,
+    attempt_count: int = 1,
+) -> dict[str, object]:
+    if type(provider) is not str or not provider.strip():
+        raise ValueError("leader generation provider must be a non-empty string")
+    if type(constraint_mode) is not str or constraint_mode not in LEADER_CONSTRAINT_MODES:
+        raise ValueError("leader generation constraint mode is invalid")
+    if schema is not None and type(schema) is not dict:
+        raise ValueError("leader generation schema must be a JSON object or null")
+    if type(attempt_count) is not int or attempt_count < 1 or attempt_count > 2:
+        raise ValueError("leader generation attempt count is invalid")
+
+    selected_agent_ids, step_count = leader_plan_authority(request)
+    if schema is not None and schema != build_leader_plan_schema(request):
+        raise ValueError("leader generation schema does not match request authority")
+
+    return {
+        "provider": provider,
+        "model": request.model,
+        "constraint_mode": constraint_mode,
+        "schema_version": LEADER_PLAN_SCHEMA_VERSION if schema is not None else None,
+        "schema_hash": canonical_leader_plan_schema_hash(schema) if schema is not None else None,
+        "attempt_count": attempt_count,
+        "regeneration_used": attempt_count > 1,
+        "selected_agent_ids": list(selected_agent_ids),
+        "step_count": step_count,
+    }
+
+
 def _validate_explicit_authority(
     selected_agent_ids: tuple[str, ...] | None,
     step_count: int | None,
