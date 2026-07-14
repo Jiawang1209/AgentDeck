@@ -847,6 +847,9 @@ def create_mission_preview(
             ),
             config.leader.model,
             skill_context=skill_context,
+            selected_agent_ids=selected_agent_ids,
+            step_count=step_count,
+            timeout_seconds=timeout_seconds,
         )
     except ProviderPlanValidationError:
         raise MissionPreviewError("mission preview plan invalid") from None

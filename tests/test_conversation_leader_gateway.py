@@ -16,7 +16,11 @@ from agentdeck.conversation.leader_gateway import (
 )
 from agentdeck.orchestration.leader import LeaderOrchestrator
 from agentdeck.providers import LeaderPlanRequest, LeaderPlanResult
-from agentdeck.providers.plan_schema import ProviderPlanValidationError
+from agentdeck.providers.plan_schema import (
+    ProviderPlanValidationError,
+    build_leader_generation_provenance,
+    build_leader_plan_schema,
+)
 
 
 def _plan() -> dict[str, object]:
@@ -40,6 +44,24 @@ def _plan() -> dict[str, object]:
                 "risk": "review",
                 "requires_approval": True,
             },
+        ],
+    }
+
+
+def _configured_plan(config) -> dict[str, object]:
+    return {
+        "goal": "demo",
+        "summary": "configured plan",
+        "steps": [
+            {
+                "step": index,
+                "agent_id": agent.agent_id,
+                "role": agent.role,
+                "task": f"step {index}",
+                "risk": "review",
+                "requires_approval": True,
+            }
+            for index, agent in enumerate(config.agents, start=1)
         ],
     }
 
@@ -178,9 +200,15 @@ def test_gateway_uses_native_plan_result_once_without_legacy_fallback(tmp_path: 
         def plan_result(self, request: LeaderPlanRequest) -> LeaderPlanResult:
             self.calls += 1
             assert request.timeout_seconds == 180
+            schema = build_leader_plan_schema(request)
             return LeaderPlanResult(
                 plan=_plan(),
-                leader_generation={"constraint_mode": "native_json_schema"},
+                leader_generation=build_leader_generation_provenance(
+                    request=request,
+                    provider=self.name,
+                    constraint_mode="native_json_schema",
+                    schema=schema,
+                ),
             )
 
         def plan(self, _request: LeaderPlanRequest) -> dict[str, object]:
@@ -202,6 +230,149 @@ def test_gateway_uses_native_plan_result_once_without_legacy_fallback(tmp_path: 
 
     assert provider.calls == 1
     assert candidate.plan["goal"] == "demo"
+
+
+@pytest.mark.parametrize(
+    ("plan", "message"),
+    [
+        (["not", "a", "plan"], "provider plan content must be a JSON object"),
+        ({"goal": "incomplete"}, "provider plan missing required field: summary"),
+        (
+            {**_plan(), "steps": _plan()["steps"][:1]},
+            "provider plan must include exactly 2 steps",
+        ),
+        (
+            {
+                **_plan(),
+                "steps": [
+                    _plan()["steps"][0],
+                    {
+                        **_plan()["steps"][1],
+                        "agent_id": "coder",
+                        "role": "implementation",
+                    },
+                ],
+            },
+            "provider plan step 2 agent_id is not selected by mission authority: coder",
+        ),
+    ],
+)
+def test_orchestrator_validates_native_plan_before_accepting_result(
+    tmp_path: Path,
+    plan: object,
+    message: str,
+) -> None:
+    config = _config(tmp_path)
+
+    class NativeProvider:
+        name = "fake"
+
+        def __init__(self) -> None:
+            self.native_calls = 0
+            self.legacy_calls = 0
+
+        def plan_result(self, request: LeaderPlanRequest) -> LeaderPlanResult:
+            self.native_calls += 1
+            schema = build_leader_plan_schema(request)
+            return LeaderPlanResult(
+                plan=plan,  # type: ignore[arg-type]
+                leader_generation=build_leader_generation_provenance(
+                    request=request,
+                    provider=self.name,
+                    constraint_mode="native_json_schema",
+                    schema=schema,
+                ),
+            )
+
+        def plan(self, _request: LeaderPlanRequest) -> dict[str, object]:
+            self.legacy_calls += 1
+            return _plan()
+
+    provider = NativeProvider()
+    with pytest.raises(ProviderPlanValidationError, match=message):
+        LeaderOrchestrator(config, provider).plan_result(
+            "structured mission task",
+            selected_agent_ids=("planner", "reviewer"),
+            step_count=2,
+            timeout_seconds=180,
+        )
+
+    assert provider.native_calls == 1
+    assert provider.legacy_calls == 0
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "incomplete",
+        "provider",
+        "model",
+        "schema_hash",
+        "boolean_attempt",
+        "prompt_only_schema_spoof",
+    ],
+)
+def test_orchestrator_rejects_untrusted_native_generation_provenance(
+    tmp_path: Path,
+    mutation: str,
+) -> None:
+    config = _config(tmp_path)
+
+    class NativeProvider:
+        name = "fake"
+
+        def __init__(self) -> None:
+            self.native_calls = 0
+            self.legacy_calls = 0
+
+        def plan_result(self, request: LeaderPlanRequest) -> LeaderPlanResult:
+            self.native_calls += 1
+            schema = build_leader_plan_schema(request)
+            constraint_mode = (
+                "prompt_only"
+                if mutation == "prompt_only_schema_spoof"
+                else "native_json_schema"
+            )
+            provenance = build_leader_generation_provenance(
+                request=request,
+                provider=self.name,
+                constraint_mode=constraint_mode,
+                schema=schema if constraint_mode == "native_json_schema" else None,
+            )
+            if mutation == "incomplete":
+                provenance = {"constraint_mode": "native_json_schema"}
+            elif mutation == "provider":
+                provenance["provider"] = "spoofed"
+            elif mutation == "model":
+                provenance["model"] = "spoofed"
+            elif mutation == "schema_hash":
+                provenance["schema_hash"] = "sha256:" + "0" * 64
+            elif mutation == "boolean_attempt":
+                provenance["attempt_count"] = True
+            else:
+                provenance["schema_version"] = "leader-plan/v1"
+                provenance["schema_hash"] = "sha256:" + "0" * 64
+            return LeaderPlanResult(plan=_plan(), leader_generation=provenance)
+
+        def plan(self, _request: LeaderPlanRequest) -> dict[str, object]:
+            self.legacy_calls += 1
+            return _plan()
+
+    provider = NativeProvider()
+    with pytest.raises(
+        ProviderPlanValidationError,
+        match="leader provider plan result provenance is invalid",
+    ):
+        LeaderOrchestrator(config, provider).plan_result(
+            "structured mission task",
+            "fake-plan",
+            selected_agent_ids=("planner", "reviewer"),
+            step_count=2,
+            timeout_seconds=180,
+        )
+
+    assert provider.native_calls == 1
+    assert provider.legacy_calls == 0
 
 
 def test_orchestrator_preserves_plain_plan_and_wraps_legacy_result(tmp_path: Path) -> None:
@@ -243,6 +414,79 @@ def test_orchestrator_preserves_plain_plan_and_wraps_legacy_result(tmp_path: Pat
     }
     assert isinstance(plan, dict)
     assert plan["goal"] == "demo"
+
+
+def test_orchestrator_resolves_legacy_authority_before_validating_plan(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+
+    class LegacyProvider:
+        name = "fake"
+
+        def plan(self, _request: LeaderPlanRequest) -> dict[str, object]:
+            plan = _plan()
+            plan["steps"] = plan["steps"][:1]
+            return plan
+
+    with pytest.raises(
+        ProviderPlanValidationError,
+        match="provider plan must include exactly 3 steps",
+    ):
+        LeaderOrchestrator(config, LegacyProvider()).plan_result(
+            "structured mission task"
+        )
+
+
+def test_orchestrator_rejects_legacy_native_schema_claim(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+
+    class LegacyProvider:
+        name = "fake"
+        constraint_mode = "native_json_schema"
+
+        def plan(self, _request: LeaderPlanRequest) -> dict[str, object]:
+            return _configured_plan(config)
+
+    with pytest.raises(
+        ProviderPlanValidationError,
+        match="legacy leader provider cannot claim native JSON schema",
+    ) as raised:
+        LeaderOrchestrator(config, LegacyProvider()).plan_result(
+            "structured mission task"
+        )
+
+    assert raised.value.code == "native_schema_unavailable"
+
+
+@pytest.mark.parametrize(
+    ("provider_name", "constraint_mode"),
+    [
+        ("fake", "local"),
+        ("openai-compatible", "json_object"),
+        ("codex-cli", "prompt_only"),
+    ],
+)
+def test_orchestrator_preserves_valid_legacy_constraint_modes(
+    tmp_path: Path,
+    provider_name: str,
+    constraint_mode: str,
+) -> None:
+    config = _config(tmp_path)
+
+    class LegacyProvider:
+        name = provider_name
+
+        def plan(self, _request: LeaderPlanRequest) -> dict[str, object]:
+            return _configured_plan(config)
+
+    provider = LegacyProvider()
+    provider.constraint_mode = constraint_mode
+    result = LeaderOrchestrator(config, provider).plan_result(
+        "structured mission task"
+    )
+
+    assert result.leader_generation["provider"] == provider_name
+    assert result.leader_generation["constraint_mode"] == constraint_mode
+    assert result.leader_generation["schema_hash"] is None
 
 
 def test_orchestrator_validates_malformed_legacy_provider_result(tmp_path: Path) -> None:

@@ -851,6 +851,9 @@ def test_create_preview_selects_workers_freezes_serial_plan_and_never_touches_ru
     assert "one overall Mission confirmation" in request.task
     assert "must not request per-step approval" in request.task
     assert "Every step must require human approval" not in request.task
+    assert request.selected_agent_ids == ("planner", "reviewer")
+    assert request.step_count == 8
+    assert request.timeout_seconds == 180
     assert config_path.read_bytes() == config_before
     state = store.load()
     assert state.get("workflow_runs", []) == []
