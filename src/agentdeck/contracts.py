@@ -8195,7 +8195,8 @@ def _validate_plan_leader_generation(
     *,
     prefix: str,
     item: dict[str, object],
-    selected_agent_facts: set[str] | None = None,
+    exact_selected_agent_facts: set[str] | None = None,
+    known_agent_ids: set[str] | None = None,
 ) -> None:
     generation = item.get("leader_generation")
     if type(generation) is not dict:
@@ -8321,9 +8322,14 @@ def _validate_plan_leader_generation(
         or step_count != item.get("step_count")
     ):
         errors.append(f"{prefix}.leader_generation.step_count is invalid")
-    if selected_valid and selected_agent_ids and selected_agent_facts is not None:
-        if set(selected_agent_ids) != selected_agent_facts:
+    if selected_valid and selected_agent_ids and exact_selected_agent_facts is not None:
+        if set(selected_agent_ids) != exact_selected_agent_facts:
             errors.append(f"{prefix}.leader_generation.selected_agent_ids do not match plan facts")
+    elif selected_valid and selected_agent_ids and known_agent_ids is not None:
+        if not set(selected_agent_ids).issubset(known_agent_ids):
+            errors.append(
+                f"{prefix}.leader_generation.selected_agent_ids contain unknown agents"
+            )
 
 
 def _validate_project_view_plan_items(errors: list[str], payload: dict[str, object]) -> None:
@@ -8339,6 +8345,14 @@ def _validate_project_view_plan_items(errors: list[str], payload: dict[str, obje
         return
     if not items:
         return
+    agents = payload.get("agents")
+    known_agent_ids = {
+        agent.get("agent_id")
+        for agent in agents
+        if isinstance(agent, dict)
+        and type(agent.get("agent_id")) is str
+        and bool(agent.get("agent_id"))
+    } if isinstance(agents, list) else set()
     for index, item in enumerate(items):
         if not isinstance(item, dict):
             errors.append(f"plans.items[{index}] must be an object")
@@ -8354,7 +8368,7 @@ def _validate_project_view_plan_items(errors: list[str], payload: dict[str, obje
             _validate_leader_backend(errors, prefix, leader_backend)
         else:
             errors.append(f"{prefix}.leader_backend must be an object")
-        selected_agent_facts = None
+        exact_selected_agent_facts = None
         missions = payload.get("missions")
         if isinstance(missions, dict) and isinstance(missions.get("items"), list):
             matching = next(
@@ -8367,7 +8381,7 @@ def _validate_project_view_plan_items(errors: list[str], payload: dict[str, obje
                 None,
             )
             if isinstance(matching, dict) and isinstance(matching.get("selected_agents"), list):
-                selected_agent_facts = {
+                exact_selected_agent_facts = {
                     selected.get("agent_id")
                     for selected in matching["selected_agents"]
                     if isinstance(selected, dict) and isinstance(selected.get("agent_id"), str)
@@ -8376,7 +8390,8 @@ def _validate_project_view_plan_items(errors: list[str], payload: dict[str, obje
             errors,
             prefix=prefix,
             item=item,
-            selected_agent_facts=selected_agent_facts,
+            exact_selected_agent_facts=exact_selected_agent_facts,
+            known_agent_ids=known_agent_ids,
         )
 
 
@@ -12782,7 +12797,22 @@ def project_view_example() -> dict[str, object]:
                     "cwd": "/workspace/agentdeck-example",
                     "status": "running",
                 },
-            }
+            },
+            {
+                "agent_id": "reviewer",
+                "role": "reviewer",
+                "provider": "claude",
+                "command": "claude",
+                "workspace_mode": "shared",
+                "role_prompt": "Review plans and implementation evidence.",
+                "runtime": {
+                    "agent_id": "reviewer",
+                    "pane_id": None,
+                    "session_name": None,
+                    "cwd": None,
+                    "status": "configured",
+                },
+            },
         ],
         "state_path": "/workspace/agentdeck-example/.agentdeck/state/state.json",
         "missions": {

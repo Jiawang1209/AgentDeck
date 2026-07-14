@@ -1253,6 +1253,32 @@ def test_explicit_null_plan_generation_aborts_project_view_and_trace(
         StateStore._trace_plan_for_message(store.load(), "msg_null")
 
 
+def test_unknown_stored_generation_agent_aborts_project_view_and_trace_without_mission(
+    tmp_path: Path,
+) -> None:
+    _root, config, store, _path = project(tmp_path)
+    record = store.build_plan_record(
+        MESSAGE,
+        "fake",
+        config.leader.model,
+        eight_step_plan(),
+        leader_generation=_candidate_generation(config),
+    )
+    record["leader_generation"]["selected_agent_ids"] = ["planner", "intruder"]
+    state = store.load()
+    state["plans"] = [record]
+    state["missions"] = []
+    state["approvals"] = [
+        {"message_id": "msg_unknown", "plan_id": record["plan_id"]}
+    ]
+    store.save(state)
+
+    with pytest.raises(ValueError, match="^plan leader generation invalid$"):
+        store.project_view(config)
+    with pytest.raises(ValueError, match="^plan leader generation invalid$"):
+        StateStore._trace_plan_for_message(store.load(), "msg_unknown")
+
+
 def test_create_preview_preserves_compact_loaded_leader_skill_context(tmp_path, monkeypatch) -> None:
     _root, config, store, _config_path = project(tmp_path)
     state = store.load()

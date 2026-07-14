@@ -1827,6 +1827,22 @@ def test_project_view_contract_binds_generation_to_leader_backend_identity(
     assert validate_project_view_contract(payload)["ok"] is False
 
 
+def test_project_view_contract_rejects_unknown_generation_agent_without_mission() -> None:
+    payload = project_view_example()
+    payload["missions"] = {
+        "count": 0,
+        "by_status": {},
+        "latest_id": None,
+        "items": [],
+    }
+    payload["plans"]["items"][0]["leader_generation"]["selected_agent_ids"] = [
+        "planner",
+        "intruder",
+    ]
+
+    assert validate_project_view_contract(payload)["ok"] is False
+
+
 @pytest.mark.parametrize(
     ("mutate", "expected_error"),
     [
