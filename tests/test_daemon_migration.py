@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 from pathlib import Path
+import ast
 from datetime import datetime, timedelta, timezone
 import hashlib
 import json
 import os
 import stat
+import subprocess
+import sys
 import threading
 import time
 
@@ -136,6 +139,70 @@ def test_state_directory_symlink_is_rejected_before_lock_backup_or_external_writ
     assert not (tmp_path / ".agentdeck" / "backups").exists()
     assert not any(".tmp" in path.name for path in outside.iterdir())
     assert not (outside / "protocol-mutation.lock").exists()
+
+
+def test_partial_project_read_is_zero_write_and_first_mutation_creates_safe_state(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / ".git").mkdir()
+    write_default_config(tmp_path)
+    state_dir = tmp_path / ".agentdeck" / "state"
+    for child in state_dir.iterdir():
+        child.unlink()
+    state_dir.rmdir()
+    before = _tree_bytes(tmp_path)
+    store = StateStore.open_existing(tmp_path)
+
+    state = store.load()
+
+    assert type(state) is dict
+    assert state["missions"] == []
+    assert _tree_bytes(tmp_path) == before
+
+    store.record_chat_turn("status", "created safely", None, None)
+
+    assert state_dir.is_dir()
+    persisted = store.load()
+    assert persisted["chat_turns"][-1]["message"] == "created safely"
+
+
+def test_public_mutation_rejects_symlinked_state_directory_without_external_write(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / ".git").mkdir()
+    write_default_config(tmp_path)
+    state_dir = tmp_path / ".agentdeck" / "state"
+    outside = tmp_path / "outside-state"
+    state_dir.rename(outside)
+    state_dir.symlink_to(outside, target_is_directory=True)
+    outside_before = _tree_bytes(outside)
+
+    with pytest.raises(ValueError, match="state directory"):
+        StateStore.open_existing(tmp_path).record_chat_turn(
+            "status", "must not escape", None, None
+        )
+
+    assert _tree_bytes(outside) == outside_before
+    assert not (outside / "protocol-mutation.lock").exists()
+
+
+def test_layout_never_follows_preexisting_protocol_lock_symlink(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / ".git").mkdir()
+    deck_dir = tmp_path / ".agentdeck"
+    deck_dir.mkdir()
+    outside = tmp_path / "outside-lock"
+    outside.write_text("do not touch\n", encoding="utf-8")
+    before = (outside.read_bytes(), outside.stat().st_mtime_ns)
+    (deck_dir / "protocol-mutation.lock").symlink_to(outside)
+
+    store = StateStore(tmp_path)
+
+    assert (outside.read_bytes(), outside.stat().st_mtime_ns) == before
+    with pytest.raises(ValueError, match="protocol mutation lock is unsafe"):
+        store.record_chat_turn("status", "must not escape", None, None)
+    assert (outside.read_bytes(), outside.stat().st_mtime_ns) == before
 
 
 def test_state_directory_replace_race_fails_before_backup_or_external_write(
@@ -442,6 +509,204 @@ def test_migration_confirmation_holds_authoritative_lock_without_lost_update(
     state = StateStore.open_existing(tmp_path).load()
     assert state["schema_generation"] == "project-daemon-m2b/v1"
     assert state["concurrent_authoritative_write"] == "preserved"
+
+
+def test_authoritative_state_transaction_excludes_cross_process_writer(
+    tmp_path: Path,
+) -> None:
+    _seed_m1_state_without_execution_snapshot(tmp_path)
+    started = tmp_path / "writer-started"
+    finished = tmp_path / "writer-finished"
+    script = (
+        "from pathlib import Path\n"
+        "from agentdeck.state import StateStore\n"
+        f"root = Path({str(tmp_path)!r})\n"
+        f"Path({str(started)!r}).write_text('started')\n"
+        "StateStore.open_existing(root).record_chat_turn("
+        "'status', 'cross-process-preserved', None, None)\n"
+        f"Path({str(finished)!r}).write_text('finished')\n"
+    )
+    process: subprocess.Popen[str] | None = None
+    store = StateStore.open_existing(tmp_path)
+    with store._protocol_mutation_lock():
+        process = subprocess.Popen(
+            [sys.executable, "-c", script],
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        deadline = time.monotonic() + 2
+        while not started.exists() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert started.exists()
+        assert not finished.exists()
+        assert process.poll() is None
+
+    assert process is not None
+    stdout, stderr = process.communicate(timeout=2)
+    assert (process.returncode, stdout, stderr) == (0, "", "")
+    assert finished.exists()
+    assert store.load()["chat_turns"][-1]["message"] == "cross-process-preserved"
+
+
+@pytest.mark.parametrize("writer_kind", ["update_mission", "claim", "chat"])
+def test_migration_and_common_rmw_writers_share_one_authoritative_lock(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    writer_kind: str,
+) -> None:
+    _seed_m1_state_without_execution_snapshot(tmp_path)
+    preview = state_module.migration_preview(tmp_path, now=NOW)
+    backup_started = threading.Event()
+    release_backup = threading.Event()
+    writer_done = threading.Event()
+    errors: list[BaseException] = []
+    original_write = state_module._write_migration_backup
+
+    def paused_backup(*args, **kwargs):
+        backup_started.set()
+        assert release_backup.wait(timeout=2)
+        return original_write(*args, **kwargs)
+
+    monkeypatch.setattr(state_module, "_write_migration_backup", paused_backup)
+
+    def migrate() -> None:
+        try:
+            _confirm(tmp_path, preview, now=NOW + timedelta(seconds=1))
+        except BaseException as exc:
+            errors.append(exc)
+
+    migration_thread = threading.Thread(target=migrate)
+    migration_thread.start()
+    assert backup_started.wait(timeout=2)
+
+    def write() -> None:
+        try:
+            writer = StateStore.open_existing(tmp_path)
+            if writer_kind == "update_mission":
+                writer.update_mission("mis_131313131313", stop_reason="writer-preserved")
+            elif writer_kind == "claim":
+                writer.claim_mission_execution(
+                    "mis_131313131313", resuming=True,
+                    confirmed_at="2026-07-14T08:00:01+00:00",
+                )
+            else:
+                writer.record_chat_turn("status", "writer-preserved", None, None)
+        except BaseException as exc:
+            errors.append(exc)
+        finally:
+            writer_done.set()
+
+    writer_thread = threading.Thread(target=write)
+    writer_thread.start()
+    assert not writer_done.wait(timeout=0.2)
+    release_backup.set()
+    migration_thread.join(timeout=2)
+    writer_thread.join(timeout=2)
+
+    assert errors == []
+    state = StateStore.open_existing(tmp_path).load()
+    assert state["schema_generation"] == "project-daemon-m2b/v1"
+    if writer_kind == "update_mission":
+        assert state["missions"][0]["stop_reason"] == "writer-preserved"
+    elif writer_kind == "claim":
+        assert state["missions"][0]["status"] == "preparing"
+    else:
+        assert state["chat_turns"][-1]["message"] == "writer-preserved"
+
+
+def test_stale_public_save_cannot_overwrite_successful_migration(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _seed_m1_state_without_execution_snapshot(tmp_path)
+    store = StateStore.open_existing(tmp_path)
+    stale = store.load()
+    stale["public_writer"] = "must-not-overwrite"
+    preview = state_module.migration_preview(tmp_path, now=NOW)
+    backup_started = threading.Event()
+    release_backup = threading.Event()
+    save_error: list[BaseException] = []
+    original_write = state_module._write_migration_backup
+
+    def paused_backup(*args, **kwargs):
+        backup_started.set()
+        assert release_backup.wait(timeout=2)
+        return original_write(*args, **kwargs)
+
+    monkeypatch.setattr(state_module, "_write_migration_backup", paused_backup)
+    migration_thread = threading.Thread(
+        target=lambda: _confirm(tmp_path, preview, now=NOW + timedelta(seconds=1))
+    )
+    migration_thread.start()
+    assert backup_started.wait(timeout=2)
+
+    def stale_save() -> None:
+        try:
+            store.save(stale)
+        except BaseException as exc:
+            save_error.append(exc)
+
+    save_thread = threading.Thread(target=stale_save)
+    save_thread.start()
+    time.sleep(0.1)
+    release_backup.set()
+    migration_thread.join(timeout=2)
+    save_thread.join(timeout=2)
+
+    assert len(save_error) == 1
+    assert "source facts drifted" in str(save_error[0])
+    state = store.load()
+    assert state["schema_generation"] == "project-daemon-m2b/v1"
+    assert "public_writer" not in state
+
+
+def test_authoritative_state_writer_registry_covers_all_transitive_public_writes() -> None:
+    source = Path(state_module.__file__).read_text(encoding="utf-8")
+    module = ast.parse(source)
+    state_store = next(
+        node for node in module.body
+        if isinstance(node, ast.ClassDef) and node.name == "StateStore"
+    )
+    calls: dict[str, set[str]] = {}
+    for method in state_store.body:
+        if not isinstance(method, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        calls[method.name] = set()
+        for node in ast.walk(method):
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and isinstance(node.func.value, ast.Name)
+                and node.func.value.id == "self"
+            ):
+                calls[method.name].add(node.func.attr)
+    transitive_writers = {
+        name for name, method_calls in calls.items()
+        if method_calls & {"save", "_atomic_save"}
+    }
+    while True:
+        expanded = transitive_writers | {
+            name for name, method_calls in calls.items()
+            if method_calls & transitive_writers
+        }
+        if expanded == transitive_writers:
+            break
+        transitive_writers = expanded
+    public_entrypoints = {
+        name for name in transitive_writers if not name.startswith("_")
+    } | {"save"}
+
+    assert set(state_module.AUTHORITATIVE_STATE_MUTATION_METHODS) == public_entrypoints
+    assert all(
+        not name.startswith("_")
+        for name in state_module.AUTHORITATIVE_STATE_MUTATION_METHODS
+    )
+    assert "mission-execution.lock" not in source
+    assert all(
+        getattr(getattr(StateStore, name), "_agentdeck_authoritative_mutation", False)
+        for name in state_module.AUTHORITATIVE_STATE_MUTATION_METHODS
+    )
 
 
 @pytest.mark.parametrize("symlink_level", ["backups", "preview"])

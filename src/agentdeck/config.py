@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 import tomllib
 
@@ -91,6 +92,13 @@ def ensure_project_layout(root: Path | None = None) -> Path:
     for filename in ["events.jsonl", "approvals.jsonl"]:
         path = deck_dir / "state" / filename
         path.touch(exist_ok=True)
+    lock_flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        lock_fd = os.open(deck_dir / "protocol-mutation.lock", lock_flags, 0o600)
+    except FileExistsError:
+        pass
+    else:
+        os.close(lock_fd)
     return deck_dir
 
 

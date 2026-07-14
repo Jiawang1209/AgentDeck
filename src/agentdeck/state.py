@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import asdict
+from collections import OrderedDict
 from datetime import datetime, timedelta, timezone
 import copy
 from contextlib import contextmanager
 import fcntl
+from functools import wraps
 import hashlib
 import json
 import os
@@ -14,6 +16,7 @@ import shlex
 import shutil
 import stat
 import time
+import threading
 from typing import Any, Callable, Mapping
 
 from .config import CONFIG_DIR, ensure_project_layout, load_config, project_root
@@ -263,7 +266,7 @@ _MIGRATION_DIRECTORY_FLAGS = (
 
 
 @contextmanager
-def _secure_project_state_directory(root: Path):
+def _secure_project_state_directory(root: Path, *, create_state: bool = False):
     """Anchor project, .agentdeck, and state without following directory links."""
     descriptors: list[int] = []
     try:
@@ -272,6 +275,12 @@ def _secure_project_state_directory(root: Path):
             descriptors.append(root_fd)
             deck_fd = os.open(".agentdeck", _MIGRATION_DIRECTORY_FLAGS, dir_fd=root_fd)
             descriptors.append(deck_fd)
+            if create_state:
+                try:
+                    os.mkdir("state", 0o700, dir_fd=deck_fd)
+                    os.fsync(deck_fd)
+                except FileExistsError:
+                    pass
             state_fd = os.open("state", _MIGRATION_DIRECTORY_FLAGS, dir_fd=deck_fd)
             descriptors.append(state_fd)
         except OSError as exc:
@@ -282,10 +291,14 @@ def _secure_project_state_directory(root: Path):
             os.close(descriptor)
 
 
-def _read_state_bytes_at(state_fd: int) -> bytes:
+def _read_state_bytes_at(state_fd: int, *, missing_ok: bool = False) -> bytes | None:
     flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
     try:
         descriptor = os.open("state.json", flags, dir_fd=state_fd)
+    except FileNotFoundError:
+        if missing_ok:
+            return None
+        raise ValueError("migration state file is unsafe") from None
     except OSError as exc:
         raise ValueError("migration state file is unsafe") from exc
     try:
@@ -338,6 +351,22 @@ def _atomic_save_state_at(state_fd: int, state: dict[str, object]) -> None:
             os.unlink(temporary, dir_fd=state_fd)
         except FileNotFoundError:
             pass
+
+
+_STATE_MUTATION_LOCAL = threading.local()
+_LOADED_STATE_SOURCES_LOCK = threading.Lock()
+_LOADED_STATE_SOURCES: OrderedDict[
+    tuple[str, int], tuple[dict[str, Any], str | None]
+] = OrderedDict()
+_LOADED_STATE_SOURCES_LIMIT = 512
+
+
+def _state_lock_entries() -> dict[str, dict[str, object]]:
+    entries = getattr(_STATE_MUTATION_LOCAL, "entries", None)
+    if entries is None:
+        entries = {}
+        _STATE_MUTATION_LOCAL.entries = entries
+    return entries
 
 
 def _open_migration_directory(parent_fd: int, name: str) -> int:
@@ -2007,13 +2036,47 @@ class StateStore:
         self.state_path = self.deck_dir / "state" / "state.json"
         self.events_path = self.deck_dir / "state" / "events.jsonl"
 
+    def _remember_loaded_state(
+        self, state: dict[str, Any], source_hash: str | None
+    ) -> dict[str, Any]:
+        key = (str(self.root.resolve()), id(state))
+        with _LOADED_STATE_SOURCES_LOCK:
+            _LOADED_STATE_SOURCES[key] = (state, source_hash)
+            _LOADED_STATE_SOURCES.move_to_end(key)
+            while len(_LOADED_STATE_SOURCES) > _LOADED_STATE_SOURCES_LIMIT:
+                _LOADED_STATE_SOURCES.popitem(last=False)
+        return state
+
+    def _loaded_state_source(self, state: dict[str, Any]) -> tuple[bool, str | None]:
+        key = (str(self.root.resolve()), id(state))
+        with _LOADED_STATE_SOURCES_LOCK:
+            remembered = _LOADED_STATE_SOURCES.get(key)
+        if remembered is None or remembered[0] is not state:
+            return False, None
+        return True, remembered[1]
+
     @classmethod
     def open_existing(cls, root: Path | None = None) -> StateStore:
         return cls(root, ensure_layout=False)
 
     def load(self) -> dict[str, Any]:
-        if not self.state_path.exists():
-            return {
+        key = str(self.root.resolve())
+        entry = _state_lock_entries().get(key)
+        if entry is not None:
+            anchored = entry["anchored"]
+            assert isinstance(anchored, tuple)
+            source = _read_state_bytes_at(int(anchored[1]), missing_ok=True)
+        else:
+            try:
+                with _secure_project_state_directory(self.root.resolve()) as (_deck_fd, state_fd):
+                    source = _read_state_bytes_at(state_fd, missing_ok=True)
+            except ValueError:
+                if not (self.deck_dir / "state").exists():
+                    source = None
+                else:
+                    raise
+        if source is None:
+            return self._remember_loaded_state({
                 "agents": {},
                 "messages": [],
                 "attempts": [],
@@ -2054,11 +2117,34 @@ class StateStore:
                 "worker_takeover_baselines": [],
                 "worker_reconciliation_decisions": [],
                 "mission_acp_effect_consumptions": [],
-            }
-        return json.loads(self.state_path.read_text(encoding="utf-8"))
+            }, None)
+        decoded = json.loads(source.decode("utf-8"))
+        if not isinstance(decoded, dict):
+            raise ValueError("state must be an object")
+        return self._remember_loaded_state(
+            decoded, "sha256:" + hashlib.sha256(source).hexdigest()
+        )
 
     def save(self, state: dict[str, Any]) -> None:
-        self._atomic_save(state)
+        with self._protocol_mutation_lock() as (_deck_fd, state_fd):
+            current = _read_state_bytes_at(state_fd, missing_ok=True)
+            current_hash = (
+                "sha256:" + hashlib.sha256(current).hexdigest()
+                if current is not None
+                else None
+            )
+            remembered, source_hash = self._loaded_state_source(state)
+            if remembered:
+                if source_hash != current_hash:
+                    raise ValueError("state source facts drifted")
+            elif current is not None:
+                raise ValueError("state save requires a loaded snapshot")
+            self._atomic_save(state)
+            installed = _read_state_bytes_at(state_fd)
+            assert installed is not None
+            self._remember_loaded_state(
+                state, "sha256:" + hashlib.sha256(installed).hexdigest()
+            )
 
     def append_event(self, event: EventRecord) -> None:
         with self.events_path.open("a", encoding="utf-8") as handle:
@@ -3332,23 +3418,21 @@ class StateStore:
             }
 
     def _atomic_save(self, state: dict[str, Any]) -> None:
-        temporary = self.state_path.with_name(
-            f".{self.state_path.name}.{os.getpid()}.tmp"
+        key = str(self.root.resolve())
+        entry = _state_lock_entries().get(key)
+        if entry is None:
+            with self._protocol_mutation_lock():
+                self._atomic_save(state)
+            return
+        anchored = entry["anchored"]
+        assert isinstance(anchored, tuple)
+        state_fd = int(anchored[1])
+        _atomic_save_state_at(state_fd, state)
+        installed = _read_state_bytes_at(state_fd)
+        assert installed is not None
+        self._remember_loaded_state(
+            state, "sha256:" + hashlib.sha256(installed).hexdigest()
         )
-        encoded = (
-            json.dumps(state, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
-        ).encode("utf-8")
-        try:
-            with temporary.open("wb") as handle:
-                handle.write(encoded)
-                handle.flush()
-                os.fsync(handle.fileno())
-            os.replace(temporary, self.state_path)
-        finally:
-            try:
-                temporary.unlink()
-            except FileNotFoundError:
-                pass
 
     @staticmethod
     def _conversation_collections(state: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
@@ -3537,8 +3621,22 @@ class StateStore:
 
     @contextmanager
     def _protocol_mutation_lock(self):
-        with _secure_project_state_directory(self.root.resolve()) as anchored:
-            _deck_fd, state_fd = anchored
+        key = str(self.root.resolve())
+        entries = _state_lock_entries()
+        existing = entries.get(key)
+        if existing is not None:
+            existing["depth"] = int(existing["depth"]) + 1
+            try:
+                yield existing["anchored"]
+            finally:
+                existing["depth"] = int(existing["depth"]) - 1
+            return
+        if entries:
+            raise RuntimeError("nested cross-project state mutations are forbidden")
+        with _secure_project_state_directory(
+            self.root.resolve(), create_state=True
+        ) as anchored:
+            _deck_fd, _state_fd = anchored
             flags = os.O_RDWR | getattr(os, "O_NOFOLLOW", 0)
             try:
                 try:
@@ -3555,9 +3653,13 @@ class StateStore:
             except OSError as exc:
                 raise ValueError("protocol mutation lock is unsafe") from exc
             fcntl.flock(lock_fd, fcntl.LOCK_EX)
+            entries[key] = {"depth": 1, "anchored": anchored, "lock_fd": lock_fd}
             try:
                 yield anchored
             finally:
+                entry = entries.pop(key)
+                if entry["depth"] != 1:
+                    raise RuntimeError("state mutation lock depth is unbalanced")
                 fcntl.flock(lock_fd, fcntl.LOCK_UN)
                 os.close(lock_fd)
 
@@ -6767,42 +6869,35 @@ class StateStore:
             raise TypeError("resuming must be a boolean")
         if not isinstance(confirmed_at, str) or not confirmed_at:
             raise ValueError("confirmed_at must be a non-empty string")
-        lock_path = self.state_path.parent / "mission-execution.lock"
-        lock_path.parent.mkdir(parents=True, exist_ok=True)
-        with lock_path.open("a+", encoding="utf-8") as lock:
-            fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
-            try:
-                state = self.load()
-                record = next(
-                    (
-                        item
-                        for item in state.setdefault("missions", [])
-                        if isinstance(item, dict) and item.get("mission_id") == mission_id
-                    ),
-                    None,
-                )
-                if record is None:
-                    raise KeyError(mission_id)
-                status = record.get("status")
-                if status in {"preparing", "running", "completed"}:
-                    return {"claimed": False, "mission": copy.deepcopy(record)}
-                allowed = {"stopped", "interrupted"} if resuming else {"pending_confirmation"}
-                if status not in allowed:
-                    raise ValueError("mission is not claimable")
-                record.update(
-                    {
-                        "status": "preparing",
-                        "confirmed_at": record.get("confirmed_at") or confirmed_at,
-                        "stop_reason": None,
-                        "blockers": [],
-                        "can_start": False,
-                        "updated_at": utc_now(),
-                    }
-                )
-                self.save(state)
-                return {"claimed": True, "mission": copy.deepcopy(record)}
-            finally:
-                fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
+        state = self.load()
+        record = next(
+            (
+                item
+                for item in state.setdefault("missions", [])
+                if isinstance(item, dict) and item.get("mission_id") == mission_id
+            ),
+            None,
+        )
+        if record is None:
+            raise KeyError(mission_id)
+        status = record.get("status")
+        if status in {"preparing", "running", "completed"}:
+            return {"claimed": False, "mission": copy.deepcopy(record)}
+        allowed = {"stopped", "interrupted"} if resuming else {"pending_confirmation"}
+        if status not in allowed:
+            raise ValueError("mission is not claimable")
+        record.update(
+            {
+                "status": "preparing",
+                "confirmed_at": record.get("confirmed_at") or confirmed_at,
+                "stop_reason": None,
+                "blockers": [],
+                "can_start": False,
+                "updated_at": utc_now(),
+            }
+        )
+        self.save(state)
+        return {"claimed": True, "mission": copy.deepcopy(record)}
 
     def update_mission(self, mission_id: str, /, **changes: Any) -> dict[str, Any]:
         state = self.load()
@@ -9360,6 +9455,96 @@ class StateStore:
             daemon=daemon_summary,
             scheduler=scheduler_summary,
         )
+
+
+AUTHORITATIVE_STATE_MUTATION_METHODS = (
+    "ack_inbox_item",
+    "admit_mission_execution",
+    "advance_mission_after_handoff",
+    "append_message",
+    "apply_leader_action",
+    "authorize_mission_acp_effect",
+    "bind_agent",
+    "bind_mission_permission_evidence",
+    "change_worker_ownership_with_governance_preview",
+    "claim_mission_attempt_admission",
+    "claim_mission_execution",
+    "commit_controller_lease",
+    "commit_conversation_mutation",
+    "commit_recovery_decisions",
+    "complete_admitted_mission",
+    "consume_governance_preview",
+    "create_approvals_from_plan",
+    "create_chat_assignment_approval",
+    "create_dispatch_records",
+    "create_mission",
+    "create_workflow_run",
+    "decide_approval",
+    "decide_permission_with_governance_preview",
+    "flush_conversation_event_outbox",
+    "flush_daemon_event_outbox",
+    "flush_protocol_event_outbox",
+    "force_stop_with_governance_preview",
+    "freeze_mission_execution",
+    "interrupt_prepared_mission_attempt",
+    "mark_agent_stale",
+    "mark_agent_stopped",
+    "mark_approval_dispatched",
+    "mark_mission_attempt_admission_ambiguous",
+    "mark_mission_attempt_ambiguous",
+    "pause_mission_with_governance_preview",
+    "prepare_mission_attempt",
+    "record_acp_mission_attempt_completion",
+    "record_acp_permission_pending",
+    "record_agent_session",
+    "record_chat_turn",
+    "record_daemon_state",
+    "record_governance_preview",
+    "record_leader_error",
+    "record_memory_suggestion",
+    "record_mission_acp_permission_pending",
+    "record_mission_attempt_result",
+    "record_mission_attempt_submitted",
+    "record_mission_handoff_evidence",
+    "record_mission_not_admitted",
+    "record_mission_reply_evidence",
+    "record_permission_request",
+    "record_plan",
+    "record_protocol_transition",
+    "record_protocol_turn",
+    "record_release",
+    "record_reply",
+    "record_skill_load",
+    "record_skill_suggestion",
+    "record_tmux_mission_attempt_completion",
+    "record_transport_reroute_with_governance_preview",
+    "record_transport_update",
+    "record_worker_reconciliation_ambiguity",
+    "release_mission_attempt_admission",
+    "save",
+    "suggest_leader_action",
+    "transition_mission_with_governance_preview",
+    "update_mission",
+    "update_workflow_run",
+)
+
+
+def _locked_state_mutation(method: Callable[..., Any]) -> Callable[..., Any]:
+    @wraps(method)
+    def wrapped(self: StateStore, *args: Any, **kwargs: Any) -> Any:
+        with self._protocol_mutation_lock():
+            return method(self, *args, **kwargs)
+
+    setattr(wrapped, "_agentdeck_authoritative_mutation", True)
+    return wrapped
+
+
+for _mutation_method_name in AUTHORITATIVE_STATE_MUTATION_METHODS:
+    setattr(
+        StateStore,
+        _mutation_method_name,
+        _locked_state_mutation(getattr(StateStore, _mutation_method_name)),
+    )
 
 
 def agentdeck_dir(root: Path | None = None) -> Path:

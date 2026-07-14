@@ -1154,9 +1154,15 @@ def test_temporary_stop_controller_is_released_after_active_work_rejection(
         (root / ".git").mkdir()
         write_default_config(root)
         monkeypatch.chdir(root)
+        daemon_pid = 0
         try:
             assert cli.main(["daemon", "start"]) == 0
             capsys.readouterr()
+            daemon_pid = int(json.loads(
+                (root / ".agentdeck" / "runtime" / "daemon.json").read_text(
+                    encoding="utf-8"
+                )
+            )["pid"])
             state = StateStore(root).load()
             state["approvals"] = [{"status": "pending"}]
             StateStore(root).save(state)
@@ -1198,6 +1204,7 @@ def test_temporary_stop_controller_is_released_after_active_work_rejection(
             StateStore(root).save(state)
             assert cli.main(["daemon", "stop", "--confirm"]) == 0
             capsys.readouterr()
+            _wait_for_process_exit(daemon_pid)
             _wait_for_reaper_empty()
         finally:
             if (root / ".agentdeck" / "runtime" / "daemon.sock").exists():
