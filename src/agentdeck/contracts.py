@@ -8237,10 +8237,40 @@ def _validate_plan_leader_generation(
     selected_agent_ids = generation.get("selected_agent_ids")
     step_count = generation.get("step_count")
 
-    if type(provider) is not str or provider != item.get("provider"):
+    if type(provider) is not str or not provider or provider != item.get("provider"):
         errors.append(f"{prefix}.leader_generation.provider must match plan provider")
-    if type(model) is not str or model != item.get("model"):
+    if type(model) is not str or not model or model != item.get("model"):
         errors.append(f"{prefix}.leader_generation.model must match plan model")
+    leader_backend = item.get("leader_backend")
+    leader_backend_shape_valid = (
+        isinstance(leader_backend, dict)
+        and all(field in leader_backend for field in LEADER_BACKEND_FIELDS)
+        and leader_backend.get("agent_id") == "leader"
+        and leader_backend.get("runtime_kind") == "logical_leader"
+        and leader_backend.get("pane_backed") is False
+        and leader_backend.get("pane_id") is None
+        and leader_backend.get("approval_required") is True
+        and leader_backend.get("dispatch_ready") is False
+    )
+    if leader_backend_shape_valid:
+        if (
+            type(leader_backend.get("provider")) is not str
+            or not leader_backend.get("provider")
+            or leader_backend.get("provider") != item.get("provider")
+            or leader_backend.get("provider") != provider
+        ):
+            errors.append(
+                f"{prefix}.leader_generation.provider must match leader_backend provider"
+            )
+        if (
+            type(leader_backend.get("model")) is not str
+            or not leader_backend.get("model")
+            or leader_backend.get("model") != item.get("model")
+            or leader_backend.get("model") != model
+        ):
+            errors.append(
+                f"{prefix}.leader_generation.model must match leader_backend model"
+            )
     if type(mode) is not str or mode not in {
         "local", "json_object", "prompt_only", "native_json_schema"
     }:

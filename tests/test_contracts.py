@@ -1807,6 +1807,26 @@ def test_project_view_contract_allows_only_exact_legacy_one_step_generation() ->
     assert validate_project_view_contract(payload)["ok"] is False
 
 
+@pytest.mark.parametrize("field", ["provider", "model"])
+def test_project_view_contract_rejects_empty_plan_generation_identity(field: str) -> None:
+    payload = project_view_example()
+    item = payload["plans"]["items"][0]
+    item[field] = ""
+    item["leader_generation"][field] = ""
+
+    assert validate_project_view_contract(payload)["ok"] is False
+
+
+@pytest.mark.parametrize("field", ["provider", "model"])
+def test_project_view_contract_binds_generation_to_leader_backend_identity(
+    field: str,
+) -> None:
+    payload = project_view_example()
+    payload["plans"]["items"][0]["leader_backend"][field] = "drifted"
+
+    assert validate_project_view_contract(payload)["ok"] is False
+
+
 @pytest.mark.parametrize(
     ("mutate", "expected_error"),
     [

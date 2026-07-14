@@ -4,6 +4,13 @@
 
 ## 2026-07-15
 
+### Close ProjectView provenance fail-open boundaries
+
+- **Presence-aware legacy projection**: ProjectView and trace now distinguish a completely absent historical `leader_generation` key from an explicitly persisted null or malformed value. Only absence reaches deterministic legacy projection; explicit null fails with the fixed `plan leader generation invalid` boundary. Public record APIs still treat their optional `None` argument as omission and preserve compatibility.
+- **Three-way logical identity binding**: ProjectView contract validation now requires non-empty plan/provenance provider and model values, validates the logical Leader backend shape first, then binds the provenance identity to both the enclosing plan and that backend. Coordinated empty values and otherwise-valid backend provider/model drift fail closed without adding redundant identity errors to already-invalid pane/dispatch backend shapes.
+- **Legal migration fixture**: the state-source GC/deepcopy regression now persists a complete one-step legacy plan record before rendering ProjectView instead of relying on an invalid plan-id-only skeleton. Production projection remains strict; adjacent copied-state tests that do not render ProjectView retain their focused CAS/provenance fixtures.
+- **TDD evidence**: the new boundary group first produced five failures for explicit-null and identity fail-open behavior, while the existing migration regression independently failed on its skeletal plan. Focused follow-up coverage passes all eight presence/identity/backend/migration cases; the current corresponding four-file regression passes 1023 tests, and the full suite passes 3293 tests with one skip.
+
 ### Expose Leader generation provenance
 
 - **Immutable plan audit projection**: new Mission plan records validate and deep-copy the exact nine-field `leader_generation` object at the `StateStore` boundary. ProjectView plan items and trace plan projections rebuild the same compact allowlist immediately after `leader_backend`; native schema identity, provider/model, attempt/regeneration facts, selected Worker authority, and step count must remain coherent. Raw prompts, argv, paths, credentials, secrets, tokens, passwords, API keys, authorization data, unknown fields, and hostile values never pass through or enter fixed errors.

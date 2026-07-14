@@ -110,6 +110,7 @@ _PLAN_LEADER_GENERATION_MODES = frozenset(
     {"local", "json_object", "prompt_only", "native_json_schema"}
 )
 _PLAN_LEADER_SCHEMA_VERSION = "leader-plan/v1"
+_MISSING_PLAN_LEADER_GENERATION = object()
 _PLAN_LEADER_FORBIDDEN_KEY_PARTS = frozenset(
     {
         "prompt",
@@ -8339,7 +8340,7 @@ class StateStore:
         if type(step_count) is not int or step_count < 1 or step_count > 64:
             fail()
 
-        if value is None:
+        if value is _MISSING_PLAN_LEADER_GENERATION:
             backend = leader_provider_backend(provider)
             legacy_mode = {
                 "api": "json_object",
@@ -9157,7 +9158,9 @@ class StateStore:
                 bool(plan.get("dispatch_ready", False)),
             ),
             "leader_generation": StateStore._plan_leader_generation(
-                plan.get("leader_generation"),
+                plan["leader_generation"]
+                if "leader_generation" in plan
+                else _MISSING_PLAN_LEADER_GENERATION,
                 provider=plan.get("provider"),
                 model=plan.get("model"),
                 step_count=len(steps) if isinstance(steps, list) else 0,
@@ -9458,7 +9461,9 @@ class StateStore:
                         bool(plan.get("dispatch_ready", False)),
                     ),
                     "leader_generation": StateStore._plan_leader_generation(
-                        plan.get("leader_generation"),
+                        plan["leader_generation"]
+                        if "leader_generation" in plan
+                        else _MISSING_PLAN_LEADER_GENERATION,
                         provider=plan.get("provider"),
                         model=plan.get("model"),
                         step_count=len(steps) if isinstance(steps, list) else 0,

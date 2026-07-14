@@ -780,7 +780,25 @@ def test_state_source_provenance_is_gc_reclaimed_and_deepcopy_stable(
     token_ref = weakref.ref(token)
     clone = deepcopy(state)
     assert clone[state_module._STATE_SOURCE_TOKEN_KEY] is not token
-    clone["plans"] = [{"plan_id": "pln_deepcopy"}]
+    legacy_plan = store.build_plan_record(
+        "deepcopy state provenance",
+        "fake",
+        "fake-plan",
+        {
+            "dispatch_ready": False,
+            "steps": [
+                {
+                    "step": 1,
+                    "agent_id": "planner",
+                    "role": "planning",
+                    "task": "preserve a legal legacy plan fixture",
+                    "requires_approval": True,
+                }
+            ],
+        },
+    )
+    legacy_plan["plan_id"] = "pln_deepcopy"
+    clone["plans"] = [legacy_plan]
     store.save(clone)
     assert state_module._STATE_SOURCE_TOKEN_KEY not in store.state_path.read_text(
         encoding="utf-8"
