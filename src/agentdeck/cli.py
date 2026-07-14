@@ -7057,6 +7057,55 @@ def _daemon_worker_transport_for(
     )
 
 
+def _cleanup_permission_confirmation_controller(
+    store: StateStore,
+    record: dict[str, object],
+    *,
+    now: datetime,
+    commit_and_flush: Any,
+) -> dict[str, object]:
+    """Durably retire only the controller generation held by one handle."""
+    lease_id = record.get("lease_id")
+    generation = record.get("generation")
+    if type(lease_id) is not str or type(generation) is not int:
+        raise ServiceError("permission confirmation controller cleanup incomplete")
+    terminal = store.controller_lease_terminal_state(
+        lease_id=lease_id, generation=generation
+    )
+    if terminal in {"released", "expired"}:
+        return {"status": "already_inactive"}
+    current = controller_lease_from_summary(
+        store.load().get("controller_lease")
+    )
+    if (
+        current is None
+        or current.lease_id != lease_id
+        or current.generation != generation
+    ):
+        return {"status": "already_inactive"}
+    try:
+        expires_at = datetime.fromisoformat(current.expires_at)
+    except (TypeError, ValueError):
+        raise ServiceError(
+            "permission confirmation controller cleanup incomplete"
+        ) from None
+    if expires_at.tzinfo is None or expires_at.utcoffset() is None:
+        raise ServiceError("permission confirmation controller cleanup incomplete")
+    if expires_at.astimezone(timezone.utc) <= now.astimezone(timezone.utc):
+        transition = expire_controller(current, now=now)
+        status = "expired"
+    else:
+        transition = release_controller(
+            current,
+            lease_id=lease_id,
+            generation=generation,
+            now=now,
+        )
+        status = "released"
+    commit_and_flush(transition)
+    return {"status": status}
+
+
 async def _serve_daemon(root: Path, config: ProjectConfig, store: StateStore) -> int:
     ownership = acquire_daemon_ownership(
         root, start_nonce=secrets.token_hex(32), health_probe=lambda _metadata: None,
@@ -7198,6 +7247,9 @@ async def _serve_daemon(root: Path, config: ProjectConfig, store: StateStore) ->
                             "permission_confirmation_blocked",
                         )
                     record: dict[str, object] | None = None
+                    committed = False
+                    response: dict[str, object] | None = None
+                    failure: DaemonClientRequestError | None = None
                     try:
                         record = service.consume_permission_confirmation(
                             params["handle"], now=now
@@ -7248,6 +7300,7 @@ async def _serve_daemon(root: Path, config: ProjectConfig, store: StateStore) ->
                             now=now,
                             live_waiter_authority=current_waiter,
                         )
+                        committed = True
                         if result.get("state") not in {"approved", "denied"}:
                             raise ServiceError(
                                 "permission confirmation result is invalid"
@@ -7258,39 +7311,58 @@ async def _serve_daemon(root: Path, config: ProjectConfig, store: StateStore) ->
                             raise ServiceError(
                                 "live permission waiter notification failed"
                             )
-                        return {
+                        response = {
                             "confirmation_handle": params["handle"],
                             "preview_id": stored_preview_id,
                             **target,
                             "state": result["state"],
                         }
-                    except PermissionConfirmationExpired as exc:
-                        record = exc.record
+                    except PermissionConfirmationExpired:
+                        failure = DaemonClientRequestError(
+                            "permission confirmation handle is unavailable",
+                            "permission_confirmation_blocked",
+                        )
+                    except (LeaseError, ServiceError) as exc:
+                        if str(exc) == (
+                            "permission confirmation controller cleanup incomplete"
+                        ):
+                            failure = DaemonClientRequestError(
+                                "permission confirmation failed; controller cleanup incomplete",
+                                "permission_confirmation_cleanup_incomplete",
+                            )
+                        else:
+                            failure = DaemonClientRequestError(
+                                "permission confirmation handle is unavailable",
+                                "permission_confirmation_blocked",
+                            )
+                    except Exception:
+                        failure = DaemonClientRequestError(
+                            "permission confirmation handle is unavailable",
+                            "permission_confirmation_blocked",
+                        )
+                    if record is not None:
+                        try:
+                            service.finalize_permission_confirmation(
+                                str(params["handle"]), record
+                            )
+                        except ServiceError:
+                            message = (
+                                "permission state committed; controller cleanup incomplete"
+                                if committed
+                                else "permission confirmation failed; controller cleanup incomplete"
+                            )
+                            raise DaemonClientRequestError(
+                                message,
+                                "permission_confirmation_cleanup_incomplete",
+                            ) from None
+                    if failure is not None:
+                        raise failure
+                    if response is None:
                         raise DaemonClientRequestError(
                             "permission confirmation handle is unavailable",
                             "permission_confirmation_blocked",
-                        ) from None
-                    except (LeaseError, ServiceError):
-                        raise DaemonClientRequestError(
-                            "permission confirmation handle is unavailable",
-                            "permission_confirmation_blocked",
-                        ) from None
-                    finally:
-                        if record is not None:
-                            try:
-                                current = controller_lease_from_summary(
-                                    store.load().get("controller_lease")
-                                )
-                                if current is not None:
-                                    transition = release_controller(
-                                        current,
-                                        lease_id=str(record["lease_id"]),
-                                        generation=int(record["generation"]),
-                                        now=now,
-                                    )
-                                    commit_and_flush(transition)
-                            except Exception:
-                                pass
+                        )
+                    return response
                 if method == "mission.admit":
                     if service is None:
                         raise DaemonClientRequestError(
@@ -7594,6 +7666,14 @@ async def _serve_daemon(root: Path, config: ProjectConfig, store: StateStore) ->
             ),
             apply_transition=lambda decision: effects.apply(decision),
             permission_waiter_changed=publish_live_permission_waiter,
+            permission_confirmation_cleanup=lambda record: (
+                _cleanup_permission_confirmation_controller(
+                    store,
+                    record,
+                    now=datetime.now(timezone.utc),
+                    commit_and_flush=commit_and_flush,
+                )
+            ),
         )
         def transport_for(attempt: dict[str, object]):
             return _daemon_worker_transport_for(

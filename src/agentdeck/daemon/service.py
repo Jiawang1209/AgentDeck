@@ -2078,6 +2078,9 @@ class ProjectDaemonService:
         permission_waiter_changed: Callable[
             [dict[str, object], bool], object | Awaitable[object]
         ] = lambda _authority, _active: None,
+        permission_confirmation_cleanup: Callable[
+            [dict[str, object]], object
+        ] = lambda _record: {"status": "already_inactive"},
         permission_confirmation_capacity: int = 128,
         shutdown_grace_seconds: float = 5.0,
     ) -> None:
@@ -2089,6 +2092,7 @@ class ProjectDaemonService:
                 load_scheduler_facts,
                 apply_transition,
                 permission_waiter_changed,
+                permission_confirmation_cleanup,
             )
         ):
             raise TypeError("daemon service callbacks must be callable")
@@ -2114,6 +2118,7 @@ class ProjectDaemonService:
         self._load_scheduler_facts = load_scheduler_facts
         self._apply_transition = apply_transition
         self._permission_waiter_changed = permission_waiter_changed
+        self._permission_confirmation_cleanup = permission_confirmation_cleanup
         self._queue: asyncio.Queue[
             tuple[str, Callback, asyncio.Future[object] | None]
         ] = asyncio.Queue()
@@ -2346,7 +2351,26 @@ class ProjectDaemonService:
         current = now.astimezone(timezone.utc)
         for handle, record in tuple(self._permission_confirmations.items()):
             if self._confirmation_time(record.get("expires_at")) <= current:
+                self._cleanup_permission_confirmation(record)
                 self._permission_confirmations.pop(handle, None)
+
+    def _cleanup_permission_confirmation(
+        self, record: dict[str, object]
+    ) -> None:
+        try:
+            result = self._permission_confirmation_cleanup(dict(record))
+        except Exception:
+            raise ServiceError(
+                "permission confirmation controller cleanup incomplete"
+            ) from None
+        if (
+            type(result) is not dict
+            or result.get("status")
+            not in {"released", "expired", "already_inactive"}
+        ):
+            raise ServiceError(
+                "permission confirmation controller cleanup incomplete"
+            )
 
     @property
     def permission_confirmation_count(self) -> int:
@@ -2496,7 +2520,7 @@ class ProjectDaemonService:
             or re.fullmatch(r"pcf_[0-9a-f]{24}", handle) is None
         ):
             raise ServiceError("permission confirmation handle is invalid")
-        record = self._permission_confirmations.pop(handle, None)
+        record = self._permission_confirmations.get(handle)
         if record is None:
             raise ServiceError("permission confirmation handle is unavailable")
         if (
@@ -2514,8 +2538,23 @@ class ProjectDaemonService:
         if self._confirmation_time(record.get("expires_at")) <= now.astimezone(
             timezone.utc
         ):
+            self._cleanup_permission_confirmation(record)
+            self._permission_confirmations.pop(handle, None)
             raise PermissionConfirmationExpired(detached)
+        self._permission_confirmations.pop(handle, None)
         return detached
+
+    def finalize_permission_confirmation(
+        self,
+        handle: str,
+        record: dict[str, object],
+    ) -> None:
+        """Release exact private controller, restoring the handle on failure."""
+        try:
+            self._cleanup_permission_confirmation(record)
+        except ServiceError:
+            self._permission_confirmations.setdefault(handle, dict(record))
+            raise
 
     def resolve_permission_waiter(self, authority: object, decision: str) -> None:
         exact = self._permission_wait_authority(authority)
@@ -2652,7 +2691,13 @@ class ProjectDaemonService:
             if not future.done():
                 future.set_exception(ServiceError("daemon service closed"))
         self._permission_waiters.clear()
-        self._permission_confirmations.clear()
+        for handle, record in tuple(self._permission_confirmations.items()):
+            try:
+                self._cleanup_permission_confirmation(record)
+            except BaseException as exc:
+                failures.append(exc)
+            else:
+                self._permission_confirmations.pop(handle, None)
         workers = tuple(self._worker_tasks)
         for task in workers:
             task.cancel()

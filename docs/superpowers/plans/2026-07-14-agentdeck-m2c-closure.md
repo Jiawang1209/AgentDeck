@@ -1426,6 +1426,28 @@ bearer with a daemon-private, single-use confirmation capability.
 - [x] Run the focused suites, full suite, `compileall`, and diff checks; commit
   separately as `Scope permission confirmation authority`.
 
+#### Task 9 P1 follow-up: durable scoped-controller cleanup
+
+The final quality review found that registry expiry and daemon close discarded
+private handle records without retiring their longer-lived controller, while
+confirm swallowed controller-release failure. This could leave a hidden
+controller active after the public five-minute handle had ended.
+
+- [x] Inject exact private-record cleanup into `ProjectDaemonService`; require
+  cleanup before expiry/capacity purge, confirmation finalization, or close may
+  discard a record, and retain the record on bounded cleanup failure.
+- [x] Release only the exact active lease/generation, expire only the exact
+  elapsed lease/generation, and classify terminal or replacement generations as
+  already inactive. Commit and flush every actual controller transition.
+- [x] Distinguish `permission state committed; controller cleanup incomplete`
+  from precommit cleanup failure without exposing lease credentials or raw
+  errors, and make close report cleanup failure rather than false success.
+- [x] Prove the 3,600-second-controller/300-second-handle mismatch, immediate
+  reacquisition, close cleanup, retry retention, different-generation safety,
+  and non-success confirmation status with deterministic tests.
+- [x] Run focused and full suites, `compileall`, and diff checks; commit
+  separately as `Release scoped confirmation controllers`.
+
 ### Task 10: Opt-in real M2c acceptance gate and SOP
 
 **Files:**

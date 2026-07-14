@@ -4,6 +4,13 @@
 
 ## 2026-07-15
 
+### Release scoped confirmation controllers
+
+- **Cleanup-before-discard registry**: permission confirmation expiry purge, capacity recovery, consume finalization, and graceful close now invoke one injected exact-controller cleanup callback before deleting private handle state. A failed cleanup retains the bounded record for retry and reports only `permission confirmation controller cleanup incomplete`; close surfaces shutdown cleanup failure instead of claiming success.
+- **Generation-safe durable retirement**: production cleanup reloads durable controller truth and releases only the handle's exact active lease/generation, expires that exact lease when its TTL has elapsed, and treats a terminal or different generation as already inactive. Every release/expiry is committed and flushed; a stale handle can never release a replacement controller.
+- **Honest confirmation result**: handle confirmation no longer swallows controller release failures. A post-permission-commit cleanup failure returns `permission state committed; controller cleanup incomplete`; a precommit failure returns a separate bounded failure. Neither response exposes the private lease, generation, raw exception, or path.
+- **TDD evidence**: deterministic regressions cover a 3,600-second controller behind a 300-second handle, expiry purge followed by immediate controller reacquisition, exact active/expired/different-generation cleanup, graceful close, retained cleanup failure, and non-success public confirmation diagnostics. The seven-file daemon group passes `327` tests; the full suite passes `3309` tests with one skip.
+
 ### Scope permission confirmation authority
 
 - **Opaque single-use confirmation**: public permission preview no longer returns a controller lease or generation and never places that general daemon mutation authority in JSON or argv. The daemon registers a canonical `pcf_...` handle in a private bounded in-memory registry, and the public confirm command contains only `agentdeck daemon permission-confirm --handle <pcf>`.

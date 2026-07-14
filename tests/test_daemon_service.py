@@ -229,6 +229,186 @@ def test_permission_confirmation_registry_is_bounded_short_lived_and_ephemeral(
     asyncio.run(case())
 
 
+def test_permission_confirmation_cleanup_precedes_expiry_purge_and_close() -> None:
+    async def case() -> None:
+        cleaned: list[str] = []
+
+        def cleanup(record: dict[str, object]) -> dict[str, object]:
+            cleaned.append(str(record["lease_id"]))
+            return {"status": "released"}
+
+        service = ProjectDaemonService(
+            server=FakeServer([]),
+            reconcile_all=lambda: None,
+            flush_safe_outboxes=lambda: None,
+            load_scheduler_facts=lambda: None,
+            apply_transition=lambda _decision: None,
+            permission_confirmation_cleanup=cleanup,
+            permission_confirmation_capacity=1,
+        )
+        await service.start()
+        now = datetime(2026, 7, 15, tzinfo=timezone.utc)
+        target = {
+            "mission_id": MISSION_ID,
+            "attempt_id": "mat_0123456789ab",
+            "permission_id": "prm_0123456789ab",
+            "decision": "approved",
+        }
+        waiter = {
+            "permission_id": target["permission_id"],
+            "attempt_id": target["attempt_id"],
+            "session_id": "ags_0123456789ab",
+            "generation": 1,
+        }
+        waiter_task = asyncio.create_task(service.wait_for_permission(
+            waiter, read_decision=lambda: "pending"
+        ))
+        await asyncio.sleep(0)
+
+        def register(lease_digit: str, preview_digit: str, at: datetime):
+            return service.register_permission_confirmation(
+                target=target,
+                preview={
+                    "preview_id": "gov_" + preview_digit * 12,
+                    "action": "permission_decision",
+                    "generation": 3,
+                    "execution_digest": "a" * 64,
+                    "previewed_at": now.isoformat(),
+                    "expires_at": (
+                        now + timedelta(seconds=300 if lease_digit == "1" else 600)
+                    ).isoformat(),
+                    "state": "pending",
+                },
+                controller_authority={
+                    "lease_id": "lse_" + lease_digit * 24,
+                    "client_id": "client_permission_preview",
+                    "issued_at": now.isoformat(),
+                    "expires_at": (now + timedelta(seconds=3600)).isoformat(),
+                    "last_renewed_at": now.isoformat(),
+                    "generation": 3,
+                },
+                live_waiter_authority=waiter,
+                permission_binding={
+                    "mission_id": target["mission_id"],
+                    "attempt_id": target["attempt_id"],
+                    "permission_id": target["permission_id"],
+                },
+                now=at,
+            )
+
+        expired = register("1", "1", now)
+        replacement = register("2", "2", now + timedelta(seconds=301))
+        assert cleaned == ["lse_" + "1" * 24]
+        with pytest.raises(ServiceError, match="unavailable"):
+            service.consume_permission_confirmation(
+                str(expired["confirmation_handle"]),
+                now=now + timedelta(seconds=301),
+            )
+        assert service.permission_confirmation_count == 1
+
+        await service.close()
+        assert cleaned[-1] == "lse_" + "2" * 24
+        assert service.permission_confirmation_count == 0
+        with pytest.raises(ServiceError, match="closed"):
+            await waiter_task
+
+    asyncio.run(case())
+
+
+def test_permission_confirmation_cleanup_failure_is_bounded_and_retryable() -> None:
+    async def case() -> None:
+        attempts = 0
+
+        def cleanup(_record: dict[str, object]) -> dict[str, object]:
+            nonlocal attempts
+            attempts += 1
+            raise OSError("raw cleanup failure for lse_secret")
+
+        service = ProjectDaemonService(
+            server=FakeServer([]),
+            reconcile_all=lambda: None,
+            flush_safe_outboxes=lambda: None,
+            load_scheduler_facts=lambda: None,
+            apply_transition=lambda _decision: None,
+            permission_confirmation_cleanup=cleanup,
+        )
+        await service.start()
+        now = datetime(2026, 7, 15, tzinfo=timezone.utc)
+        target = {
+            "mission_id": MISSION_ID,
+            "attempt_id": "mat_0123456789ab",
+            "permission_id": "prm_0123456789ab",
+            "decision": "approved",
+        }
+        waiter = {
+            "permission_id": target["permission_id"],
+            "attempt_id": target["attempt_id"],
+            "session_id": "ags_0123456789ab",
+            "generation": 1,
+        }
+        waiter_task = asyncio.create_task(service.wait_for_permission(
+            waiter, read_decision=lambda: "pending"
+        ))
+        await asyncio.sleep(0)
+        registered = service.register_permission_confirmation(
+            target=target,
+            preview={
+                "preview_id": "gov_" + "3" * 12,
+                "action": "permission_decision",
+                "generation": 3,
+                "execution_digest": "a" * 64,
+                "previewed_at": now.isoformat(),
+                "expires_at": (now + timedelta(seconds=2)).isoformat(),
+                "state": "pending",
+            },
+            controller_authority={
+                "lease_id": "lse_" + "3" * 24,
+                "client_id": "client_permission_preview",
+                "issued_at": now.isoformat(),
+                "expires_at": (now + timedelta(seconds=3600)).isoformat(),
+                "last_renewed_at": now.isoformat(),
+                "generation": 3,
+            },
+            live_waiter_authority=waiter,
+            permission_binding={
+                "mission_id": target["mission_id"],
+                "attempt_id": target["attempt_id"],
+                "permission_id": target["permission_id"],
+            },
+            now=now,
+        )
+        consumed = service.consume_permission_confirmation(
+            str(registered["confirmation_handle"]),
+            now=now + timedelta(seconds=1),
+        )
+        assert service.permission_confirmation_count == 0
+        with pytest.raises(
+            ServiceError, match="^permission confirmation controller cleanup incomplete$"
+        ):
+            service.finalize_permission_confirmation(
+                str(registered["confirmation_handle"]),
+                consumed,
+            )
+        assert service.permission_confirmation_count == 1
+        with pytest.raises(
+            ServiceError, match="^permission confirmation controller cleanup incomplete$"
+        ) as error:
+            service.consume_permission_confirmation(
+                str(registered["confirmation_handle"]),
+                now=now + timedelta(seconds=3),
+            )
+        assert "lse_" not in str(error.value)
+        assert service.permission_confirmation_count == 1
+        with pytest.raises(ServiceError, match="daemon shutdown cleanup failed"):
+            await service.close()
+        assert attempts == 3
+        assert service.permission_confirmation_count == 1
+        with pytest.raises(ServiceError, match="closed"):
+            await waiter_task
+
+    asyncio.run(case())
+
+
 def test_tmux_readiness_probe_blocks_first_run_trust_without_sending_input() -> None:
     calls: list[str] = []
     backend = SimpleNamespace(

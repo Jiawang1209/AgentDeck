@@ -619,6 +619,96 @@ def test_force_stop_finalizer_signals_after_any_post_commit_failure(
     asyncio.run(case())
 
 
+def test_permission_confirmation_controller_cleanup_releases_long_lease(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    root = _project(tmp_path, monkeypatch)
+    store = StateStore(root)
+    now = datetime(2026, 7, 15, tzinfo=timezone.utc)
+    granted = grant_controller(
+        client_id="permission-preview", now=now, ttl_seconds=3600
+    )
+    store.commit_controller_lease(granted)
+    lease = granted.current
+    assert lease is not None
+
+    def commit_and_flush(transition):
+        store.commit_controller_lease(transition)
+        store.flush_daemon_event_outbox()
+
+    result = cli._cleanup_permission_confirmation_controller(
+        store,
+        {"lease_id": lease.lease_id, "generation": lease.generation},
+        now=now + timedelta(seconds=301),
+        commit_and_flush=commit_and_flush,
+    )
+    assert result == {"status": "released"}
+    assert store.controller_lease_terminal_state(
+        lease_id=lease.lease_id, generation=lease.generation
+    ) == "released"
+    current = cli.controller_lease_from_summary(
+        store.load().get("controller_lease")
+    )
+    reacquired = grant_controller(
+        client_id="next-client",
+        now=now + timedelta(seconds=302),
+        ttl_seconds=60,
+        previous=current,
+    )
+    assert reacquired.current is not None
+    assert reacquired.current.generation == lease.generation + 1
+    store.commit_controller_lease(reacquired)
+    assert cli._cleanup_permission_confirmation_controller(
+        store,
+        {"lease_id": lease.lease_id, "generation": lease.generation},
+        now=now + timedelta(seconds=303),
+        commit_and_flush=commit_and_flush,
+    ) == {"status": "already_inactive"}
+    still_current = cli.controller_lease_from_summary(
+        store.load().get("controller_lease")
+    )
+    assert still_current == reacquired.current
+    assert cli._cleanup_permission_confirmation_controller(
+        store,
+        {
+            "lease_id": reacquired.current.lease_id,
+            "generation": reacquired.current.generation,
+        },
+        now=now + timedelta(seconds=4000),
+        commit_and_flush=commit_and_flush,
+    ) == {"status": "expired"}
+
+
+def test_permission_confirm_cleanup_incomplete_is_not_false_success(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    root = _project(tmp_path, monkeypatch)
+
+    class FakeClient:
+        async def request(self, method, _params, **_kwargs):
+            assert method == "permission.confirm-handle"
+            raise DaemonClientError(
+                "permission state committed; controller cleanup incomplete"
+            )
+
+        async def close(self) -> None:
+            return None
+
+    async def connect(*_args, **_kwargs):
+        return FakeClient()
+
+    monkeypatch.setattr(DaemonClient, "connect_verified", connect)
+    with pytest.raises(
+        DaemonClientError,
+        match="^permission state committed; controller cleanup incomplete$",
+    ):
+        asyncio.run(cli._confirm_daemon_permission_decision(
+            root,
+            load_config(root),
+            confirmation_handle="pcf_" + "2" * 24,
+        ))
+
+
 def test_force_stop_rpc_reports_cleanup_failure_after_durable_acceptance(
     monkeypatch,
 ) -> None:
