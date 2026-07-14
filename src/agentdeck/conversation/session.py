@@ -25,6 +25,7 @@ from .leader_gateway import (
     LeaderGatewayError,
     LeaderRequest,
 )
+from .lifecycle import validate_conversation_history
 from .models import (
     MAX_CONTEXT_BYTES,
     MAX_CONTEXT_TURNS,
@@ -386,6 +387,59 @@ class ConversationSession:
             return ConversationResponse("blocked", {"blocker": str(error)})
         return ConversationResponse("preview_executed", dict(result))
 
+    def _durable_turn_state(self, turn_id: str) -> str | None:
+        assert self.store is not None
+        try:
+            state = self.store.load()
+            projection = validate_conversation_history(
+                {
+                    key: state.get(key, [])
+                    for key in (
+                        "conversation_sessions",
+                        "conversation_turns",
+                        "conversation_preview_bindings",
+                    )
+                },
+                state.get("conversation_state_transitions", []),
+            )
+            value = projection["turn_states"].get(turn_id)
+            return value if isinstance(value, str) else None
+        except Exception:
+            return None
+
+    def _durable_leader_fail_stop(
+        self, turn_id: str, durable_turn_state: str | None
+    ) -> ConversationResponse:
+        assert self.store is not None
+        state_label = durable_turn_state or "unknown"
+        try:
+            self.store.commit_conversation_mutation(
+                ConversationMutation(
+                    events=(
+                        EventRecord.create(
+                            "conversation_turn_recovery_blocked",
+                            {
+                                "conversation_id": self.conversation_id,
+                                "turn_id": turn_id,
+                                "durable_turn_state": state_label,
+                                "reason": "mission_preview_exact_proof_failed",
+                            },
+                        ),
+                    ),
+                )
+            )
+        except Exception:
+            pass
+        return ConversationResponse(
+            "blocked",
+            {
+                "blocker": "Leader planning durable state is ambiguous; automatic recovery stopped",
+                "stage": "durable_state",
+                "fail_stop": True,
+                "durable_turn_state": state_label,
+            },
+        )
+
     def _handle_leader(self, text: str) -> ConversationResponse:
         assert self.config is not None and self.store is not None
         self.cancel_token = CancellationToken()
@@ -532,23 +586,31 @@ class ConversationSession:
             return ConversationResponse("mission_preview", payload)
         except LeaderGatewayError as error:
             state = "cancelled" if error.stage == "cancelled" else "failed"
-            self.store.commit_conversation_mutation(
-                ConversationMutation(
-                    append_records={
-                        "conversation_state_transitions": (
-                            self._transition(
-                                "turn",
-                                turn_id,
-                                "waiting_leader",
-                                state,
-                                f"leader_{error.stage}",
-                            ),
-                            self._transition("conversation", self.conversation_id, "busy", "ready", "leader_turn_terminal"),
-                        )
-                    },
-                    events=(EventRecord.create("conversation_turn_terminal", {"conversation_id": self.conversation_id, "turn_id": turn_id, "state": state, "stage": error.stage}),),
+            durable_turn_state = self._durable_turn_state(turn_id)
+            if durable_turn_state != "waiting_leader":
+                return self._durable_leader_fail_stop(turn_id, durable_turn_state)
+            try:
+                self.store.commit_conversation_mutation(
+                    ConversationMutation(
+                        append_records={
+                            "conversation_state_transitions": (
+                                self._transition(
+                                    "turn",
+                                    turn_id,
+                                    "waiting_leader",
+                                    state,
+                                    f"leader_{error.stage}",
+                                ),
+                                self._transition("conversation", self.conversation_id, "busy", "ready", "leader_turn_terminal"),
+                            )
+                        },
+                        events=(EventRecord.create("conversation_turn_terminal", {"conversation_id": self.conversation_id, "turn_id": turn_id, "state": state, "stage": error.stage}),),
+                    )
                 )
-            )
+            except Exception:
+                return self._durable_leader_fail_stop(
+                    turn_id, self._durable_turn_state(turn_id)
+                )
             return ConversationResponse(
                 state,
                 {

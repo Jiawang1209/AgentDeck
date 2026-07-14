@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import replace
+from dataclasses import asdict, replace
 from pathlib import Path
 
 import pytest
@@ -14,11 +14,13 @@ from agentdeck.conversation.models import (
 from agentdeck.mission_orchestration import (
     LeaderMissionCandidate,
     MissionPreviewError,
+    _mission_preview_mutation_is_durable,
     create_mission_preview,
     create_mission_preview_from_candidate,
     requested_mission_step_count,
 )
 from agentdeck.models import AgentSpec
+from agentdeck.models import EventRecord
 from agentdeck.providers import LeaderPlanRequest
 from agentdeck.state import StateStore
 
@@ -144,6 +146,7 @@ def test_candidate_frozen_authority_survives_redacted_message_and_excludes_third
     ("message", "expected"),
     [
         ("共2轮", 2),
+        ("严格完成两步审阅，共2轮", 2),
         ("共十轮", 10),
         ("严格四步骤", 4),
         ("恰好四个串行步骤", 4),
@@ -166,8 +169,10 @@ def test_requested_mission_step_count_supports_bounded_explicit_phrases(
         "version v4 steps are documented",
         "four agents review one step",
         "第四步骤的标题",
+        "第贰步骤的标题",
         "step4 is a label",
         "there are four possible plans",
+        "共同讨论轮值安排",
     ],
 )
 def test_requested_mission_step_count_avoids_ambiguous_false_positives(
@@ -183,8 +188,17 @@ def test_requested_mission_step_count_avoids_ambiguous_false_positives(
         "共1轮",
         "共65轮",
         "共九十九轮",
+        "共两百轮",
+        "共壹佰轮",
+        "共64.0轮",
+        "共+64轮",
+        "共－2轮",
         "共" + "9" * 5000 + "轮",
         "按一百步骤完成",
+        "按贰步骤完成",
+        "严格2.0步骤完成",
+        "先共2轮，再共65轮",
+        "use 2 steps, then use 65 steps",
     ],
 )
 def test_requested_mission_step_count_rejects_explicit_unsafe_bounds(
@@ -192,6 +206,52 @@ def test_requested_mission_step_count_rejects_explicit_unsafe_bounds(
 ) -> None:
     with pytest.raises(ValueError, match="mission step count invalid"):
         requested_mission_step_count(message, default=8)
+
+
+@pytest.mark.parametrize("channel", ["outbox", "journal"])
+def test_exact_preview_proof_rejects_duplicate_event_within_one_channel(
+    tmp_path: Path, channel: str
+) -> None:
+    _root, _config, store = _project(tmp_path)
+    event = EventRecord.create("conversation_preview_presented", {"proof": "exact"})
+    plan = {"plan_id": "pln_exact"}
+    mutation = ConversationMutation(
+        append_records={"plans": (plan,)},
+        events=(event,),
+    )
+    state = store.load()
+    state["plans"].append(plan)
+    if channel == "outbox":
+        state["conversation_event_outbox"] = [
+            asdict(event),
+            asdict(event),
+        ]
+        store.save(state)
+    else:
+        store.save(state)
+        store.append_event(event)
+        store.append_event(event)
+
+    assert _mission_preview_mutation_is_durable(store, mutation) is False
+
+
+def test_exact_preview_proof_accepts_one_identical_event_per_durable_channel(
+    tmp_path: Path,
+) -> None:
+    _root, _config, store = _project(tmp_path)
+    event = EventRecord.create("conversation_preview_presented", {"proof": "exact"})
+    plan = {"plan_id": "pln_exact"}
+    mutation = ConversationMutation(
+        append_records={"plans": (plan,)},
+        events=(event,),
+    )
+    state = store.load()
+    state["plans"].append(plan)
+    state["conversation_event_outbox"] = [asdict(event)]
+    store.save(state)
+    store.append_event(event)
+
+    assert _mission_preview_mutation_is_durable(store, mutation) is True
 
 
 def test_invalid_candidate_is_full_tree_zero_write(

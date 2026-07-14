@@ -213,6 +213,7 @@ _CHINESE_COUNT_DIGITS = {
     "七": 7,
     "八": 8,
     "九": 9,
+    "两": 2,
 }
 _ENGLISH_COUNT_WORDS = {
     "one": 1,
@@ -226,7 +227,12 @@ _ENGLISH_COUNT_WORDS = {
     "nine": 9,
     "ten": 10,
 }
-_COUNT_TOKEN = r"(?:[0-9]+|[零一二三四五六七八九十百千万]+)"
+_COUNT_GLYPHS = "0-9０-９零〇一二三四五六七八九十百千万两壹贰叁肆伍陆柒捌玖拾佰仟萬亿億"
+_COUNT_FORMAT_GLYPHS = _COUNT_GLYPHS + r"+\-＋－.．"
+_COUNT_LIKE_TOKEN = (
+    rf"(?=[{_COUNT_FORMAT_GLYPHS}]*[{_COUNT_GLYPHS}])"
+    rf"[{_COUNT_FORMAT_GLYPHS}]+"
+)
 
 
 def _parse_mission_count_token(token: str) -> int | None:
@@ -251,26 +257,27 @@ def _parse_mission_count_token(token: str) -> int | None:
 
 def requested_mission_step_count(user_message: str, *, default: int) -> int:
     """Parse only explicit, unambiguous Mission step-count phrases."""
-    patterns = (
-        rf"共\s*(?P<count>{_COUNT_TOKEN})\s*轮",
-        rf"(?<![A-Za-z0-9_第零一二三四五六七八九十])"
-        rf"(?P<count>{_COUNT_TOKEN})\s*(?:个\s*)?(?:串行\s*)?步(?:骤)?",
+    chinese_patterns = (
+        rf"共\s*(?P<count>{_COUNT_LIKE_TOKEN})\s*轮",
+        rf"(?<![A-Za-z0-9_第{_COUNT_GLYPHS}])"
+        rf"(?P<count>{_COUNT_LIKE_TOKEN})\s*(?:个\s*)?(?:串行\s*)?步(?:骤)?",
     )
-    for pattern in patterns:
-        match = re.search(pattern, user_message)
-        if match is not None:
+    chinese_counts: list[int] = []
+    for pattern in chinese_patterns:
+        for match in re.finditer(pattern, user_message):
             parsed = _parse_mission_count_token(match.group("count"))
-            if parsed is not None and 2 <= parsed <= MAX_MISSION_STEPS:
-                return parsed
-            raise ValueError("mission step count invalid")
-    english = re.search(
+            if parsed is None or not 2 <= parsed <= MAX_MISSION_STEPS:
+                raise ValueError("mission step count invalid")
+            chinese_counts.append(parsed)
+    if chinese_counts:
+        return chinese_counts[0]
+    english_pattern = (
         r"(?<![A-Za-z0-9_])(?:exactly\s+)?"
         r"(?P<count>[0-9]+|one|two|three|four|five|six|seven|eight|nine|ten)"
-        r"\s+steps(?![A-Za-z0-9_])",
-        user_message,
-        re.IGNORECASE,
+        r"\s+steps(?![A-Za-z0-9_])"
     )
-    if english is not None:
+    english_counts: list[int] = []
+    for english in re.finditer(english_pattern, user_message, re.IGNORECASE):
         token = english.group("count").lower()
         parsed = (
             int(token)
@@ -279,7 +286,9 @@ def requested_mission_step_count(user_message: str, *, default: int) -> int:
         )
         if parsed is None or not 2 <= parsed <= MAX_MISSION_STEPS:
             raise ValueError("mission step count invalid")
-        return parsed
+        english_counts.append(parsed)
+    if english_counts:
+        return english_counts[0]
     return default
 
 
@@ -536,17 +545,28 @@ def _mission_preview_mutation_is_durable(
         if type(outbox) is not list:
             return False
         ledger = store.all_events()
-        durable_events = [
-            item for item in (*outbox, *ledger) if isinstance(item, dict)
-        ]
+        if type(ledger) is not list:
+            return False
         for event in mutation.events:
             expected = asdict(event)
-            same_identity = [
+            outbox_matches = [
                 item
-                for item in durable_events
+                for item in outbox
                 if item.get("event_id") == event.event_id
             ]
-            if not same_identity or any(item != expected for item in same_identity):
+            ledger_matches = [
+                item
+                for item in ledger
+                if isinstance(item, dict) and item.get("event_id") == event.event_id
+            ]
+            if (
+                len(outbox_matches) > 1
+                or len(ledger_matches) > 1
+                or not outbox_matches + ledger_matches
+                or any(
+                    item != expected for item in (*outbox_matches, *ledger_matches)
+                )
+            ):
                 return False
     except Exception:
         return False

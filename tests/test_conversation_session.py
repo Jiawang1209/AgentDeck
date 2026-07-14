@@ -335,7 +335,18 @@ def test_partial_candidate_commit_is_rejected_and_turn_terminalizes_failed(
     assert store.project_view(config).conversation["latest_turn_state"] == "failed"
 
 
-@pytest.mark.parametrize("message", ["共1轮完成任务", "共65轮完成任务", "共九十九轮完成任务"])
+@pytest.mark.parametrize(
+    "message",
+    [
+        "共1轮完成任务",
+        "共65轮完成任务",
+        "共九十九轮完成任务",
+        "共两百轮完成任务",
+        "共壹佰轮完成任务",
+        "共64.0轮完成任务",
+        "共+64轮完成任务",
+    ],
+)
 def test_explicit_invalid_step_count_durably_fails_before_leader_call(
     tmp_path: Path, message: str
 ) -> None:
@@ -353,6 +364,62 @@ def test_explicit_invalid_step_count_durably_fails_before_leader_call(
     assert response.payload["stage"] == "schema"
     assert gateway.calls == 0
     assert store.project_view(config).conversation["latest_turn_state"] == "failed"
+
+
+def test_completed_turn_without_complete_mission_proof_fail_stops_without_reexecution(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config, store = _project(tmp_path)
+    real_commit = store.commit_conversation_mutation
+    injected = False
+
+    def complete_turn_without_mission(mutation):
+        nonlocal injected
+        if not injected and mutation.append_records.get("missions"):
+            injected = True
+            partial_records = {
+                key: records
+                for key, records in mutation.append_records.items()
+                if key != "missions"
+            }
+            real_commit(
+                type(mutation)(
+                    append_records=partial_records,
+                    events=(),
+                )
+            )
+            raise ValueError("post-domain-save proof failure")
+        return real_commit(mutation)
+
+    monkeypatch.setattr(store, "commit_conversation_mutation", complete_turn_without_mission)
+    monkeypatch.setattr(
+        "agentdeck.mission_orchestration.shutil.which", lambda command: f"/bin/{command}"
+    )
+    gateway = _Gateway()
+
+    response = ConversationSession(
+        root=tmp_path,
+        config=config,
+        store=store,
+        leader_gateway=gateway,
+    ).handle(MESSAGE)
+
+    assert response.kind == "blocked"
+    assert response.payload == {
+        "blocker": "Leader planning durable state is ambiguous; automatic recovery stopped",
+        "stage": "durable_state",
+        "fail_stop": True,
+        "durable_turn_state": "completed",
+    }
+    state = store.load()
+    assert gateway.calls == 1
+    assert len(state["plans"]) == 1
+    assert state["missions"] == []
+    assert len(state["conversation_preview_bindings"]) == 1
+    assert store.project_view(config).conversation["latest_turn_state"] == "completed"
+    assert [
+        event["event_type"] for event in store.all_events()
+    ].count("conversation_turn_recovery_blocked") == 1
 
 
 @pytest.mark.parametrize(
