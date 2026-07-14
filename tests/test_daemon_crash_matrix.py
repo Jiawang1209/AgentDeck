@@ -109,15 +109,6 @@ async def _admit(root: Path, config, confirmed: dict[str, object]) -> None:
     assert result["accepted"] is True
 
 
-async def _stop(root: Path) -> None:
-    client = await DaemonClient.connect_verified(root)
-    try:
-        lease = await client.request("controller.acquire", {"client_id": "crash-cleanup"})
-        await client.request("daemon.stop", {"lease_id": lease["lease_id"], "generation": lease["generation"]}, lease_id=lease["lease_id"], lease_generation=lease["generation"])
-    finally:
-        await client.close()
-
-
 async def _force_stop(root: Path) -> None:
     client = await DaemonClient.connect_verified(root)
     try:
@@ -139,6 +130,10 @@ async def _force_stop(root: Path) -> None:
 def _start(root: Path, point: str, marker: Path, env: dict[str, str]) -> subprocess.Popen[bytes]:
     process = subprocess.Popen([sys.executable, str(WRAPPER), point, str(marker), str(root)], env=env)
 
+    if point == "observe_after_cycle":
+        _wait(lambda: daemon_endpoint(root).metadata_path.exists())
+        return process
+
     async def probe() -> bool:
         try:
             client = await DaemonClient.connect_verified(root, timeout_seconds=0.2)
@@ -149,6 +144,55 @@ def _start(root: Path, point: str, marker: Path, env: dict[str, str]) -> subproc
 
     _wait(lambda: asyncio.run(probe()))
     return process
+
+
+def _kill_and_wait(process: subprocess.Popen[bytes] | None) -> None:
+    if process is None:
+        return
+    if process.poll() is None:
+        process.kill()
+    process.wait(timeout=3)
+    assert process.poll() is not None
+
+
+def _reconcile(root: Path) -> None:
+    reconcile_endpoint(
+        root,
+        expected_project_hash=project_root_hash(root),
+        health_probe=lambda _: {"healthy": False},
+    )
+    endpoint = daemon_endpoint(root)
+    assert not endpoint.socket_path.exists()
+    assert not endpoint.metadata_path.exists()
+
+
+def _logical_admission_counts(
+    store: StateStore, admissions: Path, acp_log: Path
+) -> Counter[tuple[str, str, str]]:
+    attempts = store.load().get("mission_attempts", [])
+    by_token = {
+        item["dispatch_key"]: (
+            item["mission_id"], item["step_id"], item["agent_id"]
+        )
+        for item in attempts
+    }
+    tokens: list[str] = []
+    if admissions.exists():
+        tokens.extend(
+            str(json.loads(line)["token"])
+            for line in admissions.read_text(encoding="utf-8").splitlines()
+        )
+    if acp_log.exists():
+        tokens.extend(
+            str(row["dispatch_token"])
+            for row in (
+                json.loads(line)
+                for line in acp_log.read_text(encoding="utf-8").splitlines()
+            )
+            if row.get("method") == "prompt" and row.get("dispatch_token") is not None
+        )
+    assert all(token in by_token for token in tokens)
+    return Counter(by_token[token] for token in tokens)
 
 
 @pytest.mark.parametrize(
@@ -163,33 +207,26 @@ def test_real_daemon_crash_boundaries_never_duplicate_external_admission(
     fake_bin = parent / "bin"; fake_bin.mkdir(); _write_fake_tmux(fake_bin)
     config, store, confirmed = _seed(root, permission=crash_point == "permission_pending")
     env = dict(os.environ, PATH=f"{fake_bin}{os.pathsep}{os.environ['PATH']}", AGENTDECK_CRASH_ADMISSIONS=str(admissions))
-    process = _start(root, crash_point, marker, env)
-    restarted_pid: int | None = None
-    observer: subprocess.Popen[bytes] | None = None
+    process: subprocess.Popen[bytes] | None = None
+    restarted: subprocess.Popen[bytes] | None = None
     try:
+        process = _start(root, crash_point, marker, env)
         asyncio.run(_admit(root, config, confirmed))
         _wait(marker.exists)
-        os.kill(process.pid, signal.SIGKILL); process.wait(timeout=3)
+        os.kill(process.pid, signal.SIGKILL)
+        process.wait(timeout=3)
         crashed = store.load()
         assert json.loads(marker.read_text())["crash_point"] == crash_point
-        reconcile_endpoint(root, expected_project_hash=project_root_hash(root), health_probe=lambda _: {"healthy": False})
-        recovery_marker = parent / "recovery-marker.json"
-        observer = subprocess.Popen(
-            [sys.executable, str(WRAPPER), "observe_recovery", str(recovery_marker), str(root)],
-            env=env,
+        _reconcile(root)
+        cycle_marker = parent / "cycle-marker.json"
+        restarted = _start(
+            root, "observe_after_cycle", cycle_marker, env
         )
-        _wait(recovery_marker.exists)
-        prior_decisions = crashed.get("recovery_decisions", [])
-        prior_classified_at = (
-            prior_decisions[-1].get("classified_at") if prior_decisions else None
-        )
-        _wait(
-            lambda: bool(store.load().get("recovery_decisions"))
-            and store.load()["recovery_decisions"][-1].get("classified_at")
-            != prior_classified_at
-        )
-        recovered = store.load()
-        decision = recovered["recovery_decisions"][-1]
+        _wait(cycle_marker.exists)
+        cycle = json.loads(cycle_marker.read_text(encoding="utf-8"))
+        assert cycle["scheduler_decision_kind"] != "idle"
+        assert len(cycle["startup_recovery_decisions"]) == 1
+        decision = cycle["startup_recovery_decisions"][0]
         assert decision["mission_id"] == confirmed["mission_id"]
         if crash_point == "after_dispatch_before_receipt":
             assert decision["classification"] == "ambiguous"
@@ -202,54 +239,21 @@ def test_real_daemon_crash_boundaries_never_duplicate_external_admission(
                 assert crashed["mission_attempts"][-1]["state"] == "submitted"
                 assert crashed["mission_attempts"][-1]["receipt_summary"] == "tmux input submitted"
                 assert decision["next_transition"] == "await_worker"
-
-        os.kill(observer.pid, signal.SIGKILL)
-        observer.wait(timeout=3)
-        reconcile_endpoint(
-            root,
-            expected_project_hash=project_root_hash(root),
-            health_probe=lambda _: {"healthy": False},
+        logical_key = (str(confirmed["mission_id"]), "step_1", "planner")
+        expected_counts = (
+            Counter()
+            if crash_point in {"before_prepare", "after_prepare_before_dispatch"}
+            else Counter({logical_key: 1})
         )
-        restarted = subprocess.Popen(
-            [sys.executable, str(WRAPPER), "none", str(parent / "normal-marker.json"), str(root)],
-            env=env,
-        )
-        restarted_pid = restarted.pid
-        _wait(lambda: daemon_endpoint(root).metadata_path.exists())
-        if decision["classification"] == "resumable" and decision["next_transition"] != "await_worker":
-            _wait(
-                lambda: store.mission_by_id(str(confirmed["mission_id"])).get("status")
-                == "completed"
-            )
-        else:
-            time.sleep(0.2)
-        records = [json.loads(line) for line in admissions.read_text().splitlines()] if admissions.exists() else []
-        counts = Counter(item["token"] for item in records)
-        if crash_point == "permission_pending":
-            acp_records = [
-                json.loads(line)
-                for line in (root / "acp.jsonl").read_text().splitlines()
-            ]
-            counts.update(
-                f"acp:{item['session_id']}"
-                for item in acp_records
-                if item.get("method") == "prompt"
-            )
-        assert counts
-        assert all(count == 1 for count in counts.values())
+        assert _logical_admission_counts(
+            store, admissions, root / "acp.jsonl"
+        ) == expected_counts
     finally:
-        if restarted_pid is not None:
-            try: asyncio.run(_stop(root))
-            except Exception:
-                os.kill(restarted_pid, signal.SIGKILL)
-            try:
-                restarted.wait(timeout=3)
-            except subprocess.TimeoutExpired:
-                restarted.kill(); restarted.wait(timeout=3)
-        if process.poll() is None: process.kill()
-        if observer is not None and observer.poll() is None:
-            observer.kill(); observer.wait(timeout=3)
+        _kill_and_wait(restarted)
+        _kill_and_wait(process)
+        _reconcile(root)
         shutil.rmtree(parent, ignore_errors=True)
+        assert not parent.exists()
 
 
 def test_real_daemon_crash_after_protocol_outbox_flush_replays_no_event(
@@ -260,20 +264,30 @@ def test_real_daemon_crash_after_protocol_outbox_flush_replays_no_event(
     state = store.load(); state["protocol_event_outbox"] = [asdict(event)]; store.save(state)
     marker = tmp_path / "marker.json"; admissions = tmp_path / "admissions.jsonl"
     env = dict(os.environ, AGENTDECK_CRASH_ADMISSIONS=str(admissions))
-    process = subprocess.Popen(
-        [sys.executable, str(WRAPPER), "outbox_flush", str(marker), str(root)],
-        env=env,
-    )
-    _wait(marker.exists); os.kill(process.pid, signal.SIGKILL); process.wait(timeout=3)
-    crashed = store.load()
-    assert crashed["protocol_event_outbox"] == []
-    assert [item["event_id"] for item in store.all_events()].count(event.event_id) == 1
-    reconcile_endpoint(root, expected_project_hash=project_root_hash(root), health_probe=lambda _: {"healthy": False})
-    restarted = _start(root, "none", parent / "restart.json", env)
-    assert StateStore(root).load()["protocol_event_outbox"] == []
-    assert [item["event_id"] for item in StateStore(root).all_events()].count(event.event_id) == 1
-    restarted.kill(); restarted.wait(timeout=3)
-    shutil.rmtree(parent, ignore_errors=True)
+    process: subprocess.Popen[bytes] | None = None
+    restarted: subprocess.Popen[bytes] | None = None
+    try:
+        process = subprocess.Popen(
+            [sys.executable, str(WRAPPER), "outbox_flush", str(marker), str(root)],
+            env=env,
+        )
+        _wait(marker.exists)
+        os.kill(process.pid, signal.SIGKILL)
+        process.wait(timeout=3)
+        crashed = store.load()
+        assert crashed["protocol_event_outbox"] == []
+        assert [item["event_id"] for item in store.all_events()].count(event.event_id) == 1
+        _reconcile(root)
+        restarted = _start(root, "none", parent / "restart.json", env)
+        assert StateStore(root).load()["protocol_event_outbox"] == []
+        assert [item["event_id"] for item in StateStore(root).all_events()].count(event.event_id) == 1
+        assert _logical_admission_counts(store, admissions, root / "acp.jsonl") == Counter()
+    finally:
+        _kill_and_wait(restarted)
+        _kill_and_wait(process)
+        _reconcile(root)
+        shutil.rmtree(parent, ignore_errors=True)
+        assert not parent.exists()
 
 
 def test_real_daemon_crash_after_durable_shutdown_state_is_observed(
@@ -283,12 +297,9 @@ def test_real_daemon_crash_after_durable_shutdown_state_is_observed(
     fake_bin = parent / "bin"; fake_bin.mkdir(); _write_fake_tmux(fake_bin)
     config, store, confirmed = _seed(root)
     marker = parent / "marker.json"; env = dict(os.environ, PATH=f"{fake_bin}{os.pathsep}{os.environ['PATH']}", AGENTDECK_CRASH_ADMISSIONS=str(parent / "admissions.jsonl"), AGENTDECK_CRASH_NO_REPLY="1")
-    process = _start(root, "shutdown", marker, env)
-    asyncio.run(_admit(root, config, confirmed))
-    _wait(
-        lambda: bool(store.load().get("mission_attempts"))
-        and store.load()["mission_attempts"][-1].get("state") == "submitted"
-    )
+    process: subprocess.Popen[bytes] | None = None
+    restarted: subprocess.Popen[bytes] | None = None
+    request: threading.Thread | None = None
     force_error: list[BaseException] = []
 
     def force_stop() -> None:
@@ -297,24 +308,39 @@ def test_real_daemon_crash_after_durable_shutdown_state_is_observed(
         except BaseException as exc:
             force_error.append(exc)
 
-    request = threading.Thread(target=force_stop, daemon=True)
-    request.start(); _wait(lambda: marker.exists() or not request.is_alive())
-    assert marker.exists(), repr(force_error)
-    os.kill(process.pid, signal.SIGKILL); process.wait(timeout=3)
-    request.join(timeout=3)
-    crashed = store.load()
-    mission = store.mission_by_id(str(confirmed["mission_id"]))
-    assert mission["status"] == "interrupted"
-    assert mission["stop_reason"] == "force_daemon_stop"
-    assert crashed["mission_attempts"][-1]["state"] == "ambiguous"
-    reconcile_endpoint(root, expected_project_hash=project_root_hash(root), health_probe=lambda _: {"healthy": False})
-    restarted = _start(root, "none", parent / "restart.json", env)
-    assert store.mission_by_id(str(confirmed["mission_id"]))["status"] == "interrupted"
-    admissions = [
-        json.loads(line) for line in (parent / "admissions.jsonl").read_text().splitlines()
-    ]
-    assert [item["token"] for item in admissions] == [
-        crashed["mission_attempts"][-1]["dispatch_key"]
-    ]
-    restarted.kill(); restarted.wait(timeout=3)
-    shutil.rmtree(parent, ignore_errors=True)
+    try:
+        process = _start(root, "shutdown", marker, env)
+        asyncio.run(_admit(root, config, confirmed))
+        _wait(
+            lambda: bool(store.load().get("mission_attempts"))
+            and store.load()["mission_attempts"][-1].get("state") == "submitted"
+        )
+        request = threading.Thread(target=force_stop, daemon=True)
+        request.start()
+        _wait(lambda: marker.exists() or not request.is_alive())
+        assert marker.exists(), repr(force_error)
+        os.kill(process.pid, signal.SIGKILL)
+        process.wait(timeout=3)
+        request.join(timeout=3)
+        assert not request.is_alive()
+        crashed = store.load()
+        mission = store.mission_by_id(str(confirmed["mission_id"]))
+        assert mission["status"] == "interrupted"
+        assert mission["stop_reason"] == "force_daemon_stop"
+        assert crashed["mission_attempts"][-1]["state"] == "ambiguous"
+        _reconcile(root)
+        restarted = _start(root, "none", parent / "restart.json", env)
+        assert store.mission_by_id(str(confirmed["mission_id"]))["status"] == "interrupted"
+        logical_key = (str(confirmed["mission_id"]), "step_1", "planner")
+        assert _logical_admission_counts(
+            store, parent / "admissions.jsonl", root / "acp.jsonl"
+        ) == Counter({logical_key: 1})
+    finally:
+        _kill_and_wait(restarted)
+        _kill_and_wait(process)
+        if request is not None:
+            request.join(timeout=3)
+            assert not request.is_alive()
+        _reconcile(root)
+        shutil.rmtree(parent, ignore_errors=True)
+        assert not parent.exists()

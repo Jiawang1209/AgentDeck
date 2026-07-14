@@ -81,6 +81,8 @@ Control `kind`, `label`, `command`, and `safety` are non-empty strings; `enabled
 
 `MISSION_STATUS_RESPONSE_FIELDS` projects the persisted facts: identity, one of the six statuses, plan/workflow ids and hash, the nullable legacy `workflow_run_id`, the nullable compact `daemon_admission`, progress bounds, selected agents, blockers/stop reason, timestamps, resume gate, terminal/workbench commands, controls, and safety metadata. A present `daemon_admission` has the exact five-field ProjectView shape (`state`, `snapshot_hash`, `blocker`, `recovery_command`, `updated_at`); `null` preserves the legacy foreground Mission contract.
 
+Daemon authority is `admitted` only when that record has exactly those five fields, `state=admitted`, null blocker/recovery command, a non-empty timestamp, and the same canonical `sha256:<64 lowercase hex>` value is present in `mission.snapshot_hash`, `execution_snapshot.execution_hash`, and `daemon_admission.snapshot_hash`. Missing or extra admission fields, malformed or unequal hashes, and invalid admitted combinations are `incomplete`; ProjectView/status keep resume disabled and daemon governance refuses them. The daemon RPC acceptance envelope is never substituted for this compact status provenance.
+
 The six statuses and approved transitions are:
 
 ```text

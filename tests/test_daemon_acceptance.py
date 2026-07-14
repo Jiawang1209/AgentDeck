@@ -19,11 +19,16 @@ from agentdeck.config import load_config, write_default_config
 from agentdeck import cli as cli_module
 from agentdeck.contracts import (
     validate_daemon_runtime_contract,
+    validate_mission_run_contract,
     validate_mission_scheduler_contract,
     validate_workbench_contract,
 )
 from agentdeck.daemon.client import DaemonClient
-from agentdeck.daemon.lifecycle import daemon_endpoint
+from agentdeck.daemon.lifecycle import (
+    daemon_endpoint,
+    project_root_hash,
+    reconcile_endpoint,
+)
 from agentdeck.state import StateStore
 
 
@@ -149,7 +154,9 @@ def _render_recovery_through_bare_pty(root: Path, mission_id: str) -> bytes:
         os.close(master)
 
 
-def _create_and_confirm_through_bare_pty(root: Path, store: StateStore) -> tuple[str, bytes]:
+def _create_and_confirm_through_bare_pty(
+    root: Path, store: StateStore
+) -> tuple[str, bytes, dict[str, object]]:
     master, slave = pty.openpty()
     process = subprocess.Popen(
         [sys.executable, str(CONVERSATION_WRAPPER)],
@@ -215,11 +222,29 @@ def _create_and_confirm_through_bare_pty(root: Path, store: StateStore) -> tuple
             raise AssertionError("bare conversation did not durably consume preview")
         wait_for_prompt_count(3)
         drain()
-        return mission_id, bytes(output)
+        rendered_payloads: list[dict[str, object]] = []
+        for line in bytes(output).decode("utf-8", errors="replace").splitlines():
+            candidate = line[line.find("{") :] if "{" in line else ""
+            try:
+                payload = json.loads(candidate)
+            except (json.JSONDecodeError, TypeError):
+                continue
+            if isinstance(payload, dict):
+                rendered_payloads.append(payload)
+        run_cards = [
+            payload for payload in rendered_payloads if payload.get("mode") == "mission_run"
+        ]
+        assert len(run_cards) == 1
+        return mission_id, bytes(output), run_cards[0]
     finally:
         if process.poll() is None:
             process.terminate()
-            process.wait(timeout=3)
+            try:
+                process.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait(timeout=3)
+        assert process.poll() is not None
         os.close(master)
 
 
@@ -268,8 +293,21 @@ def test_background_mission_acceptance_orders_workers_and_recovers_controller(
             "status": "running",
         }
     store.save(state)
-    mission_id, initial_render = _create_and_confirm_through_bare_pty(root, store)
+    mission_id: str | None = None
+    daemon_pid: int | None = None
     try:
+        mission_id, initial_render, initial_run_card = (
+            _create_and_confirm_through_bare_pty(root, store)
+        )
+        run_validation = validate_mission_run_contract(initial_run_card)
+        assert run_validation["ok"] is True, run_validation["errors"]
+        assert initial_run_card["mission_id"] == mission_id
+        assert initial_run_card["status"] == "preparing"
+        assert set(initial_run_card["daemon_admission"]) == {
+            "state", "snapshot_hash", "blocker", "recovery_command", "updated_at",
+        }
+        assert initial_run_card["daemon_admission"]["state"] == "admitted"
+        assert b'"accepted"' not in initial_render
         pending = _wait(
             store,
             lambda item: bool(item.get("permission_requests"))
@@ -281,6 +319,7 @@ def test_background_mission_acceptance_orders_workers_and_recovers_controller(
         daemon_metadata = json.loads(
             daemon_endpoint(root).metadata_path.read_text(encoding="utf-8")
         )
+        daemon_pid = int(daemon_metadata["pid"])
         rendered = _render_recovery_through_bare_pty(
             root, mission_id
         )
@@ -399,6 +438,7 @@ def test_background_mission_acceptance_orders_workers_and_recovers_controller(
         ]
         assert completed["artifacts"] == []
         assert completed["missions"][-1]["execution_snapshot"]["execution_hash"] == completed["missions"][-1]["snapshot_hash"]
+        assert completed["missions"][-1]["daemon_admission"] == initial_run_card["daemon_admission"]
         tmux_bytes = tmux_prompt.read_bytes()
         assert attempts[1]["dispatch_key"].encode() in tmux_bytes
         assert reviewer_artifact.read_bytes() == b"reviewer verified\n"
@@ -435,5 +475,28 @@ def test_background_mission_acceptance_orders_workers_and_recovers_controller(
         except Exception:
             metadata = daemon_endpoint(root).metadata_path
             if metadata.exists():
-                os.kill(int(json.loads(metadata.read_text())["pid"]), signal.SIGTERM)
+                daemon_pid = int(json.loads(metadata.read_text())["pid"])
+                try:
+                    os.kill(daemon_pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+        if daemon_pid is not None:
+            deadline = time.monotonic() + 5
+            while time.monotonic() < deadline:
+                try:
+                    os.kill(daemon_pid, 0)
+                except ProcessLookupError:
+                    break
+                time.sleep(0.05)
+            else:
+                raise AssertionError("acceptance daemon did not exit")
+        reconcile_endpoint(
+            root,
+            expected_project_hash=project_root_hash(root),
+            health_probe=lambda _: {"healthy": False},
+        )
+        endpoint = daemon_endpoint(root)
+        assert not endpoint.socket_path.exists()
+        assert not endpoint.metadata_path.exists()
         shutil.rmtree(parent, ignore_errors=True)
+        assert not parent.exists()

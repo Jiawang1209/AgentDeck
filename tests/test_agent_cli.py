@@ -1494,6 +1494,9 @@ def test_mission_cli_submits_frozen_mission_without_foreground_worker_io(tmp_pat
     monkeypatch.setattr(cli, "TmuxBackend", lambda: backend)
     async def fake_admit(_root, _config, mission, *, state_store):
         assert state_store.root == store.root
+        state_store.admit_mission_execution(
+            mission["mission_id"], snapshot_hash=mission["snapshot_hash"]
+        )
         return {
             "accepted": True,
             "mission_id": mission["mission_id"],
@@ -1506,8 +1509,13 @@ def test_mission_cli_submits_frozen_mission_without_foreground_worker_io(tmp_pat
 
     payload = json.loads(capsys.readouterr().out)
     assert payload["status"] == "preparing"
-    assert payload["daemon_admission"]["accepted"] is True
+    assert set(payload["daemon_admission"]) == {
+        "state", "snapshot_hash", "blocker", "recovery_command", "updated_at",
+    }
     assert payload["daemon_admission"]["state"] == "admitted"
+    assert payload["daemon_admission"]["snapshot_hash"] == store.mission_by_id(
+        preview["mission_id"]
+    )["snapshot_hash"]
     assert store.mission_by_id(preview["mission_id"])["status"] == "preparing"
     assert backend.sent == []
     assert store.load().get("workflow_runs", []) == []

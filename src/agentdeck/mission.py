@@ -18,13 +18,32 @@ DAEMON_MISSION_RESUME_BLOCKER = (
 
 def daemon_mission_authority_state(mission: Mapping[str, object]) -> str:
     """Classify legacy versus complete/incomplete daemon execution authority."""
-    has_hash = type(mission.get("snapshot_hash")) is str
-    has_snapshot = type(mission.get("execution_snapshot")) is dict
+    snapshot_hash = mission.get("snapshot_hash")
+    snapshot = mission.get("execution_snapshot")
     admission = mission.get("daemon_admission")
     admission_state = admission.get("state") if isinstance(admission, Mapping) else None
-    if has_hash and has_snapshot and admission_state == "admitted":
+    execution_hash = snapshot.get("execution_hash") if isinstance(snapshot, Mapping) else None
+    admission_hash = admission.get("snapshot_hash") if isinstance(admission, Mapping) else None
+    exact_hash = (
+        type(snapshot_hash) is str
+        and re.fullmatch(r"sha256:[0-9a-f]{64}", snapshot_hash) is not None
+        and type(execution_hash) is str
+        and type(admission_hash) is str
+        and snapshot_hash == execution_hash == admission_hash
+    )
+    exact_admission = (
+        type(admission) is dict
+        and set(admission)
+        == {"state", "snapshot_hash", "blocker", "recovery_command", "updated_at"}
+        and admission_state == "admitted"
+        and admission.get("blocker") is None
+        and admission.get("recovery_command") is None
+        and type(admission.get("updated_at")) is str
+        and bool(admission.get("updated_at"))
+    )
+    if exact_hash and exact_admission:
         return "admitted"
-    if has_hash or has_snapshot or admission_state in {
+    if snapshot_hash is not None or snapshot is not None or admission_state in {
         "admitted",
         "confirmed_not_admitted",
     }:

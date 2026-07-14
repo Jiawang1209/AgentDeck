@@ -27,6 +27,7 @@ from agentdeck.daemon.service import (
 )
 from agentdeck.cli import _DaemonAcpWorkerSink, _daemon_acp_update_digest
 from agentdeck.daemon.transports import AcpWorkerTransport
+from agentdeck.daemon.recovery import RecoveryFacts
 from agentdeck.models import AgentSpec
 from agentdeck.runtime.protocol import TransportCapabilities
 from agentdeck.state import (
@@ -66,34 +67,86 @@ def test_daemon_acp_update_digest_rejects_true_turn_overflow() -> None:
         _daemon_acp_update_digest(payload, payload_bytes=0, update_count=0)
 
 
+def _ambiguous_recovery_facts(attempt_id: str = "mat_111111111111") -> RecoveryFacts:
+    return RecoveryFacts(
+        mission_id=MISSION_ID,
+        mission_state="interrupted",
+        attempt_id=attempt_id,
+        attempt_state="ambiguous",
+        receipt_state="recorded",
+        reply_state="none",
+        handoff_state="none",
+        permission_state="none",
+        configured_transport="tmux",
+        transport_state="ready",
+        snapshot_state="valid",
+        lineage_state="valid",
+        ownership_state="agentdeck_owned",
+    )
+
+
 @pytest.mark.parametrize(
-    ("mission_status", "attempt_state", "terminal_reason", "classification", "expected"),
+    ("mission_status", "stop_reason", "classification", "expected"),
     [
-        ("interrupted", "ambiguous", "force_daemon_stop_outcome_unknown", "ambiguous", True),
-        ("completed", "ambiguous", "force_daemon_stop_outcome_unknown", "ambiguous", False),
-        ("stopped", "ambiguous", "force_daemon_stop_outcome_unknown", "ambiguous", False),
-        ("interrupted", "ambiguous", "admission_outcome_unknown", "ambiguous", False),
-        ("interrupted", "ambiguous", "force_daemon_stop_outcome_unknown", "blocked", False),
+        ("interrupted", "force_daemon_stop", "ambiguous", True),
+        ("interrupted", "ordinary_interrupt", "ambiguous", False),
+        ("completed", "force_daemon_stop", "ambiguous", False),
+        ("stopped", "force_daemon_stop", "ambiguous", False),
+        ("interrupted", "force_daemon_stop", "blocked", False),
     ],
 )
 def test_force_stop_terminal_ambiguity_exception_is_exactly_bounded(
     mission_status: str,
-    attempt_state: str,
-    terminal_reason: str,
+    stop_reason: str,
     classification: str,
     expected: bool,
 ) -> None:
+    facts = _ambiguous_recovery_facts()
     assert _is_force_stop_terminal_ambiguity(
-        {"mission_id": MISSION_ID, "status": mission_status},
+        {
+            "mission_id": MISSION_ID,
+            "status": mission_status,
+            "stop_reason": stop_reason,
+        },
         [
             {
+                "attempt_id": facts.attempt_id,
                 "mission_id": MISSION_ID,
-                "state": attempt_state,
-                "terminal_reason": terminal_reason,
+                "state": "ambiguous",
+                "terminal_reason": "force_daemon_stop_outcome_unknown",
             }
         ],
+        facts,
         classification,
     ) is expected
+
+
+def test_force_stop_terminal_ambiguity_rejects_other_attempt_evidence() -> None:
+    facts = _ambiguous_recovery_facts()
+
+    assert _is_force_stop_terminal_ambiguity(
+        {
+            "mission_id": MISSION_ID,
+            "status": "interrupted",
+            "stop_reason": "force_daemon_stop",
+        },
+        [
+            {
+                "attempt_id": "mat_222222222222",
+                "mission_id": MISSION_ID,
+                "state": "ambiguous",
+                "terminal_reason": "force_daemon_stop_outcome_unknown",
+            },
+            {
+                "attempt_id": facts.attempt_id,
+                "mission_id": MISSION_ID,
+                "state": "ambiguous",
+                "terminal_reason": "admission_outcome_unknown",
+            },
+        ],
+        facts,
+        "ambiguous",
+    ) is False
 
 
 def compact_handoff(token: str) -> dict[str, object]:

@@ -1028,15 +1028,25 @@ def canonical_snapshot_hash(value: object) -> str:
 def _is_force_stop_terminal_ambiguity(
     mission: Mapping[str, object],
     attempts: Iterable[Mapping[str, object]],
+    facts: object,
     classification: object,
 ) -> bool:
     """Recognize only the force-stop ambiguity preserved by interrupted Missions."""
+    from .daemon.recovery import RecoveryFacts
+
     mission_id = mission.get("mission_id")
+    if not isinstance(facts, RecoveryFacts):
+        return False
     return (
         mission.get("status") == "interrupted"
+        and mission.get("stop_reason") == "force_daemon_stop"
         and classification == "ambiguous"
+        and facts.mission_id == mission_id
+        and facts.attempt_id is not None
+        and facts.attempt_state == "ambiguous"
         and any(
             item.get("mission_id") == mission_id
+            and item.get("attempt_id") == facts.attempt_id
             and item.get("state") == "ambiguous"
             and item.get("terminal_reason")
             == "force_daemon_stop_outcome_unknown"
@@ -5592,12 +5602,14 @@ class StateStore:
                 for item in collection
             )
             if has_terminal_lineage:
-                terminal_decision = reconcile_gate(
-                    recovery_facts_from_persisted_state(state, mission_id)
+                terminal_facts = recovery_facts_from_persisted_state(
+                    state, mission_id
                 )
+                terminal_decision = reconcile_gate(terminal_facts)
                 force_stop_ambiguity = _is_force_stop_terminal_ambiguity(
                     mission,
                     attempts,
+                    terminal_facts,
                     terminal_decision.classification,
                 )
                 if (

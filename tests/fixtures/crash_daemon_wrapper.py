@@ -16,7 +16,7 @@ from agentdeck.state import StateStore
 
 
 def install(point: str, marker: Path, root: Path) -> None:
-    def stop_at_boundary() -> None:
+    def stop_at_boundary(extra: dict[str, object] | None = None) -> None:
         if marker.exists():
             return
         state = StateStore(root).load()
@@ -27,6 +27,8 @@ def install(point: str, marker: Path, root: Path) -> None:
             "handoff_states": [item.get("state") for item in state.get("mission_handoffs", [])],
             "permission_states": [item.get("status") for item in state.get("permission_requests", [])],
         }
+        if extra:
+            payload.update(extra)
         temporary = marker.with_suffix(".tmp")
         temporary.write_text(json.dumps(payload, sort_keys=True), encoding="utf-8")
         os.replace(temporary, marker)
@@ -39,7 +41,15 @@ def install(point: str, marker: Path, root: Path) -> None:
             stop_at_boundary()
         if point == "before_prepare" and decision.kind == "prepare_dispatch":
             stop_at_boundary()
+        startup_recovery = StateStore(root).load().get("recovery_decisions", [])
         result = original_apply(self, decision)
+        if point == "observe_after_cycle" and decision.kind != "idle":
+            stop_at_boundary(
+                {
+                    "scheduler_decision_kind": decision.kind,
+                    "startup_recovery_decisions": startup_recovery,
+                }
+            )
         if point == "after_prepare_before_dispatch" and decision.kind == "prepare_dispatch":
             stop_at_boundary()
         return result

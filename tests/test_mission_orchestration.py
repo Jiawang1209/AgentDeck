@@ -354,6 +354,7 @@ def test_daemon_managed_mission_cannot_resume_through_foreground_runtime(
     mission = next(item for item in state["missions"] if item["mission_id"] == mission_id)
     mission["snapshot_hash"] = "sha256:" + "a" * 64
     mission["execution_snapshot"] = {"execution_hash": mission["snapshot_hash"]}
+    mission["confirmed_at"] = mission["updated_at"]
     mission["daemon_admission"] = {
         "state": "admitted", "snapshot_hash": mission["snapshot_hash"],
         "blocker": None, "recovery_command": None, "updated_at": mission["updated_at"],
@@ -374,6 +375,46 @@ def test_daemon_managed_mission_cannot_resume_through_foreground_runtime(
     assert backend.spawned == []
     assert store.state_path.read_bytes() == before_state
     assert store.events_path.read_bytes() == before_events
+
+
+def test_daemon_admission_hash_drift_blocks_project_view_status_and_resume(
+    tmp_path, monkeypatch
+) -> None:
+    from agentdeck.mission import DAEMON_MISSION_RESUME_BLOCKER
+    from agentdeck.mission_orchestration import mission_status_payload
+
+    _root, config, store, preview = seeded_mission(tmp_path, monkeypatch)
+    mission_id = preview["mission_id"]
+    store.update_mission(mission_id, status="stopped", stop_reason="human_pause")
+    state = store.load()
+    mission = next(item for item in state["missions"] if item["mission_id"] == mission_id)
+    mission["snapshot_hash"] = "sha256:" + "a" * 64
+    mission["execution_snapshot"] = {"execution_hash": mission["snapshot_hash"]}
+    mission["confirmed_at"] = mission["updated_at"]
+    mission["daemon_admission"] = {
+        "state": "admitted",
+        "snapshot_hash": "sha256:" + "b" * 64,
+        "blocker": None,
+        "recovery_command": None,
+        "updated_at": mission["updated_at"],
+    }
+    store.save(state)
+
+    item = store.project_view(config).missions["items"][-1]
+    assert item["can_resume"] is False
+    assert DAEMON_MISSION_RESUME_BLOCKER in item["blockers"]
+    status = mission_status_payload(config, store, store.mission_by_id(mission_id))
+    assert status["can_resume"] is False
+    assert DAEMON_MISSION_RESUME_BLOCKER in status["blockers"]
+    with pytest.raises(
+        MissionRunError, match="daemon-managed Mission requires daemon governance resume"
+    ):
+        resume_mission(
+            config=config,
+            store=store,
+            backend=MissionBackend(),
+            mission_id=mission_id,
+        )
 
 
 def test_setup_required_stops_before_workflow_dispatch(tmp_path, monkeypatch) -> None:

@@ -247,7 +247,6 @@ def _foreground_conversation_session() -> ConversationSession:
             config,
             store,
             store.mission_by_id(mission_id),
-            include_admission=True,
         ),
     )
 
@@ -11620,8 +11619,6 @@ def _admit_mission_card(
     config: ProjectConfig,
     store: StateStore,
     mission: dict[str, object],
-    *,
-    include_admission: bool = False,
 ) -> dict[str, object]:
     mission_id = str(mission["mission_id"])
     if mission.get("status") == "pending_confirmation":
@@ -11634,7 +11631,7 @@ def _admit_mission_card(
         or type(mission.get("execution_snapshot")) is not dict
     ):
         raise MissionRunError("mission is not awaiting daemon admission")
-    admission = asyncio.run(
+    asyncio.run(
         admit_confirmed_mission(
             Path(config.root), config, mission, state_store=store
         )
@@ -11643,8 +11640,6 @@ def _admit_mission_card(
         config, store, store.mission_by_id(mission_id),
         mode="mission_run", confirmed=True,
     )
-    if include_admission:
-        card["daemon_admission"] = admission
     return card
 
 
@@ -17517,7 +17512,7 @@ def _mission_execution_command(args: argparse.Namespace, *, resume: bool) -> int
         try:
             mission = store.mission_by_id(args.mission_id)
             payload = _admit_mission_card(
-                config, store, mission, include_admission=True
+                config, store, mission
             )
         except KeyError:
             print(f"unknown mission: {args.mission_id}", file=sys.stderr)

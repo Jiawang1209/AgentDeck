@@ -12,6 +12,7 @@ from agentdeck.mission import (
     MISSION_STATUSES,
     EffectiveMissionAgent,
     MissionSelection,
+    daemon_mission_authority_state,
     effective_mission_agent,
     mission_intent,
     provider_family,
@@ -29,6 +30,123 @@ from agentdeck.models import (
     RuntimeConfig,
 )
 from agentdeck.state import StateStore, leader_backend_identity
+
+
+@pytest.mark.parametrize(
+    ("mission", "expected"),
+    [
+        ({}, "legacy"),
+        (
+            {
+                "snapshot_hash": "sha256:" + "a" * 64,
+                "execution_snapshot": {"execution_hash": "sha256:" + "a" * 64},
+                "daemon_admission": {
+                    "state": "admitted",
+                    "snapshot_hash": "sha256:" + "a" * 64,
+                    "blocker": None,
+                    "recovery_command": None,
+                    "updated_at": "2026-07-14T00:00:00+00:00",
+                },
+            },
+            "admitted",
+        ),
+        (
+            {
+                "snapshot_hash": "sha256:" + "a" * 64,
+                "execution_snapshot": {"execution_hash": "sha256:" + "a" * 64},
+                "daemon_admission": {
+                    "state": "admitted",
+                    "snapshot_hash": "sha256:" + "b" * 64,
+                    "blocker": None,
+                    "recovery_command": None,
+                    "updated_at": "2026-07-14T00:00:00+00:00",
+                },
+            },
+            "incomplete",
+        ),
+        (
+            {
+                "snapshot_hash": "sha256:" + "a" * 64,
+                "execution_snapshot": {"execution_hash": "sha256:" + "b" * 64},
+                "daemon_admission": {
+                    "state": "admitted",
+                    "snapshot_hash": "sha256:" + "a" * 64,
+                    "blocker": None,
+                    "recovery_command": None,
+                    "updated_at": "2026-07-14T00:00:00+00:00",
+                },
+            },
+            "incomplete",
+        ),
+        (
+            {
+                "snapshot_hash": "not-a-hash",
+                "execution_snapshot": {"execution_hash": "not-a-hash"},
+                "daemon_admission": {
+                    "state": "admitted",
+                    "snapshot_hash": "not-a-hash",
+                    "blocker": None,
+                    "recovery_command": None,
+                    "updated_at": "2026-07-14T00:00:00+00:00",
+                },
+            },
+            "incomplete",
+        ),
+        (
+            {
+                "snapshot_hash": "sha256:" + "a" * 64,
+                "execution_snapshot": {"execution_hash": "sha256:" + "a" * 64},
+                "daemon_admission": {
+                    "state": "admitted",
+                    "snapshot_hash": "sha256:" + "a" * 64,
+                    "blocker": None,
+                    "recovery_command": None,
+                    "updated_at": "2026-07-14T00:00:00+00:00",
+                    "extra": "forbidden",
+                },
+            },
+            "incomplete",
+        ),
+        (
+            {
+                "snapshot_hash": "sha256:" + "a" * 64,
+                "execution_snapshot": {"execution_hash": "sha256:" + "a" * 64},
+                "daemon_admission": {
+                    "state": "admitted",
+                    "snapshot_hash": "sha256:" + "a" * 64,
+                    "blocker": None,
+                    "recovery_command": None,
+                },
+            },
+            "incomplete",
+        ),
+        (
+            {
+                "snapshot_hash": "sha256:" + "a" * 64,
+                "execution_snapshot": {"execution_hash": "sha256:" + "a" * 64},
+                "daemon_admission": {
+                    "state": "admitted",
+                    "snapshot_hash": "sha256:" + "a" * 64,
+                    "blocker": "unexpected",
+                    "recovery_command": None,
+                    "updated_at": "2026-07-14T00:00:00+00:00",
+                },
+            },
+            "incomplete",
+        ),
+        (
+            {
+                "snapshot_hash": "sha256:" + "a" * 64,
+                "execution_snapshot": {"execution_hash": "sha256:" + "a" * 64},
+            },
+            "incomplete",
+        ),
+    ],
+)
+def test_daemon_mission_authority_requires_exact_three_way_hash_binding(
+    mission: dict[str, object], expected: str
+) -> None:
+    assert daemon_mission_authority_state(mission) == expected
 
 
 def agent(

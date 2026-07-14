@@ -102,7 +102,14 @@ class FakeAgent:
         return schema.ResumeSessionResponse()
 
     async def prompt(self, session_id: str, prompt: list[object], **kwargs):
-        self.log_request("prompt", session_id=session_id, block_count=len(prompt))
+        text = prompt[0].text
+        dispatch_tokens = re.findall(r"dsp_[0-9a-f]{32}", text)
+        self.log_request(
+            "prompt",
+            session_id=session_id,
+            block_count=len(prompt),
+            dispatch_token=dispatch_tokens[-1] if dispatch_tokens else None,
+        )
         if self.scenario == "timeout":
             await self.cancelled.wait()
             return schema.PromptResponse(stopReason="cancelled")
@@ -120,7 +127,6 @@ class FakeAgent:
                     schema.PermissionOption(optionId="reject", name="Reject once", kind="reject_once"),
                 ],
             )
-        text = prompt[0].text
         if self.scenario in {"mission_worker", "mission_worker_permission"}:
             label = self.args[1] if len(self.args) > 1 else "worker"
             state_path = Path.cwd() / ".agentdeck" / "state" / "state.json"

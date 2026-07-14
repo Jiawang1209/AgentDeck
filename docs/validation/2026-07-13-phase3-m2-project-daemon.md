@@ -15,7 +15,10 @@ attempts, two validated replies, and two recorded compact handoffs. Worker B is
 not admitted until Worker A's validated handoff is durable. ProjectView,
 daemon/scheduler contracts, ledger records, events, snapshot hash, and bounded
 file effects agree. Durable state contains hashes and byte counts for streamed
-ACP updates, not transcript chunks, private reasoning, or secret markers.
+ACP updates, not transcript chunks, private reasoning, or secret markers. The
+initial PTY run response itself passes the strict Mission run validator and
+contains only the compact five-field daemon admission; the daemon RPC
+acceptance envelope is not exposed as Mission status provenance.
 
 The crash matrix terminates a real daemon child process with SIGKILL at nine
 durable boundaries. Startup recovery classifies before-prepare, after-prepare,
@@ -27,14 +30,20 @@ record itself remains pending for human inspection. The outbox case proves the
 already-flushed event is not replayed, and the shutdown case proves a durable
 force stop leaves the Mission `interrupted` while preserving the active
 attempt's unknown external outcome as `ambiguous`. Every case records zero
-duplicate external admissions.
+duplicate logical external admissions by mapping each observed tmux/ACP prompt
+token back to its durable `(mission_id, step_id, agent_id)`. Each restart applies
+one real first non-idle scheduler transition before its deterministic stop
+marker, so the cardinality assertion is made after a completed scheduler cycle,
+not a fixed sleep. Failure cleanup terminates and waits every managed process,
+joins the force-stop request thread, reconciles the endpoint, and removes the
+disposable project.
 
 ## Automated evidence
 
 - Real crash matrix, repeated twice: `9 passed` in each run.
-- Acceptance/crash/recovery regression: `124 passed`.
-- Daemon suite: `896 passed`.
-- Full suite: `2765 passed, 1 skipped`.
+- Acceptance/crash/recovery regression: `125 passed`.
+- Daemon suite: `897 passed`.
+- Full suite: `2776 passed, 1 skipped`.
 - Compileall and `git diff --check`: PASS.
 
 ## Real component evidence and blocker
