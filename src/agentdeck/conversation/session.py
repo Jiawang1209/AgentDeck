@@ -433,21 +433,35 @@ class ConversationSession:
                 raise LeaderGatewayError("schema")
             selected = tuple(agent.agent_id for agent in selection.agents)
             planning_config = replace(self.config, agents=selection.agents)
+            step_count = max(2, len(_requested_steps(text)))
             planning_task = mission_planning_task(
                 text,
                 selected_agent_ids=selected,
-                step_count=max(2, len(_requested_steps(text))),
+                step_count=step_count,
             )
             candidate = self.leader_gateway.generate_mission(
                 LeaderRequest(
-                    planning_config,
-                    text,
-                    planning_task,
-                    180,
-                    asdict(self.store.project_view(self.config)).get("skills"),
+                    config=planning_config,
+                    user_message=text,
+                    planning_task=planning_task,
+                    timeout_seconds=180,
+                    skill_context=asdict(self.store.project_view(self.config)).get(
+                        "skills"
+                    ),
+                    selected_agent_ids=selected,
+                    step_count=step_count,
                 ),
                 self.cancel_token,
             )
+            try:
+                candidate_authority_matches = (
+                    candidate.selected_agent_ids == selected
+                    and candidate.step_count == step_count
+                )
+            except Exception:
+                raise LeaderGatewayError("schema") from None
+            if not candidate_authority_matches:
+                raise LeaderGatewayError("schema")
             captured_binding: dict[str, object] = {}
 
             def mutation_factory(payload: dict[str, object]) -> ConversationMutation:
@@ -492,16 +506,21 @@ class ConversationSession:
                     events=(EventRecord.create("conversation_preview_presented", {"conversation_id": self.conversation_id, "turn_id": turn_id, "preview_id": binding["preview_id"]}),),
                 )
 
-            persisted_candidate = replace(
-                candidate,
-                user_message=_redact_persisted_user_message(candidate.user_message),
-            )
-            payload = create_mission_preview_from_candidate(
-                config=self.config,
-                store=self.store,
-                candidate=persisted_candidate,
-                conversation_mutation_factory=mutation_factory,
-            )
+            try:
+                persisted_candidate = replace(
+                    candidate,
+                    user_message=_redact_persisted_user_message(
+                        candidate.user_message
+                    ),
+                )
+                payload = create_mission_preview_from_candidate(
+                    config=self.config,
+                    store=self.store,
+                    candidate=persisted_candidate,
+                    conversation_mutation_factory=mutation_factory,
+                )
+            except Exception:
+                raise LeaderGatewayError("schema") from None
             payload["preview_binding"] = {
                 "preview_id": captured_binding["preview_id"],
                 "expires_at": captured_binding["expires_at"],

@@ -198,6 +198,8 @@ def test_conversation_leader_receives_only_uniquely_requested_workers(
                 user_message=request.user_message,
                 plan=_plan(),
                 timeout_seconds=request.timeout_seconds,
+                selected_agent_ids=request.selected_agent_ids,
+                step_count=request.step_count,
             )
 
     monkeypatch.setattr(

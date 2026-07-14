@@ -66,6 +66,8 @@ class _Gateway:
             user_message=request.user_message,
             plan=_plan(),
             timeout_seconds=request.timeout_seconds,
+            selected_agent_ids=request.selected_agent_ids,
+            step_count=request.step_count,
         )
 
 
@@ -143,6 +145,77 @@ def test_leader_turn_commits_mission_and_exact_pending_binding_without_transcrip
     assert MESSAGE not in repr(state["conversation_sessions"])
     assert MESSAGE not in repr(state["conversation_turns"])
     assert MESSAGE not in repr(state["conversation_preview_bindings"])
+
+
+def test_open_natural_task_uses_one_frozen_selection_and_step_count(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config, store = _project(tmp_path)
+    gateway = _Gateway()
+    monkeypatch.setattr(
+        "agentdeck.mission_orchestration.shutil.which", lambda command: f"/bin/{command}"
+    )
+    session = ConversationSession(
+        root=tmp_path, config=config, store=store, leader_gateway=gateway
+    )
+
+    response = session.handle("请一起完成这个开放任务")
+
+    assert response.kind == "mission_preview"
+    assert [item["agent_id"] for item in response.payload["selected_agents"]] == [
+        "planner",
+        "reviewer",
+    ]
+    assert len(response.payload["plan"]["steps"]) == 2
+
+
+def test_redacted_persisted_message_never_recomputes_mission_authority(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config, store = _project(tmp_path)
+    monkeypatch.setattr(
+        "agentdeck.mission_orchestration.shutil.which", lambda command: f"/bin/{command}"
+    )
+    monkeypatch.setattr(
+        "agentdeck.conversation.session._redact_persisted_user_message",
+        lambda _message: "[persisted provenance redacted]",
+    )
+
+    response = ConversationSession(
+        root=tmp_path,
+        config=config,
+        store=store,
+        leader_gateway=_Gateway(),
+    ).handle(MESSAGE)
+
+    assert response.kind == "mission_preview"
+    assert len(response.payload["plan"]["steps"]) == 2
+
+
+def test_candidate_landing_failure_terminalizes_turn_instead_of_leaving_waiting(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config, store = _project(tmp_path)
+    monkeypatch.setattr(
+        "agentdeck.conversation.session.create_mission_preview_from_candidate",
+        lambda **_kwargs: (_ for _ in ()).throw(ValueError("unsafe detail")),
+    )
+
+    response = ConversationSession(
+        root=tmp_path,
+        config=config,
+        store=store,
+        leader_gateway=_Gateway(),
+    ).handle(MESSAGE)
+
+    assert response.kind == "failed"
+    assert response.payload == {
+        "blocker": "Leader planning failed at stage: schema",
+        "stage": "schema",
+    }
+    assert store.project_view(config).conversation["latest_turn_state"] == "failed"
+    assert store.all_events()[-1]["payload"]["stage"] == "schema"
+    assert "unsafe detail" not in repr(store.load())
 
 
 def test_session_context_is_bounded_and_never_persisted(tmp_path: Path) -> None:

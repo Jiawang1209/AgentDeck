@@ -15,6 +15,8 @@ def deterministic_mission(self, request, cancel):
         model="fake-plan",
         user_message=request.user_message,
         timeout_seconds=request.timeout_seconds,
+        selected_agent_ids=request.selected_agent_ids,
+        step_count=request.step_count,
         plan={
             "goal": "implement then review",
             "summary": "two ordered workers",

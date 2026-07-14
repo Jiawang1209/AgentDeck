@@ -60,6 +60,8 @@ class _FakeLeader:
             user_message=request.user_message,
             plan=_plan(),
             timeout_seconds=request.timeout_seconds,
+            selected_agent_ids=request.selected_agent_ids,
+            step_count=request.step_count,
         )
 
 

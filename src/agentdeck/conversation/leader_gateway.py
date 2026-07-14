@@ -81,6 +81,8 @@ class LeaderRequest:
     planning_task: str
     timeout_seconds: int
     skill_context: dict[str, object] | None
+    selected_agent_ids: tuple[str, ...] | None = None
+    step_count: int | None = None
 
 
 @dataclass(frozen=True)
@@ -263,4 +265,6 @@ class LeaderGateway:
             user_message=request.user_message,
             plan=plan,
             timeout_seconds=request.timeout_seconds,
+            selected_agent_ids=request.selected_agent_ids,
+            step_count=request.step_count,
         )

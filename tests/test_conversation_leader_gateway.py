@@ -109,6 +109,8 @@ def test_gateway_generates_candidate_through_exact_provider_once(tmp_path: Path)
             planning_task="structured mission task",
             timeout_seconds=180,
             skill_context={"count": 0, "items": []},
+            selected_agent_ids=("planner", "reviewer"),
+            step_count=2,
         ),
         CancellationToken(),
     )
@@ -117,6 +119,8 @@ def test_gateway_generates_candidate_through_exact_provider_once(tmp_path: Path)
     assert candidate.provider == "fake"
     assert candidate.model == "fake-plan"
     assert candidate.plan["goal"] == "demo"
+    assert candidate.selected_agent_ids == ("planner", "reviewer")
+    assert candidate.step_count == 2
 
 
 def test_gateway_failure_never_tries_another_backend(tmp_path: Path) -> None:

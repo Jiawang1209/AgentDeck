@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -16,6 +17,7 @@ from agentdeck.mission_orchestration import (
     create_mission_preview,
     create_mission_preview_from_candidate,
 )
+from agentdeck.models import AgentSpec
 from agentdeck.providers import LeaderPlanRequest
 from agentdeck.state import StateStore
 
@@ -98,6 +100,43 @@ def test_candidate_path_does_not_call_any_provider(
     assert [event["event_type"] for event in store.all_events()] == [
         "mission_preview_created"
     ]
+
+
+def test_candidate_frozen_authority_survives_redacted_message_and_excludes_third_worker(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _root, config, store = _project(tmp_path)
+    config = replace(
+        config,
+        agents=(
+            *config.agents,
+            AgentSpec("auditor", "audit", "codex-cli", "codex"),
+        ),
+    )
+    monkeypatch.setattr(
+        "agentdeck.mission_orchestration.shutil.which", lambda command: f"/bin/{command}"
+    )
+    candidate = LeaderMissionCandidate(
+        provider="fake",
+        model="fake-plan",
+        user_message="[persisted provenance redacted]",
+        plan=_plan(),
+        timeout_seconds=180,
+        selected_agent_ids=("planner", "reviewer"),
+        step_count=8,
+    )
+
+    payload = create_mission_preview_from_candidate(
+        config=config,
+        store=store,
+        candidate=candidate,
+    )
+
+    assert [item["agent_id"] for item in payload["selected_agents"]] == [
+        "planner",
+        "reviewer",
+    ]
+    assert len(payload["plan"]["steps"]) == 8
 
 
 def test_invalid_candidate_is_full_tree_zero_write(

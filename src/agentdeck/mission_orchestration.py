@@ -197,6 +197,8 @@ class LeaderMissionCandidate:
     user_message: str
     plan: dict[str, Any]
     timeout_seconds: int
+    selected_agent_ids: tuple[str, ...] | None = None
+    step_count: int | None = None
 
 
 def _requested_step_count(user_message: str) -> int:
@@ -342,10 +344,28 @@ def _mission_candidate_context(
     *,
     user_message: str,
     provider: str,
+    frozen_agent_ids: tuple[str, ...] | None = None,
 ) -> tuple[dict[str, Any], tuple[Any, ...], tuple[str, ...], list[str], ProjectConfig, dict[str, Any]]:
-    intent = mission_intent(user_message, config)
-    if intent is None:
-        raise ValueError("message is not a multi-agent mission request")
+    if frozen_agent_ids is None:
+        intent = mission_intent(user_message, config)
+        if intent is None:
+            raise ValueError("message is not a multi-agent mission request")
+        requested_agent_ids = tuple(
+            str(item) for item in intent["requested_agent_ids"]
+        )
+        requested_providers = tuple(
+            str(item) for item in intent["requested_providers"]
+        )
+    else:
+        if (
+            type(frozen_agent_ids) is not tuple
+            or len(frozen_agent_ids) < 2
+            or any(type(item) is not str or not item for item in frozen_agent_ids)
+            or len(set(frozen_agent_ids)) != len(frozen_agent_ids)
+        ):
+            raise MissionPreviewError("mission preview candidate authority invalid")
+        requested_agent_ids = frozen_agent_ids
+        requested_providers = ()
     try:
         state = store.load()
         if not isinstance(state, dict) or not isinstance(state.get("agents"), dict):
@@ -355,8 +375,8 @@ def _mission_candidate_context(
         raise MissionPreviewError("mission preview state invalid") from None
     selection = select_mission_agents(
         config,
-        requested_agent_ids=tuple(str(item) for item in intent["requested_agent_ids"]),
-        requested_providers=tuple(str(item) for item in intent["requested_providers"]),
+        requested_agent_ids=requested_agent_ids,
+        requested_providers=requested_providers,
         bindings=bindings,
     )
     if selection.blockers or len(selection.agents) < 2 or len(
@@ -388,6 +408,8 @@ def _mission_candidate_context(
         agents=tuple(item.agent for item in effective),
     )
     selected_agent_ids = tuple(item.agent.agent_id for item in effective)
+    if frozen_agent_ids is not None and selected_agent_ids != frozen_agent_ids:
+        raise MissionPreviewError("mission preview candidate authority invalid")
     try:
         skill_context = _explicit_leader_skill_context(store, config)
     except Exception:
@@ -421,6 +443,12 @@ def create_mission_preview_from_candidate(
         raise ValueError("mission timeout must be positive")
     if type(retry_limit) is not int or retry_limit < 0:
         raise ValueError("mission retry limit must be non-negative")
+    if (candidate.selected_agent_ids is None) != (candidate.step_count is None):
+        raise MissionPreviewError("mission preview candidate authority invalid")
+    if candidate.step_count is not None and (
+        type(candidate.step_count) is not int or candidate.step_count <= 0
+    ):
+        raise MissionPreviewError("mission preview candidate authority invalid")
     (
         bindings,
         effective,
@@ -429,9 +457,17 @@ def create_mission_preview_from_candidate(
         selected_config,
         skill_context,
     ) = _mission_candidate_context(
-        config, store, user_message=candidate.user_message, provider=provider
+        config,
+        store,
+        user_message=candidate.user_message,
+        provider=provider,
+        frozen_agent_ids=candidate.selected_agent_ids,
     )
-    step_count = _requested_step_count(candidate.user_message)
+    step_count = (
+        candidate.step_count
+        if candidate.step_count is not None
+        else _requested_step_count(candidate.user_message)
+    )
     try:
         raw_plan = deepcopy(candidate.plan)
         validate_provider_plan_schema(raw_plan, config=selected_config)
@@ -667,6 +703,8 @@ def create_mission_preview(
             user_message=user_message,
             plan=plan,
             timeout_seconds=timeout_seconds,
+            selected_agent_ids=selected_agent_ids,
+            step_count=step_count,
         ),
         retry_limit=retry_limit,
     )
