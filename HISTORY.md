@@ -4,6 +4,14 @@
 
 ## 2026-07-15
 
+### Bind M2c cleanup authority
+
+- **PTY process-group closure**: every bare PTY process is now sealed immediately with its exact new-session process group and a hashed birth fingerprint. Cleanup enumerates the group and applies bounded TERM then KILL even when the session leader has already exited; all tracked groups feed the final derived residual count, and signal failure returns only a fixed compact code plus count.
+- **Handshake-sealed daemon authority**: daemon fallback no longer trusts a project-local JSON PID. A known-good verified handshake seals exact project/instance/nonce metadata, no-follow regular metadata inode/owner/mode/size/content hash, Unix-socket inode/type/owner/mode, PID birth fingerprint, process group, and descendants. Fallback reopens and revalidates those facts before any signal; tampered metadata, symlink/nonregular files, socket drift, handshake mismatch, or PID-birth mismatch yields fixed `daemon_cleanup_authority_unverified`, zero signals, and a blocking residual.
+- **Exact bounded fallback**: only a still-matching sealed daemon group may receive bounded TERM/KILL. Endpoint removal is likewise bound to the sealed socket and metadata inodes. Diagnostics contain fixed codes, counts, and existing bounded hashes only—never PID, path, command, environment, or raw process output.
+- **TDD evidence**: seven focused cases were RED at the missing process-group/sealed-daemon helpers, then GREEN for terminated-leader child cleanup, compact kill failure, unrelated-PID tamper, symlink and directory metadata rejection, birth mismatch, and valid exact-tree cleanup. No real provider run was attempted; Task 11 evidence and M2c status remain unchanged.
+- **Verification**: the default gate produces exactly `14 passed, 1 skipped`; the full suite passes `3323` tests with two skips. `python -m compileall -q src tests`, `git diff --check`, and post-test dummy-process scans also pass in the `agentdeck` environment.
+
 ### Harden real M2c acceptance harness
 
 - **Credential-free probe isolation**: capability commands now run from the disposable project with a minimal environment and isolated HOME/XDG/TMP roots. Project and actual isolation roots are snapshotted before/after, including directory mtimes, so any mutation produces only fixed blocker `probe_wrote_files` and forces `ready=false`.

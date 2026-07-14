@@ -14,6 +14,7 @@ import select
 import shutil
 import shlex
 import signal
+import socket
 import stat
 import subprocess
 import sys
@@ -27,7 +28,12 @@ from agentdeck import cli as cli_module
 from agentdeck.config import load_config
 from agentdeck.contracts import validate_trace_contract, validate_workbench_contract
 from agentdeck.daemon.client import DaemonClient
-from agentdeck.daemon.lifecycle import daemon_endpoint, project_root_hash
+from agentdeck.daemon.lifecycle import (
+    DaemonIdentityError,
+    bind_daemon_endpoint,
+    daemon_endpoint,
+    project_root_hash,
+)
 from agentdeck.state import StateStore
 
 
@@ -387,6 +393,44 @@ class _LiveHarnessFailure(AssertionError):
     pass
 
 
+@dataclass(frozen=True)
+class _ProcessIdentity:
+    pid: int
+    pgid: int
+    birth_fingerprint: str
+
+
+@dataclass(frozen=True)
+class _ProcessGroupScope:
+    pgid: int
+    leader: _ProcessIdentity
+
+
+@dataclass(frozen=True)
+class _FileIdentity:
+    device: int
+    inode: int
+    owner: int
+    mode: int
+    size: int
+    content_hash: str | None = None
+
+
+@dataclass(frozen=True)
+class _DaemonCleanupIdentity:
+    metadata: tuple[tuple[str, object], ...]
+    metadata_file: _FileIdentity
+    socket_file: _FileIdentity
+    process_scope: _ProcessGroupScope
+    descendant_identities: tuple[_ProcessIdentity, ...]
+
+
+@dataclass
+class _LiveCleanupAuthority:
+    process_scopes: list[_ProcessGroupScope]
+    daemon: _DaemonCleanupIdentity | None = None
+
+
 def _state_cardinalities(store: StateStore) -> dict[str, int]:
     state = store.load()
     fields = (
@@ -587,20 +631,175 @@ def _wait_for_pty_prompt(
     raise _live_failure("bare_pty_prompt_timeout", capture=capture)
 
 
-def _stop_pty(process: subprocess.Popen[bytes], master: int) -> list[str]:
+def _process_birth_fingerprint(pid: int) -> str | None:
+    try:
+        completed = subprocess.run(
+            ["/bin/ps", "-o", "lstart=", "-o", "uid=", "-o", "pgid=", "-p", str(pid)],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            timeout=2,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    value = completed.stdout.strip()
+    if completed.returncode != 0 or not value:
+        return None
+    return hashlib.sha256(value).hexdigest()
+
+
+def _seal_process_identity(
+    pid: int,
+    *,
+    fingerprint_provider: Any = _process_birth_fingerprint,
+) -> _ProcessIdentity:
+    if type(pid) is not int or pid <= 1:
+        raise _live_failure("process_cleanup_authority_unverified")
+    try:
+        pgid = os.getpgid(pid)
+    except OSError:
+        raise _live_failure("process_cleanup_authority_unverified") from None
+    fingerprint = fingerprint_provider(pid)
+    if type(fingerprint) is not str or not fingerprint:
+        raise _live_failure("process_cleanup_authority_unverified")
+    return _ProcessIdentity(pid=pid, pgid=pgid, birth_fingerprint=fingerprint)
+
+
+def _seal_process_group(
+    leader_pid: int,
+    *,
+    fingerprint_provider: Any = _process_birth_fingerprint,
+) -> _ProcessGroupScope:
+    leader = _seal_process_identity(
+        leader_pid,
+        fingerprint_provider=fingerprint_provider,
+    )
+    if leader.pgid <= 1:
+        raise _live_failure("process_cleanup_authority_unverified")
+    return _ProcessGroupScope(pgid=leader.pgid, leader=leader)
+
+
+def _process_group_pids(pgid: int) -> set[int]:
+    try:
+        completed = subprocess.run(
+            ["/bin/ps", "-axo", "pid=,pgid="],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            timeout=3,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return set()
+    members: set[int] = set()
+    for line in completed.stdout.decode("ascii", errors="ignore").splitlines():
+        parts = line.split()
+        if len(parts) == 2 and all(part.isdigit() for part in parts):
+            pid, candidate_group = map(int, parts)
+            if candidate_group == pgid and _process_alive(pid):
+                members.add(pid)
+    return members
+
+
+def _process_identity_matches(
+    identity: _ProcessIdentity,
+    *,
+    fingerprint_provider: Any = _process_birth_fingerprint,
+) -> bool:
+    if not _process_alive(identity.pid):
+        return False
+    try:
+        current_group = os.getpgid(identity.pid)
+    except OSError:
+        return False
+    return (
+        current_group == identity.pgid
+        and fingerprint_provider(identity.pid) == identity.birth_fingerprint
+    )
+
+
+def _process_scope_residual_count(scope: _ProcessGroupScope) -> int:
+    return len(_process_group_pids(scope.pgid))
+
+
+def _terminate_process_group(
+    scope: _ProcessGroupScope,
+    *,
+    signal_group: Any = os.killpg,
+    fingerprint_provider: Any = _process_birth_fingerprint,
+) -> dict[str, object]:
+    members = _process_group_pids(scope.pgid)
+    if not members:
+        return {"code": None, "residual_process_count": 0}
+    leader_alive = _process_alive(scope.leader.pid)
+    if leader_alive and not _process_identity_matches(
+        scope.leader,
+        fingerprint_provider=fingerprint_provider,
+    ):
+        return {
+            "code": "process_cleanup_authority_unverified",
+            "residual_process_count": len(members),
+        }
+    member_identities: list[_ProcessIdentity] = []
+    for pid in sorted(members):
+        try:
+            member_identities.append(
+                _seal_process_identity(pid, fingerprint_provider=fingerprint_provider)
+            )
+        except _LiveHarnessFailure:
+            if _process_alive(pid):
+                return {
+                    "code": "process_cleanup_authority_unverified",
+                    "residual_process_count": len(members),
+                }
+    failed = False
+    for signal_number in (signal.SIGTERM, signal.SIGKILL):
+        current_members = _process_group_pids(scope.pgid)
+        if not current_members:
+            break
+        if not any(
+            _process_identity_matches(
+                item,
+                fingerprint_provider=fingerprint_provider,
+            )
+            for item in member_identities
+        ):
+            return {
+                "code": "process_cleanup_authority_unverified",
+                "residual_process_count": len(current_members),
+            }
+        try:
+            signal_group(scope.pgid, signal_number)
+        except (OSError, PermissionError):
+            failed = True
+            break
+        deadline = time.monotonic() + 3
+        while time.monotonic() < deadline and _process_group_pids(scope.pgid):
+            time.sleep(0.05)
+    residual = _process_scope_residual_count(scope)
+    return {
+        "code": (
+            "pty_process_group_cleanup_failed" if failed or residual else None
+        ),
+        "residual_process_count": residual,
+    }
+
+
+def _stop_pty(
+    process: subprocess.Popen[bytes],
+    master: int,
+    scope: _ProcessGroupScope,
+) -> list[str]:
     failures: list[str] = []
     try:
-        if process.poll() is None:
-            process.terminate()
-            try:
-                process.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                process.kill()
-                process.wait(timeout=5)
-        if process.poll() is None:
-            failures.append("pty_process_alive")
+        cleanup = _terminate_process_group(scope)
+        if cleanup["code"] is not None:
+            failures.append(str(cleanup["code"]))
+        with __import__("contextlib").suppress(subprocess.TimeoutExpired):
+            process.wait(timeout=2)
     except (OSError, subprocess.SubprocessError):
-        failures.append("pty_process_cleanup_failed")
+        failures.append("pty_process_group_cleanup_failed")
     try:
         os.close(master)
     except OSError:
@@ -636,21 +835,6 @@ def _process_alive(pid: int) -> bool:
     return bool(status) and not status.startswith("Z")
 
 
-def _terminate_managed_pids(pids: set[int]) -> list[int]:
-    targets = {pid for pid in pids if type(pid) is int and pid > 1 and _process_alive(pid)}
-    for signal_number in (signal.SIGTERM, signal.SIGKILL):
-        for pid in targets:
-            if _process_alive(pid):
-                with __import__("contextlib").suppress(ProcessLookupError):
-                    os.kill(pid, signal_number)
-        deadline = time.monotonic() + 3
-        while time.monotonic() < deadline:
-            if not any(_process_alive(pid) for pid in targets):
-                break
-            time.sleep(0.05)
-    return sorted(pid for pid in targets if _process_alive(pid))
-
-
 def _descendant_pids(root_pid: int) -> set[int]:
     try:
         completed = subprocess.run(
@@ -681,11 +865,281 @@ def _descendant_pids(root_pid: int) -> set[int]:
     return descendants
 
 
+def _read_daemon_authority_facts(
+    root: Path,
+) -> tuple[dict[str, object], _FileIdentity, _FileIdentity]:
+    binding = None
+    runtime_fd: int | None = None
+    metadata_fd: int | None = None
+    try:
+        binding = bind_daemon_endpoint(root)
+        binding.assert_runtime_identity()
+        runtime_fd = binding.duplicate_runtime_fd()
+        metadata_fd = os.open(
+            "daemon.json",
+            os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0),
+            dir_fd=runtime_fd,
+        )
+        metadata_stat = os.fstat(metadata_fd)
+        metadata_mode = stat.S_IMODE(metadata_stat.st_mode)
+        if (
+            not stat.S_ISREG(metadata_stat.st_mode)
+            or metadata_stat.st_uid != os.getuid()
+            or metadata_mode & 0o077
+            or metadata_stat.st_size < 2
+            or metadata_stat.st_size > 64 * 1024
+        ):
+            raise _live_failure("daemon_cleanup_authority_unverified")
+        payload = b""
+        while len(payload) <= 64 * 1024:
+            chunk = os.read(metadata_fd, min(8192, 64 * 1024 + 1 - len(payload)))
+            if not chunk:
+                break
+            payload += chunk
+        if len(payload) > 64 * 1024 or len(payload) != metadata_stat.st_size:
+            raise _live_failure("daemon_cleanup_authority_unverified")
+        decoded = json.loads(payload)
+        if (
+            type(decoded) is not dict
+            or set(decoded) != {
+                "instance_id",
+                "project_root_hash",
+                "start_nonce_hash",
+                "pid",
+            }
+            or type(decoded["instance_id"]) is not str
+            or not str(decoded["instance_id"]).startswith("dmn_")
+            or decoded["project_root_hash"] != project_root_hash(root)
+            or type(decoded["start_nonce_hash"]) is not str
+            or re.fullmatch(r"[0-9a-f]{64}", str(decoded["start_nonce_hash"]))
+            is None
+            or type(decoded["pid"]) is not int
+            or int(decoded["pid"]) <= 1
+        ):
+            raise _live_failure("daemon_cleanup_authority_unverified")
+        socket_stat = os.stat(
+            "daemon.sock",
+            dir_fd=runtime_fd,
+            follow_symlinks=False,
+        )
+        socket_mode = stat.S_IMODE(socket_stat.st_mode)
+        if (
+            not stat.S_ISSOCK(socket_stat.st_mode)
+            or socket_stat.st_uid != os.getuid()
+            or socket_mode & 0o077
+        ):
+            raise _live_failure("daemon_cleanup_authority_unverified")
+        binding.assert_runtime_identity()
+        return (
+            dict(decoded),
+            _FileIdentity(
+                device=metadata_stat.st_dev,
+                inode=metadata_stat.st_ino,
+                owner=metadata_stat.st_uid,
+                mode=metadata_mode,
+                size=metadata_stat.st_size,
+                content_hash=hashlib.sha256(payload).hexdigest(),
+            ),
+            _FileIdentity(
+                device=socket_stat.st_dev,
+                inode=socket_stat.st_ino,
+                owner=socket_stat.st_uid,
+                mode=socket_mode,
+                size=socket_stat.st_size,
+            ),
+        )
+    except _LiveHarnessFailure:
+        raise
+    except (
+        DaemonIdentityError,
+        FileNotFoundError,
+        NotADirectoryError,
+        OSError,
+        UnicodeDecodeError,
+        json.JSONDecodeError,
+    ):
+        raise _live_failure("daemon_cleanup_authority_unverified") from None
+    finally:
+        if metadata_fd is not None:
+            os.close(metadata_fd)
+        if runtime_fd is not None:
+            os.close(runtime_fd)
+        if binding is not None:
+            binding.close()
+
+
+async def _verified_daemon_handshake(
+    root: Path, metadata: dict[str, object]
+) -> bool | None:
+    client: DaemonClient | None = None
+    try:
+        client = await DaemonClient.connect_verified(root, timeout_seconds=5)
+        return client.instance_id == metadata["instance_id"]
+    except Exception:
+        return None
+    finally:
+        if client is not None:
+            await client.close()
+
+
+def _default_daemon_handshake(
+    root: Path, metadata: dict[str, object]
+) -> bool | None:
+    return asyncio.run(_verified_daemon_handshake(root, metadata))
+
+
+def _seal_daemon_cleanup_identity(
+    root: Path,
+    *,
+    handshake_verifier: Any | None = None,
+    fingerprint_provider: Any = _process_birth_fingerprint,
+) -> _DaemonCleanupIdentity:
+    verifier = handshake_verifier or (
+        lambda metadata: _default_daemon_handshake(root, metadata)
+    )
+    metadata, metadata_file, socket_file = _read_daemon_authority_facts(root)
+    if verifier(metadata) is not True:
+        raise _live_failure("daemon_cleanup_authority_unverified")
+    repeated = _read_daemon_authority_facts(root)
+    if repeated != (metadata, metadata_file, socket_file):
+        raise _live_failure("daemon_cleanup_authority_unverified")
+    process_scope = _seal_process_group(
+        int(metadata["pid"]),
+        fingerprint_provider=fingerprint_provider,
+    )
+    if process_scope.pgid != process_scope.leader.pid:
+        raise _live_failure("daemon_cleanup_authority_unverified")
+    descendants: list[_ProcessIdentity] = []
+    for pid in sorted(_descendant_pids(process_scope.leader.pid)):
+        try:
+            descendants.append(
+                _seal_process_identity(pid, fingerprint_provider=fingerprint_provider)
+            )
+        except _LiveHarnessFailure:
+            if _process_alive(pid):
+                raise _live_failure("daemon_cleanup_authority_unverified") from None
+    return _DaemonCleanupIdentity(
+        metadata=tuple(sorted(metadata.items())),
+        metadata_file=metadata_file,
+        socket_file=socket_file,
+        process_scope=process_scope,
+        descendant_identities=tuple(descendants),
+    )
+
+
+def _daemon_cleanup_authority_matches(
+    root: Path,
+    identity: _DaemonCleanupIdentity,
+    *,
+    handshake_verifier: Any | None = None,
+    fingerprint_provider: Any = _process_birth_fingerprint,
+) -> bool:
+    try:
+        metadata, metadata_file, socket_file = _read_daemon_authority_facts(root)
+    except _LiveHarnessFailure:
+        return False
+    if (
+        tuple(sorted(metadata.items())) != identity.metadata
+        or metadata_file != identity.metadata_file
+        or socket_file != identity.socket_file
+        or not _process_identity_matches(
+            identity.process_scope.leader,
+            fingerprint_provider=fingerprint_provider,
+        )
+    ):
+        return False
+    if any(
+        _process_alive(item.pid)
+        and not _process_identity_matches(
+            item,
+            fingerprint_provider=fingerprint_provider,
+        )
+        for item in identity.descendant_identities
+    ):
+        return False
+    try:
+        if os.getpgid(identity.process_scope.leader.pid) != identity.process_scope.pgid:
+            return False
+    except OSError:
+        return False
+    verifier = handshake_verifier or (
+        lambda current: _default_daemon_handshake(root, current)
+    )
+    handshake = verifier(metadata)
+    return handshake is not False
+
+
+def _terminate_daemon_tree(
+    identity: _DaemonCleanupIdentity,
+    *,
+    fingerprint_provider: Any = _process_birth_fingerprint,
+    signal_process: Any = os.kill,
+    signal_group: Any = os.killpg,
+) -> dict[str, object]:
+    descendants: list[_ProcessIdentity] = []
+    for pid in sorted(_descendant_pids(identity.process_scope.leader.pid)):
+        try:
+            descendants.append(
+                _seal_process_identity(pid, fingerprint_provider=fingerprint_provider)
+            )
+        except _LiveHarnessFailure:
+            if _process_alive(pid):
+                return {
+                    "code": "daemon_cleanup_authority_unverified",
+                    "residual_process_count": _process_scope_residual_count(
+                        identity.process_scope
+                    )
+                    + 1,
+                }
+    failed = False
+    for signal_number in (signal.SIGTERM, signal.SIGKILL):
+        for process_identity in reversed(descendants):
+            if _process_identity_matches(
+                process_identity,
+                fingerprint_provider=fingerprint_provider,
+            ):
+                try:
+                    signal_process(process_identity.pid, signal_number)
+                except (OSError, PermissionError):
+                    failed = True
+        if _process_group_pids(identity.process_scope.pgid):
+            try:
+                signal_group(identity.process_scope.pgid, signal_number)
+            except (OSError, PermissionError):
+                failed = True
+        deadline = time.monotonic() + 3
+        while time.monotonic() < deadline:
+            group_residual = _process_scope_residual_count(identity.process_scope)
+            descendant_residual = sum(
+                _process_identity_matches(
+                    item,
+                    fingerprint_provider=fingerprint_provider,
+                )
+                for item in descendants
+                if item.pgid != identity.process_scope.pgid
+            )
+            if group_residual + descendant_residual == 0:
+                break
+            time.sleep(0.05)
+    residual = _process_scope_residual_count(identity.process_scope) + sum(
+        _process_identity_matches(item, fingerprint_provider=fingerprint_provider)
+        for item in descendants
+        if item.pgid != identity.process_scope.pgid
+    )
+    return {
+        "code": "daemon_process_group_cleanup_failed" if failed or residual else None,
+        "residual_process_count": residual,
+    }
+
+
 def _stop_or_terminate_daemon(
     *,
-    daemon_pid: int,
-    managed_pids: set[int],
+    root: Path,
+    identity: _DaemonCleanupIdentity,
     stop_daemon: Any,
+    handshake_verifier: Any | None = None,
+    fingerprint_provider: Any = _process_birth_fingerprint,
+    signal_process: Any | None = None,
 ) -> dict[str, object]:
     fallback_used = False
     try:
@@ -693,19 +1147,48 @@ def _stop_or_terminate_daemon(
     except Exception:
         fallback_used = True
     deadline = time.monotonic() + 5
-    while time.monotonic() < deadline and any(
-        _process_alive(pid) for pid in managed_pids
+    while time.monotonic() < deadline and _process_scope_residual_count(
+        identity.process_scope
     ):
         if fallback_used:
             break
         time.sleep(0.05)
-    alive = [pid for pid in managed_pids if _process_alive(pid)]
-    if alive:
+    residual = _process_scope_residual_count(identity.process_scope)
+    if residual:
         fallback_used = True
-        descendants = {pid for pid in alive if pid != daemon_pid}
-        _terminate_managed_pids(descendants)
-        alive = _terminate_managed_pids({daemon_pid, *descendants})
-    return {"fallback_used": fallback_used, "alive_pids": alive}
+        if not _daemon_cleanup_authority_matches(
+            root,
+            identity,
+            handshake_verifier=handshake_verifier,
+            fingerprint_provider=fingerprint_provider,
+        ):
+            return {
+                "code": "daemon_cleanup_authority_unverified",
+                "fallback_used": True,
+                "residual_process_count": residual,
+            }
+        cleanup = _terminate_daemon_tree(
+            identity,
+            fingerprint_provider=fingerprint_provider,
+            signal_process=signal_process or os.kill,
+            signal_group=(
+                (lambda pgid, sig: signal_process(-pgid, sig))
+                if signal_process is not None
+                else os.killpg
+            ),
+        )
+        residual = int(cleanup["residual_process_count"])
+        if cleanup["code"] is not None or residual:
+            return {
+                "code": str(cleanup["code"] or "daemon_process_group_cleanup_failed"),
+                "fallback_used": True,
+                "residual_process_count": residual,
+            }
+    return {
+        "code": None,
+        "fallback_used": fallback_used,
+        "residual_process_count": residual,
+    }
 
 
 def _cleanup_exact_tmux(
@@ -743,12 +1226,16 @@ def _cleanup_exact_tmux(
 
 def _derive_residual_audit(
     *,
-    tracked_pids: set[int],
+    tracked_pids: set[int] | None = None,
+    tracked_process_scopes: tuple[_ProcessGroupScope, ...] = (),
     endpoint_paths: tuple[Path, ...],
     tmux_reachable: bool,
     tmux_socket_paths: tuple[Path, ...],
 ) -> dict[str, object]:
-    process_count = sum(_process_alive(pid) for pid in tracked_pids)
+    process_count = sum(_process_alive(pid) for pid in (tracked_pids or set()))
+    process_count += sum(
+        _process_scope_residual_count(scope) for scope in tracked_process_scopes
+    )
     resource_count = (
         sum(path.exists() for path in endpoint_paths)
         + int(tmux_reachable)
@@ -763,36 +1250,58 @@ def _derive_residual_audit(
     }
 
 
-def _remove_verified_daemon_endpoint(
-    *,
-    socket_path: Path,
-    metadata_path: Path,
-    expected: dict[str, object],
+def _remove_sealed_daemon_endpoint(
+    root: Path, identity: _DaemonCleanupIdentity
 ) -> bool:
+    binding = None
+    runtime_fd: int | None = None
+    metadata_fd: int | None = None
     try:
-        current = json.loads(metadata_path.read_text(encoding="utf-8"))
-        if type(current) is not dict or any(
-            current.get(field) != expected.get(field)
-            for field in (
-                "instance_id",
-                "project_root_hash",
-                "start_nonce_hash",
-                "pid",
-            )
+        metadata, metadata_file, socket_file = _read_daemon_authority_facts(root)
+        if (
+            tuple(sorted(metadata.items())) != identity.metadata
+            or metadata_file != identity.metadata_file
+            or socket_file != identity.socket_file
         ):
             return False
-        metadata_stat = metadata_path.lstat()
-        if not stat.S_ISREG(metadata_stat.st_mode) or metadata_path.is_symlink():
+        binding = bind_daemon_endpoint(root)
+        binding.assert_runtime_identity()
+        if not binding.unlink_socket_if_identity(
+            (identity.socket_file.device, identity.socket_file.inode)
+        ):
             return False
-        if socket_path.exists():
-            socket_stat = socket_path.lstat()
-            if not stat.S_ISSOCK(socket_stat.st_mode) or socket_path.is_symlink():
-                return False
-            socket_path.unlink()
-        metadata_path.unlink()
+        runtime_fd = binding.duplicate_runtime_fd()
+        metadata_fd = os.open(
+            "daemon.json",
+            os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0),
+            dir_fd=runtime_fd,
+        )
+        current = os.fstat(metadata_fd)
+        if (
+            current.st_dev,
+            current.st_ino,
+            current.st_uid,
+            stat.S_IMODE(current.st_mode),
+            current.st_size,
+        ) != (
+            identity.metadata_file.device,
+            identity.metadata_file.inode,
+            identity.metadata_file.owner,
+            identity.metadata_file.mode,
+            identity.metadata_file.size,
+        ):
+            return False
+        os.unlink("daemon.json", dir_fd=runtime_fd)
         return True
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+    except (_LiveHarnessFailure, DaemonIdentityError, OSError):
         return False
+    finally:
+        if metadata_fd is not None:
+            os.close(metadata_fd)
+        if runtime_fd is not None:
+            os.close(runtime_fd)
+        if binding is not None:
+            binding.close()
 
 
 def _toml_string(value: str) -> str:
@@ -859,6 +1368,7 @@ def _create_and_confirm_live_mission(
     store: StateStore,
     *,
     env: dict[str, str],
+    cleanup_authority: _LiveCleanupAuthority | None = None,
     openpty_factory: Any = pty.openpty,
     popen_factory: Any = subprocess.Popen,
 ) -> tuple[str, _PtyTail, dict[str, object]]:
@@ -866,6 +1376,7 @@ def _create_and_confirm_live_mission(
     master: int | None = None
     slave: int | None = None
     process: subprocess.Popen[bytes] | None = None
+    process_scope: _ProcessGroupScope | None = None
     try:
         master, slave = openpty_factory()
         try:
@@ -879,6 +1390,9 @@ def _create_and_confirm_live_mission(
                 start_new_session=True,
                 env=env,
             )
+            process_scope = _seal_process_group(process.pid)
+            if cleanup_authority is not None:
+                cleanup_authority.process_scopes.append(process_scope)
         except (OSError, subprocess.SubprocessError):
             raise _live_failure(
                 "bare_pty_spawn_failed", store=store, capture=capture
@@ -970,10 +1484,16 @@ def _create_and_confirm_live_mission(
         raise _live_failure("bare_pty_failed", store=store, capture=capture) from None
     finally:
         failures: list[str] = []
-        if process is not None and master is not None:
-            failures.extend(_stop_pty(process, master))
+        if process is not None and master is not None and process_scope is not None:
+            failures.extend(_stop_pty(process, master, process_scope))
             master = None
-        elif master is not None:
+        elif process is not None:
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+                process.wait(timeout=2)
+            except (OSError, subprocess.SubprocessError):
+                failures.append("pty_process_group_cleanup_failed")
+        if master is not None:
             try:
                 os.close(master)
             except OSError:
@@ -1089,6 +1609,7 @@ def _live_resource_guard(
     session_name: str,
     cleanup_env: dict[str, str],
     tmux_socket_paths: tuple[Path, ...],
+    cleanup_authority: _LiveCleanupAuthority,
 ):
     cleanup_failures: list[str] = []
     audit: dict[str, object] = {
@@ -1100,54 +1621,32 @@ def _live_resource_guard(
         yield audit
     finally:
         endpoint = daemon_endpoint(root)
-        daemon_pid: int | None = None
-        managed_pids: set[int] = set()
-        metadata_verified = False
-        verified_metadata: dict[str, object] | None = None
-        if endpoint.metadata_path.is_file():
+        endpoint_present = endpoint.socket_path.exists() or endpoint.metadata_path.exists()
+        if endpoint_present and cleanup_authority.daemon is None:
             try:
-                metadata = json.loads(endpoint.metadata_path.read_text(encoding="utf-8"))
-                candidate_pid = metadata.get("pid") if type(metadata) is dict else None
-                if (
-                    type(candidate_pid) is int
-                    and candidate_pid > 1
-                    and type(metadata.get("instance_id")) is str
-                    and str(metadata["instance_id"]).startswith("dmn_")
-                    and type(metadata.get("start_nonce_hash")) is str
-                    and re.fullmatch(
-                        r"[0-9a-f]{64}", str(metadata["start_nonce_hash"])
-                    )
-                    is not None
-                    and metadata.get("project_root_hash") == project_root_hash(root)
-                ):
-                    daemon_pid = candidate_pid
-                    metadata_verified = True
-                    verified_metadata = dict(metadata)
-                    managed_pids = {daemon_pid, *_descendant_pids(daemon_pid)}
-                else:
-                    cleanup_failures.append("daemon_identity_unverified")
-            except (OSError, UnicodeDecodeError, json.JSONDecodeError):
-                cleanup_failures.append("daemon_metadata_invalid")
-        if metadata_verified and daemon_pid is not None:
+                cleanup_authority.daemon = _seal_daemon_cleanup_identity(root)
+            except _LiveHarnessFailure:
+                cleanup_failures.append("daemon_cleanup_authority_unverified")
+        daemon_identity = cleanup_authority.daemon
+        if daemon_identity is not None:
             daemon_cleanup = _stop_or_terminate_daemon(
-                daemon_pid=daemon_pid,
-                managed_pids=managed_pids,
+                root=root,
+                identity=daemon_identity,
                 stop_daemon=lambda: asyncio.run(_stop_live_daemon(root)),
             )
-            if daemon_cleanup["alive_pids"]:
-                cleanup_failures.append("daemon_process_retained")
+            if daemon_cleanup["code"] is not None:
+                cleanup_failures.append(str(daemon_cleanup["code"]))
             elif (
                 (endpoint.socket_path.exists() or endpoint.metadata_path.exists())
-                and verified_metadata is not None
-                and not _remove_verified_daemon_endpoint(
-                    socket_path=endpoint.socket_path,
-                    metadata_path=endpoint.metadata_path,
-                    expected=verified_metadata,
-                )
+                and not _remove_sealed_daemon_endpoint(root, daemon_identity)
             ):
                 cleanup_failures.append("daemon_endpoint_cleanup_failed")
         elif endpoint.socket_path.exists() or endpoint.metadata_path.exists():
-            cleanup_failures.append("daemon_cleanup_unverified")
+            cleanup_failures.append("daemon_cleanup_authority_unverified")
+        for scope in cleanup_authority.process_scopes:
+            process_cleanup = _terminate_process_group(scope)
+            if process_cleanup["code"] is not None:
+                cleanup_failures.append(str(process_cleanup["code"]))
         tmux_cleanup = _cleanup_exact_tmux(
             tmux=tmux,
             socket_name=session_name,
@@ -1166,7 +1665,10 @@ def _live_resource_guard(
             cleanup_failures.append("project_retained")
         audit.update(
             _derive_residual_audit(
-                tracked_pids=managed_pids,
+                tracked_process_scopes=tuple(
+                    cleanup_authority.process_scopes
+                    + ([daemon_identity.process_scope] if daemon_identity else [])
+                ),
                 endpoint_paths=(endpoint.socket_path, endpoint.metadata_path),
                 tmux_reachable=bool(tmux_cleanup["reachable"]),
                 tmux_socket_paths=tmux_socket_paths,
@@ -1228,6 +1730,7 @@ def _run_live_acceptance_in_project(
         "LANG": "C",
         "LC_ALL": "C",
     }
+    cleanup_authority = _LiveCleanupAuthority(process_scopes=[])
     with _live_resource_guard(
         root,
         parent,
@@ -1235,6 +1738,7 @@ def _run_live_acceptance_in_project(
         session_name=session_name,
         cleanup_env=cleanup_env,
         tmux_socket_paths=tmux_socket_paths,
+        cleanup_authority=cleanup_authority,
     ) as cleanup_audit:
         preflight_before = _tree_snapshot(root)
         preflight = _live_preflight(root, require_explicit_paths=True)
@@ -1271,8 +1775,12 @@ def _run_live_acceptance_in_project(
         _write_live_config(root, paths, session_name=session_name)
         store = StateStore(root)
         mission_id, capture, admitted = _create_and_confirm_live_mission(
-            root, store, env=env
+            root,
+            store,
+            env=env,
+            cleanup_authority=cleanup_authority,
         )
+        cleanup_authority.daemon = _seal_daemon_cleanup_identity(root)
         _require_live(
             admitted["missions"][0]["daemon_admission"]["state"] == "admitted",
             "admission_not_durable",
@@ -1631,6 +2139,7 @@ def test_daemon_stop_failure_terminates_tracked_child_tree(tmp_path) -> None:
                 "time.sleep(60)"
             ),
         ],
+        start_new_session=True,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
@@ -1639,12 +2148,8 @@ def test_daemon_stop_failure_terminates_tracked_child_tree(tmp_path) -> None:
         time.sleep(0.02)
     child_pid = int(child_pid_file.read_text(encoding="utf-8"))
     try:
-        result = _stop_or_terminate_daemon(
-            daemon_pid=parent.pid,
-            managed_pids={parent.pid, child_pid},
-            stop_daemon=lambda: (_ for _ in ()).throw(OSError("SECRET_PATH")),
-        )
-        assert result == {"fallback_used": True, "alive_pids": []}
+        result = _terminate_process_group(_seal_process_group(parent.pid))
+        assert result == {"code": None, "residual_process_count": 0}
         assert not _process_alive(parent.pid)
         assert not _process_alive(child_pid)
     finally:
@@ -1738,6 +2243,261 @@ def test_residual_count_is_derived_and_blocks_on_live_pid(tmp_path) -> None:
     finally:
         process.kill()
         process.wait(timeout=2)
+
+
+def test_pty_cleanup_kills_child_after_session_leader_exits(tmp_path) -> None:
+    child_pid_file = tmp_path / "pty-child.pid"
+    process = subprocess.Popen(
+        [
+            sys.executable,
+            "-c",
+            (
+                    "import subprocess,sys,time; "
+                    "child=subprocess.Popen([sys.executable,'-c','import time;time.sleep(60)']); "
+                    f"open({str(child_pid_file)!r},'w').write(str(child.pid)); "
+                    "time.sleep(60)"
+            ),
+        ],
+        start_new_session=True,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    child_pid: int | None = None
+    try:
+        scope = _seal_process_group(process.pid)
+        deadline = time.monotonic() + 5
+        while not child_pid_file.exists() and time.monotonic() < deadline:
+            time.sleep(0.02)
+        child_pid = int(child_pid_file.read_text(encoding="utf-8"))
+        process.terminate()
+        process.wait(timeout=5)
+        result = _terminate_process_group(scope)
+        audit = _derive_residual_audit(
+            tracked_process_scopes=(scope,),
+            endpoint_paths=(),
+            tmux_reachable=False,
+            tmux_socket_paths=(),
+        )
+        assert result == {"code": None, "residual_process_count": 0}
+        assert audit["residual_process_count"] == 0
+        assert not _process_alive(child_pid)
+    finally:
+        with __import__("contextlib").suppress(ProcessLookupError):
+            os.killpg(process.pid, signal.SIGKILL)
+        if child_pid is not None:
+            with __import__("contextlib").suppress(ProcessLookupError):
+                os.kill(child_pid, signal.SIGKILL)
+
+
+def test_pty_group_kill_failure_is_compact_and_residual_is_derived(tmp_path) -> None:
+    process = subprocess.Popen(
+        [sys.executable, "-c", "import time;time.sleep(60)"],
+        start_new_session=True,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    try:
+        scope = _seal_process_group(process.pid)
+        result = _terminate_process_group(
+            scope,
+            signal_group=lambda _pgid, _signal: (_ for _ in ()).throw(
+                PermissionError("SECRET pid/path/command")
+            ),
+        )
+        assert result["code"] == "pty_process_group_cleanup_failed"
+        assert result["residual_process_count"] > 0
+        assert "SECRET" not in repr(result)
+    finally:
+        with __import__("contextlib").suppress(ProcessLookupError):
+            os.killpg(process.pid, signal.SIGKILL)
+        with __import__("contextlib").suppress(subprocess.TimeoutExpired):
+            process.wait(timeout=5)
+
+
+def _daemon_fixture(
+    root: Path,
+    *,
+    pid: int,
+) -> socket.socket:
+    endpoint = daemon_endpoint(root)
+    endpoint.metadata_path.parent.mkdir(parents=True, mode=0o700)
+    endpoint.metadata_path.write_text(
+        json.dumps(
+            {
+                "instance_id": "dmn_test",
+                "project_root_hash": project_root_hash(root),
+                "start_nonce_hash": "a" * 64,
+                "pid": pid,
+            },
+            sort_keys=True,
+        ),
+        encoding="utf-8",
+    )
+    endpoint.metadata_path.chmod(0o600)
+    server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    server.bind(str(endpoint.socket_path))
+    os.chmod(endpoint.socket_path, 0o600)
+    return server
+
+
+def test_daemon_tampered_pid_never_signals_unrelated_process(tmp_path) -> None:
+    root = Path(tempfile.mkdtemp(prefix="m2c-auth-", dir="/tmp"))
+    daemon = subprocess.Popen(
+        [sys.executable, "-c", "import time;time.sleep(60)"],
+        start_new_session=True,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    unrelated = subprocess.Popen(
+        [sys.executable, "-c", "import time;time.sleep(60)"],
+        start_new_session=True,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    server: socket.socket | None = None
+    signalled: list[tuple[int, int]] = []
+    try:
+        server = _daemon_fixture(root, pid=daemon.pid)
+        identity = _seal_daemon_cleanup_identity(
+            root,
+            handshake_verifier=lambda metadata: metadata["pid"] == daemon.pid,
+        )
+        endpoint = daemon_endpoint(root)
+        tampered = json.loads(endpoint.metadata_path.read_text(encoding="utf-8"))
+        tampered["pid"] = unrelated.pid
+        endpoint.metadata_path.write_text(json.dumps(tampered), encoding="utf-8")
+        result = _stop_or_terminate_daemon(
+            root=root,
+            identity=identity,
+            stop_daemon=lambda: (_ for _ in ()).throw(OSError("stop failed")),
+            signal_process=lambda pid, sig: signalled.append((pid, sig)),
+        )
+        assert result["code"] == "daemon_cleanup_authority_unverified"
+        assert result["residual_process_count"] > 0
+        assert signalled == []
+        assert _process_alive(unrelated.pid)
+        assert str(unrelated.pid) not in repr(result)
+        assert str(endpoint.metadata_path) not in repr(result)
+    finally:
+        if server is not None:
+            server.close()
+        for process in (daemon, unrelated):
+            with __import__("contextlib").suppress(ProcessLookupError):
+                os.killpg(os.getpgid(process.pid), signal.SIGKILL)
+            process.wait(timeout=5)
+        shutil.rmtree(root, ignore_errors=True)
+
+
+@pytest.mark.parametrize("endpoint_kind", ["symlink", "directory"])
+def test_daemon_metadata_symlink_or_nonregular_is_never_sealed(
+    tmp_path, endpoint_kind,
+) -> None:
+    endpoint = daemon_endpoint(tmp_path)
+    endpoint.metadata_path.parent.mkdir(parents=True, mode=0o700)
+    target = tmp_path / "outside.json"
+    target.write_text("{}", encoding="utf-8")
+    if endpoint_kind == "symlink":
+        endpoint.metadata_path.symlink_to(target)
+    else:
+        endpoint.metadata_path.mkdir()
+    with pytest.raises(_LiveHarnessFailure) as error:
+        _seal_daemon_cleanup_identity(
+            tmp_path,
+            handshake_verifier=lambda _metadata: True,
+        )
+    assert "daemon_cleanup_authority_unverified" in str(error.value)
+    assert str(target) not in str(error.value)
+
+
+def test_daemon_birth_mismatch_never_signals(tmp_path) -> None:
+    root = Path(tempfile.mkdtemp(prefix="m2c-auth-", dir="/tmp"))
+    daemon = subprocess.Popen(
+        [sys.executable, "-c", "import time;time.sleep(60)"],
+        start_new_session=True,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    server: socket.socket | None = None
+    signalled: list[tuple[int, int]] = []
+    try:
+        server = _daemon_fixture(root, pid=daemon.pid)
+        identity = _seal_daemon_cleanup_identity(
+            root,
+            handshake_verifier=lambda _metadata: True,
+            fingerprint_provider=lambda _pid: "birth-a",
+        )
+        result = _stop_or_terminate_daemon(
+            root=root,
+            identity=identity,
+            stop_daemon=lambda: (_ for _ in ()).throw(OSError("stop failed")),
+            fingerprint_provider=lambda _pid: "birth-b",
+            signal_process=lambda pid, sig: signalled.append((pid, sig)),
+        )
+        assert result["code"] == "daemon_cleanup_authority_unverified"
+        assert signalled == []
+        assert _process_alive(daemon.pid)
+    finally:
+        if server is not None:
+            server.close()
+        with __import__("contextlib").suppress(ProcessLookupError):
+            os.killpg(daemon.pid, signal.SIGKILL)
+        with __import__("contextlib").suppress(subprocess.TimeoutExpired):
+            daemon.wait(timeout=5)
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def test_valid_sealed_daemon_identity_kills_exact_tree(tmp_path) -> None:
+    root = Path(tempfile.mkdtemp(prefix="m2c-auth-", dir="/tmp"))
+    child_pid_file = tmp_path / "daemon-child.pid"
+    daemon = subprocess.Popen(
+        [
+            sys.executable,
+            "-c",
+            (
+                "import subprocess,sys,time; "
+                "child=subprocess.Popen([sys.executable,'-c','import time;time.sleep(60)'],start_new_session=True); "
+                f"open({str(child_pid_file)!r},'w').write(str(child.pid)); "
+                "time.sleep(60)"
+            ),
+        ],
+        start_new_session=True,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    child_pid: int | None = None
+    server: socket.socket | None = None
+    try:
+        deadline = time.monotonic() + 5
+        while not child_pid_file.exists() and time.monotonic() < deadline:
+            time.sleep(0.02)
+        child_pid = int(child_pid_file.read_text(encoding="utf-8"))
+        server = _daemon_fixture(root, pid=daemon.pid)
+        identity = _seal_daemon_cleanup_identity(
+            root,
+            handshake_verifier=lambda _metadata: True,
+        )
+        result = _stop_or_terminate_daemon(
+            root=root,
+            identity=identity,
+            stop_daemon=lambda: (_ for _ in ()).throw(OSError("stop failed")),
+            handshake_verifier=lambda _metadata: True,
+        )
+        assert result == {
+            "code": None,
+            "fallback_used": True,
+            "residual_process_count": 0,
+        }
+        assert not _process_alive(daemon.pid)
+        assert not _process_alive(child_pid)
+    finally:
+        if server is not None:
+            server.close()
+        for pid in ((child_pid,) if child_pid is not None else ()) + (daemon.pid,):
+            with __import__("contextlib").suppress(ProcessLookupError):
+                os.kill(pid, signal.SIGKILL)
+        with __import__("contextlib").suppress(subprocess.TimeoutExpired):
+            daemon.wait(timeout=2)
+        shutil.rmtree(root, ignore_errors=True)
 
 
 @pytest.mark.skipif(

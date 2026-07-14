@@ -117,16 +117,24 @@ a bare bounded PTY. It requires:
 8. agreement among ProjectView, Mission status, workbench ledger, events,
    traces, execution snapshot, daemon admission, and attempt receipts;
 9. collect-all cleanup that first verifies exact daemon PID/instance/project
-   metadata, tracks its descendant process tree, falls back from normal stop to
-   bounded TERM/KILL, kills only the exact disposable tmux socket's session and
-   server, removes the project, and derives zero residual process/resource
-   counts from post-cleanup probes.
+   metadata through a successful daemon handshake, seals no-follow metadata
+   inode/owner/mode/content, Unix-socket inode/type/owner/mode, PID birth
+   fingerprint, process group, and descendants, then revalidates that authority
+   before any fallback signal. Missing or drifted authority emits only
+   `daemon_cleanup_authority_unverified`, sends zero signals, and blocks PASS.
+   Valid fallback applies bounded TERM/KILL only to that exact daemon group.
+   Cleanup also kills only the exact disposable tmux socket's session/server,
+   removes the project, and derives zero residual process/resource counts from
+   post-cleanup probes.
 
 PTY output is retained only as a 64 KiB tail for in-process parsing. PTY open,
 process spawn, setup, and cleanup are all enclosed by collect-all failure
-guards that close any acquired descriptors/processes. Failures emit only byte
-count, truncation flag, SHA-256, a fixed stage/code, and state cardinalities—
-never terminal text, paths, commands, environment values, or raw exceptions.
+guards that seal the exact new-session process group plus leader birth identity,
+enumerate group members, and apply bounded group TERM/KILL even if the leader
+has already exited. Tracked groups participate in final derived residual counts.
+Failures emit only byte count, truncation flag, SHA-256, a fixed stage/code, and
+state cardinalities—never PID, terminal text, paths, commands, environment
+values, or raw exceptions.
 
 ## 5. Classify the result
 
@@ -149,6 +157,6 @@ conda run --no-capture-output -n agentdeck \
   pytest tests/test_m2c_live_acceptance.py -q
 ```
 
-Expected portable result: seven portable contract/helper tests pass and exactly
+Expected portable result: fourteen portable contract/helper tests pass and exactly
 one live test skips. A printed `ready=false` payload remains an honest setup
 result, not M2c PASS.

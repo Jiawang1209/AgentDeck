@@ -1586,6 +1586,22 @@ git commit -m "Add opt-in real M2c acceptance gate"
   pane identity, daemon fallback cleanup, tmux socket scoping, PTY spawn
   closure, and derived residual counts.
 
+#### Task 10 P1 cleanup-authority re-review
+
+- [x] Seal each PTY session leader's process birth identity and exact process
+  group immediately after spawn; enumerate and TERM/KILL the whole group even
+  after leader exit, and include every tracked group in final residual counts.
+- [x] Seal daemon cleanup authority only after a verified handshake, binding
+  no-follow metadata inode/owner/mode/content, socket inode/type/owner/mode,
+  project/instance/nonce, PID birth fingerprint, process group, and descendants.
+- [x] Revalidate the sealed authority before fallback signaling; metadata,
+  socket, handshake, or birth drift produces fixed
+  `daemon_cleanup_authority_unverified`, zero signals, and a nonzero/blocking
+  residual result.
+- [x] Add direct non-live regressions for terminated PTY leaders with live
+  children, compact group-kill failure, tampered PID, symlink/nonregular
+  metadata, PID-birth mismatch, and a valid sealed daemon tree.
+
 ### Task 11: Run the real frozen-commit rehearsal and record evidence
 
 **Files:**
