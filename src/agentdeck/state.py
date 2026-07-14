@@ -9713,13 +9713,9 @@ class StateStore:
                 else daemon_blockers
             ),
         }
-        scheduler_summary = {
-            "state": "inactive",
-            "active_mission_id": None,
-            "active_step": None,
-            "next_transition": None,
-            "blockers": ["background Mission scheduling is not implemented in M2a"],
-        }
+        from .daemon.service import scheduler_summary_from_state
+
+        scheduler_summary = scheduler_summary_from_state(state, config)
         return ProjectView(
             schema_version=PROJECT_VIEW_SCHEMA_VERSION,
             project=config.name,

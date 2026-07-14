@@ -516,7 +516,13 @@ def test_background_mission_acceptance_orders_workers_and_recovers_controller(
 
         view = asdict(store.project_view(config))
         assert view["missions"]["items"][-1]["status"] == "completed"
-        assert view["scheduler"]["state"] == "inactive"
+        assert view["scheduler"] == {
+            "state": "terminal",
+            "active_mission_id": mission_id,
+            "active_step": None,
+            "next_transition": None,
+            "blockers": [],
+        }
         assert validate_daemon_runtime_contract(
             cli_module._daemon_runtime_card(view)
         )["ok"] is True

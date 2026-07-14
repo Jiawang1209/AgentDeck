@@ -389,6 +389,70 @@ def test_post_confirmation_task_drift_constructs_no_worker_transport(
     assert calls == []
 
 
+def test_project_view_scheduler_projects_active_and_terminal_mission_facts(
+    tmp_path, monkeypatch
+) -> None:
+    _root, config, store, preview = _seed(tmp_path, monkeypatch)
+    result = confirm_mission_for_daemon(
+        config=config, store=store, mission_id=preview["mission_id"]
+    )
+    store.admit_mission_execution(
+        preview["mission_id"], snapshot_hash=result["snapshot_hash"]
+    )
+
+    active = store.project_view(config).scheduler
+    assert active == {
+        "state": "running",
+        "active_mission_id": preview["mission_id"],
+        "active_step": "step_1",
+        "next_transition": "prepare_dispatch",
+        "blockers": [],
+    }
+
+    state = store.load()
+    state["missions"][0].update({"status": "completed", "current_step": 2})
+    store.save(state)
+    terminal = store.project_view(config).scheduler
+    assert terminal == {
+        "state": "terminal",
+        "active_mission_id": preview["mission_id"],
+        "active_step": None,
+        "next_transition": None,
+        "blockers": [],
+    }
+
+
+def test_project_view_scheduler_is_read_only_and_never_probes_tmux(
+    tmp_path, monkeypatch
+) -> None:
+    root, config, store, preview = _seed(tmp_path, monkeypatch)
+    result = confirm_mission_for_daemon(
+        config=config, store=store, mission_id=preview["mission_id"]
+    )
+    store.admit_mission_execution(
+        preview["mission_id"], snapshot_hash=result["snapshot_hash"]
+    )
+    state = store.load()
+    state["missions"][0].update({"status": "running", "current_step": 1})
+    store.save(state)
+    monkeypatch.setattr(
+        "agentdeck.daemon.service.probe_tmux_worker_readiness",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("ProjectView must not inspect tmux")
+        ),
+    )
+    before = _tree_bytes(root)
+
+    assert store.project_view(config).scheduler == {
+        "state": "running",
+        "active_mission_id": preview["mission_id"],
+        "active_step": "step_2",
+        "next_transition": "start_worker",
+        "blockers": [],
+    }
+    assert _tree_bytes(root) == before
+
+
 @pytest.mark.parametrize("drift", ["task", "order", "add", "remove"])
 def test_freeze_recomputes_current_plan_hash_inside_lock_and_is_full_tree_zero_write(
     tmp_path, monkeypatch, drift

@@ -1051,11 +1051,14 @@ When `recovery.recommended_action.source` is:
 
 ## Invariants
 
-The M2a workbench additionally embeds `daemon_runtime_card`,
+The M2 workbench additionally embeds `daemon_runtime_card`,
 `mission_scheduler_card`, and `client_session_card`. They reuse the three
 versioned discovery contracts and ProjectView daemon/scheduler facts. Rendering
 them never starts, stops, connects, schedules, dispatches, or grants a lease.
-M2a's scheduler card remains explicitly inactive.
+The scheduler card faithfully projects ProjectView's current durable
+Mission state (`inactive`, `running`, `waiting_human`, `blocked`, or
+`terminal`) and the pure gate's next bounded transition. Rendering remains
+read-only and never probes tmux or applies that transition.
 M2b additionally embeds `mission_recovery_card`, which must be object-equal to
 `project_view.mission_recovery`. It gives reconnecting clients compact progress,
 completed steps, at most three validated hashed results, the active step/wait

@@ -207,6 +207,13 @@ def test_project_view_and_workbench_embed_same_source_daemon_cards(tmp_path: Pat
     assert set(project_view["scheduler"]) == {
         "state", "active_mission_id", "active_step", "next_transition", "blockers",
     }
+    assert project_view["scheduler"] == {
+        "state": "inactive",
+        "active_mission_id": None,
+        "active_step": None,
+        "next_transition": None,
+        "blockers": [],
+    }
     workbench = cli._workbench_snapshot_payload(project_view, store, since_event_id=None)
     assert workbench["daemon_runtime_card"]["state"] == project_view["daemon"]["state"]
     assert workbench["mission_scheduler_card"]["state"] == project_view["scheduler"]["state"]

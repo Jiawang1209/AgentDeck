@@ -21,7 +21,12 @@ import stat
 import subprocess
 from typing import Any, Protocol
 
-from .scheduler import SchedulerDecision, SchedulerFacts, schedule_gate
+from .scheduler import (
+    SchedulerDecision,
+    SchedulerFacts,
+    schedule_gate,
+    scheduler_observation,
+)
 from .scheduler import WORKER_START_REQUIRED_BLOCKER
 from .supervisor import SubmittedReceipt, TransportResult
 from ..runtime.base import RuntimeBackend
@@ -1215,13 +1220,16 @@ def probe_tmux_worker_readiness(
     return False, blocker
 
 
-def scheduler_facts_from_store(
-    store: object, *, tmux_backend: RuntimeBackend | None = None
+def scheduler_facts_from_state(
+    state: Mapping[str, object],
+    config: object,
+    *,
+    tmux_backend: RuntimeBackend | None = None,
+    probe_runtime: bool,
 ) -> SchedulerFacts | None:
-    """Project one admitted Mission from one durable StateStore snapshot."""
-    if not callable(getattr(store, "load", None)):
-        raise ServiceError("scheduler store is invalid")
-    state = store.load()
+    """Project one admitted Mission from one already loaded durable snapshot."""
+    if not isinstance(state, Mapping) or type(probe_runtime) is not bool:
+        raise ServiceError("scheduler state is invalid")
     missions = [
         item for item in state.get("missions", [])
         if isinstance(item, dict)
@@ -1340,10 +1348,8 @@ def scheduler_facts_from_store(
             ownership_state = "conflict"
             worker_ready = False
         try:
-            from ..config import load_config
             from .governance import effective_transport_for_step
 
-            config = load_config(Path(store.root))
             agent = next(item for item in config.agents if item.agent_id == step.get("agent_id"))
             worker = next(
                 item for item in snapshot.get("workers", [])
@@ -1370,25 +1376,21 @@ def scheduler_facts_from_store(
             )
             if effective_transport == "acp":
                 command = agent.transport_command[0] if agent.transport_command else ""
-                worker_ready = bool(
-                    command
-                    and (
-                        Path(command).expanduser().is_file()
-                        if "/" in command
-                        else shutil.which(command) is not None
+                worker_ready = bool(command)
+                if probe_runtime:
+                    worker_ready = bool(
+                        command
+                        and (
+                            Path(command).expanduser().is_file()
+                            if "/" in command
+                            else shutil.which(command) is not None
+                        )
                     )
-                )
             else:
-                project_view = store.project_view(config)
-                runtime = next(
-                    (
-                        item.get("runtime", {})
-                        for item in project_view.agents
-                        if isinstance(item, dict)
-                        and item.get("agent_id") == agent.agent_id
-                    ),
-                    {},
-                )
+                bindings = state.get("agents", {})
+                if not isinstance(bindings, Mapping):
+                    raise ValueError("Worker runtime bindings are invalid")
+                runtime = bindings.get(agent.agent_id, {})
                 worker_ready = bool(
                     isinstance(runtime, dict)
                     and runtime.get("status") == "running"
@@ -1421,7 +1423,7 @@ def scheduler_facts_from_store(
                         runtime_blocker = starts[0].get("blocker")
                     else:
                         runtime_blocker = "tmux Worker runtime binding drift"
-                elif tmux_backend is not None and (
+                elif probe_runtime and tmux_backend is not None and (
                     current is None or current.get("state") == "prepared"
                 ):
                     pane_id = runtime["pane_id"]
@@ -1464,6 +1466,72 @@ def scheduler_facts_from_store(
             or mission["daemon_admission"].get("blocker")
         ),
     )
+
+
+def scheduler_facts_from_store(
+    store: object, *, tmux_backend: RuntimeBackend | None = None
+) -> SchedulerFacts | None:
+    """Load current config/state once, then add bounded live readiness probes."""
+    from ..config import load_config
+
+    if not callable(getattr(store, "load", None)):
+        raise ServiceError("scheduler store is invalid")
+    state = store.load()
+    try:
+        config = load_config(Path(store.root))
+    except (OSError, TypeError, ValueError):
+        # Preserve a deterministic blocked fact projection when project config
+        # is unavailable; never stall the daemon mutation queue.
+        config = object()
+    return scheduler_facts_from_state(
+        state,
+        config,
+        tmux_backend=tmux_backend,
+        probe_runtime=True,
+    )
+
+
+def scheduler_summary_from_state(
+    state: Mapping[str, object], config: object
+) -> dict[str, object]:
+    """Derive ProjectView scheduler state without runtime I/O or mutation."""
+    try:
+        facts = scheduler_facts_from_state(
+            state, config, tmux_backend=None, probe_runtime=False
+        )
+    except ServiceError:
+        return {
+            "state": "blocked",
+            "active_mission_id": None,
+            "active_step": None,
+            "next_transition": "blocked",
+            "blockers": ["scheduler durable facts are invalid"],
+        }
+    if facts is not None:
+        return scheduler_observation(facts)
+    missions = state.get("missions", [])
+    terminal = [
+        item for item in missions
+        if isinstance(item, dict)
+        and item.get("status") in {"completed", "stopped", "interrupted"}
+        and isinstance(item.get("daemon_admission"), dict)
+        and item["daemon_admission"].get("state") == "admitted"
+    ] if isinstance(missions, list) else []
+    if terminal:
+        return {
+            "state": "terminal",
+            "active_mission_id": terminal[-1].get("mission_id"),
+            "active_step": None,
+            "next_transition": None,
+            "blockers": [],
+        }
+    return {
+        "state": "inactive",
+        "active_mission_id": None,
+        "active_step": None,
+        "next_transition": None,
+        "blockers": [],
+    }
 
 
 Callback = Callable[[], object | Awaitable[object]]

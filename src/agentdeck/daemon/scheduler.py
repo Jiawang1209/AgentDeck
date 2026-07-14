@@ -521,6 +521,33 @@ def schedule_gate(facts: SchedulerFacts) -> SchedulerDecision:
     return _decision("blocked", facts, blocker="incomplete active Mission facts")
 
 
+def scheduler_observation(facts: SchedulerFacts) -> dict[str, object]:
+    """Project one GUI-ready scheduler summary from the exact pure gate."""
+    decision = schedule_gate(facts)
+    if facts.mission_state in _TERMINAL_MISSION_STATES:
+        state = "terminal"
+        next_transition = None
+    elif decision.kind == "idle":
+        state = "inactive"
+        next_transition = None
+    elif decision.kind in {"wait_human", "wait_ambiguity"}:
+        state = "waiting_human"
+        next_transition = decision.kind
+    elif decision.kind == "blocked":
+        state = "blocked"
+        next_transition = decision.kind
+    else:
+        state = "running"
+        next_transition = decision.kind
+    return {
+        "state": state,
+        "active_mission_id": facts.mission_id,
+        "active_step": facts.step_id,
+        "next_transition": next_transition,
+        "blockers": [] if decision.blocker is None else [decision.blocker],
+    }
+
+
 EffectResult = TypeVar("EffectResult")
 
 

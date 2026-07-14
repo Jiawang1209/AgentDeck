@@ -23,6 +23,7 @@ from agentdeck.daemon.scheduler import (
     SchedulerFacts,
     run_scheduler_once,
     schedule_gate,
+    scheduler_observation,
     WORKER_START_REQUIRED_BLOCKER,
 )
 
@@ -706,6 +707,25 @@ def test_scheduler_is_deterministic() -> None:
             attempt_id=ATTEMPT_ID,
             blocker=None,
         )
+    }
+
+
+def test_scheduler_observation_maps_waiting_human_and_blocked_from_same_gate() -> None:
+    waiting = scheduler_observation(facts(permission_state="pending"))
+    assert waiting == {
+        "state": "waiting_human",
+        "active_mission_id": MISSION_ID,
+        "active_step": STEP_ID,
+        "next_transition": "wait_human",
+        "blockers": [],
+    }
+    blocked = scheduler_observation(facts(blocker="policy denied"))
+    assert blocked == {
+        "state": "blocked",
+        "active_mission_id": MISSION_ID,
+        "active_step": STEP_ID,
+        "next_transition": "blocked",
+        "blockers": ["policy denied"],
     }
 
 

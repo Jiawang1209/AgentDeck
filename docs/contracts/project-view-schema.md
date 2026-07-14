@@ -541,15 +541,22 @@ If `cursor_found` is false, the cursor is stale or unknown and the response fall
 
 ## Consumer Rules
 
-## M2a daemon and scheduler summaries
+## M2 daemon and scheduler summaries
 
 ProjectView includes top-level `daemon` and `scheduler` compact summaries.
 `daemon` contains state, health, client count, controller presence, idle-exit
 state, protocol compatibility, and blockers without PID, socket, nonce, or home
 paths. `scheduler` contains active Mission/step/next-transition facts and
-blockers. During M2a it is deliberately `inactive`; background Mission
-scheduling begins only in M2b. Both summaries are derived read-only from the
-durable state model and are the source for the corresponding workbench cards.
+blockers. It is derived from the same immutable `SchedulerFacts` and pure
+scheduler gate used by the project daemon: active work projects `running`,
+permission or ambiguity waits project `waiting_human`, fail-closed authority
+projects `blocked`, and a finished admitted Mission projects `terminal`. With
+no daemon-managed Mission it is `inactive` with no obsolete implementation
+blocker. ProjectView uses only the already loaded durable snapshot and current
+project config; it never probes tmux, checks live process readiness, writes
+state, or recursively renders another ProjectView. The daemon may add bounded
+live readiness probes before applying the same gate. These summaries are the
+source for the corresponding workbench cards.
 `daemon.controller_present` is a time-aware read-only projection: the exact
 persisted lease must parse, use the active `lse_` namespace, and have an aware
 expiry later than the current UTC instant. Expired, terminal, naive, or malformed
