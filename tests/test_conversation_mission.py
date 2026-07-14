@@ -199,6 +199,10 @@ def test_requested_mission_step_count_avoids_ambiguous_false_positives(
         "严格2.0步骤完成",
         "先共2轮，再共65轮",
         "use 2 steps, then use 65 steps",
+        "共2轮 then use 65 steps",
+        "use 65 steps 然后共2轮",
+        "共2轮 then use 4 steps",
+        "use 4 steps 然后共2轮",
     ],
 )
 def test_requested_mission_step_count_rejects_explicit_unsafe_bounds(
@@ -206,6 +210,19 @@ def test_requested_mission_step_count_rejects_explicit_unsafe_bounds(
 ) -> None:
     with pytest.raises(ValueError, match="mission step count invalid"):
         requested_mission_step_count(message, default=8)
+
+
+@pytest.mark.parametrize(
+    ("message", "expected"),
+    [
+        ("共2轮 then use 2 steps", 2),
+        ("use 4 steps，然后共4轮，再按四步骤完成", 4),
+    ],
+)
+def test_requested_mission_step_count_allows_repeated_equal_cross_language_counts(
+    message: str, expected: int
+) -> None:
+    assert requested_mission_step_count(message, default=8) == expected
 
 
 @pytest.mark.parametrize("channel", ["outbox", "journal"])

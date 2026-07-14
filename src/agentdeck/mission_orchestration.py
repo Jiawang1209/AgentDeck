@@ -262,21 +262,20 @@ def requested_mission_step_count(user_message: str, *, default: int) -> int:
         rf"(?<![A-Za-z0-9_第{_COUNT_GLYPHS}])"
         rf"(?P<count>{_COUNT_LIKE_TOKEN})\s*(?:个\s*)?(?:串行\s*)?步(?:骤)?",
     )
-    chinese_counts: list[int] = []
+    valid_counts: list[int] = []
+    invalid_count = False
     for pattern in chinese_patterns:
         for match in re.finditer(pattern, user_message):
             parsed = _parse_mission_count_token(match.group("count"))
             if parsed is None or not 2 <= parsed <= MAX_MISSION_STEPS:
-                raise ValueError("mission step count invalid")
-            chinese_counts.append(parsed)
-    if chinese_counts:
-        return chinese_counts[0]
+                invalid_count = True
+            else:
+                valid_counts.append(parsed)
     english_pattern = (
         r"(?<![A-Za-z0-9_])(?:exactly\s+)?"
-        r"(?P<count>[0-9]+|one|two|three|four|five|six|seven|eight|nine|ten)"
+        rf"(?P<count>{_COUNT_LIKE_TOKEN}|one|two|three|four|five|six|seven|eight|nine|ten)"
         r"\s+steps(?![A-Za-z0-9_])"
     )
-    english_counts: list[int] = []
     for english in re.finditer(english_pattern, user_message, re.IGNORECASE):
         token = english.group("count").lower()
         parsed = (
@@ -285,10 +284,13 @@ def requested_mission_step_count(user_message: str, *, default: int) -> int:
             else _ENGLISH_COUNT_WORDS.get(token)
         )
         if parsed is None or not 2 <= parsed <= MAX_MISSION_STEPS:
-            raise ValueError("mission step count invalid")
-        english_counts.append(parsed)
-    if english_counts:
-        return english_counts[0]
+            invalid_count = True
+        else:
+            valid_counts.append(parsed)
+    if invalid_count or len(set(valid_counts)) > 1:
+        raise ValueError("mission step count invalid")
+    if valid_counts:
+        return valid_counts[0]
     return default
 
 

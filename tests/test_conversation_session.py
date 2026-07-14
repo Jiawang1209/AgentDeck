@@ -345,6 +345,10 @@ def test_partial_candidate_commit_is_rejected_and_turn_terminalizes_failed(
         "共壹佰轮完成任务",
         "共64.0轮完成任务",
         "共+64轮完成任务",
+        "共2轮 then use 65 steps",
+        "use 65 steps 然后共2轮",
+        "共2轮 then use 4 steps",
+        "use 4 steps 然后共2轮",
     ],
 )
 def test_explicit_invalid_step_count_durably_fails_before_leader_call(
