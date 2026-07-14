@@ -4,7 +4,7 @@ Date: 2026-07-14
 
 ## Verdict
 
-**Deterministic M2 acceptance: PASS. Real Codex/Claude end-to-end rehearsal: PASS.**
+**Deterministic M2 acceptance: PASS. Two-step real transport rehearsal: PASS. Full approved four-stage M2c rehearsal: BLOCKED.**
 
 ## tmux startup/readiness correction
 
@@ -77,9 +77,10 @@ first cleanup-stage failure.
 
 - Crash/acceptance focused group, repeated twice: `12 passed` in each run.
 - Acceptance/crash/recovery regression: `127 passed`.
-- Final daemon suite after startup/readiness and terminal-ambiguity closure:
-  `946 passed`.
-- Final full suite: `2827 passed, 1 skipped` in `103.12s`.
+- Final daemon suite after all authority, recovery and mixed-version closure:
+  `963 passed`.
+- Final full suite on frozen commit `be4dee08`: `2928 passed, 1 skipped` in
+  `121.21s`.
 - Compileall and `git diff --check`: PASS.
 
 ## Real component evidence
@@ -122,6 +123,30 @@ run. The passing run ended through exact `daemon.force-stop` preview/confirm;
 the daemon PID exited, endpoint metadata and socket were removed, the exact
 project tmux socket was killed, the disposable directory was deleted, and the
 suffix-scoped process audit was empty. No unknown Worker effect was retried.
+
+## Full approved M2c rehearsal blocker
+
+The approved M2c gate is stronger than the passing two-step transport proof: it
+requires one real implementation-review-revision-acceptance Mission plus
+Mission-time tmux visibility, takeover and return-control. On frozen commit
+`be4dee08`, two independent fresh projects used bare `agentdeck`, an installed
+Codex CLI `0.131.0` Leader with model `gpt-5.5`, ready Claude Agent ACP
+`0.58.1`, and tmux `3.6a`. Both real Leader calls ended durably before preview
+creation with `state=failed` and fixed reason `leader_schema`.
+
+For each attempt, `plans=0`, `missions=0`, `mission_attempts=0`,
+`permission_requests=0`, and Worker effects were zero. Therefore no exact
+Mission confirmation, Worker prompt, permission decision, disconnect/resume,
+takeover/return-control, four-step handoff, or file effect was authorized. The
+second project was the sole allowed fresh retry and produced the same terminal
+stage. This is **BLOCKED**, not PASS; no raw Leader output was retained to guess
+which schema field drifted.
+
+Both disposable directories, daemon processes and isolated tmux sockets were
+removed. Suffix-scoped process audits were empty. No package installation,
+authentication change, tracked-file change, Worker retry, or file effect
+occurred. Earlier aborted harness attempts are not acceptance evidence: they
+were cleaned and are retained only as development history.
 
 No transcript, raw prompt/tool I/O, credentials, authentication data,
 environment dump, opaque native session id, or absolute home path is included
