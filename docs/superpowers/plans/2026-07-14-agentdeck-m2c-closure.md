@@ -1561,13 +1561,30 @@ result through its asserted payload; real test is exactly one skip. A
 `ready=false` preflight payload is not M2c PASS even though the read-only
 contract test itself passes.
 
-- [ ] **Step 6: Update history and commit**
+- [x] **Step 6: Update history and commit**
 
 ```bash
 git add tests/test_m2c_live_acceptance.py \
   docs/validation/phase3-m2c-live-acceptance-sop.md HISTORY.md
 git commit -m "Add opt-in real M2c acceptance gate"
 ```
+
+#### Task 10 P1 hardening follow-up
+
+- [x] Run every capability probe from the disposable project with isolated
+  HOME/XDG/TMP roots and a minimal environment; treat any project or isolation
+  root mutation as fixed blocker `probe_wrote_files`.
+- [x] Execute the exact enabled pane-selection control without a shell and
+  verify the selected pane through the exact project tmux socket without
+  capturing terminal contents.
+- [x] Verify daemon identity before cleanup, track descendants, use bounded
+  TERM/KILL fallback, clean only the exact tmux socket, and derive residual
+  counts from post-cleanup probes.
+- [x] Close partially acquired PTY/process resources on every setup/spawn
+  failure and reduce all setup/cleanup exceptions to fixed compact evidence.
+- [x] Add six default non-live helper regressions covering probe isolation,
+  pane identity, daemon fallback cleanup, tmux socket scoping, PTY spawn
+  closure, and derived residual counts.
 
 ### Task 11: Run the real frozen-commit rehearsal and record evidence
 

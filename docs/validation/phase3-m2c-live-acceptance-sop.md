@@ -14,9 +14,11 @@ live run may update the Task 11 validation report or product status.
 
 The harness never searches for a replacement provider after opt-in, installs a
 package, performs login, changes global settings, or touches a user tmux
-socket/session. All writes are confined to a disposable Git project under
-`/tmp`, including exact-name wrappers that bind name-based provider/tmux calls
-to the four validated executable paths.
+socket/session. Capability probes run from the disposable project with a
+minimal environment and isolated `HOME`, `XDG_CONFIG_HOME`, `XDG_CACHE_HOME`,
+`XDG_DATA_HOME`, and `TMPDIR`. Live writes are confined to that disposable
+tree, including exact-name wrappers that bind name-based provider/tmux calls to
+the four validated executable paths.
 
 ## 1. Freeze and inspect the checkout
 
@@ -52,11 +54,14 @@ payload contains only:
 - sanitized version strings;
 - the fixed probe timeout.
 
-The test snapshots a disposable tree before and after probing and requires
-byte-identical contents. It also deterministically rejects a relative path and
-a symlink path without executing either. The portable test passes when this
-contract is honored even if the product result is `ready=false`; that result is
-still a setup blocker, not M2c PASS.
+The test snapshots both the disposable project and every actual isolated probe
+root before and after probing, including file bytes, kinds, and directory/file
+mtimes. Any probe write, including a create-then-delete mutation, produces the
+fixed `probe_wrote_files` blocker and forces `ready=false`. It also
+deterministically rejects a relative path and a symlink path without executing
+either. The portable test passes when this contract is honored even if the
+product result is `ready=false`; that result is still a setup blocker, not M2c
+PASS.
 
 ## 3. Validate exact executable inputs
 
@@ -101,7 +106,9 @@ a bare bounded PTY. It requires:
 3. both real Claude ACP edit permissions confirmed through the Task 9 public
    scoped-handle preview/confirm commands with no controller credential in
    public JSON or argv;
-4. the exact ProjectView/workbench `codex-worker` pane control;
+4. execution of the exact enabled ProjectView/workbench `codex-worker`
+   `select_pane` control as argv without a shell, followed by an exact
+   project-socket `display-message` identity check (never pane capture text);
 5. a safe step-3 pause, explicit `codex-worker` takeover, no-change
    return-control reconciliation, then continuation;
 6. four succeeded attempts, **four canonical recorded handoff evidence rows**,
@@ -109,12 +116,17 @@ a bare bounded PTY. It requires:
 7. exact `artifact.txt` bytes `accepted-v2\n` and their byte count/hash;
 8. agreement among ProjectView, Mission status, workbench ledger, events,
    traces, execution snapshot, daemon admission, and attempt receipts;
-9. collect-all cleanup of the daemon endpoint, exact disposable tmux
-   socket/session, project tree, and managed processes with residual count zero.
+9. collect-all cleanup that first verifies exact daemon PID/instance/project
+   metadata, tracks its descendant process tree, falls back from normal stop to
+   bounded TERM/KILL, kills only the exact disposable tmux socket's session and
+   server, removes the project, and derives zero residual process/resource
+   counts from post-cleanup probes.
 
-PTY output is retained only as a 64 KiB tail for in-process parsing. Failures
-emit only byte count, truncation flag, SHA-256, a fixed stage/code, and state
-cardinalities—never terminal text.
+PTY output is retained only as a 64 KiB tail for in-process parsing. PTY open,
+process spawn, setup, and cleanup are all enclosed by collect-all failure
+guards that close any acquired descriptors/processes. Failures emit only byte
+count, truncation flag, SHA-256, a fixed stage/code, and state cardinalities—
+never terminal text, paths, commands, environment values, or raw exceptions.
 
 ## 5. Classify the result
 
@@ -137,6 +149,6 @@ conda run --no-capture-output -n agentdeck \
   pytest tests/test_m2c_live_acceptance.py -q
 ```
 
-Expected portable result: one preflight-contract test passes and exactly one
-live test skips. A printed `ready=false` payload remains an honest setup result,
-not M2c PASS.
+Expected portable result: seven portable contract/helper tests pass and exactly
+one live test skips. A printed `ready=false` payload remains an honest setup
+result, not M2c PASS.
