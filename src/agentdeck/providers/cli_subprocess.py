@@ -772,7 +772,8 @@ def cli_native_schema_ready(provider: str) -> tuple[bool, str | None]:
             return False, _CLI_NATIVE_SCHEMA_UNAVAILABLE
         option_names = set(
             re.findall(
-                r"(?<![A-Za-z0-9_-])--[A-Za-z0-9][A-Za-z0-9-]*",
+                r"(?<![A-Za-z0-9_-])--[A-Za-z0-9][A-Za-z0-9-]*"
+                r"(?![A-Za-z0-9_-])",
                 help_text,
             )
         )
