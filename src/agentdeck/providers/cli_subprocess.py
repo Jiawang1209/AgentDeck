@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 import shutil
@@ -58,6 +59,12 @@ def _strict_json_decode(payload: bytes) -> object:
     def reject_constant(_value: str) -> object:
         raise _StrictJsonError("non-JSON numeric constant")
 
+    def parse_finite_float(value: str) -> float:
+        parsed = float(value)
+        if not math.isfinite(parsed):
+            raise _StrictJsonError("non-finite JSON number")
+        return parsed
+
     invalid = False
     decoded: object = None
     try:
@@ -66,6 +73,7 @@ def _strict_json_decode(payload: bytes) -> object:
             text,
             object_pairs_hook=reject_duplicates,
             parse_constant=reject_constant,
+            parse_float=parse_finite_float,
         )
     except (
         JSONDecodeError,
@@ -762,6 +770,9 @@ def cli_native_schema_ready(provider: str) -> tuple[bool, str | None]:
             help_text = payload.decode("utf-8", errors="strict")
         except (CliLeaderProviderError, UnicodeDecodeError):
             return False, _CLI_NATIVE_SCHEMA_UNAVAILABLE
-        if not all(flag in help_text for flag in required_flags):
+        option_names = set(
+            re.findall(r"--[A-Za-z0-9][A-Za-z0-9-]*", help_text)
+        )
+        if not all(flag in option_names for flag in required_flags):
             return False, _CLI_NATIVE_SCHEMA_UNAVAILABLE
     return True, None

@@ -268,6 +268,38 @@ def test_cli_native_schema_probe_returns_only_fixed_blockers(
 
 
 @pytest.mark.parametrize(
+    ("provider", "spoofed_help"),
+    [
+        (
+            "claude-cli",
+            "--json-schema-file --output-formatting",
+        ),
+        (
+            "codex-cli",
+            "--x-output-schema --output-last-message-suffix",
+        ),
+        (
+            "codex-cli",
+            "--output-schema-file --output-last-message-suffix",
+        ),
+    ],
+)
+def test_cli_native_schema_probe_rejects_required_flag_substring_spoofs(
+    monkeypatch, provider: str, spoofed_help: str
+) -> None:
+    def fake_run(command, **kwargs):
+        os.write(kwargs["stdout"].fileno(), spoofed_help.encode("utf-8"))
+        return subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr("agentdeck.providers.cli_subprocess.subprocess.run", fake_run)
+
+    assert cli_native_schema_ready(provider) == (
+        False,
+        "Leader CLI native JSON schema capability is unavailable",
+    )
+
+
+@pytest.mark.parametrize(
     "case",
     [
         "missing_structured_output",
@@ -337,6 +369,26 @@ def test_claude_rejects_invalid_native_output_envelopes(
     assert raised.value.stage == "json_parse"
     assert raised.value.diagnostic_code == "invalid_output_envelope"
     assert payload not in repr(_exception_values(raised.value))
+
+
+def test_claude_rejects_exponent_overflow_in_ignored_envelope_metadata(
+    tmp_path: Path, monkeypatch
+) -> None:
+    request = _request(tmp_path)
+    payload = json.dumps(_claude_envelope()).removesuffix("}") + ',"duration_ms":1e999}'
+
+    def fake_run(command, **kwargs):
+        os.write(kwargs["stdout"].fileno(), payload.encode("utf-8"))
+        return subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr("agentdeck.providers.cli_subprocess.subprocess.run", fake_run)
+
+    with pytest.raises(CliLeaderProviderError) as raised:
+        ClaudeCliProvider().plan_result(request)
+
+    assert raised.value.stage == "json_parse"
+    assert raised.value.diagnostic_code == "invalid_output_envelope"
+    _assert_exception_graph_redacted(raised.value, (payload, "inf", "Infinity"))
 
 
 def test_claude_bounds_native_stdout_and_never_calls_fenced_parser(
@@ -743,7 +795,14 @@ def test_cli_error_accepts_only_supported_stage_and_diagnostic_combinations(
 
 @pytest.mark.parametrize(
     "case",
-    ["duplicate_key", "nan", "infinity", "top_level_extra", "step_extra"],
+    [
+        "duplicate_key",
+        "nan",
+        "infinity",
+        "exponent_overflow",
+        "top_level_extra",
+        "step_extra",
+    ],
 )
 def test_codex_strict_json_and_schema_parity_rejects_noncanonical_output(
     tmp_path: Path, monkeypatch, case: str
@@ -765,9 +824,13 @@ def test_codex_strict_json_and_schema_parity_rejects_noncanonical_output(
         )
     elif case == "nan":
         payload = json.dumps(plan).replace('"risk": "needs review"', '"risk": NaN', 1)
-    else:
+    elif case == "infinity":
         payload = json.dumps(plan).replace(
             '"risk": "needs review"', '"risk": Infinity', 1
+        )
+    else:
+        payload = json.dumps(plan).replace(
+            '"risk": "needs review"', '"risk": 1e999', 1
         )
 
     def fake_run(command, **_kwargs):
