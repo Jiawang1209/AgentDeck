@@ -10,6 +10,7 @@
 - **Sanitized capability facts**: Codex CLI `codex-cli 0.131.0`, Claude CLI `2.1.208 (Claude Code)`, Claude Agent ACP `0.58.1`, and tmux `tmux 3.6a` all reported ready. No executable path, home path, environment value, raw probe output, prompt, transcript, or authentication material is retained in the evidence.
 - **Honest BLOCKED verdict**: the opt-in live node was not run. Live attempt count is zero; native live constraint/schema facts, plan/Mission creation, four stages, permissions, disconnect/reconnect, takeover/return-control, four handoffs, three inter-stage links, artifact, ledger, trace, snapshot, and acceptance agreement are all not reached. The earlier two-step transport PASS remains historical evidence and is not promoted to M2c PASS.
 - **Zero residual/global mutation**: the ephemeral staging area and M2c temporary roots were removed with zero residual staged resources. No package install, login, authentication, global-setting, README, or north-star change was made.
+- **Checklist closure**: marked Task 11's evidence-commit step complete after the BLOCKED evidence boundary was committed; this changes only plan bookkeeping and does not alter the verdict or authorize a live run.
 
 ### Preserve M2c setup interrupts through cleanup
 

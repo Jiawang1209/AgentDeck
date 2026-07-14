@@ -1718,7 +1718,7 @@ README state that the real four-stage Mission is proven. On BLOCKED, preserve
 the blocker and do not advertise completion. Keep English/Chinese README
 meaning aligned and concise.
 
-- [ ] **Step 7: Commit the evidence boundary**
+- [x] **Step 7: Commit the evidence boundary**
 
 ```bash
 git add docs/validation/2026-07-13-phase3-m2-project-daemon.md \
