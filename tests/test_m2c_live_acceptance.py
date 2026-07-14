@@ -2305,40 +2305,36 @@ def _run_live_acceptance() -> dict[str, object]:
         ) from None
 
 
+def _remove_live_setup_parent(parent: Path) -> bool:
+    try:
+        if parent.exists():
+            shutil.rmtree(parent)
+        return parent.exists()
+    except BaseException:
+        return True
+
+
 def _run_live_acceptance_in_project(
     paths: dict[str, _ExecutableSeal], parent: Path
 ) -> dict[str, object]:
     try:
         return _run_live_acceptance_in_project_guarded(paths, parent)
-    except _LiveHarnessFailure as exc:
-        cleanup_failed = False
-        if parent.exists():
-            try:
-                shutil.rmtree(parent)
-            except OSError:
-                cleanup_failed = True
-        if cleanup_failed or parent.exists():
-            exc.add_note(
-                json.dumps(
-                    {
-                        "stage": "live_setup_cleanup",
-                        "codes": ["live_setup_cleanup_failed"],
-                    },
-                    sort_keys=True,
+    except BaseException as exc:
+        cleanup_failed = _remove_live_setup_parent(parent)
+        if isinstance(exc, _LiveHarnessFailure) or not isinstance(exc, Exception):
+            if cleanup_failed:
+                exc.add_note(
+                    json.dumps(
+                        {
+                            "stage": "live_setup_cleanup",
+                            "codes": ["live_setup_cleanup_failed"],
+                        },
+                        sort_keys=True,
+                    )
                 )
-            )
-        raise
-    except Exception:
-        cleanup_failed = False
-        if parent.exists():
-            try:
-                shutil.rmtree(parent)
-            except OSError:
-                cleanup_failed = True
+            raise
         raise _live_failure(
-            "live_setup_cleanup_failed"
-            if cleanup_failed or parent.exists()
-            else "live_setup_failed"
+            "live_setup_cleanup_failed" if cleanup_failed else "live_setup_failed"
         ) from None
 
 
@@ -3667,6 +3663,107 @@ def test_live_setup_cleanup_failure_keeps_original_blocker_compact(
     assert "launcher_setup_blocked" in str(error.value)
     assert "live_setup_cleanup_failed" in repr(error.value.__notes__)
     assert "SECRET" not in repr(error.value.__notes__)
+
+
+class _CleanupAbort(BaseException):
+    pass
+
+
+@pytest.mark.parametrize(
+    ("interrupt_type", "failure_index"),
+    [
+        (KeyboardInterrupt, 0),
+        (KeyboardInterrupt, 2),
+        (SystemExit, 0),
+        (SystemExit, 2),
+    ],
+)
+def test_live_setup_interrupt_removes_parent_and_reraises_same_object(
+    tmp_path, monkeypatch, interrupt_type, failure_index,
+) -> None:
+    parent = tmp_path / (
+        f"agentdeck-m2c-live-{interrupt_type.__name__}-{failure_index}"
+    )
+    parent.mkdir(mode=0o700)
+    source_bin = tmp_path / (
+        f"source-{interrupt_type.__name__}-{failure_index}"
+    )
+    source_bin.mkdir(mode=0o700)
+    paths: dict[str, _ExecutableSeal] = {}
+    for name, _env_name, _help, _version in TOOL_SPECS:
+        executable = source_bin / name
+        executable.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        executable.chmod(0o700)
+        seal = _seal_executable(str(executable))
+        assert seal is not None
+        paths[name] = seal
+    real_writer = _write_controlled_launcher
+    interruption = interrupt_type("stop setup")
+    calls = 0
+
+    def interrupt_at_index(name, source, destination):
+        nonlocal calls
+        current = calls
+        calls += 1
+        if current == failure_index:
+            raise interruption
+        return real_writer(name, source, destination)
+
+    monkeypatch.setattr(
+        sys.modules[__name__],
+        "_write_controlled_launcher",
+        interrupt_at_index,
+    )
+
+    with pytest.raises(interrupt_type) as raised:
+        _run_live_acceptance_in_project(paths, parent)
+
+    assert raised.value is interruption
+    assert not parent.exists()
+
+
+@pytest.mark.parametrize(
+    ("interrupt_type", "cleanup_error_type"),
+    [
+        (KeyboardInterrupt, OSError),
+        (SystemExit, OSError),
+        (KeyboardInterrupt, _CleanupAbort),
+        (SystemExit, _CleanupAbort),
+    ],
+)
+def test_live_setup_interrupt_cleanup_failure_adds_only_compact_note(
+    tmp_path, monkeypatch, interrupt_type, cleanup_error_type,
+) -> None:
+    parent = tmp_path / f"agentdeck-m2c-live-{interrupt_type.__name__}-cleanup"
+    parent.mkdir(mode=0o700)
+    executable = tmp_path / f"tool-{interrupt_type.__name__}"
+    executable.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    executable.chmod(0o700)
+    seal = _seal_executable(str(executable))
+    assert seal is not None
+    interruption = interrupt_type("stop setup")
+    monkeypatch.setattr(
+        sys.modules[__name__],
+        "_write_controlled_launcher",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(interruption),
+    )
+    monkeypatch.setattr(
+        shutil,
+        "rmtree",
+        lambda _path, **_kwargs: (_ for _ in ()).throw(
+            cleanup_error_type("SECRET cleanup path")
+        ),
+    )
+
+    with pytest.raises(interrupt_type) as raised:
+        _run_live_acceptance_in_project(
+            {name: seal for name, _env, _help, _version in TOOL_SPECS},
+            parent,
+        )
+
+    assert raised.value is interruption
+    assert "live_setup_cleanup_failed" in repr(interruption.__notes__)
+    assert "SECRET" not in repr(interruption.__notes__)
 
 
 @pytest.mark.skipif(

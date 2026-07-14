@@ -4,6 +4,13 @@
 
 ## 2026-07-15
 
+### Preserve M2c setup interrupts through cleanup
+
+- **BaseException-safe setup boundary**: pre-guard repo/tmux/runtime/launcher setup now routes every `BaseException` through one parent-removal helper. `KeyboardInterrupt`, `SystemExit`, and `_LiveHarnessFailure` retain the identical exception object and type after cleanup; ordinary exceptions retain the existing compact harness-failure conversion.
+- **Compact cleanup-failure attachment**: if parent removal fails while an interrupt is active—even through a second cleanup `BaseException`—the original interrupt remains primary and receives only the fixed `live_setup_cleanup_failed` note. Raw cleanup exception text and paths are never attached.
+- **Strict TDD evidence**: first/mid-launcher `KeyboardInterrupt` and `SystemExit` cases plus ordinary/custom-`BaseException` cleanup-failure cases were RED with retained parents, replacement interruptions, or missing notes, then GREEN; the combined setup-cleanup target passes eleven cases. No live provider run was attempted; Task 11 evidence and M2c status remain unchanged.
+- **Verification**: the default M2c harness passes `39` tests with the live node skipped; the full suite passes `3348` tests with two skips. `python -m compileall -q src tests`, `git diff --check`, the three-file scope gate, and post-test orphan scan pass in the `agentdeck` environment.
+
 ### Close M2c pre-guard setup cleanup
 
 - **Setup-total cleanup**: `_run_live_acceptance_in_project()` now owns a parent-scoped outer cleanup boundary before the first repo, tmux-temp, runtime-bin, or launcher write. A first or mid-sequence controlled-launcher failure removes the entire disposable parent instead of bypassing the later live resource guard.

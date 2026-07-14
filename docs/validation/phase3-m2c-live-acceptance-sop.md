@@ -164,6 +164,11 @@ runtime-bin, or controlled-launcher write. A first or mid-sequence launcher
 failure removes the entire disposable parent while preserving the original
 fixed blocker. If that removal itself fails, the original blocker remains
 primary and receives only a compact fixed `live_setup_cleanup_failed` note.
+The same outer boundary covers `KeyboardInterrupt`, `SystemExit`, and other
+`BaseException` exits: cleanup runs first, then the identical interruption
+object and type are re-raised. Even a second `BaseException` raised by cleanup
+cannot replace the active interruption; it only causes the same fixed compact
+note to be attached.
 Each drain call also has explicit byte, chunk, duration, and overall-deadline
 budgets, so a continuous writer must yield control to timeout/process checks.
 Process fingerprints use Linux `/proc/<pid>/stat` start ticks or macOS
@@ -195,5 +200,5 @@ conda run --no-capture-output -n agentdeck \
   pytest tests/test_m2c_live_acceptance.py -q
 ```
 
-Expected portable result: `31 passed, 1 skipped`. A printed `ready=false`
+Expected portable result: `39 passed, 1 skipped`. A printed `ready=false`
 payload remains an honest setup result, not M2c PASS.
