@@ -368,7 +368,8 @@ def schedule_gate(facts: SchedulerFacts) -> SchedulerDecision:
         )
 
     if (
-        facts.blocker == WORKER_START_REQUIRED_BLOCKER
+        facts.mission_state not in _TERMINAL_MISSION_STATES
+        and facts.blocker == WORKER_START_REQUIRED_BLOCKER
         and facts.step_state == "pending"
         and facts.attempt_state == "none"
         and facts.attempt_id is None

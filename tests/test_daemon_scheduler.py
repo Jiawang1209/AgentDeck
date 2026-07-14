@@ -746,6 +746,26 @@ def test_scheduler_observation_never_hides_terminal_ambiguity() -> None:
     }
 
 
+@pytest.mark.parametrize("mission_state", ["stopped", "interrupted"])
+def test_terminal_mission_never_authorizes_tmux_worker_start(
+    mission_state: str,
+) -> None:
+    terminal = facts(
+        mission_state=mission_state,
+        step_state="pending",
+        attempt_id=None,
+        attempt_state="none",
+        active_attempt_count=0,
+        blocker=WORKER_START_REQUIRED_BLOCKER,
+    )
+
+    decision = schedule_gate(terminal)
+
+    assert decision.kind == "blocked"
+    assert decision.blocker == WORKER_START_REQUIRED_BLOCKER
+    assert scheduler_observation(terminal)["state"] == "blocked"
+
+
 class RecordingEffects(SchedulerEffects[str]):
     def __init__(self, *, error: Exception | None = None) -> None:
         self.decisions: list[SchedulerDecision] = []
