@@ -416,6 +416,49 @@ def test_codex_strict_json_and_schema_parity_rejects_noncanonical_output(
     _assert_exception_graph_redacted(raised.value, (secret, payload))
 
 
+@pytest.mark.parametrize(
+    ("case", "payload"),
+    [
+        (
+            "integer_digit_limit",
+            b'{"goal":"x","summary":"x","steps":' + b"9" * 5000 + b"}",
+        ),
+        (
+            "recursion_limit",
+            b'{"goal":"x","summary":"x","steps":'
+            + b"[" * 10_000
+            + b"0"
+            + b"]" * 10_000
+            + b"}",
+        ),
+    ],
+    ids=["integer_digit_limit", "recursion_limit"],
+)
+def test_codex_strict_decoder_bounds_large_integer_and_deep_nesting_failures(
+    tmp_path: Path, monkeypatch, case: str, payload: bytes
+) -> None:
+    request = _request(tmp_path)
+
+    def fake_run(command, **_kwargs):
+        _schema_path, result_path = _output_paths(command)
+        result_path.write_bytes(payload)
+        return subprocess.CompletedProcess(command, 0, stdout=None, stderr=None)
+
+    monkeypatch.setattr("agentdeck.providers.cli_subprocess.subprocess.run", fake_run)
+
+    with pytest.raises(CliLeaderProviderError) as raised:
+        CodexCliProvider().plan_result(request)
+
+    assert raised.value.stage == "json_parse"
+    assert raised.value.diagnostic_code == "invalid_output_envelope"
+    rendered = repr(_exception_values(raised.value))
+    assert payload.decode("ascii") not in rendered
+    assert "Exceeds the limit" not in rendered
+    assert "maximum recursion" not in rendered
+    assert "ValueError" not in rendered
+    assert "RecursionError" not in rendered
+
+
 def test_codex_discards_subprocess_diagnostics_at_the_os_boundary(
     tmp_path: Path, monkeypatch
 ) -> None:

@@ -66,7 +66,13 @@ def _strict_json_decode(payload: bytes) -> object:
             object_pairs_hook=reject_duplicates,
             parse_constant=reject_constant,
         )
-    except (JSONDecodeError, UnicodeDecodeError, _StrictJsonError):
+    except (
+        JSONDecodeError,
+        UnicodeDecodeError,
+        _StrictJsonError,
+        ValueError,
+        RecursionError,
+    ):
         invalid = True
     if invalid:
         raise _StrictJsonError("strict JSON decoding failed")
