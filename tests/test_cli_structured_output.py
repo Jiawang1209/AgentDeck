@@ -592,18 +592,32 @@ def test_claude_rejects_private_sink_mutation_during_same_fd_read(
         )
         return subprocess.CompletedProcess(command, 0)
 
-    mutated = False
+    attempt = 0
+    mutated_attempts: set[int] = set()
+
+    original_fake_run = fake_run
+
+    def counted_run(command, **kwargs):
+        nonlocal attempt
+        attempt += 1
+        tracked["attempt"] = attempt
+        return original_fake_run(command, **kwargs)
 
     def mutating_read(descriptor: int, size: int) -> bytes:
-        nonlocal mutated
         chunk = real_read(descriptor, size)
-        if descriptor == tracked.get("fd") and chunk and not mutated:
-            mutated = True
+        current_attempt = tracked.get("attempt")
+        if (
+            descriptor == tracked.get("fd")
+            and chunk
+            and isinstance(current_attempt, int)
+            and current_attempt not in mutated_attempts
+        ):
+            mutated_attempts.add(current_attempt)
             os.lseek(descriptor, 0, os.SEEK_END)
             os.write(descriptor, b"x")
         return chunk
 
-    monkeypatch.setattr("agentdeck.providers.cli_subprocess.subprocess.run", fake_run)
+    monkeypatch.setattr("agentdeck.providers.cli_subprocess.subprocess.run", counted_run)
     monkeypatch.setattr("agentdeck.providers.cli_subprocess.os.read", mutating_read)
 
     with pytest.raises(CliLeaderProviderError) as raised:
@@ -611,7 +625,8 @@ def test_claude_rejects_private_sink_mutation_during_same_fd_read(
 
     assert raised.value.stage == "json_parse"
     assert raised.value.diagnostic_code == "invalid_output_envelope"
-    assert mutated is True
+    assert mutated_attempts == {1, 2}
+    assert raised.value.attempt_count == 2
 
 
 @pytest.mark.parametrize(
@@ -863,7 +878,8 @@ def test_native_workspace_creation_failure_is_fixed_and_redacted(
 
     assert raised.value.stage == "json_parse"
     assert raised.value.diagnostic_code == "invalid_output_envelope"
-    assert prefixes == ["agentdeck-leader-"]
+    assert prefixes == ["agentdeck-leader-", "agentdeck-leader-"]
+    assert raised.value.attempt_count == 2
     _assert_exception_graph_redacted(raised.value, (secret, str(tmp_path)))
 
 
@@ -926,7 +942,8 @@ def test_native_workspace_cleanup_failure_after_success_is_fixed_and_redacted(
 
     assert raised.value.stage == "json_parse"
     assert raised.value.diagnostic_code == "invalid_output_envelope"
-    assert cleanup_calls == 1
+    assert cleanup_calls == 2
+    assert raised.value.attempt_count == 2
     _assert_exception_graph_redacted(raised.value, (secret, str(tmp_path)))
 
 
@@ -1020,7 +1037,8 @@ def test_native_workspace_cleanup_cannot_mask_prior_failure(
         provider_class().plan_result(request)
 
     assert raised.value.stage == expected_stage
-    assert cleanup_calls == 1
+    assert cleanup_calls == (2 if scenario == "schema" else 1)
+    assert raised.value.attempt_count == (2 if scenario == "schema" else 1)
     _assert_exception_graph_redacted(raised.value, (secret, str(tmp_path)))
 
 
@@ -1356,7 +1374,7 @@ def test_codex_discards_subprocess_diagnostics_at_the_os_boundary(
     assert "capture_output" not in seen
     assert seen["text"] is True
     assert seen["check"] is False
-    assert seen["timeout"] == 180
+    assert 0 < seen["timeout"] <= CodexCliProvider.timeout
     assert seen["cwd"] == request.config.root
     assert isinstance(seen["input"], str)
 
@@ -1392,7 +1410,11 @@ def test_codex_rejects_unstable_or_unowned_result_files(
     real_fstat = os.fstat
     real_read = os.read
 
+    reads = 0
+
     def fake_run(command, **_kwargs):
+        nonlocal reads
+        reads = 0
         _schema_path, result_path = _output_paths(command)
         tracked["path"] = result_path
         payload = json.dumps(_valid_plan()).encode("utf-8")
@@ -1424,8 +1446,6 @@ def test_codex_rejects_unstable_or_unowned_result_files(
         if case == "unsafe_owner" and descriptor == tracked.get("fd"):
             return UnsafeOwnerStat(current)
         return current
-
-    reads = 0
 
     def controlled_read(descriptor, size):
         nonlocal reads
@@ -1467,6 +1487,7 @@ def test_codex_rejects_unstable_or_unowned_result_files(
 
     assert raised.value.stage == "json_parse"
     assert raised.value.diagnostic_code == "invalid_output_envelope"
+    assert raised.value.attempt_count == 2
 
 
 def test_codex_normalizes_owned_single_link_result_mode_to_0600(
@@ -1578,6 +1599,7 @@ def test_codex_rejects_missing_or_unsafe_result_files_without_stdout_fallback(
 
     assert raised.value.stage == "json_parse"
     assert raised.value.diagnostic_code == "invalid_output_envelope"
+    assert raised.value.attempt_count == 2
     assert "SECRET" not in repr(raised.value) + repr(vars(raised.value))
     assert not seen["schema"].parent.exists()
 
@@ -1731,3 +1753,235 @@ def test_codex_plan_remains_dict_and_orchestrator_accepts_native_provenance(
     )
     assert result.leader_generation["constraint_mode"] == "native_json_schema"
     assert result.leader_generation["attempt_count"] == 1
+
+
+@pytest.mark.parametrize(
+    ("outcomes", "expected_calls", "expected_stage", "expected_attempts"),
+    [
+        (("json_parse", "success"), 2, None, 2),
+        (("schema", "success"), 2, None, 2),
+        (("json_parse", "json_parse"), 2, "json_parse", 2),
+        (("schema", "schema"), 2, "schema", 2),
+        (("nonzero",), 1, "nonzero", 1),
+        (("timeout",), 1, "timeout", 1),
+        (("oversize",), 1, "oversize", 1),
+    ],
+)
+def test_codex_native_regeneration_matrix_is_bounded_and_same_identity(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    outcomes: tuple[str, ...],
+    expected_calls: int,
+    expected_stage: str | None,
+    expected_attempts: int,
+) -> None:
+    request = _request(tmp_path)
+    calls: list[tuple[list[str], str, float, bytes]] = []
+    raw_secret = "SECRET_FIRST_PROVIDER_OUTPUT"
+
+    def fake_run(command, **kwargs):
+        call_number = len(calls)
+        outcome = outcomes[call_number]
+        schema_path, result_path = _output_paths(command)
+        calls.append(
+            (list(command), kwargs["input"], kwargs["timeout"], schema_path.read_bytes())
+        )
+        if outcome == "timeout":
+            raise subprocess.TimeoutExpired(command, kwargs["timeout"], output=raw_secret)
+        if outcome == "nonzero":
+            return subprocess.CompletedProcess(command, 7, stdout=raw_secret, stderr=raw_secret)
+        if outcome == "oversize":
+            with result_path.open("wb") as output:
+                output.truncate(MAX_CLI_LEADER_OUTPUT_BYTES + 1)
+        elif outcome == "json_parse":
+            result_path.write_text(raw_secret, encoding="utf-8")
+        elif outcome == "schema":
+            invalid = _valid_plan()
+            invalid["steps"] = invalid["steps"][:-1]
+            result_path.write_text(json.dumps(invalid), encoding="utf-8")
+        else:
+            result_path.write_text(json.dumps(_valid_plan()), encoding="utf-8")
+        return subprocess.CompletedProcess(command, 0, stdout=raw_secret, stderr=raw_secret)
+
+    monkeypatch.setattr("agentdeck.providers.cli_subprocess.subprocess.run", fake_run)
+    if expected_stage is None:
+        result = CodexCliProvider().plan_result(request)
+        assert result.leader_generation["attempt_count"] == expected_attempts
+        assert result.leader_generation["regeneration_used"] is (expected_attempts == 2)
+        assert result.leader_generation["selected_agent_ids"] == ["planner", "reviewer"]
+        assert result.leader_generation["step_count"] == 4
+        assert result.leader_generation["schema_hash"] == canonical_leader_plan_schema_hash(
+            build_leader_plan_schema(request)
+        )
+    else:
+        with pytest.raises(CliLeaderProviderError) as raised:
+            CodexCliProvider().plan_result(request)
+        assert raised.value.stage == expected_stage
+        assert raised.value.attempt_count == expected_attempts
+        assert raised.value.constraint_mode == "native_json_schema"
+        _assert_exception_graph_redacted(raised.value, (raw_secret, str(tmp_path)))
+
+    assert len(calls) == expected_calls
+    assert len(calls) <= 2
+    if len(calls) == 2:
+        first_argv, first_prompt, _, first_schema = calls[0]
+        second_argv, second_prompt, _, second_schema = calls[1]
+
+        def stable_command(argv: list[str]) -> tuple[str, ...]:
+            stable = list(argv)
+            for flag in ("--output-schema", "--output-last-message"):
+                index = stable.index(flag)
+                stable[index + 1] = "<private-resource>"
+            return tuple(stable)
+
+        assert stable_command(first_argv) == stable_command(second_argv)
+        assert first_schema == second_schema
+        assert first_schema == json.dumps(
+            build_leader_plan_schema(request),
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        assert request.task in second_prompt
+        assert "Regenerate the complete plan" in second_prompt
+        assert raw_secret not in second_prompt
+        assert "--output-schema" not in second_prompt
+        assert str(Path(first_argv[first_argv.index("--output-schema") + 1]).parent) not in second_prompt
+        assert "invalid_step_count" in second_prompt or outcomes[0] == "json_parse"
+    for argv, _prompt, _timeout, _schema in calls:
+        schema_path = Path(argv[argv.index("--output-schema") + 1])
+        assert not schema_path.parent.exists()
+
+
+@pytest.mark.parametrize("provider_class", [CodexCliProvider, ClaudeCliProvider])
+def test_native_regeneration_uses_one_total_deadline_and_remaining_timeout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, provider_class
+) -> None:
+    request = replace(_request(tmp_path), timeout_seconds=10)
+    timeouts: list[float] = []
+    monotonic_values = iter((100.0, 100.0, 104.0))
+    monkeypatch.setattr(
+        "agentdeck.providers.cli_subprocess.time.monotonic",
+        lambda: next(monotonic_values),
+    )
+
+    def fake_run(command, **kwargs):
+        timeouts.append(kwargs["timeout"])
+        if provider_class is CodexCliProvider:
+            _schema_path, result_path = _output_paths(command)
+            result_path.write_text(
+                "not-json" if len(timeouts) == 1 else json.dumps(_valid_plan()),
+                encoding="utf-8",
+            )
+        else:
+            payload = _claude_envelope() if len(timeouts) == 2 else {"type": "bad"}
+            kwargs["stdout"].write(json.dumps(payload).encode("utf-8"))
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    monkeypatch.setattr("agentdeck.providers.cli_subprocess.subprocess.run", fake_run)
+    result = provider_class().plan_result(request)
+    assert result.leader_generation["attempt_count"] == 2
+    assert timeouts == [10.0, 6.0]
+    assert max(timeouts) <= 10.0
+
+
+def test_native_regeneration_skips_second_attempt_when_deadline_is_exhausted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    request = replace(_request(tmp_path), timeout_seconds=5)
+    calls = 0
+    monotonic_values = iter((10.0, 10.0, 15.0))
+    monkeypatch.setattr(
+        "agentdeck.providers.cli_subprocess.time.monotonic",
+        lambda: next(monotonic_values),
+    )
+
+    def fake_run(command, **_kwargs):
+        nonlocal calls
+        calls += 1
+        _schema_path, result_path = _output_paths(command)
+        result_path.write_text("not-json", encoding="utf-8")
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    monkeypatch.setattr("agentdeck.providers.cli_subprocess.subprocess.run", fake_run)
+    with pytest.raises(CliLeaderProviderError) as raised:
+        CodexCliProvider().plan_result(request)
+    assert calls == 1
+    assert raised.value.stage == "timeout"
+    assert raised.value.attempt_count == 1
+
+
+@pytest.mark.parametrize(
+    "value",
+    [True, False, 0, -1, float("nan"), float("inf"), 10**1000, "5"],
+)
+def test_native_planning_rejects_invalid_total_budget_without_subprocess(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, value: object
+) -> None:
+    request = replace(_request(tmp_path), timeout_seconds=value)
+    monkeypatch.setattr(
+        "agentdeck.providers.cli_subprocess.subprocess.run",
+        lambda *_args, **_kwargs: pytest.fail("invalid budget must not start subprocess"),
+    )
+    with pytest.raises(ValueError) as raised:
+        CodexCliProvider().plan_result(request)
+    assert str(raised.value) == "CLI Leader planning timeout must be a positive number"
+
+
+@pytest.mark.parametrize(
+    ("attempt_count", "constraint_mode"),
+    [(-1, None), (3, None), (True, None), ("1", None), (0, True), (0, "secret")],
+)
+def test_cli_error_rejects_unsafe_attempt_metadata(
+    attempt_count: object, constraint_mode: object
+) -> None:
+    with pytest.raises(ValueError) as raised:
+        CliLeaderProviderError(
+            "schema",
+            "invalid_step_count",
+            attempt_count=attempt_count,
+            constraint_mode=constraint_mode,
+        )
+    assert str(raised.value) in {
+        "invalid CLI Leader attempt count",
+        "invalid CLI Leader constraint mode",
+    }
+
+
+def test_cli_error_with_attempt_count_is_new_frozen_and_redacted() -> None:
+    original = CliLeaderProviderError(
+        "schema",
+        "invalid_step_count",
+        constraint_mode="native_json_schema",
+    )
+    regenerated = original.with_attempt_count(2)
+    assert regenerated is not original
+    assert regenerated.stage == original.stage == "schema"
+    assert regenerated.diagnostic_code == original.diagnostic_code == "invalid_step_count"
+    assert regenerated.constraint_mode == original.constraint_mode == "native_json_schema"
+    assert regenerated.attempt_count == 2
+    assert regenerated.__cause__ is None
+    assert regenerated.__context__ is None
+    with pytest.raises(AttributeError):
+        regenerated.stage = "SECRET_RAW_STAGE"
+    _assert_exception_graph_redacted(regenerated, ("SECRET_RAW_STAGE",))
+
+
+@pytest.mark.parametrize("code", ["native_schema_unavailable", "authority_invalid"])
+def test_native_local_schema_capability_errors_are_not_regenerated(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, code: str
+) -> None:
+    request = _request(tmp_path)
+    calls = 0
+
+    def fail_attempt(*_args, **_kwargs):
+        nonlocal calls
+        calls += 1
+        raise CliLeaderProviderError("schema", code)
+
+    monkeypatch.setattr(CodexCliProvider, "_native_attempt", fail_attempt)
+    with pytest.raises(CliLeaderProviderError) as raised:
+        CodexCliProvider().plan_result(request)
+    assert calls == 1
+    assert raised.value.diagnostic_code == code
+    assert raised.value.attempt_count == 1

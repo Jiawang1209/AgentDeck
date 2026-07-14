@@ -2,6 +2,15 @@
 
 本文件记录 AgentDeck 每一次开发内容。约束：每次新增功能、文档规则、项目骨架、运行环境或用户可见行为变化，都必须同步更新本文件，并在同一次 commit 中提交。
 
+## 2026-07-15
+
+### Bound native CLI Leader plan regeneration
+
+- **One bounded same-identity regeneration**: native Codex and Claude planning now share a two-attempt loop that retries only a first strict-JSON/envelope failure or provider-output semantic schema diagnostic. The second attempt keeps the exact provider, model, transport, canonical schema and frozen Worker/count authority, uses a fresh private workspace/output resource, and receives only the original request plus a fixed `Regenerate the complete plan` instruction and an allowlisted diagnostic token. Nonzero exit, timeout, oversize, cancellation, local authority failure and native-schema capability failure remain terminal after one attempt; there is no third call, provider/model/transport fallback, dispatch, tmux access or approval mutation.
+- **One total planning deadline**: both native providers validate an exact positive numeric request/provider timeout, establish one monotonic deadline before schema and temporary-resource work, and pass only the remaining budget to each subprocess. Parsing, cleanup and regeneration preparation consume the same budget; exhaustion before regeneration returns a fixed timeout with the number of subprocess attempts actually started rather than resetting the full timeout.
+- **Safe attempt metadata**: `CliLeaderProviderError` now carries validated immutable `stage`, `diagnostic_code`, `attempt_count` and `constraint_mode` metadata. Its copy helper rebuilds a fresh credential-free error without raw provider output or exception context. Successful native provenance continues to be reconstructed locally once and now truthfully reports attempt count and whether regeneration was used; direct `plan()` remains dict-returning.
+- **TDD and lifecycle evidence**: the initial retry/deadline/metadata group produced 24 expected RED failures for missing second calls, attempt facts and budget validation; the local capability group then produced two RED failures proving schema-stage capability/authority errors were incorrectly retryable. The focused matrix covers parse/schema success and repeated failure, terminal stages, Codex and Claude remaining-time propagation, pre-second deadline exhaustion, exact command/model/schema identity, safe regeneration prompts, two-attempt cleanup and repeated unsafe-output rejection, fixed constructor boundaries and recursive exception-graph redaction.
+
 ## 2026-07-14
 
 ### Add native Claude Leader structured output

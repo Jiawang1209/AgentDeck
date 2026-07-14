@@ -8,6 +8,7 @@ import shutil
 import stat
 import subprocess
 import tempfile
+import time
 from typing import BinaryIO
 from json import JSONDecodeError
 
@@ -18,6 +19,7 @@ from .base import (
     validate_provider_plan_schema,
 )
 from .plan_schema import (
+    LEADER_CONSTRAINT_MODES,
     LEADER_PLAN_DIAGNOSTIC_CODES,
     ProviderPlanValidationError,
     build_leader_generation_provenance,
@@ -33,6 +35,19 @@ MAX_CLI_LEADER_OUTPUT_BYTES = 2 * 1024 * 1024
 _NATIVE_PLAN_FIELDS = frozenset({"goal", "summary", "steps"})
 _NATIVE_STEP_FIELDS = frozenset(
     {"step", "agent_id", "role", "task", "risk", "requires_approval"}
+)
+_REGENERABLE_SCHEMA_CODES = frozenset(
+    {
+        "missing_required_field",
+        "invalid_top_level_type",
+        "invalid_string_field",
+        "invalid_step_type",
+        "invalid_step_count",
+        "invalid_step_numbering",
+        "unknown_agent",
+        "role_mismatch",
+        "approval_not_required",
+    }
 )
 
 
@@ -115,7 +130,18 @@ def _strict_json_decode(payload: bytes) -> object:
 class CliLeaderProviderError(RuntimeError):
     """A credential-free, machine-readable CLI Leader failure."""
 
-    def __init__(self, stage: str, diagnostic_code: str | None = None) -> None:
+    _FROZEN_FIELDS = frozenset(
+        {"stage", "diagnostic_code", "attempt_count", "constraint_mode"}
+    )
+
+    def __init__(
+        self,
+        stage: str,
+        diagnostic_code: str | None = None,
+        *,
+        attempt_count: int = 0,
+        constraint_mode: str | None = None,
+    ) -> None:
         if type(stage) is not str or stage not in CLI_LEADER_FAILURE_STAGES:
             raise ValueError("invalid CLI Leader failure stage")
         if (
@@ -135,9 +161,35 @@ class CliLeaderProviderError(RuntimeError):
             or (stage not in {"json_parse", "schema"} and diagnostic_code is not None)
         ):
             raise ValueError("invalid CLI Leader stage and diagnostic combination")
-        self.stage = stage
-        self.diagnostic_code = diagnostic_code
+        if type(attempt_count) is not int or attempt_count < 0 or attempt_count > 2:
+            raise ValueError("invalid CLI Leader attempt count")
+        if (
+            constraint_mode is not None
+            and (
+                type(constraint_mode) is not str
+                or constraint_mode not in LEADER_CONSTRAINT_MODES
+            )
+        ):
+            raise ValueError("invalid CLI Leader constraint mode")
+        object.__setattr__(self, "stage", stage)
+        object.__setattr__(self, "diagnostic_code", diagnostic_code)
+        object.__setattr__(self, "attempt_count", attempt_count)
+        object.__setattr__(self, "constraint_mode", constraint_mode)
         super().__init__(f"CLI Leader planning failed at stage: {stage}")
+        object.__setattr__(self, "_metadata_frozen", True)
+
+    def __setattr__(self, name: str, value: object) -> None:
+        if getattr(self, "_metadata_frozen", False) and name in self._FROZEN_FIELDS:
+            raise AttributeError("CLI Leader failure metadata is immutable")
+        super().__setattr__(name, value)
+
+    def with_attempt_count(self, attempt_count: int) -> CliLeaderProviderError:
+        return CliLeaderProviderError(
+            self.stage,
+            self.diagnostic_code,
+            attempt_count=attempt_count,
+            constraint_mode=self.constraint_mode,
+        )
 
 
 def _create_private_workspace(prefix: str) -> str | None:
@@ -219,6 +271,98 @@ class CliLeaderProvider:
                 constraint_mode=self.constraint_mode,
             ),
         )
+
+    @staticmethod
+    def _positive_timeout(value: object) -> float:
+        if type(value) not in {int, float}:
+            raise ValueError("CLI Leader planning timeout must be a positive number")
+        try:
+            timeout = float(value)
+        except (OverflowError, ValueError):
+            raise ValueError(
+                "CLI Leader planning timeout must be a positive number"
+            ) from None
+        if not math.isfinite(timeout) or timeout <= 0:
+            raise ValueError("CLI Leader planning timeout must be a positive number")
+        return timeout
+
+    def _native_plan_result(self, request: LeaderPlanRequest) -> LeaderPlanResult:
+        provider_timeout = self._positive_timeout(self.timeout)
+        requested_timeout = self._positive_timeout(
+            self.timeout
+            if request.timeout_seconds is None
+            else request.timeout_seconds
+        )
+        budget = min(requested_timeout, provider_timeout)
+        deadline = time.monotonic() + budget
+        schema = build_leader_plan_schema(request)
+        original_prompt = self._prompt(request)
+        prompt = original_prompt
+        attempted = 0
+        for attempt in (1, 2):
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise CliLeaderProviderError(
+                    "timeout",
+                    attempt_count=attempted,
+                    constraint_mode=self.constraint_mode,
+                ) from None
+            attempted = attempt
+            try:
+                plan = self._native_attempt(
+                    request=request,
+                    schema=schema,
+                    prompt=prompt,
+                    timeout=remaining,
+                )
+            except CliLeaderProviderError as error:
+                safe_error = CliLeaderProviderError(
+                    error.stage,
+                    error.diagnostic_code,
+                    constraint_mode=self.constraint_mode,
+                ).with_attempt_count(attempt)
+            else:
+                return LeaderPlanResult(
+                    plan=plan,
+                    leader_generation=build_leader_generation_provenance(
+                        request=request,
+                        provider=self.name,
+                        constraint_mode=self.constraint_mode,
+                        schema=schema,
+                        attempt_count=attempt,
+                    ),
+                )
+            regenerable = safe_error.stage == "json_parse" or (
+                safe_error.stage == "schema"
+                and (
+                    safe_error.diagnostic_code is None
+                    or safe_error.diagnostic_code in _REGENERABLE_SCHEMA_CODES
+                )
+            )
+            if attempt == 2 or not regenerable:
+                raise safe_error from None
+            diagnostic = safe_error.diagnostic_code or safe_error.stage
+            prompt = (
+                f"{original_prompt}\n"
+                "Regenerate the complete plan.\n"
+                f"Previous attempt diagnostic: {diagnostic}.\n"
+                "Return a complete replacement; do not discuss the previous output."
+            )
+        raise CliLeaderProviderError(
+            "timeout",
+            attempt_count=attempted,
+            constraint_mode=self.constraint_mode,
+        ) from None
+
+    def _native_attempt(
+        self,
+        *,
+        request: LeaderPlanRequest,
+        schema: dict[str, object],
+        prompt: str,
+        timeout: float,
+    ) -> dict[str, object]:
+        raise NotImplementedError
 
     def _command_for_request(self, request: LeaderPlanRequest) -> list[str]:
         if not request.model:
@@ -315,8 +459,16 @@ class CodexCliProvider(CliLeaderProvider):
         )
 
     def plan_result(self, request: LeaderPlanRequest) -> LeaderPlanResult:
-        schema = build_leader_plan_schema(request)
-        prompt = self._prompt(request)
+        return self._native_plan_result(request)
+
+    def _native_attempt(
+        self,
+        *,
+        request: LeaderPlanRequest,
+        schema: dict[str, object],
+        prompt: str,
+        timeout: float,
+    ) -> dict[str, object]:
         temp_dir = _create_private_workspace("agentdeck-leader-")
         if temp_dir is None:
             raise CliLeaderProviderError(
@@ -348,11 +500,7 @@ class CodexCliProvider(CliLeaderProvider):
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
                     cwd=request.config.root,
-                    timeout=(
-                        request.timeout_seconds
-                        if request.timeout_seconds is not None
-                        else self.timeout
-                    ),
+                    timeout=timeout,
                     check=False,
                 )
             except subprocess.TimeoutExpired:
@@ -380,16 +528,7 @@ class CodexCliProvider(CliLeaderProvider):
             raise pending_error
         if plan is None:
             raise CliLeaderProviderError("schema")
-        return LeaderPlanResult(
-            plan=plan,
-            leader_generation=build_leader_generation_provenance(
-                request=request,
-                provider=self.name,
-                constraint_mode=self.constraint_mode,
-                schema=schema,
-                attempt_count=1,
-            ),
-        )
+        return plan
 
     @staticmethod
     def _write_schema(path: str, schema: dict[str, object]) -> None:
@@ -620,14 +759,22 @@ class ClaudeCliProvider(CliLeaderProvider):
         )
 
     def plan_result(self, request: LeaderPlanRequest) -> LeaderPlanResult:
-        schema = build_leader_plan_schema(request)
+        return self._native_plan_result(request)
+
+    def _native_attempt(
+        self,
+        *,
+        request: LeaderPlanRequest,
+        schema: dict[str, object],
+        prompt: str,
+        timeout: float,
+    ) -> dict[str, object]:
         schema_argument = json.dumps(
             schema,
             ensure_ascii=False,
             sort_keys=True,
             separators=(",", ":"),
         )
-        prompt = self._prompt(request)
         temp_dir = _create_private_workspace("agentdeck-leader-")
         if temp_dir is None:
             raise CliLeaderProviderError(
@@ -655,11 +802,7 @@ class ClaudeCliProvider(CliLeaderProvider):
                         stdout=output,
                         stderr=subprocess.DEVNULL,
                         cwd=request.config.root,
-                        timeout=(
-                            request.timeout_seconds
-                            if request.timeout_seconds is not None
-                            else self.timeout
-                        ),
+                        timeout=timeout,
                         check=False,
                     )
                 except subprocess.TimeoutExpired:
@@ -704,16 +847,7 @@ class ClaudeCliProvider(CliLeaderProvider):
             raise pending_error
         if plan is None:
             raise CliLeaderProviderError("schema")
-        return LeaderPlanResult(
-            plan=plan,
-            leader_generation=build_leader_generation_provenance(
-                request=request,
-                provider=self.name,
-                constraint_mode=self.constraint_mode,
-                schema=schema,
-                attempt_count=1,
-            ),
-        )
+        return plan
 
     @staticmethod
     def _private_sink_identity(file_stat: os.stat_result) -> tuple[object, ...]:
