@@ -9,13 +9,14 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable, Mapping
-from datetime import datetime
+from datetime import datetime, timezone
 import hashlib
 import inspect
 import math
 import os
 from pathlib import Path
 import re
+import secrets
 import shutil
 import stat
 import subprocess
@@ -39,6 +40,14 @@ from ..workflow import build_canonical_handoff, validate_canonical_handoff
 
 class ServiceError(RuntimeError):
     """The daemon service could not preserve its authority boundary."""
+
+
+class PermissionConfirmationExpired(ServiceError):
+    """An expired scoped handle whose private controller still needs cleanup."""
+
+    def __init__(self, record: dict[str, object]) -> None:
+        super().__init__("permission confirmation handle expired")
+        self.record = record
 
 
 class ServiceServer(Protocol):
@@ -2069,6 +2078,7 @@ class ProjectDaemonService:
         permission_waiter_changed: Callable[
             [dict[str, object], bool], object | Awaitable[object]
         ] = lambda _authority, _active: None,
+        permission_confirmation_capacity: int = 128,
         shutdown_grace_seconds: float = 5.0,
     ) -> None:
         if not all(
@@ -2086,6 +2096,12 @@ class ProjectDaemonService:
             getattr(server, "close", None)
         ):
             raise TypeError("daemon service server is invalid")
+        if (
+            type(permission_confirmation_capacity) is not int
+            or permission_confirmation_capacity < 1
+            or permission_confirmation_capacity > 1024
+        ):
+            raise TypeError("permission confirmation capacity is invalid")
         if (
             type(shutdown_grace_seconds) not in {int, float}
             or not math.isfinite(float(shutdown_grace_seconds))
@@ -2105,6 +2121,8 @@ class ProjectDaemonService:
         self._permission_waiters: dict[
             str, tuple[dict[str, object], asyncio.Future[str]]
         ] = {}
+        self._permission_confirmations: dict[str, dict[str, object]] = {}
+        self._permission_confirmation_capacity = permission_confirmation_capacity
         self._started = False
         self._lifecycle_state = "open"
         self._close_task: asyncio.Task[None] | None = None
@@ -2310,6 +2328,195 @@ class ProjectDaemonService:
             return None
         return dict(registered[0])
 
+    @staticmethod
+    def _confirmation_time(value: object) -> datetime:
+        if type(value) is not str:
+            raise ServiceError("permission confirmation expiry is invalid")
+        try:
+            parsed = datetime.fromisoformat(value)
+        except ValueError:
+            raise ServiceError("permission confirmation expiry is invalid") from None
+        if parsed.tzinfo is None or parsed.utcoffset() is None:
+            raise ServiceError("permission confirmation expiry is invalid")
+        return parsed.astimezone(timezone.utc)
+
+    def _drop_expired_permission_confirmations(self, *, now: datetime) -> None:
+        if not isinstance(now, datetime) or now.tzinfo is None or now.utcoffset() is None:
+            raise ServiceError("permission confirmation time is invalid")
+        current = now.astimezone(timezone.utc)
+        for handle, record in tuple(self._permission_confirmations.items()):
+            if self._confirmation_time(record.get("expires_at")) <= current:
+                self._permission_confirmations.pop(handle, None)
+
+    @property
+    def permission_confirmation_count(self) -> int:
+        return len(self._permission_confirmations)
+
+    def register_permission_confirmation(
+        self,
+        *,
+        target: object,
+        preview: object,
+        controller_authority: object,
+        live_waiter_authority: object,
+        permission_binding: object,
+        now: datetime,
+    ) -> dict[str, object]:
+        """Register one bounded in-memory capability for an exact confirmation."""
+        if not self.started:
+            raise ServiceError("permission confirmation registry is unavailable")
+        target_fields = {"mission_id", "attempt_id", "permission_id", "decision"}
+        if type(target) is not dict or set(target) != target_fields:
+            raise ServiceError("permission confirmation target is invalid")
+        mission_id = target.get("mission_id")
+        attempt_id = target.get("attempt_id")
+        permission_id = target.get("permission_id")
+        decision = target.get("decision")
+        if (
+            type(mission_id) is not str
+            or re.fullmatch(r"mis_[0-9a-f]{12}", mission_id) is None
+            or type(attempt_id) is not str
+            or re.fullmatch(r"mat_[0-9a-f]{12}", attempt_id) is None
+            or type(permission_id) is not str
+            or re.fullmatch(r"prm_[a-z0-9]+", permission_id) is None
+            or decision not in {"approved", "denied"}
+        ):
+            raise ServiceError("permission confirmation target is invalid")
+        preview_fields = {
+            "preview_id", "action", "generation", "execution_digest",
+            "previewed_at", "expires_at", "state",
+        }
+        if type(preview) is not dict or set(preview) != preview_fields:
+            raise ServiceError("permission confirmation preview is invalid")
+        preview_id = preview.get("preview_id")
+        if (
+            type(preview_id) is not str
+            or re.fullmatch(r"gov_[0-9a-f]{12}", preview_id) is None
+            or preview.get("action") != "permission_decision"
+            or preview.get("state") != "pending"
+            or type(preview.get("generation")) is not int
+            or type(preview.get("execution_digest")) is not str
+            or re.fullmatch(r"[0-9a-f]{64}", str(preview["execution_digest"])) is None
+        ):
+            raise ServiceError("permission confirmation preview is invalid")
+        controller_fields = {
+            "lease_id", "client_id", "issued_at", "expires_at",
+            "last_renewed_at", "generation",
+        }
+        if (
+            type(controller_authority) is not dict
+            or set(controller_authority) != controller_fields
+        ):
+            raise ServiceError("permission confirmation controller is invalid")
+        lease_id = controller_authority.get("lease_id")
+        generation = controller_authority.get("generation")
+        if (
+            type(lease_id) is not str
+            or re.fullmatch(r"lse_[0-9a-f]{24}", lease_id) is None
+            or type(generation) is not int
+            or generation < 1
+            or generation != preview.get("generation")
+            or type(controller_authority.get("client_id")) is not str
+            or not controller_authority["client_id"]
+        ):
+            raise ServiceError("permission confirmation controller is invalid")
+        waiter = self._permission_wait_authority(live_waiter_authority)
+        current_waiter = self.live_permission_waiter_authority(permission_id)
+        if (
+            current_waiter != waiter
+            or waiter.get("permission_id") != permission_id
+            or waiter.get("attempt_id") != attempt_id
+        ):
+            raise ServiceError("permission confirmation waiter is invalid")
+        expected_binding = {
+            "mission_id": mission_id,
+            "attempt_id": attempt_id,
+            "permission_id": permission_id,
+        }
+        if (
+            type(permission_binding) is not dict
+            or permission_binding != expected_binding
+        ):
+            raise ServiceError("permission confirmation binding is invalid")
+        if (
+            not isinstance(now, datetime)
+            or now.tzinfo is None
+            or now.utcoffset() is None
+        ):
+            raise ServiceError("permission confirmation time is invalid")
+        current = now.astimezone(timezone.utc)
+        previewed_at = self._confirmation_time(preview.get("previewed_at"))
+        preview_expiry = self._confirmation_time(preview.get("expires_at"))
+        issued_at = self._confirmation_time(controller_authority.get("issued_at"))
+        renewed_at = self._confirmation_time(
+            controller_authority.get("last_renewed_at")
+        )
+        controller_expiry = self._confirmation_time(
+            controller_authority.get("expires_at")
+        )
+        effective_expiry = min(preview_expiry, controller_expiry)
+        if (
+            previewed_at > current
+            or issued_at > current
+            or renewed_at > current
+            or effective_expiry <= current
+        ):
+            raise ServiceError("permission confirmation authority is expired")
+        self._drop_expired_permission_confirmations(now=current)
+        if (
+            len(self._permission_confirmations)
+            >= self._permission_confirmation_capacity
+        ):
+            raise ServiceError("permission confirmation registry capacity exceeded")
+        while True:
+            handle = f"pcf_{secrets.token_hex(12)}"
+            if handle not in self._permission_confirmations:
+                break
+        self._permission_confirmations[handle] = {
+            "lease_id": lease_id,
+            "generation": generation,
+            "preview_id": preview_id,
+            "target": dict(target),
+            "live_waiter_authority": waiter,
+            "permission_binding": expected_binding,
+            "expires_at": effective_expiry.isoformat(),
+        }
+        return {
+            "confirmation_handle": handle,
+            "preview_id": preview_id,
+            "expires_at": effective_expiry.isoformat(),
+        }
+
+    def consume_permission_confirmation(
+        self, handle: object, *, now: datetime
+    ) -> dict[str, object]:
+        """Consume one exact capability before any confirmation side effect."""
+        if (
+            type(handle) is not str
+            or re.fullmatch(r"pcf_[0-9a-f]{24}", handle) is None
+        ):
+            raise ServiceError("permission confirmation handle is invalid")
+        record = self._permission_confirmations.pop(handle, None)
+        if record is None:
+            raise ServiceError("permission confirmation handle is unavailable")
+        if (
+            not isinstance(now, datetime)
+            or now.tzinfo is None
+            or now.utcoffset() is None
+        ):
+            raise ServiceError("permission confirmation time is invalid")
+        detached = {
+            **record,
+            "target": dict(record["target"]),
+            "live_waiter_authority": dict(record["live_waiter_authority"]),
+            "permission_binding": dict(record["permission_binding"]),
+        }
+        if self._confirmation_time(record.get("expires_at")) <= now.astimezone(
+            timezone.utc
+        ):
+            raise PermissionConfirmationExpired(detached)
+        return detached
+
     def resolve_permission_waiter(self, authority: object, decision: str) -> None:
         exact = self._permission_wait_authority(authority)
         if decision not in {"approved", "denied"}:
@@ -2445,6 +2652,7 @@ class ProjectDaemonService:
             if not future.done():
                 future.set_exception(ServiceError("daemon service closed"))
         self._permission_waiters.clear()
+        self._permission_confirmations.clear()
         workers = tuple(self._worker_tasks)
         for task in workers:
             task.cancel()

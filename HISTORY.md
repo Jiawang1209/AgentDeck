@@ -4,7 +4,17 @@
 
 ## 2026-07-15
 
+### Scope permission confirmation authority
+
+- **Opaque single-use confirmation**: public permission preview no longer returns a controller lease or generation and never places that general daemon mutation authority in JSON or argv. The daemon registers a canonical `pcf_...` handle in a private bounded in-memory registry, and the public confirm command contains only `agentdeck daemon permission-confirm --handle <pcf>`.
+- **Honest effective expiry**: each handle is bound to the exact Mission, attempt, permission, decision, governance preview, live waiter, and controller generation. Its public expiry is the earlier of the governance-preview and controller expiries; expired entries are removed, capacity is bounded, consumption is single-use, and daemon shutdown/restart clears all handles.
+- **Narrow RPC authority**: lease-protected `permission.preview-handle` creates the existing exact governance preview and registers its handle in the same serialized mutation. Only `permission.confirm-handle` is newly lease-exempt, and it accepts exactly one canonical handle; ordinary `permission.decide` remains controller-gated. Confirmation atomically consumes the handle, revalidates its private controller/waiter/binding facts, commits and notifies the exact permission, then releases the controller.
+- **No bearer leakage**: four-stage acceptance executes both displayed preview controls and returned handle-only confirm commands, proves the effective expiry does not outlive the controller, proves the controller was released, rejects replay without permission-lineage writes, and rejects legacy raw-lease confirm arguments. Deterministic unit and IPC coverage also prove capacity/expiry cleanup, close/restart loss, expired/restarted zero-write rejection, and that the scoped handle cannot authorize other daemon mutations.
+- **Verification**: the daemon service/CLI/IPC/governance/recovery/reconnection/acceptance group passes `323` tests; the full suite passes `3305` tests with one skip, and `python -m compileall -q src tests` succeeds in the `agentdeck` environment.
+
 ### Add public permission recovery controls
+
+> This intermediate implementation was superseded by “Scope permission confirmation authority” above, which removes controller credentials from the public response and confirm command.
 
 - **Executable recovery control**: `mission_recovery.decision.controls[]` now names the exact Mission, attempt, pending permission, and explicit decision in a real `agentdeck daemon permission-preview` command. The Mission recovery validator accepts only that canonical public shape, and fixed recovery fixtures carry the same binding.
 - **Two-stage daemon CLI**: `permission-preview` connects only to an already-running verified daemon, acquires a temporary controller, records one exact-bound preview, and returns a bounded shell-safe confirm command without releasing the successful lease. `permission-confirm` requires the complete preview and lease identity, never reacquires authority, confirms through the same live waiter, and releases that exact lease on success or failure.

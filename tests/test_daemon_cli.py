@@ -157,6 +157,10 @@ def test_permission_recovery_cli_requires_explicit_exact_arguments() -> None:
         "approved",
     ])
     assert preview.func is cli.daemon_permission_preview_command
+    confirm = parser.parse_args([
+        "daemon", "permission-confirm", "--handle", "pcf_" + "1" * 24,
+    ])
+    assert confirm.func is cli.daemon_permission_confirm_command
     with pytest.raises(SystemExit):
         parser.parse_args([
             "daemon",
@@ -185,9 +189,15 @@ def test_permission_recovery_cli_requires_explicit_exact_arguments() -> None:
             "--lease-id",
             "lse_0123456789ab",
         ])
+    with pytest.raises(SystemExit):
+        parser.parse_args([
+            "daemon", "permission-confirm",
+            "--handle", "pcf_" + "1" * 24,
+            "--lease-id", "lse_" + "1" * 24,
+        ])
 
 
-def test_permission_recovery_failure_releases_exact_lease_without_reacquire(
+def test_permission_recovery_public_payload_uses_only_scoped_opaque_handle(
     tmp_path: Path, monkeypatch,
 ) -> None:
     root = _project(tmp_path, monkeypatch)
@@ -199,8 +209,19 @@ def test_permission_recovery_failure_releases_exact_lease_without_reacquire(
             calls.append((method, dict(params)))
             if method == "controller.acquire":
                 return {"lease_id": "lse_" + "1" * 24, "generation": 7}
-            if method == "permission.decide":
-                raise DaemonClientError("permission decision rejected")
+            if method == "permission.preview-handle":
+                return {
+                    "confirmation_handle": "pcf_" + "2" * 24,
+                    "preview_id": "gov_0123456789ab",
+                    "expires_at": "2026-07-15T00:00:30+00:00",
+                }
+            if method == "permission.confirm-handle":
+                return {
+                    "confirmation_handle": "pcf_" + "2" * 24,
+                    "preview_id": "gov_0123456789ab",
+                    **exact,
+                    "state": "approved",
+                }
             assert method == "controller.release"
             return {
                 "released": True,
@@ -222,29 +243,126 @@ def test_permission_recovery_failure_releases_exact_lease_without_reacquire(
         "permission_id": "prm_0123456789ab",
         "decision": "approved",
     }
-    with pytest.raises(DaemonClientError, match="permission decision rejected"):
-        asyncio.run(cli._preview_daemon_permission_decision(root, config, **exact))
+    preview = asyncio.run(cli._preview_daemon_permission_decision(root, config, **exact))
+    assert preview == {
+        "mode": "daemon_permission_preview",
+        **exact,
+        "preview_id": "gov_0123456789ab",
+        "confirmation_handle": "pcf_" + "2" * 24,
+        "expires_at": "2026-07-15T00:00:30+00:00",
+        "confirm_command": (
+            "agentdeck daemon permission-confirm --handle pcf_" + "2" * 24
+        ),
+    }
+    assert "lse_" not in json.dumps(preview)
+    assert "lease_id" not in preview
+    assert "lease_generation" not in preview
     assert [method for method, _params in calls] == [
-        "controller.acquire", "permission.decide", "controller.release"
+        "controller.acquire", "permission.preview-handle"
     ]
 
     calls.clear()
-    with pytest.raises(DaemonClientError, match="permission decision rejected"):
-        asyncio.run(cli._confirm_daemon_permission_decision(
+    confirmed = asyncio.run(cli._confirm_daemon_permission_decision(
+        root, config, confirmation_handle="pcf_" + "2" * 24,
+    ))
+    assert confirmed["mode"] == "daemon_permission_confirmed"
+    assert "lse_" not in json.dumps(confirmed)
+    assert calls == [("permission.confirm-handle", {
+        "handle": "pcf_" + "2" * 24,
+    })]
+
+
+def test_permission_preview_malformed_handle_response_releases_controller(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    root = _project(tmp_path, monkeypatch)
+    calls: list[str] = []
+
+    class FakeClient:
+        async def request(self, method, _params, **_kwargs):
+            calls.append(method)
+            if method == "controller.acquire":
+                return {"lease_id": "lse_" + "1" * 24, "generation": 7}
+            if method == "permission.preview-handle":
+                return {"confirmation_handle": "invalid"}
+            return {"released": True}
+
+        async def close(self) -> None:
+            return None
+
+    async def connect(*_args, **_kwargs):
+        return FakeClient()
+
+    monkeypatch.setattr(DaemonClient, "connect_verified", connect)
+    with pytest.raises(DaemonUnavailable, match="preview was rejected"):
+        asyncio.run(cli._preview_daemon_permission_decision(
+            root,
+            load_config(root),
+            mission_id="mis_0123456789ab",
+            attempt_id="mat_0123456789ab",
+            permission_id="prm_0123456789ab",
+            decision="approved",
+        ))
+    assert calls == [
+        "controller.acquire", "permission.preview-handle", "controller.release"
+    ]
+
+
+def test_permission_handle_cli_rejects_malformed_bounded_daemon_responses(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    root = _project(tmp_path, monkeypatch)
+    config = load_config(root)
+    calls: list[str] = []
+
+    class FakeClient:
+        async def request(self, method, _params, **_kwargs):
+            calls.append(method)
+            if method == "controller.acquire":
+                return {"lease_id": "lse_" + "1" * 24, "generation": 7}
+            if method == "permission.preview-handle":
+                return {
+                    "confirmation_handle": "pcf_" + "2" * 24,
+                    "preview_id": "gov_0123456789ab",
+                    "expires_at": "not-a-time",
+                }
+            if method == "permission.confirm-handle":
+                return {
+                    "confirmation_handle": "pcf_" + "2" * 24,
+                    "preview_id": "gov_0123456789ab",
+                    "mission_id": "not-a-mission",
+                    "attempt_id": "mat_0123456789ab",
+                    "permission_id": "prm_0123456789ab",
+                    "decision": "approved",
+                    "state": "approved",
+                }
+            assert method == "controller.release"
+            return {"released": True}
+
+        async def close(self) -> None:
+            return None
+
+    async def connect(*_args, **_kwargs):
+        return FakeClient()
+
+    monkeypatch.setattr(DaemonClient, "connect_verified", connect)
+    with pytest.raises(DaemonUnavailable, match="preview was rejected"):
+        asyncio.run(cli._preview_daemon_permission_decision(
             root,
             config,
-            **exact,
-            preview_id="gov_0123456789ab",
-            lease_id="lse_" + "1" * 24,
-            lease_generation=7,
+            mission_id="mis_0123456789ab",
+            attempt_id="mat_0123456789ab",
+            permission_id="prm_0123456789ab",
+            decision="approved",
         ))
-    assert [method for method, _params in calls] == [
-        "permission.decide", "controller.release"
-    ]
-    assert calls[-1][1] == {
-        "lease_id": "lse_" + "1" * 24,
-        "generation": 7,
-    }
+    assert calls[-1] == "controller.release"
+
+    calls.clear()
+    with pytest.raises(DaemonUnavailable, match="confirmation was rejected"):
+        asyncio.run(cli._confirm_daemon_permission_decision(
+            root, config, confirmation_handle="pcf_" + "2" * 24,
+        ))
+    assert calls == ["permission.confirm-handle"]
 
 
 def test_daemon_status_is_read_only_when_endpoint_is_absent(tmp_path: Path, monkeypatch, capsys) -> None:

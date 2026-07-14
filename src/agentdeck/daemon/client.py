@@ -49,6 +49,8 @@ CLIENT_METHODS = frozenset(
         "mission.cancel",
         "mission.admit",
         "permission.decide",
+        "permission.preview-handle",
+        "permission.confirm-handle",
         "worker.takeover",
         "worker.return-control",
         "worker.reroute",

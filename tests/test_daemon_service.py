@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import MappingProxyType, SimpleNamespace
 import time
@@ -17,6 +18,7 @@ from agentdeck.daemon.client import (
 )
 from agentdeck.daemon.service import (
     DaemonWorkerCoordinator,
+    PermissionConfirmationExpired,
     ProjectDaemonService,
     ServiceError,
     resolve_previous_handoff,
@@ -26,9 +28,205 @@ from agentdeck.daemon.service import (
 from agentdeck.daemon.supervisor import SubmittedReceipt, TransportResult
 from agentdeck.daemon.transports import AcpWorkerTransport, WorkerTransportError
 from agentdeck.models import AgentSpec, RuntimeConfig
+from agentdeck.state import StateStore
 
 
 MISSION_ID = "mis_0123456789ab"
+
+
+def test_permission_confirmation_registry_is_bounded_short_lived_and_ephemeral(
+    tmp_path: Path,
+) -> None:
+    async def case() -> None:
+        service = ProjectDaemonService(
+            server=FakeServer([]),
+            reconcile_all=lambda: None,
+            flush_safe_outboxes=lambda: None,
+            load_scheduler_facts=lambda: None,
+            apply_transition=lambda _decision: None,
+            permission_confirmation_capacity=1,
+        )
+        await service.start()
+        now = datetime(2026, 7, 15, tzinfo=timezone.utc)
+        target = {
+            "mission_id": MISSION_ID,
+            "attempt_id": "mat_0123456789ab",
+            "permission_id": "prm_0123456789ab",
+            "decision": "approved",
+        }
+        preview = {
+            "preview_id": "gov_0123456789ab",
+            "action": "permission_decision",
+            "generation": 3,
+            "execution_digest": "a" * 64,
+            "previewed_at": now.isoformat(),
+            "expires_at": (now + timedelta(minutes=5)).isoformat(),
+            "state": "pending",
+        }
+        controller = {
+            "lease_id": "lse_" + "1" * 24,
+            "client_id": "client_permission_preview_0123456789ab",
+            "issued_at": now.isoformat(),
+            "expires_at": (now + timedelta(seconds=30)).isoformat(),
+            "last_renewed_at": now.isoformat(),
+            "generation": 3,
+        }
+        waiter = {
+            "permission_id": target["permission_id"],
+            "attempt_id": target["attempt_id"],
+            "session_id": "ags_0123456789ab",
+            "generation": 1,
+        }
+        binding = {
+            "mission_id": target["mission_id"],
+            "attempt_id": target["attempt_id"],
+            "permission_id": target["permission_id"],
+        }
+        waiter_task = asyncio.create_task(service.wait_for_permission(
+            waiter, read_decision=lambda: "pending"
+        ))
+        await asyncio.sleep(0)
+
+        public = service.register_permission_confirmation(
+            target=target,
+            preview=preview,
+            controller_authority=controller,
+            live_waiter_authority=waiter,
+            permission_binding=binding,
+            now=now,
+        )
+        assert set(public) == {"confirmation_handle", "expires_at", "preview_id"}
+        assert public["confirmation_handle"].startswith("pcf_")
+        assert public["expires_at"] == controller["expires_at"]
+        assert "lse_" not in repr(public)
+        assert service.permission_confirmation_count == 1
+
+        with pytest.raises(ServiceError, match="capacity"):
+            service.register_permission_confirmation(
+                target=target,
+                preview={**preview, "preview_id": "gov_ffffffffffff"},
+                controller_authority=controller,
+                live_waiter_authority=waiter,
+                permission_binding=binding,
+                now=now,
+            )
+
+        private = service.consume_permission_confirmation(
+            str(public["confirmation_handle"]), now=now + timedelta(seconds=1)
+        )
+        assert private["lease_id"] == controller["lease_id"]
+        assert private["generation"] == 3
+        assert private["target"] == target
+        assert service.permission_confirmation_count == 0
+        with pytest.raises(ServiceError, match="handle"):
+            service.consume_permission_confirmation(
+                str(public["confirmation_handle"]), now=now + timedelta(seconds=1)
+            )
+        for invalid_preview in (
+            {**preview, "controller_lineage": {}},
+            {**preview, "generation": 4},
+        ):
+            with pytest.raises(ServiceError, match="preview|controller"):
+                service.register_permission_confirmation(
+                    target=target,
+                    preview=invalid_preview,
+                    controller_authority=controller,
+                    live_waiter_authority=waiter,
+                    permission_binding=binding,
+                    now=now,
+                )
+            assert service.permission_confirmation_count == 0
+
+        expiring = service.register_permission_confirmation(
+            target=target,
+            preview={**preview, "preview_id": "gov_eeeeeeeeeeee"},
+            controller_authority={
+                **controller,
+                "lease_id": "lse_" + "2" * 24,
+                "expires_at": (now + timedelta(seconds=2)).isoformat(),
+            },
+            live_waiter_authority=waiter,
+            permission_binding=binding,
+            now=now,
+        )
+        durable_before_expiry = StateStore(tmp_path).load()
+        with pytest.raises(
+            PermissionConfirmationExpired, match="expired"
+        ) as expired_error:
+            service.consume_permission_confirmation(
+                str(expiring["confirmation_handle"]),
+                now=now + timedelta(seconds=2),
+            )
+        assert expired_error.value.record["lease_id"] == "lse_" + "2" * 24
+        assert StateStore(tmp_path).load() == durable_before_expiry
+        assert service.permission_confirmation_count == 0
+
+        abandoned = service.register_permission_confirmation(
+            target=target,
+            preview={**preview, "preview_id": "gov_cccccccccccc"},
+            controller_authority={
+                **controller,
+                "lease_id": "lse_" + "4" * 24,
+                "expires_at": (now + timedelta(seconds=2)).isoformat(),
+            },
+            live_waiter_authority=waiter,
+            permission_binding=binding,
+            now=now,
+        )
+        replacement = service.register_permission_confirmation(
+            target=target,
+            preview={**preview, "preview_id": "gov_bbbbbbbbbbbb"},
+            controller_authority={
+                **controller,
+                "lease_id": "lse_" + "5" * 24,
+            },
+            live_waiter_authority=waiter,
+            permission_binding=binding,
+            now=now + timedelta(seconds=3),
+        )
+        assert service.permission_confirmation_count == 1
+        with pytest.raises(ServiceError, match="unavailable"):
+            service.consume_permission_confirmation(
+                str(abandoned["confirmation_handle"]),
+                now=now + timedelta(seconds=3),
+            )
+        service.consume_permission_confirmation(
+            str(replacement["confirmation_handle"]),
+            now=now + timedelta(seconds=4),
+        )
+
+        service.register_permission_confirmation(
+            target=target,
+            preview={**preview, "preview_id": "gov_dddddddddddd"},
+            controller_authority={
+                **controller,
+                "lease_id": "lse_" + "3" * 24,
+            },
+            live_waiter_authority=waiter,
+            permission_binding=binding,
+            now=now,
+        )
+        await service.close()
+        assert service.permission_confirmation_count == 0
+        with pytest.raises(ServiceError, match="closed"):
+            await waiter_task
+        restarted = ProjectDaemonService(
+            server=FakeServer([]),
+            reconcile_all=lambda: None,
+            flush_safe_outboxes=lambda: None,
+            load_scheduler_facts=lambda: None,
+            apply_transition=lambda _decision: None,
+        )
+        await restarted.start()
+        before_restart_confirm = StateStore(tmp_path).load()
+        with pytest.raises(ServiceError, match="unavailable"):
+            restarted.consume_permission_confirmation(
+                str(public["confirmation_handle"]), now=now + timedelta(seconds=1)
+            )
+        assert StateStore(tmp_path).load() == before_restart_confirm
+        await restarted.close()
+
+    asyncio.run(case())
 
 
 def test_tmux_readiness_probe_blocks_first_run_trust_without_sending_input() -> None:

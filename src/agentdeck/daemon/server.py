@@ -105,7 +105,9 @@ class DaemonServer:
         lease_exempt = frozenset(lease_exempt_methods)
         if (
             not lease_exempt.issubset(methods)
-            or not lease_exempt.issubset({"controller.acquire"})
+            or not lease_exempt.issubset({
+                "controller.acquire", "permission.confirm-handle"
+            })
         ):
             raise ValueError("daemon lease-exempt methods are invalid")
         self.endpoint = Path(endpoint)

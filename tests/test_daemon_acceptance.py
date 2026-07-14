@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass
+from datetime import datetime
 import hashlib
 import json
 import os
@@ -398,11 +399,23 @@ def _decide_permission_through_public_control(
         "permission_id": permission_id,
         "decision": "approved",
         "preview_id": preview["preview_id"],
-        "lease_id": preview["lease_id"],
-        "lease_generation": preview["lease_generation"],
+        "confirmation_handle": preview["confirmation_handle"],
         "expires_at": preview["expires_at"],
         "confirm_command": preview["confirm_command"],
     }
+    assert re.fullmatch(r"pcf_[0-9a-f]{24}", preview["confirmation_handle"])
+    assert shlex.split(str(preview["confirm_command"])) == [
+        "agentdeck", "daemon", "permission-confirm", "--handle",
+        preview["confirmation_handle"],
+    ]
+    assert "lse_" not in preview_process.stdout
+    assert "lease_id" not in preview_process.stdout
+    assert "lease_generation" not in preview_process.stdout
+    controller_before = StateStore(root).load()["controller_lease"]
+    controller_expiry = controller_before["expires_at"]
+    assert datetime.fromisoformat(preview["expires_at"]) <= datetime.fromisoformat(
+        controller_expiry
+    )
     confirm_process = subprocess.run(
         shlex.split(str(preview["confirm_command"])),
         cwd=root,
@@ -418,9 +431,27 @@ def _decide_permission_through_public_control(
         "attempt_id": attempt_id,
         "permission_id": permission_id,
         "decision": "approved",
+        "preview_id": preview["preview_id"],
+        "confirmation_handle": preview["confirmation_handle"],
         "state": "approved",
     }
+    assert StateStore(root).controller_lease_terminal_state(
+        lease_id=controller_before["lease_id"],
+        generation=controller_before["generation"],
+    ) == "released"
     if verify_replay:
+        before_replay = StateStore(root).load()
+        stable_before = {
+            field: before_replay.get(field)
+            for field in (
+                "permission_requests", "governance_previews", "controller_lease",
+            )
+        }
+        permission_transitions_before = [
+            item for item in before_replay["protocol_state_transitions"]
+            if item.get("entity_type") == "permission"
+            and item.get("entity_id") == permission_id
+        ]
         replay = subprocess.run(
             shlex.split(str(preview["confirm_command"])),
             cwd=root,
@@ -429,7 +460,18 @@ def _decide_permission_through_public_control(
             check=False,
         )
         assert replay.returncode != 0
-        assert "controller lease" in replay.stderr
+        assert "permission confirmation handle" in replay.stderr
+        assert "lse_" not in replay.stderr
+        assert "lease_id" not in replay.stderr
+        after_replay = StateStore(root).load()
+        assert {
+            field: after_replay.get(field) for field in stable_before
+        } == stable_before
+        assert [
+            item for item in after_replay["protocol_state_transitions"]
+            if item.get("entity_type") == "permission"
+            and item.get("entity_id") == permission_id
+        ] == permission_transitions_before
     return {"preview": preview, "result": confirmed}
 
 

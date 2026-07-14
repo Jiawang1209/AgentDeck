@@ -207,6 +207,7 @@ from .daemon.service import (
     DaemonTmuxWorkerStarter,
     DaemonWorkerCoordinator,
     ProjectDaemonService,
+    PermissionConfirmationExpired,
     ServiceError,
     resolve_previous_handoff,
     scheduler_facts_from_store,
@@ -6432,7 +6433,7 @@ async def _preview_daemon_permission_decision(
         lease_id = acquired_lease_id
         lease_generation = acquired_generation
         preview = await client.request(
-            "permission.decide",
+            "permission.preview-handle",
             {
                 "mission_id": mission_id,
                 "attempt_id": attempt_id,
@@ -6443,24 +6444,31 @@ async def _preview_daemon_permission_decision(
             lease_generation=lease_generation,
         )
         preview_id = preview.get("preview_id")
+        confirmation_handle = preview.get("confirmation_handle")
         expires_at = preview.get("expires_at")
+        try:
+            parsed_expiry = (
+                datetime.fromisoformat(expires_at)
+                if type(expires_at) is str
+                else None
+            )
+        except ValueError:
+            parsed_expiry = None
         if (
-            type(preview_id) is not str
+            set(preview) != {"confirmation_handle", "preview_id", "expires_at"}
+            or type(preview_id) is not str
+            or re.fullmatch(r"gov_[0-9a-f]{12}", preview_id) is None
+            or type(confirmation_handle) is not str
+            or re.fullmatch(r"pcf_[0-9a-f]{24}", confirmation_handle) is None
             or type(expires_at) is not str
-            or preview.get("action") != "permission_decision"
-            or preview.get("generation") != lease_generation
-            or preview.get("state") != "pending"
+            or parsed_expiry is None
+            or parsed_expiry.tzinfo is None
+            or parsed_expiry.utcoffset() is None
         ):
             raise DaemonUnavailable("permission decision preview was rejected")
         confirm_command = shlex.join([
             "agentdeck", "daemon", "permission-confirm",
-            "--mission-id", mission_id,
-            "--attempt-id", attempt_id,
-            "--permission-id", permission_id,
-            "--decision", decision,
-            "--preview-id", preview_id,
-            "--lease-id", lease_id,
-            "--lease-generation", str(lease_generation),
+            "--handle", confirmation_handle,
         ])
         succeeded = True
         return {
@@ -6470,8 +6478,7 @@ async def _preview_daemon_permission_decision(
             "permission_id": permission_id,
             "decision": decision,
             "preview_id": preview_id,
-            "lease_id": lease_id,
-            "lease_generation": lease_generation,
+            "confirmation_handle": confirmation_handle,
             "expires_at": expires_at,
             "confirm_command": confirm_command,
         }
@@ -6487,13 +6494,7 @@ async def _confirm_daemon_permission_decision(
     root: Path,
     config: ProjectConfig,
     *,
-    mission_id: str,
-    attempt_id: str,
-    permission_id: str,
-    decision: str,
-    preview_id: str,
-    lease_id: str,
-    lease_generation: int,
+    confirmation_handle: str,
 ) -> dict[str, object]:
     client = await DaemonClient.connect_verified(
         root,
@@ -6502,36 +6503,40 @@ async def _confirm_daemon_permission_decision(
     )
     try:
         result = await client.request(
-            "permission.decide",
-            {
-                "mission_id": mission_id,
-                "attempt_id": attempt_id,
-                "permission_id": permission_id,
-                "decision": decision,
-                "preview_id": preview_id,
-            },
-            lease_id=lease_id,
-            lease_generation=lease_generation,
+            "permission.confirm-handle", {"handle": confirmation_handle}
         )
+        target_fields = {
+            "confirmation_handle", "preview_id", "mission_id", "attempt_id",
+            "permission_id", "decision", "state",
+        }
         if (
-            result.get("accepted") is not True
-            or result.get("permission_id") != permission_id
-            or result.get("preview_id") != preview_id
-            or result.get("state") != decision
+            set(result) != target_fields
+            or result.get("confirmation_handle") != confirmation_handle
+            or type(result.get("preview_id")) is not str
+            or re.fullmatch(
+                r"gov_[0-9a-f]{12}", str(result.get("preview_id"))
+            ) is None
+            or type(result.get("mission_id")) is not str
+            or re.fullmatch(
+                r"mis_[0-9a-f]{12}", str(result.get("mission_id"))
+            ) is None
+            or type(result.get("attempt_id")) is not str
+            or re.fullmatch(
+                r"mat_[0-9a-f]{12}", str(result.get("attempt_id"))
+            ) is None
+            or type(result.get("permission_id")) is not str
+            or re.fullmatch(
+                r"prm_[a-z0-9]+", str(result.get("permission_id"))
+            ) is None
+            or result.get("decision") not in {"approved", "denied"}
+            or result.get("state") != result.get("decision")
         ):
             raise DaemonUnavailable("permission decision confirmation was rejected")
         return {
             "mode": "daemon_permission_confirmed",
-            "mission_id": mission_id,
-            "attempt_id": attempt_id,
-            "permission_id": permission_id,
-            "decision": decision,
-            "state": decision,
+            **result,
         }
     finally:
-        await _release_permission_controller(
-            client, lease_id=lease_id, lease_generation=lease_generation
-        )
         await client.close()
 
 
@@ -6563,13 +6568,7 @@ def daemon_permission_confirm_command(args: argparse.Namespace) -> int:
         payload = asyncio.run(_confirm_daemon_permission_decision(
             Path(config.root),
             config,
-            mission_id=args.mission_id,
-            attempt_id=args.attempt_id,
-            permission_id=args.permission_id,
-            decision=args.decision,
-            preview_id=args.preview_id,
-            lease_id=args.lease_id,
-            lease_generation=args.lease_generation,
+            confirmation_handle=args.handle,
         ))
     except DaemonClientError as exc:
         print(str(exc), file=sys.stderr)
@@ -7182,7 +7181,9 @@ async def _serve_daemon(root: Path, config: ProjectConfig, store: StateStore) ->
             try:
                 now = datetime.now(timezone.utc)
                 params = dict(params)
-                if method != "controller.acquire":
+                if method not in {
+                    "controller.acquire", "permission.confirm-handle"
+                }:
                     authority = params.pop("_lease", None)
                     if not isinstance(authority, Mapping):
                         raise LeaseError("controller lease required")
@@ -7190,6 +7191,106 @@ async def _serve_daemon(root: Path, config: ProjectConfig, store: StateStore) ->
                     _validate_daemon_controller_lease(
                         store, lease_id, generation, now=now
                     )
+                if method == "permission.confirm-handle":
+                    if service is None or set(params) != {"handle"}:
+                        raise DaemonClientRequestError(
+                            "permission confirmation handle is invalid",
+                            "permission_confirmation_blocked",
+                        )
+                    record: dict[str, object] | None = None
+                    try:
+                        record = service.consume_permission_confirmation(
+                            params["handle"], now=now
+                        )
+                        target = record.get("target")
+                        stored_waiter = record.get("live_waiter_authority")
+                        stored_binding = record.get("permission_binding")
+                        stored_lease_id = record.get("lease_id")
+                        stored_generation = record.get("generation")
+                        stored_preview_id = record.get("preview_id")
+                        if (
+                            type(target) is not dict
+                            or type(stored_waiter) is not dict
+                            or type(stored_binding) is not dict
+                            or type(stored_lease_id) is not str
+                            or type(stored_generation) is not int
+                            or type(stored_preview_id) is not str
+                        ):
+                            raise ServiceError(
+                                "permission confirmation handle is invalid"
+                            )
+                        _validate_daemon_controller_lease(
+                            store, stored_lease_id, stored_generation, now=now
+                        )
+                        permission_id = target.get("permission_id")
+                        current_waiter = (
+                            service.live_permission_waiter_authority(permission_id)
+                            if isinstance(permission_id, str)
+                            else None
+                        )
+                        state = store.validated_protocol_state()
+                        current_bindings = [
+                            item
+                            for item in state.get(
+                                "mission_permission_bindings", []
+                            )
+                            if type(item) is dict
+                            and item == stored_binding
+                        ]
+                        if current_waiter != stored_waiter or len(current_bindings) != 1:
+                            raise ServiceError(
+                                "permission confirmation authority is stale"
+                            )
+                        result = apply_permission_decision_request(
+                            store,
+                            {**target, "preview_id": stored_preview_id},
+                            generation=stored_generation,
+                            now=now,
+                            live_waiter_authority=current_waiter,
+                        )
+                        if result.get("state") not in {"approved", "denied"}:
+                            raise ServiceError(
+                                "permission confirmation result is invalid"
+                            )
+                        if service.notify_permission_decision(
+                            str(result["permission_id"]), str(result["state"])
+                        ) is not True:
+                            raise ServiceError(
+                                "live permission waiter notification failed"
+                            )
+                        return {
+                            "confirmation_handle": params["handle"],
+                            "preview_id": stored_preview_id,
+                            **target,
+                            "state": result["state"],
+                        }
+                    except PermissionConfirmationExpired as exc:
+                        record = exc.record
+                        raise DaemonClientRequestError(
+                            "permission confirmation handle is unavailable",
+                            "permission_confirmation_blocked",
+                        ) from None
+                    except (LeaseError, ServiceError):
+                        raise DaemonClientRequestError(
+                            "permission confirmation handle is unavailable",
+                            "permission_confirmation_blocked",
+                        ) from None
+                    finally:
+                        if record is not None:
+                            try:
+                                current = controller_lease_from_summary(
+                                    store.load().get("controller_lease")
+                                )
+                                if current is not None:
+                                    transition = release_controller(
+                                        current,
+                                        lease_id=str(record["lease_id"]),
+                                        generation=int(record["generation"]),
+                                        now=now,
+                                    )
+                                    commit_and_flush(transition)
+                            except Exception:
+                                pass
                 if method == "mission.admit":
                     if service is None:
                         raise DaemonClientRequestError(
@@ -7240,7 +7341,7 @@ async def _serve_daemon(root: Path, config: ProjectConfig, store: StateStore) ->
                         raise DaemonClientRequestError(
                             str(exc), "mission_governance_blocked"
                         ) from None
-                if method == "permission.decide":
+                if method in {"permission.decide", "permission.preview-handle"}:
                     try:
                         permission_id = params.get("permission_id")
                         live_waiter = (
@@ -7255,6 +7356,40 @@ async def _serve_daemon(root: Path, config: ProjectConfig, store: StateStore) ->
                             now=now,
                             live_waiter_authority=live_waiter,
                         )
+                        if method == "permission.preview-handle":
+                            if service is None:
+                                raise ServiceError("daemon service is unavailable")
+                            current = controller_lease_from_summary(
+                                store.load().get("controller_lease")
+                            )
+                            if current is None:
+                                raise ServiceError(
+                                    "permission confirmation controller is invalid"
+                                )
+                            state = store.validated_protocol_state()
+                            bindings = [
+                                item
+                                for item in state.get(
+                                    "mission_permission_bindings", []
+                                )
+                                if type(item) is dict
+                                and item.get("mission_id") == params.get("mission_id")
+                                and item.get("attempt_id") == params.get("attempt_id")
+                                and item.get("permission_id")
+                                == params.get("permission_id")
+                            ]
+                            if len(bindings) != 1 or live_waiter is None:
+                                raise ServiceError(
+                                    "permission confirmation binding is invalid"
+                                )
+                            return service.register_permission_confirmation(
+                                target=params,
+                                preview=result,
+                                controller_authority=current.summary(),
+                                live_waiter_authority=live_waiter,
+                                permission_binding=bindings[0],
+                                now=now,
+                            )
                         if result.get("state") in {"approved", "denied"}:
                             if service is None:
                                 raise ServiceError("daemon service is unavailable")
@@ -7416,14 +7551,17 @@ async def _serve_daemon(root: Path, config: ProjectConfig, store: StateStore) ->
                 "handshake", "status", "subscribe", "mission.pause",
                 "mission.resume", "mission.cancel",
                 "mission.admit",
-                "permission.decide",
+                "permission.decide", "permission.preview-handle",
+                "permission.confirm-handle",
                 "worker.takeover", "worker.return-control",
                 "worker.reroute",
                 "controller.acquire", "controller.renew", "controller.release",
                 "daemon.stop",
                 "daemon.force-stop",
             },
-            lease_exempt_methods={"controller.acquire"},
+            lease_exempt_methods={
+                "controller.acquire", "permission.confirm-handle"
+            },
             status_provider=current_status,
             mutation_handler=mutation_handler,
             lease_validator=lease_validator,
@@ -18866,17 +19004,9 @@ def build_parser() -> argparse.ArgumentParser:
     daemon_permission_preview.set_defaults(func=daemon_permission_preview_command)
     daemon_permission_confirm = daemon_subparsers.add_parser(
         "permission-confirm",
-        help="Confirm an exact permission preview using its original controller lease",
+        help="Confirm one exact scoped permission handle",
     )
-    daemon_permission_confirm.add_argument("--mission-id", required=True)
-    daemon_permission_confirm.add_argument("--attempt-id", required=True)
-    daemon_permission_confirm.add_argument("--permission-id", required=True)
-    daemon_permission_confirm.add_argument(
-        "--decision", required=True, choices=("approved", "denied")
-    )
-    daemon_permission_confirm.add_argument("--preview-id", required=True)
-    daemon_permission_confirm.add_argument("--lease-id", required=True)
-    daemon_permission_confirm.add_argument("--lease-generation", required=True, type=int)
+    daemon_permission_confirm.add_argument("--handle", required=True)
     daemon_permission_confirm.set_defaults(func=daemon_permission_confirm_command)
     daemon_stop = daemon_subparsers.add_parser("stop", help="Safely stop the verified project daemon")
     daemon_stop.add_argument("--confirm", action="store_true", required=True, help="Confirm the explicit runtime stop")

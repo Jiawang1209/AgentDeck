@@ -1356,6 +1356,9 @@ production file with no semantic diff. Never use `git add .`.
 
 #### Task 9 spec-review follow-up: public permission recovery controls
 
+This first follow-up records the intermediate raw-lease confirm design. The
+subsequent scoped-opaque follow-up below supersedes its public confirm shape.
+
 The P1 review found that Task 9 displayed an enabled
 `agentdeck daemon permission-preview` control without implementing that public
 subcommand; acceptance had bypassed the surface through a private
@@ -1386,6 +1389,42 @@ subcommand; acceptance had bypassed the surface through a private
   fresh-restart zero-write proof, and cover malformed arguments plus cleanup.
 - [x] Run focused daemon suites, the full suite, `compileall`, diff checks, then
   commit separately as `Add public permission recovery controls`.
+
+#### Task 9 P1 follow-up: scoped opaque permission confirmation
+
+The second review found that the first public confirm command exposed the
+general controller lease and advertised the governance preview's five-minute
+expiry even though controller authority expires earlier. Replace that public
+bearer with a daemon-private, single-use confirmation capability.
+
+**Authorized files:**
+- Modify: `src/agentdeck/cli.py` for handle-only public preview/confirm and the
+  serialized daemon registration/consumption wiring
+- Modify: `src/agentdeck/daemon/service.py` for the bounded ephemeral registry
+- Modify: `src/agentdeck/daemon/client.py` and
+  `src/agentdeck/daemon/server.py` for the two scoped RPC method boundaries
+- Modify: `tests/test_daemon_acceptance.py`, `tests/test_daemon_cli.py`,
+  `tests/test_daemon_ipc.py`, `tests/test_daemon_reconnection.py`, and
+  `tests/test_daemon_service.py`
+- Verify unchanged: `src/agentdeck/state.py` continues to emit only the exact
+  nonsecret preview control, while `src/agentdeck/contracts.py` continues to
+  validate that same control; handle creation begins only after it is executed
+- Modify: `HISTORY.md` and this plan
+
+- [x] RED/GREEN a private `pcf_<random>` registry with a strict capacity,
+  canonical exact bindings, `min(controller, governance)` expiry, expired-entry
+  cleanup, consume-once behavior, and close/restart clearing.
+- [x] Add lease-protected `permission.preview-handle` and narrowly
+  lease-exempt `permission.confirm-handle`; keep `permission.decide` gated.
+- [x] Make confirm accept only `--handle`, reject legacy raw authority args,
+  revalidate controller/waiter/binding inside the mutation queue, commit then
+  notify, and release the exact private controller on every terminal path.
+- [x] Prove public JSON, argv, stderr, and ProjectView recovery controls contain
+  no raw lease/generation; prove effective expiry, replay/expired/restart
+  rejection, zero permission-lineage writes, capacity cleanup, and controller
+  release through deterministic unit, IPC, and four-stage acceptance tests.
+- [x] Run the focused suites, full suite, `compileall`, and diff checks; commit
+  separately as `Scope permission confirmation authority`.
 
 ### Task 10: Opt-in real M2c acceptance gate and SOP
 

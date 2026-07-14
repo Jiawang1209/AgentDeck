@@ -452,7 +452,9 @@ def test_observer_mutation_requires_current_lease_before_handler(short_project: 
     _run(exercise())
 
 
-def test_only_controller_acquire_can_be_lease_exempt(short_project: Path) -> None:
+def test_only_controller_acquire_and_scoped_permission_confirm_can_be_lease_exempt(
+    short_project: Path,
+) -> None:
     base = {
         "endpoint": short_project / "daemon.sock",
         "instance_id": "dmn_test",
@@ -475,6 +477,11 @@ def test_only_controller_acquire_can_be_lease_exempt(short_project: Path) -> Non
             allowed_methods=METHODS,
             lease_exempt_methods={"mission.pause"},
         )
+    DaemonServer(
+        **base,
+        allowed_methods=METHODS | {"permission.confirm-handle"},
+        lease_exempt_methods={"permission.confirm-handle"},
+    )
 
     calls: list[tuple[str, dict[str, object]]] = []
 
@@ -484,7 +491,8 @@ def test_only_controller_acquire_can_be_lease_exempt(short_project: Path) -> Non
 
     async def exercise() -> None:
         allowed = METHODS | {
-            "controller.acquire", "controller.renew", "controller.release"
+            "controller.acquire", "controller.renew", "controller.release",
+            "permission.confirm-handle", "permission.decide",
         }
         owner, server = await _running_server(
             short_project,
@@ -495,7 +503,9 @@ def test_only_controller_acquire_can_be_lease_exempt(short_project: Path) -> Non
                 else (_ for _ in ()).throw(LeaseError("stale controller lease"))
             ),
             allowed_methods=allowed,
-            lease_exempt_methods={"controller.acquire"},
+            lease_exempt_methods={
+                "controller.acquire", "permission.confirm-handle"
+            },
         )
         try:
             client = await DaemonClient.connect_verified(
@@ -507,6 +517,13 @@ def test_only_controller_acquire_can_be_lease_exempt(short_project: Path) -> Non
                 )
                 assert set(acquired) == {"lease_id", "generation"}
                 assert acquired["generation"] == 1
+                assert await client.request(
+                    "permission.confirm-handle", {"handle": "pcf_" + "2" * 24}
+                ) == {"lease_id": "lse_" + "1" * 24, "generation": 1}
+                with pytest.raises(
+                    DaemonClientError, match="controller lease required"
+                ):
+                    await client.request("permission.decide", {})
                 with pytest.raises(
                     DaemonClientError, match="controller lease required"
                 ):
@@ -536,9 +553,10 @@ def test_only_controller_acquire_can_be_lease_exempt(short_project: Path) -> Non
             cleanup_daemon_endpoint(owner)
         assert calls[0] == ("controller.acquire", {"client_id": "client-a"})
         assert [method for method, _params in calls[1:]] == [
-            "controller.renew", "controller.release",
+            "permission.confirm-handle", "controller.renew", "controller.release",
         ]
-        for _method, params in calls[1:]:
+        assert calls[1][1] == {"handle": "pcf_" + "2" * 24}
+        for _method, params in calls[2:]:
             assert dict(params["_lease"]) == {  # type: ignore[arg-type]
                 "lease_id": "lse_" + "1" * 24, "generation": 1,
             }

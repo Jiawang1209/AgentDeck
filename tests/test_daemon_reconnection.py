@@ -259,6 +259,8 @@ def test_recovery_card_is_compact_same_source_and_zero_write(tmp_path: Path) -> 
         "--attempt-id mat_131313131313 --permission-id prm_131313131313 "
         "--decision approved"
     )
+    assert "lse_" not in response.payload["decision"]["controls"][0]["command"]
+    assert "lease" not in response.payload["decision"]["controls"][0]["command"]
     assert response.payload["trace_commands"][-1] == (
         "agentdeck trace --id mat_131313131313"
     )
