@@ -10,6 +10,7 @@ from pathlib import Path
 import pty
 import re
 import select
+import shlex
 import signal
 import shutil
 import subprocess
@@ -324,7 +325,18 @@ async def _decide_pending_permission(
             "lease_id": lease["lease_id"],
             "lease_generation": lease["generation"],
         }
-        params = {"permission_id": permission_id, "decision": "approved"}
+        bindings = [
+            item
+            for item in StateStore(root).load()["mission_permission_bindings"]
+            if item.get("permission_id") == permission_id
+        ]
+        assert len(bindings) == 1
+        params = {
+            "mission_id": bindings[0]["mission_id"],
+            "attempt_id": bindings[0]["attempt_id"],
+            "permission_id": permission_id,
+            "decision": "approved",
+        }
         preview = await client.request("permission.decide", params, **authority)
         assert set(preview) == {
             "preview_id",
@@ -359,6 +371,66 @@ async def _decide_pending_permission(
         return {"preview": preview, "result": result}
     finally:
         await client.close()
+
+
+def _decide_permission_through_public_control(
+    root: Path,
+    *,
+    preview_command: str,
+    mission_id: str,
+    attempt_id: str,
+    permission_id: str,
+    verify_replay: bool = False,
+) -> dict[str, object]:
+    preview_process = subprocess.run(
+        shlex.split(preview_command),
+        cwd=root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert preview_process.returncode == 0, preview_process.stderr
+    preview = json.loads(preview_process.stdout)
+    assert preview == {
+        "mode": "daemon_permission_preview",
+        "mission_id": mission_id,
+        "attempt_id": attempt_id,
+        "permission_id": permission_id,
+        "decision": "approved",
+        "preview_id": preview["preview_id"],
+        "lease_id": preview["lease_id"],
+        "lease_generation": preview["lease_generation"],
+        "expires_at": preview["expires_at"],
+        "confirm_command": preview["confirm_command"],
+    }
+    confirm_process = subprocess.run(
+        shlex.split(str(preview["confirm_command"])),
+        cwd=root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert confirm_process.returncode == 0, confirm_process.stderr
+    confirmed = json.loads(confirm_process.stdout)
+    assert confirmed == {
+        "mode": "daemon_permission_confirmed",
+        "mission_id": mission_id,
+        "attempt_id": attempt_id,
+        "permission_id": permission_id,
+        "decision": "approved",
+        "state": "approved",
+    }
+    if verify_replay:
+        replay = subprocess.run(
+            shlex.split(str(preview["confirm_command"])),
+            cwd=root,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert replay.returncode != 0
+        assert "controller lease" in replay.stderr
+    return {"preview": preview, "result": confirmed}
 
 
 async def _govern_worker_ownership(
@@ -778,7 +850,8 @@ def test_daemon_acceptance_runs_four_stage_acp_tmux_mission(monkeypatch) -> None
                 "label": "Preview pending permission",
                 "command": (
                     "agentdeck daemon permission-preview --mission-id "
-                    f"{preview['mission_id']} --attempt-id {first_attempt['attempt_id']}"
+                    f"{preview['mission_id']} --attempt-id {first_attempt['attempt_id']} "
+                    f"--permission-id {first_permission_id} --decision approved"
                 ),
                 "safety": "inspect",
                 "enabled": True,
@@ -786,10 +859,13 @@ def test_daemon_acceptance_runs_four_stage_acp_tmux_mission(monkeypatch) -> None
             }
         ]
 
-        asyncio.run(
-            _decide_pending_permission(
-                root, str(first_permission_id), verify_replay=True
-            )
+        _decide_permission_through_public_control(
+            root,
+            preview_command=recovery_card["decision"]["controls"][0]["command"],
+            mission_id=str(preview["mission_id"]),
+            attempt_id=str(first_attempt["attempt_id"]),
+            permission_id=str(first_permission_id),
+            verify_replay=True,
         )
         after_first = _wait(
             store,
@@ -882,10 +958,17 @@ def test_daemon_acceptance_runs_four_stage_acp_tmux_mission(monkeypatch) -> None
             "paths": [],
         }
 
-        asyncio.run(
-            _decide_pending_permission(
-                root, str(second_permission_id), verify_replay=True
-            )
+        second_recovery = asdict(store.project_view(config))["mission_recovery"]
+        assert second_recovery["decision"]["attempt_id"] == safe_window[
+            "mission_attempts"
+        ][2]["attempt_id"]
+        _decide_permission_through_public_control(
+            root,
+            preview_command=second_recovery["decision"]["controls"][0]["command"],
+            mission_id=str(preview["mission_id"]),
+            attempt_id=str(safe_window["mission_attempts"][2]["attempt_id"]),
+            permission_id=str(second_permission_id),
+            verify_replay=True,
         )
         completed = _wait(
             store,

@@ -4,6 +4,14 @@
 
 ## 2026-07-15
 
+### Add public permission recovery controls
+
+- **Executable recovery control**: `mission_recovery.decision.controls[]` now names the exact Mission, attempt, pending permission, and explicit decision in a real `agentdeck daemon permission-preview` command. The Mission recovery validator accepts only that canonical public shape, and fixed recovery fixtures carry the same binding.
+- **Two-stage daemon CLI**: `permission-preview` connects only to an already-running verified daemon, acquires a temporary controller, records one exact-bound preview, and returns a bounded shell-safe confirm command without releasing the successful lease. `permission-confirm` requires the complete preview and lease identity, never reacquires authority, confirms through the same live waiter, and releases that exact lease on success or failure.
+- **TOCTOU and cleanup boundary**: Mission and attempt ids are required domain authority, not display metadata. Preview and atomic confirm both bind them through the unique durable permission binding; tampered ids, orphaned waiters, malformed arguments, stale/replayed confirms, and preview/confirm failures reject without permission mutation, while acquired temporary leases receive best-effort cleanup.
+- **Acceptance path**: both ACP permission windows in the deterministic four-stage Mission now execute the displayed public preview command and its returned confirm command. The first confirm is replayed and rejected, and the existing fresh-restart no-waiter regression remains zero-write.
+- **Verification**: the daemon CLI/governance/recovery/reconnection/acceptance group passes `235` tests; the full suite passes `3302` tests with one skip, and `python -m compileall -q src tests` succeeds in the `agentdeck` environment.
+
 ### Prove M2c recovery and human takeover
 
 - **Live permission recovery authority**: the daemon now projects `waiting_human` only while the current process owns the exact ACP permission waiter, bound to daemon instance, Mission attempt, session, generation, and pending permission. Fresh startup remains persisted-only and therefore classifies the same orphaned ACP facts as ambiguous; preview/confirm without a live waiter fails closed with zero writes, and confirm commits before synchronously waking exactly that waiter.

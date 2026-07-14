@@ -3163,7 +3163,22 @@ class StateStore:
             current = current_states.get(("permission", permission_id), "pending")
             if current != "pending":
                 raise ValueError("permission decision is terminal")
+            bindings = [
+                item
+                for item in state.get("mission_permission_bindings", [])
+                if type(item) is dict
+                and item.get("permission_id") == permission_id
+            ]
+            if len(bindings) != 1:
+                raise ValueError("permission decision binding is invalid")
+            binding = bindings[0]
+            mission_id = binding.get("mission_id")
+            attempt_id = binding.get("attempt_id")
+            if type(mission_id) is not str or type(attempt_id) is not str:
+                raise ValueError("permission decision binding is invalid")
             current_facts = {
+                "mission_id": mission_id,
+                "attempt_id": attempt_id,
                 "permission_id": permission_id,
                 "session_id": permission["session_id"],
                 "turn_id": permission["turn_id"],
@@ -10595,14 +10610,33 @@ class StateStore:
         if isinstance(attempt_id, str) and attempt_id not in trace_ids:
             trace_ids.append(attempt_id)
         trace_commands = [f"agentdeck trace --id {item}" for item in trace_ids]
-        if decision_kind == "permission" and isinstance(mission_id, str) and isinstance(attempt_id, str):
+        permission_bindings = [
+            item
+            for item in state.get("mission_permission_bindings", [])
+            if isinstance(item, dict)
+            and item.get("mission_id") == mission_id
+            and item.get("attempt_id") == attempt_id
+            and isinstance(item.get("permission_id"), str)
+        ]
+        permission_id = (
+            permission_bindings[0]["permission_id"]
+            if len(permission_bindings) == 1
+            else None
+        )
+        if (
+            decision_kind == "permission"
+            and isinstance(mission_id, str)
+            and isinstance(attempt_id, str)
+            and isinstance(permission_id, str)
+        ):
             decision_controls = [
                 {
                     "kind": "permission_preview",
                     "label": "Preview pending permission",
                     "command": (
                         f"agentdeck daemon permission-preview --mission-id {mission_id} "
-                        f"--attempt-id {attempt_id}"
+                        f"--attempt-id {attempt_id} --permission-id {permission_id} "
+                        "--decision approved"
                     ),
                     "safety": "inspect",
                     "enabled": True,

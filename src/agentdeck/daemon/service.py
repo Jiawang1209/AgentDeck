@@ -353,15 +353,22 @@ def apply_permission_decision_request(
     live_waiter_authority: object = None,
 ) -> dict[str, object]:
     """Production RPC domain handler for one exact human permission decision."""
+    base_fields = {"mission_id", "attempt_id", "permission_id", "decision"}
     if type(params) is not dict or set(params) not in (
-        {"permission_id", "decision"},
-        {"permission_id", "decision", "preview_id"},
+        base_fields,
+        base_fields | {"preview_id"},
     ):
         raise ServiceError("permission decision request is invalid")
+    mission_id = params.get("mission_id")
+    attempt_id = params.get("attempt_id")
     permission_id = params.get("permission_id")
     decision = params.get("decision")
     if (
-        type(permission_id) is not str
+        type(mission_id) is not str
+        or re.fullmatch(r"mis_[0-9a-f]{12}", mission_id) is None
+        or type(attempt_id) is not str
+        or re.fullmatch(r"mat_[0-9a-f]{12}", attempt_id) is None
+        or type(permission_id) is not str
         or re.fullmatch(r"prm_[a-z0-9]+", permission_id) is None
         or decision not in {"approved", "denied"}
         or not callable(getattr(store, "validated_protocol_state", None))
@@ -376,6 +383,7 @@ def apply_permission_decision_request(
             "generation",
         }
         or live_waiter_authority.get("permission_id") != permission_id
+        or live_waiter_authority.get("attempt_id") != attempt_id
         or type(live_waiter_authority.get("attempt_id")) is not str
         or re.fullmatch(
             r"mat_[0-9a-f]{12}", str(live_waiter_authority["attempt_id"])
@@ -404,13 +412,14 @@ def apply_permission_decision_request(
             for item in state.get("mission_permission_bindings", [])
             if type(item) is dict
             and item.get("permission_id") == permission_id
-            and item.get("attempt_id") == live_waiter_authority["attempt_id"]
+            and item.get("attempt_id") == attempt_id
+            and item.get("mission_id") == mission_id
         ]
         attempts = [
             item
             for item in state.get("mission_attempts", [])
             if type(item) is dict
-            and item.get("attempt_id") == live_waiter_authority["attempt_id"]
+            and item.get("attempt_id") == attempt_id
         ]
         sessions = [
             item
@@ -424,7 +433,7 @@ def apply_permission_decision_request(
             or len(attempts) != 1
             or attempts[0].get("configured_transport") != "acp"
             or attempts[0].get("state") not in {"submitted", "running"}
-            or bindings[0].get("mission_id") != attempts[0].get("mission_id")
+            or attempts[0].get("mission_id") != mission_id
             or len(sessions) != 1
             or sessions[0].get("agent_id") != attempts[0].get("agent_id")
         ):
@@ -434,6 +443,8 @@ def apply_permission_decision_request(
     if current != "pending":
         raise ServiceError("permission decision target is terminal")
     facts = {
+        "mission_id": mission_id,
+        "attempt_id": attempt_id,
         "permission_id": permission_id,
         "session_id": permission.get("session_id"),
         "turn_id": permission.get("turn_id"),

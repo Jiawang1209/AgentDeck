@@ -1354,6 +1354,39 @@ git commit -m "Prove M2c recovery and human takeover"
 Before committing, inspect `git diff --cached --name-only` and unstage any
 production file with no semantic diff. Never use `git add .`.
 
+#### Task 9 spec-review follow-up: public permission recovery controls
+
+The P1 review found that Task 9 displayed an enabled
+`agentdeck daemon permission-preview` control without implementing that public
+subcommand; acceptance had bypassed the surface through a private
+`DaemonClient` helper. Close that gap in a follow-up commit without squashing.
+
+**Additional files:**
+- Modify: `src/agentdeck/cli.py` for verified-daemon-only public preview/confirm
+- Modify: `src/agentdeck/contracts.py` for the exact Mission recovery control
+- Modify: `src/agentdeck/daemon/service.py` and `src/agentdeck/state.py` so
+  Mission/attempt/permission are exact preview and atomic-confirm authority
+- Modify: `tests/test_daemon_cli.py`, `tests/test_daemon_acceptance.py`,
+  `tests/test_daemon_governance.py`, `tests/test_daemon_reconnection.py`, and
+  `tests/test_daemon_recovery.py`
+- Modify: `HISTORY.md` and this plan
+
+- [x] Add required `permission-preview` arguments for Mission, attempt,
+  permission, and explicit decision. Connect to the existing daemon only,
+  acquire one controller, return bounded JSON and a shell-safe confirm command,
+  retain the successful lease, and best-effort release it on preview failure.
+- [x] Add `permission-confirm` requiring the exact preview id, lease id, and
+  lease generation. Never acquire replacement authority; confirm and then
+  best-effort release the exact lease on both success and failure.
+- [x] Bind Mission and attempt into both preview facts and the StateStore's
+  lock-protected current-facts reconstruction. Reject mismatched authority,
+  missing live waiters, replay, and stale leases without permission writes.
+- [x] Drive both deterministic ACP permission windows through the displayed
+  public command, assert bounded payloads and replay rejection, retain the
+  fresh-restart zero-write proof, and cover malformed arguments plus cleanup.
+- [x] Run focused daemon suites, the full suite, `compileall`, diff checks, then
+  commit separately as `Add public permission recovery controls`.
+
 ### Task 10: Opt-in real M2c acceptance gate and SOP
 
 **Files:**

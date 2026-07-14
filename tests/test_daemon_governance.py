@@ -780,7 +780,12 @@ def test_persisted_pending_permission_without_live_waiter_is_zero_write(
     with pytest.raises(ServiceError, match="live permission waiter"):
         apply_permission_decision_request(
             store,
-            {"permission_id": "prm_000000000001", "decision": "approved"},
+            {
+                "mission_id": "mis_0123456789ab",
+                "attempt_id": "mat_000000000001",
+                "permission_id": "prm_000000000001",
+                "decision": "approved",
+            },
             generation=5,
             now=NOW,
         )
@@ -790,7 +795,26 @@ def test_persisted_pending_permission_without_live_waiter_is_zero_write(
 def test_production_permission_decision_rpc_is_preview_bound(tmp_path) -> None:
     store = StateStore(tmp_path)
     _seed_pending_permission(store, tmp_path)
-    params = {"permission_id": "prm_000000000001", "decision": "approved"}
+    params = {
+        "mission_id": "mis_0123456789ab",
+        "attempt_id": "mat_000000000001",
+        "permission_id": "prm_000000000001",
+        "decision": "approved",
+    }
+    before = store.load()
+    for field, value in (
+        ("mission_id", "mis_ffffffffffff"),
+        ("attempt_id", "mat_ffffffffffff"),
+    ):
+        with pytest.raises(ServiceError, match="authority|invalid"):
+            apply_permission_decision_request(
+                store,
+                {**params, field: value},
+                generation=5,
+                now=NOW,
+                live_waiter_authority=_live_permission_authority(),
+            )
+        assert store.load() == before
     preview = apply_permission_decision_request(
         store,
         params,

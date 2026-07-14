@@ -174,7 +174,7 @@ from .state import (
     worker_runtime_identity_hash,
 )
 from .workflow import authorized_steps, run_sequential_workflow, workflow_plan_hash
-from .daemon.client import DaemonClient, DaemonUnavailable, admit_confirmed_mission, connect_or_start, govern_mission, install_bounded_daemon_stdio_from_env
+from .daemon.client import DaemonClient, DaemonClientError, DaemonUnavailable, admit_confirmed_mission, connect_or_start, govern_mission, install_bounded_daemon_stdio_from_env
 from .daemon.lifecycle import (
     acquire_daemon_ownership, bind_daemon_endpoint, can_stop_daemon,
     daemon_keepalive_reasons,
@@ -6385,6 +6385,196 @@ def daemon_start_command(_args: argparse.Namespace) -> int:
     if project_view is None:
         return 1
     _print_json(_daemon_status_payload(project_view, live, compatible=compatible))
+    return 0
+
+
+async def _release_permission_controller(
+    client: DaemonClient, *, lease_id: str, lease_generation: int,
+) -> None:
+    """Best-effort cleanup for the exact temporary recovery controller."""
+    try:
+        await client.request(
+            "controller.release",
+            {"lease_id": lease_id, "generation": lease_generation},
+            lease_id=lease_id,
+            lease_generation=lease_generation,
+        )
+    except Exception:
+        pass
+
+
+async def _preview_daemon_permission_decision(
+    root: Path,
+    config: ProjectConfig,
+    *,
+    mission_id: str,
+    attempt_id: str,
+    permission_id: str,
+    decision: str,
+) -> dict[str, object]:
+    client = await DaemonClient.connect_verified(
+        root,
+        max_frame_bytes=config.daemon.max_frame_bytes,
+        timeout_seconds=config.daemon.start_timeout_seconds,
+    )
+    lease_id: str | None = None
+    lease_generation: int | None = None
+    succeeded = False
+    try:
+        acquired = await client.request(
+            "controller.acquire",
+            {"client_id": f"client_permission_preview_{secrets.token_hex(12)}"},
+        )
+        acquired_lease_id = acquired.get("lease_id")
+        acquired_generation = acquired.get("generation")
+        if type(acquired_lease_id) is not str or type(acquired_generation) is not int:
+            raise DaemonUnavailable("daemon controller acquisition failed")
+        lease_id = acquired_lease_id
+        lease_generation = acquired_generation
+        preview = await client.request(
+            "permission.decide",
+            {
+                "mission_id": mission_id,
+                "attempt_id": attempt_id,
+                "permission_id": permission_id,
+                "decision": decision,
+            },
+            lease_id=lease_id,
+            lease_generation=lease_generation,
+        )
+        preview_id = preview.get("preview_id")
+        expires_at = preview.get("expires_at")
+        if (
+            type(preview_id) is not str
+            or type(expires_at) is not str
+            or preview.get("action") != "permission_decision"
+            or preview.get("generation") != lease_generation
+            or preview.get("state") != "pending"
+        ):
+            raise DaemonUnavailable("permission decision preview was rejected")
+        confirm_command = shlex.join([
+            "agentdeck", "daemon", "permission-confirm",
+            "--mission-id", mission_id,
+            "--attempt-id", attempt_id,
+            "--permission-id", permission_id,
+            "--decision", decision,
+            "--preview-id", preview_id,
+            "--lease-id", lease_id,
+            "--lease-generation", str(lease_generation),
+        ])
+        succeeded = True
+        return {
+            "mode": "daemon_permission_preview",
+            "mission_id": mission_id,
+            "attempt_id": attempt_id,
+            "permission_id": permission_id,
+            "decision": decision,
+            "preview_id": preview_id,
+            "lease_id": lease_id,
+            "lease_generation": lease_generation,
+            "expires_at": expires_at,
+            "confirm_command": confirm_command,
+        }
+    finally:
+        if not succeeded and lease_id is not None and lease_generation is not None:
+            await _release_permission_controller(
+                client, lease_id=lease_id, lease_generation=lease_generation
+            )
+        await client.close()
+
+
+async def _confirm_daemon_permission_decision(
+    root: Path,
+    config: ProjectConfig,
+    *,
+    mission_id: str,
+    attempt_id: str,
+    permission_id: str,
+    decision: str,
+    preview_id: str,
+    lease_id: str,
+    lease_generation: int,
+) -> dict[str, object]:
+    client = await DaemonClient.connect_verified(
+        root,
+        max_frame_bytes=config.daemon.max_frame_bytes,
+        timeout_seconds=config.daemon.start_timeout_seconds,
+    )
+    try:
+        result = await client.request(
+            "permission.decide",
+            {
+                "mission_id": mission_id,
+                "attempt_id": attempt_id,
+                "permission_id": permission_id,
+                "decision": decision,
+                "preview_id": preview_id,
+            },
+            lease_id=lease_id,
+            lease_generation=lease_generation,
+        )
+        if (
+            result.get("accepted") is not True
+            or result.get("permission_id") != permission_id
+            or result.get("preview_id") != preview_id
+            or result.get("state") != decision
+        ):
+            raise DaemonUnavailable("permission decision confirmation was rejected")
+        return {
+            "mode": "daemon_permission_confirmed",
+            "mission_id": mission_id,
+            "attempt_id": attempt_id,
+            "permission_id": permission_id,
+            "decision": decision,
+            "state": decision,
+        }
+    finally:
+        await _release_permission_controller(
+            client, lease_id=lease_id, lease_generation=lease_generation
+        )
+        await client.close()
+
+
+def daemon_permission_preview_command(args: argparse.Namespace) -> int:
+    config, store, exit_code = _load_project_or_error()
+    if config is None or store is None:
+        return exit_code
+    try:
+        payload = asyncio.run(_preview_daemon_permission_decision(
+            Path(config.root),
+            config,
+            mission_id=args.mission_id,
+            attempt_id=args.attempt_id,
+            permission_id=args.permission_id,
+            decision=args.decision,
+        ))
+    except DaemonClientError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    _print_json(payload)
+    return 0
+
+
+def daemon_permission_confirm_command(args: argparse.Namespace) -> int:
+    config, store, exit_code = _load_project_or_error()
+    if config is None or store is None:
+        return exit_code
+    try:
+        payload = asyncio.run(_confirm_daemon_permission_decision(
+            Path(config.root),
+            config,
+            mission_id=args.mission_id,
+            attempt_id=args.attempt_id,
+            permission_id=args.permission_id,
+            decision=args.decision,
+            preview_id=args.preview_id,
+            lease_id=args.lease_id,
+            lease_generation=args.lease_generation,
+        ))
+    except DaemonClientError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    _print_json(payload)
     return 0
 
 
@@ -18663,6 +18853,31 @@ def build_parser() -> argparse.ArgumentParser:
     daemon_status.set_defaults(func=daemon_status_command)
     daemon_start = daemon_subparsers.add_parser("start", help="Start or connect to the project daemon")
     daemon_start.set_defaults(func=daemon_start_command)
+    daemon_permission_preview = daemon_subparsers.add_parser(
+        "permission-preview",
+        help="Preview one exact live permission decision without starting a daemon",
+    )
+    daemon_permission_preview.add_argument("--mission-id", required=True)
+    daemon_permission_preview.add_argument("--attempt-id", required=True)
+    daemon_permission_preview.add_argument("--permission-id", required=True)
+    daemon_permission_preview.add_argument(
+        "--decision", required=True, choices=("approved", "denied")
+    )
+    daemon_permission_preview.set_defaults(func=daemon_permission_preview_command)
+    daemon_permission_confirm = daemon_subparsers.add_parser(
+        "permission-confirm",
+        help="Confirm an exact permission preview using its original controller lease",
+    )
+    daemon_permission_confirm.add_argument("--mission-id", required=True)
+    daemon_permission_confirm.add_argument("--attempt-id", required=True)
+    daemon_permission_confirm.add_argument("--permission-id", required=True)
+    daemon_permission_confirm.add_argument(
+        "--decision", required=True, choices=("approved", "denied")
+    )
+    daemon_permission_confirm.add_argument("--preview-id", required=True)
+    daemon_permission_confirm.add_argument("--lease-id", required=True)
+    daemon_permission_confirm.add_argument("--lease-generation", required=True, type=int)
+    daemon_permission_confirm.set_defaults(func=daemon_permission_confirm_command)
     daemon_stop = daemon_subparsers.add_parser("stop", help="Safely stop the verified project daemon")
     daemon_stop.add_argument("--confirm", action="store_true", required=True, help="Confirm the explicit runtime stop")
     daemon_stop.add_argument("--lease-id", help="Current controller lease id; omit both lease options to acquire a temporary controller")

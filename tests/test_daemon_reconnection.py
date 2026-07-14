@@ -128,6 +128,13 @@ def _seed_waiting_permission_mission(root: Path) -> tuple[object, StateStore]:
     state["conversation_full_transcript"] = [
         {"raw_prompt": "SECRET full transcript must not be reconstructed"}
     ]
+    state["mission_permission_bindings"] = [
+        {
+            "mission_id": MISSION_ID,
+            "attempt_id": "mat_131313131313",
+            "permission_id": "prm_131313131313",
+        }
+    ]
     store.save(state)
     return config, store
 
@@ -249,7 +256,8 @@ def test_recovery_card_is_compact_same_source_and_zero_write(tmp_path: Path) -> 
     assert response.payload["wait_reason"] == "Worker permission is pending"
     assert response.payload["decision"]["controls"][0]["command"] == (
         "agentdeck daemon permission-preview --mission-id mis_131313131313 "
-        "--attempt-id mat_131313131313"
+        "--attempt-id mat_131313131313 --permission-id prm_131313131313 "
+        "--decision approved"
     )
     assert response.payload["trace_commands"][-1] == (
         "agentdeck trace --id mat_131313131313"

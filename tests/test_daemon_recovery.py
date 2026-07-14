@@ -1512,11 +1512,18 @@ def test_daemon_acp_permission_waits_durably_for_exact_human_decision(
                 str(pending["permission_id"])
             )
             assert live_waiter is not None
+            permission_binding = next(
+                item
+                for item in store.load()["mission_permission_bindings"]
+                if item["permission_id"] == pending["permission_id"]
+            )
             now = datetime(2026, 7, 14, tzinfo=timezone.utc)
             preview = await service.submit_mutation(
                 lambda: apply_permission_decision_request(
                     store,
                     {
+                        "mission_id": permission_binding["mission_id"],
+                        "attempt_id": live_waiter["attempt_id"],
                         "permission_id": pending["permission_id"],
                         "decision": "approved",
                     },
@@ -1529,6 +1536,8 @@ def test_daemon_acp_permission_waits_durably_for_exact_human_decision(
                 lambda: apply_permission_decision_request(
                     store,
                     {
+                        "mission_id": permission_binding["mission_id"],
+                        "attempt_id": live_waiter["attempt_id"],
                         "permission_id": pending["permission_id"],
                         "decision": "approved",
                         "preview_id": preview["preview_id"],

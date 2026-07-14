@@ -27,7 +27,7 @@ from agentdeck.daemon.lifecycle import (
     cleanup_daemon_endpoint,
     project_root_hash,
 )
-from agentdeck.daemon.client import DaemonClient, DaemonUnavailable
+from agentdeck.daemon.client import DaemonClient, DaemonClientError, DaemonUnavailable
 from agentdeck.daemon.lease import LeaseError, expire_controller, grant_controller
 from agentdeck.daemon.server import DaemonClientRequestError
 
@@ -140,6 +140,111 @@ def test_daemon_contract_cli_is_discoverable(name: str, capsys) -> None:
     assert cli.main(["contract", name, "--example"]) == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["example"]["schema_version"].endswith("/v1")
+
+
+def test_permission_recovery_cli_requires_explicit_exact_arguments() -> None:
+    parser = cli.build_parser()
+    preview = parser.parse_args([
+        "daemon",
+        "permission-preview",
+        "--mission-id",
+        "mis_0123456789ab",
+        "--attempt-id",
+        "mat_0123456789ab",
+        "--permission-id",
+        "prm_0123456789ab",
+        "--decision",
+        "approved",
+    ])
+    assert preview.func is cli.daemon_permission_preview_command
+    with pytest.raises(SystemExit):
+        parser.parse_args([
+            "daemon",
+            "permission-preview",
+            "--mission-id",
+            "mis_0123456789ab",
+            "--attempt-id",
+            "mat_0123456789ab",
+            "--permission-id",
+            "prm_0123456789ab",
+        ])
+    with pytest.raises(SystemExit):
+        parser.parse_args([
+            "daemon",
+            "permission-confirm",
+            "--mission-id",
+            "mis_0123456789ab",
+            "--attempt-id",
+            "mat_0123456789ab",
+            "--permission-id",
+            "prm_0123456789ab",
+            "--decision",
+            "approved",
+            "--preview-id",
+            "gpv_0123456789ab",
+            "--lease-id",
+            "lse_0123456789ab",
+        ])
+
+
+def test_permission_recovery_failure_releases_exact_lease_without_reacquire(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    root = _project(tmp_path, monkeypatch)
+    config = load_config(root)
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    class FakeClient:
+        async def request(self, method, params, **_kwargs):
+            calls.append((method, dict(params)))
+            if method == "controller.acquire":
+                return {"lease_id": "lse_" + "1" * 24, "generation": 7}
+            if method == "permission.decide":
+                raise DaemonClientError("permission decision rejected")
+            assert method == "controller.release"
+            return {
+                "released": True,
+                "lease_id": "lse_" + "1" * 24,
+                "generation": 7,
+                "expires_at": "2026-07-15T00:00:00+00:00",
+            }
+
+        async def close(self) -> None:
+            return None
+
+    async def connect(*_args, **_kwargs):
+        return FakeClient()
+
+    monkeypatch.setattr(DaemonClient, "connect_verified", connect)
+    exact = {
+        "mission_id": "mis_0123456789ab",
+        "attempt_id": "mat_0123456789ab",
+        "permission_id": "prm_0123456789ab",
+        "decision": "approved",
+    }
+    with pytest.raises(DaemonClientError, match="permission decision rejected"):
+        asyncio.run(cli._preview_daemon_permission_decision(root, config, **exact))
+    assert [method for method, _params in calls] == [
+        "controller.acquire", "permission.decide", "controller.release"
+    ]
+
+    calls.clear()
+    with pytest.raises(DaemonClientError, match="permission decision rejected"):
+        asyncio.run(cli._confirm_daemon_permission_decision(
+            root,
+            config,
+            **exact,
+            preview_id="gov_0123456789ab",
+            lease_id="lse_" + "1" * 24,
+            lease_generation=7,
+        ))
+    assert [method for method, _params in calls] == [
+        "permission.decide", "controller.release"
+    ]
+    assert calls[-1][1] == {
+        "lease_id": "lse_" + "1" * 24,
+        "generation": 7,
+    }
 
 
 def test_daemon_status_is_read_only_when_endpoint_is_absent(tmp_path: Path, monkeypatch, capsys) -> None:

@@ -7410,11 +7410,24 @@ def validate_mission_recovery_contract(payload: object) -> dict[str, object]:
         errors.append("permission decision requires matching wait evidence")
     expected_controls: list[dict[str, object]] = []
     if isinstance(mission_id, str) and decision_kind == "permission" and isinstance(decision_attempt_id, str):
-        expected_controls = [{
-            "kind": "permission_preview", "label": "Preview pending permission",
-            "command": f"agentdeck daemon permission-preview --mission-id {mission_id} --attempt-id {decision_attempt_id}",
-            "safety": "inspect", "enabled": True, "blocker": None,
-        }]
+        command = (
+            decision_controls[0].get("command")
+            if isinstance(decision_controls, list)
+            and len(decision_controls) == 1
+            and isinstance(decision_controls[0], dict)
+            else None
+        )
+        command_pattern = re.compile(
+            rf"agentdeck daemon permission-preview --mission-id {re.escape(mission_id)} "
+            rf"--attempt-id {re.escape(decision_attempt_id)} "
+            r"--permission-id prm_[a-z0-9]+ --decision approved"
+        )
+        if isinstance(command, str) and command_pattern.fullmatch(command):
+            expected_controls = [{
+                "kind": "permission_preview", "label": "Preview pending permission",
+                "command": command,
+                "safety": "inspect", "enabled": True, "blocker": None,
+            }]
     elif isinstance(mission_id, str) and decision_kind == "resume":
         expected_controls = [{
             "kind": "resume_preview", "label": "Preview Mission resume",
