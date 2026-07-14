@@ -262,6 +262,99 @@ def test_postcommit_preview_audit_failure_returns_durable_preview_without_duplic
     assert len(after["conversation_preview_bindings"]) == 1
 
 
+def test_postsave_value_error_returns_exact_durable_preview(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config, store = _project(tmp_path)
+    real_flush = store._flush_conversation_event_outbox_locked
+    injected = False
+
+    def fail_after_preview_save(state=None):
+        nonlocal injected
+        if (
+            not injected
+            and isinstance(state, dict)
+            and len(state.get("missions", [])) == 1
+        ):
+            injected = True
+            raise ValueError("post-save fault")
+        return real_flush(state)
+
+    monkeypatch.setattr(store, "_flush_conversation_event_outbox_locked", fail_after_preview_save)
+    monkeypatch.setattr(
+        "agentdeck.mission_orchestration.shutil.which", lambda command: f"/bin/{command}"
+    )
+
+    response = ConversationSession(
+        root=tmp_path,
+        config=config,
+        store=store,
+        leader_gateway=_Gateway(),
+    ).handle(MESSAGE)
+
+    assert response.kind == "mission_preview"
+    state = store.load()
+    assert len(state["missions"]) == len(state["plans"]) == 1
+    assert len(state["conversation_preview_bindings"]) == 1
+    assert state["conversation_event_outbox"]
+    assert store.project_view(config).conversation["latest_turn_state"] == "completed"
+
+
+def test_partial_candidate_commit_is_rejected_and_turn_terminalizes_failed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config, store = _project(tmp_path)
+    real_commit = store.commit_conversation_mutation
+
+    def partial_commit(mutation):
+        if mutation.append_records.get("missions"):
+            state = store.load()
+            state["plans"].extend(mutation.append_records["plans"])
+            store.save(state)
+            raise ValueError("partial post-save fault")
+        return real_commit(mutation)
+
+    monkeypatch.setattr(store, "commit_conversation_mutation", partial_commit)
+    monkeypatch.setattr(
+        "agentdeck.mission_orchestration.shutil.which", lambda command: f"/bin/{command}"
+    )
+
+    response = ConversationSession(
+        root=tmp_path,
+        config=config,
+        store=store,
+        leader_gateway=_Gateway(),
+    ).handle(MESSAGE)
+
+    assert response.kind == "failed"
+    assert response.payload["stage"] == "schema"
+    state = store.load()
+    assert len(state["plans"]) == 1
+    assert state["missions"] == []
+    assert state["conversation_preview_bindings"] == []
+    assert store.project_view(config).conversation["latest_turn_state"] == "failed"
+
+
+@pytest.mark.parametrize("message", ["共1轮完成任务", "共65轮完成任务", "共九十九轮完成任务"])
+def test_explicit_invalid_step_count_durably_fails_before_leader_call(
+    tmp_path: Path, message: str
+) -> None:
+    config, store = _project(tmp_path)
+    gateway = _Gateway()
+
+    response = ConversationSession(
+        root=tmp_path,
+        config=config,
+        store=store,
+        leader_gateway=gateway,
+    ).handle(message)
+
+    assert response.kind == "failed"
+    assert response.payload["stage"] == "schema"
+    assert gateway.calls == 0
+    assert store.project_view(config).conversation["latest_turn_state"] == "failed"
+
+
 @pytest.mark.parametrize(
     "message",
     ["请严格四步骤完成开放任务", "请恰好四个串行步骤完成开放任务"],

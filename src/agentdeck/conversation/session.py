@@ -434,9 +434,10 @@ class ConversationSession:
                 raise LeaderGatewayError("schema")
             selected = tuple(agent.agent_id for agent in selection.agents)
             planning_config = replace(self.config, agents=selection.agents)
-            step_count = max(
-                2, requested_mission_step_count(text, default=2)
-            )
+            try:
+                step_count = requested_mission_step_count(text, default=2)
+            except ValueError:
+                raise LeaderGatewayError("schema") from None
             planning_task = mission_planning_task(
                 text,
                 selected_agent_ids=selected,

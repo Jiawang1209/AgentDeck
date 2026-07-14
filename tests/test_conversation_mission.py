@@ -143,7 +143,7 @@ def test_candidate_frozen_authority_survives_redacted_message_and_excludes_third
 @pytest.mark.parametrize(
     ("message", "expected"),
     [
-        ("共1轮", 1),
+        ("共2轮", 2),
         ("共十轮", 10),
         ("严格四步骤", 4),
         ("恰好四个串行步骤", 4),
@@ -174,6 +174,24 @@ def test_requested_mission_step_count_avoids_ambiguous_false_positives(
     message: str,
 ) -> None:
     assert requested_mission_step_count(message, default=8) == 8
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "共0轮",
+        "共1轮",
+        "共65轮",
+        "共九十九轮",
+        "共" + "9" * 5000 + "轮",
+        "按一百步骤完成",
+    ],
+)
+def test_requested_mission_step_count_rejects_explicit_unsafe_bounds(
+    message: str,
+) -> None:
+    with pytest.raises(ValueError, match="mission step count invalid"):
+        requested_mission_step_count(message, default=8)
 
 
 def test_invalid_candidate_is_full_tree_zero_write(

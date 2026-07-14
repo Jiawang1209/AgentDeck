@@ -11,6 +11,7 @@ from .models import AgentRuntimeBinding, AgentSpec, LeaderConfig, ProjectConfig
 
 
 MISSION_SCHEMA_VERSION = "mission/v1"
+MAX_MISSION_STEPS = 64
 DAEMON_MISSION_RESUME_BLOCKER = (
     "daemon-managed Mission requires daemon governance resume preview"
 )
@@ -625,8 +626,12 @@ def normalize_mission_plan_metadata(
 ) -> dict[str, Any]:
     if not isinstance(plan, Mapping) or not isinstance(plan.get("steps"), list):
         raise ValueError("mission plan steps must be a list")
-    if type(step_count) is not int or step_count <= 0:
-        raise ValueError("mission step count must be positive")
+    if (
+        type(step_count) is not int
+        or step_count <= 0
+        or step_count > MAX_MISSION_STEPS
+    ):
+        raise ValueError("mission step count is invalid")
     return {
         "goal": f"Fixed sequential {step_count}-step Mission.",
         "summary": (
@@ -656,6 +661,8 @@ def validate_mission_plan(
         raise ValueError("mission plan steps must be a list")
     if len(steps) < 2:
         raise ValueError("mission plan requires at least two steps")
+    if len(steps) > MAX_MISSION_STEPS:
+        raise ValueError("mission plan exceeds maximum step count")
 
     selected = frozenset(selected_agent_ids)
     represented: set[str] = set()

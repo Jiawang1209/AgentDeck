@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from agentdeck.mission import (
+    MAX_MISSION_STEPS,
     MISSION_SCHEMA_VERSION,
     MISSION_STATUSES,
     EffectiveMissionAgent,
@@ -974,6 +975,21 @@ def test_validate_mission_plan_returns_valid_plan_unchanged() -> None:
     plan = valid_plan()
 
     assert validate_mission_plan(plan, ("planner", "reviewer"), 30) is plan
+
+
+def test_validate_mission_plan_rejects_steps_above_shared_maximum() -> None:
+    plan = {
+        "steps": [
+            {
+                "step": step,
+                "agent_id": "planner" if step % 2 else "reviewer",
+            }
+            for step in range(1, MAX_MISSION_STEPS + 2)
+        ]
+    }
+
+    with pytest.raises(ValueError, match="maximum step count"):
+        validate_mission_plan(plan, ("planner", "reviewer"), 30)
 
 
 @pytest.mark.parametrize(

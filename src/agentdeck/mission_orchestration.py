@@ -16,6 +16,7 @@ from .contracts import (
 from .mission import (
     DAEMON_MISSION_RESUME_BLOCKER,
     MISSION_SCHEMA_VERSION,
+    MAX_MISSION_STEPS,
     compact_mission_worker_entries,
     daemon_mission_authority_state,
     effective_mission_agent_for_binding,
@@ -225,11 +226,13 @@ _ENGLISH_COUNT_WORDS = {
     "nine": 9,
     "ten": 10,
 }
-_COUNT_TOKEN = r"(?:[0-9]+|[零一二三四五六七八九十]+)"
+_COUNT_TOKEN = r"(?:[0-9]+|[零一二三四五六七八九十百千万]+)"
 
 
 def _parse_mission_count_token(token: str) -> int | None:
     if token.isascii() and token.isdigit():
+        if len(token) > len(str(MAX_MISSION_STEPS)):
+            return None
         return int(token)
     if token in _CHINESE_COUNT_DIGITS:
         return _CHINESE_COUNT_DIGITS[token]
@@ -257,8 +260,9 @@ def requested_mission_step_count(user_message: str, *, default: int) -> int:
         match = re.search(pattern, user_message)
         if match is not None:
             parsed = _parse_mission_count_token(match.group("count"))
-            if parsed is not None:
+            if parsed is not None and 2 <= parsed <= MAX_MISSION_STEPS:
                 return parsed
+            raise ValueError("mission step count invalid")
     english = re.search(
         r"(?<![A-Za-z0-9_])(?:exactly\s+)?"
         r"(?P<count>[0-9]+|one|two|three|four|five|six|seven|eight|nine|ten)"
@@ -268,7 +272,14 @@ def requested_mission_step_count(user_message: str, *, default: int) -> int:
     )
     if english is not None:
         token = english.group("count").lower()
-        return int(token) if token.isdigit() else _ENGLISH_COUNT_WORDS[token]
+        parsed = (
+            int(token)
+            if token.isdigit() and len(token) <= len(str(MAX_MISSION_STEPS))
+            else _ENGLISH_COUNT_WORDS.get(token)
+        )
+        if parsed is None or not 2 <= parsed <= MAX_MISSION_STEPS:
+            raise ValueError("mission step count invalid")
+        return parsed
     return default
 
 
@@ -488,6 +499,60 @@ def _mission_candidate_context(
     )
 
 
+_MISSION_PREVIEW_RECORD_IDS = {
+    "conversation_sessions": "conversation_id",
+    "conversation_turns": "turn_id",
+    "conversation_preview_bindings": "preview_id",
+    "conversation_state_transitions": "transition_id",
+    "plans": "plan_id",
+    "missions": "mission_id",
+}
+
+
+def _mission_preview_mutation_is_durable(
+    store: StateStore, mutation: ConversationMutation
+) -> bool:
+    """Prove the exact preview mutation survived before recovering an exception."""
+    try:
+        state = store.load()
+        for collection, expected_records in mutation.append_records.items():
+            identity_field = _MISSION_PREVIEW_RECORD_IDS.get(collection)
+            persisted = state.get(collection)
+            if identity_field is None or type(persisted) is not list:
+                return False
+            for expected in expected_records:
+                if not isinstance(expected, dict):
+                    return False
+                identity = expected.get(identity_field)
+                matches = [
+                    item
+                    for item in persisted
+                    if isinstance(item, dict)
+                    and item.get(identity_field) == identity
+                ]
+                if matches != [expected]:
+                    return False
+        outbox = state.get("conversation_event_outbox")
+        if type(outbox) is not list:
+            return False
+        ledger = store.all_events()
+        durable_events = [
+            item for item in (*outbox, *ledger) if isinstance(item, dict)
+        ]
+        for event in mutation.events:
+            expected = asdict(event)
+            same_identity = [
+                item
+                for item in durable_events
+                if item.get("event_id") == event.event_id
+            ]
+            if not same_identity or any(item != expected for item in same_identity):
+                return False
+    except Exception:
+        return False
+    return True
+
+
 def create_mission_preview_from_candidate(
     *,
     config: ProjectConfig,
@@ -510,7 +575,9 @@ def create_mission_preview_from_candidate(
     if (candidate.selected_agent_ids is None) != (candidate.step_count is None):
         raise MissionPreviewError("mission preview candidate authority invalid")
     if candidate.step_count is not None and (
-        type(candidate.step_count) is not int or candidate.step_count <= 0
+        type(candidate.step_count) is not int
+        or candidate.step_count < 2
+        or candidate.step_count > MAX_MISSION_STEPS
     ):
         raise MissionPreviewError("mission preview candidate authority invalid")
     (
@@ -648,16 +715,20 @@ def create_mission_preview_from_candidate(
             for key, records in conversation_mutation.append_records.items()
         }
         conversation_events = conversation_mutation.events
-    store.commit_conversation_mutation(
-        ConversationMutation(
-            append_records={
-                **conversation_records,
-                "plans": (plan_record,),
-                "missions": (mission,),
-            },
-            events=(*conversation_events, event),
-        )
+    mutation = ConversationMutation(
+        append_records={
+            **conversation_records,
+            "plans": (plan_record,),
+            "missions": (mission,),
+        },
+        events=(*conversation_events, event),
     )
+    try:
+        store.commit_conversation_mutation(mutation)
+    except Exception:
+        if _mission_preview_mutation_is_durable(store, mutation):
+            return payload
+        raise
     return payload
 
 
