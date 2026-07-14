@@ -1514,6 +1514,43 @@ def test_acp_completion_ambiguity_rejects_unknown_stage_without_writing(tmp_path
     assert store.state_path.read_bytes() == before
 
 
+def test_acp_completion_ambiguity_rejects_tmux_attempt_with_zero_tree_writes(
+    tmp_path,
+) -> None:
+    store = StateStore(tmp_path)
+    state = store.load()
+    state["mission_attempts"] = [_attempt("tmux")]
+    store.save(state)
+    claimed = store.claim_mission_attempt_admission(
+        attempt_id="mat_0123456789ab", dispatch_key="dsp_" + "1" * 32,
+    )
+    submitted = store.record_mission_attempt_submitted(
+        attempt_id="mat_0123456789ab",
+        dispatch_key="dsp_" + "1" * 32,
+        expected_claim_id=str(claimed["admission_claim_id"]),
+        receipt_summary="pane accepted",
+    )
+    before = {
+        path.relative_to(tmp_path): path.read_bytes()
+        for path in tmp_path.rglob("*") if path.is_file()
+    }
+
+    with pytest.raises(ValueError, match="ACP completion authority"):
+        store.mark_acp_mission_attempt_completion_ambiguous(
+            attempt_id="mat_0123456789ab",
+            dispatch_key="dsp_" + "1" * 32,
+            expected_claim_id=str(claimed["admission_claim_id"]),
+            receipt_summary=str(submitted["receipt_summary"]),
+            completion_stage="cleanup",
+        )
+
+    after = {
+        path.relative_to(tmp_path): path.read_bytes()
+        for path in tmp_path.rglob("*") if path.is_file()
+    }
+    assert after == before
+
+
 def test_structured_blocked_acp_completion_preserves_canonical_reply(tmp_path) -> None:
     store = StateStore(tmp_path)
     state = store.load()

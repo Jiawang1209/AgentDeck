@@ -466,6 +466,46 @@ def test_acp_completion_errors_expose_only_a_sanitized_stage(
     asyncio.run(run())
 
 
+def test_acp_completion_error_chain_cycle_is_bounded_and_classified_as_prompt(
+    tmp_path: Path,
+) -> None:
+    error = WorkerTransportError("private prompt failure")
+    error.__cause__ = error
+
+    class Sink:
+        fragments: list[str] = []
+        permission_seen = False
+
+        async def append_update(self, *_args): return None
+        async def append_permission(self, *_args): return None
+        async def append_permission_decision(self, *_args): return None
+        async def activate(self, *_args): return None
+        async def finish(self, *_args): return None
+        async def disconnect(self, *_args): return None
+
+    class Transport:
+        async def initialize(self): return object()
+        async def new_session(self):
+            return SimpleNamespace(native_session_id="native-cycle")
+        async def prompt(self, *_args): raise error
+        async def close(self): return None
+
+    worker = AcpWorkerTransport(
+        argv=("fake-agent-acp",), workspace=tmp_path, prompt="prompt",
+        transport_factory=lambda *_args, **_kwargs: Transport(), sink=Sink(),
+    )
+
+    async def run() -> None:
+        receipt = await worker.admit(_attempt("acp"))
+        with pytest.raises(WorkerTransportError) as raised:
+            await asyncio.wait_for(
+                worker.complete(_attempt("acp"), receipt), timeout=0.2
+            )
+        assert getattr(raised.value, "completion_stage", None) == "prompt"
+
+    asyncio.run(run())
+
+
 def test_acp_transport_can_delegate_permission_to_daemon_ledger(tmp_path: Path) -> None:
     created: list[FakeAcpTransport] = []
 

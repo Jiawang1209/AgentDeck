@@ -1579,15 +1579,29 @@ class DaemonWorkerCoordinator:
                         if isinstance(result, TransportResult)
                         else "Worker completed"
                     )
-                    self.store.record_acp_mission_attempt_completion(
-                        attempt_id=claimed["attempt_id"],
-                        dispatch_key=claimed["dispatch_key"],
-                        expected_claim_id=claimed["admission_claim_id"],
-                        receipt_summary=receipt.summary,
-                        succeeded=succeeded,
-                        summary=summary,
-                        canonical_handoff=canonical,
-                    )
+                    try:
+                        self.store.record_acp_mission_attempt_completion(
+                            attempt_id=claimed["attempt_id"],
+                            dispatch_key=claimed["dispatch_key"],
+                            expected_claim_id=claimed["admission_claim_id"],
+                            receipt_summary=receipt.summary,
+                            succeeded=succeeded,
+                            summary=summary,
+                            canonical_handoff=canonical,
+                        )
+                    except Exception:
+                        try:
+                            self.store.mark_acp_mission_attempt_completion_ambiguous(
+                                attempt_id=claimed["attempt_id"],
+                                dispatch_key=claimed["dispatch_key"],
+                                expected_claim_id=claimed["admission_claim_id"],
+                                receipt_summary=receipt.summary,
+                                completion_stage="cleanup",
+                            )
+                        except Exception:
+                            raise ServiceError(
+                                "ACP completion persistence outcome is unknown"
+                            ) from None
                     self.refresh_recovery()
 
                 self.service.start_worker_io(
@@ -1926,10 +1940,15 @@ class ProjectDaemonService:
         self._wakeup = asyncio.Event()
         self._scheduler_due = False
         self._shutdown_grace_seconds = float(shutdown_grace_seconds)
+        self._fatal_error: ServiceError | None = None
 
     @property
     def started(self) -> bool:
-        return self._started and self._lifecycle_state == "open"
+        return (
+            self._started
+            and self._lifecycle_state == "open"
+            and self._fatal_error is None
+        )
 
     async def start(self) -> None:
         if self._lifecycle_state != "open":
@@ -2015,7 +2034,7 @@ class ProjectDaemonService:
                 callback: Callback = lambda: (_ for _ in ()).throw(exc)
             else:
                 callback = lambda: on_completion(result)
-            self._queue.put_nowait(("external", callback, None))
+            self._queue.put_nowait(("worker_completion", callback, None))
             self._wakeup.set()
 
         task = asyncio.create_task(run())
@@ -2119,6 +2138,8 @@ class ProjectDaemonService:
         return True
 
     async def tick(self) -> SchedulerDecision | None:
+        if self._fatal_error is not None:
+            raise self._fatal_error
         if not self.started:
             raise ServiceError("daemon service is not started")
         await _call(self._flush_safe_outboxes)
@@ -2152,6 +2173,12 @@ class ProjectDaemonService:
         except Exception as exc:
             if future is not None and not future.done():
                 future.set_exception(exc)
+            if _kind == "worker_completion":
+                self._fatal_error = ServiceError(
+                    "daemon Worker completion persistence failed"
+                )
+                self.request_shutdown()
+                raise self._fatal_error from None
             self._scheduler_due = True
             return None
         if future is not None and not future.done():

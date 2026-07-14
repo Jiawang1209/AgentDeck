@@ -6570,6 +6570,11 @@ class StateStore:
                     raise KeyError(attempt_id)
                 raise ValueError("duplicate mission attempt identity")
             persisted = matches[0]
+            if (
+                _is_acp_completion_ambiguity_reason(reason)
+                and persisted["configured_transport"] != "acp"
+            ):
+                raise ValueError("ACP completion authority invalid")
             if persisted["dispatch_key"] != dispatch_key:
                 raise ValueError("mission attempt receipt lineage drift")
             if persisted["admission_claim_id"] != expected_claim_id:

@@ -731,6 +731,130 @@ def test_acp_worker_persists_submitted_receipt_before_prompt_starts() -> None:
     asyncio.run(case())
 
 
+def test_acp_completion_save_failure_persists_cleanup_ambiguity() -> None:
+    attempt = {
+        "attempt_id": "mat_0123456789ab", "mission_id": MISSION_ID,
+        "step_id": "step_1", "agent_id": "planner", "configured_transport": "acp",
+        "dispatch_key": "dsp_" + "a" * 32, "state": "prepared",
+    }
+
+    class Store:
+        state = "prepared"
+        ambiguity_stage: str | None = None
+
+        def claim_mission_attempt_admission(self, **_kwargs):
+            self.state = "admitting"
+            return {**attempt, "state": "admitting",
+                    "admission_claim_id": "adm_0123456789ab"}
+
+        def record_mission_attempt_submitted(self, **_kwargs):
+            self.state = "submitted"
+            return {**attempt, "state": "submitted",
+                    "admission_claim_id": "adm_0123456789ab"}
+
+        def record_acp_mission_attempt_completion(self, **_kwargs):
+            raise OSError("/private/state/result.json")
+
+        def mark_acp_mission_attempt_completion_ambiguous(self, **kwargs):
+            assert self.state == "submitted"
+            self.ambiguity_stage = kwargs["completion_stage"]
+            self.state = "ambiguous"
+
+    store = Store()
+
+    class Transport:
+        async def admit(self, claimed):
+            return SubmittedReceipt("receipt-1", claimed["dispatch_key"], "created")
+
+        async def complete(self, _submitted, _receipt):
+            return TransportResult("end_turn", True, _compact_handoff(attempt["dispatch_key"]))
+
+    async def case() -> None:
+        service = ProjectDaemonService(
+            server=FakeServer([]), reconcile_all=lambda: None,
+            flush_safe_outboxes=lambda: None, load_scheduler_facts=lambda: None,
+            apply_transition=lambda _decision: None,
+        )
+        await service.start()
+        DaemonWorkerCoordinator(
+            service=service, store=store, transport_for=lambda _attempt: Transport()
+        ).launch(attempt)
+        for _ in range(20):
+            await asyncio.sleep(0)
+            await service.tick()
+            if store.state == "ambiguous":
+                break
+        assert store.state == "ambiguous"
+        assert store.ambiguity_stage == "cleanup"
+        await service.close()
+
+    asyncio.run(case())
+
+
+def test_acp_completion_and_ambiguity_save_failure_fail_stops_daemon() -> None:
+    attempt = {
+        "attempt_id": "mat_0123456789ab", "mission_id": MISSION_ID,
+        "step_id": "step_1", "agent_id": "planner", "configured_transport": "acp",
+        "dispatch_key": "dsp_" + "a" * 32, "state": "prepared",
+    }
+
+    class Store:
+        state = "prepared"
+
+        def claim_mission_attempt_admission(self, **_kwargs):
+            self.state = "admitting"
+            return {**attempt, "state": "admitting",
+                    "admission_claim_id": "adm_0123456789ab"}
+
+        def record_mission_attempt_submitted(self, **_kwargs):
+            self.state = "submitted"
+            return {**attempt, "state": "submitted",
+                    "admission_claim_id": "adm_0123456789ab"}
+
+        def record_acp_mission_attempt_completion(self, **_kwargs):
+            raise OSError("first durable save failed")
+
+        def mark_acp_mission_attempt_completion_ambiguous(self, **_kwargs):
+            raise OSError("ambiguity save failed")
+
+    store = Store()
+
+    class Transport:
+        async def admit(self, claimed):
+            return SubmittedReceipt("receipt-1", claimed["dispatch_key"], "created")
+
+        async def complete(self, _submitted, _receipt):
+            return TransportResult("end_turn", True, _compact_handoff(attempt["dispatch_key"]))
+
+    async def case() -> None:
+        service = ProjectDaemonService(
+            server=FakeServer([]), reconcile_all=lambda: None,
+            flush_safe_outboxes=lambda: None, load_scheduler_facts=lambda: None,
+            apply_transition=lambda _decision: None,
+        )
+        await service.start()
+        DaemonWorkerCoordinator(
+            service=service, store=store, transport_for=lambda _attempt: Transport()
+        ).launch(attempt)
+        caught: ServiceError | None = None
+        for _ in range(20):
+            await asyncio.sleep(0)
+            try:
+                await service.tick()
+            except ServiceError as exc:
+                caught = exc
+                break
+        assert str(caught) == "daemon Worker completion persistence failed"
+        assert store.state == "submitted"
+        with pytest.raises(ServiceError, match="completion persistence failed"):
+            await service.tick()
+        with pytest.raises(ServiceError, match="not accepting mutations"):
+            service.submit_mutation(lambda: None)
+        await service.close()
+
+    asyncio.run(case())
+
+
 def test_acp_cleanup_failure_cannot_persist_succeeded_reply(tmp_path: Path) -> None:
     attempt = {
         "attempt_id": "mat_0123456789ab", "mission_id": MISSION_ID,

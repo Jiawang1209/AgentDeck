@@ -589,7 +589,15 @@ class AcpWorkerTransport:
             except Exception as error:
                 current: BaseException | None = error
                 stage = "prompt"
-                while current is not None:
+                visited: set[int] = set()
+                remaining = 16
+                while (
+                    current is not None
+                    and id(current) not in visited
+                    and remaining > 0
+                ):
+                    visited.add(id(current))
+                    remaining -= 1
                     if isinstance(current, _AcpUpdateError):
                         stage = "update"
                         break
