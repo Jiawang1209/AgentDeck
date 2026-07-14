@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
-from dataclasses import replace
+from dataclasses import asdict, replace
 import hashlib
 import json
 import subprocess
@@ -451,6 +451,66 @@ def test_project_view_scheduler_is_read_only_and_never_probes_tmux(
         "blockers": [],
     }
     assert _tree_bytes(root) == before
+
+
+def test_force_stopped_ambiguous_attempt_projects_blocked_to_view_and_workbench(
+    tmp_path, monkeypatch
+) -> None:
+    _root, config, store, preview = _seed(tmp_path, monkeypatch)
+    result = confirm_mission_for_daemon(
+        config=config, store=store, mission_id=preview["mission_id"]
+    )
+    store.admit_mission_execution(
+        preview["mission_id"], snapshot_hash=result["snapshot_hash"]
+    )
+    attempt = prepare_attempt(
+        config=config,
+        store=store,
+        mission_id=preview["mission_id"],
+        step_id="step_1",
+        agent_id="planner",
+        configured_transport="acp",
+    )
+    claimed = store.claim_mission_attempt_admission(
+        attempt_id=attempt["attempt_id"], dispatch_key=attempt["dispatch_key"]
+    )
+    store.record_mission_attempt_submitted(
+        attempt_id=attempt["attempt_id"],
+        dispatch_key=attempt["dispatch_key"],
+        expected_claim_id=claimed["admission_claim_id"],
+        receipt_summary="ACP accepted",
+    )
+    store.mark_acp_mission_attempt_completion_ambiguous(
+        attempt_id=attempt["attempt_id"],
+        dispatch_key=attempt["dispatch_key"],
+        expected_claim_id=claimed["admission_claim_id"],
+        receipt_summary="ACP accepted",
+        completion_stage="cleanup",
+    )
+    state = store.load()
+    state["missions"][0].update(
+        {"status": "interrupted", "stop_reason": "force_daemon_stop"}
+    )
+    store.save(state)
+
+    view = asdict(store.project_view(config))
+    assert view["scheduler"] == {
+        "state": "blocked",
+        "active_mission_id": preview["mission_id"],
+        "active_step": "step_1",
+        "next_transition": "blocked",
+        "blockers": ["terminal Mission retains ambiguous attempt"],
+    }
+    workbench = cli._workbench_snapshot_payload(view, store)
+    assert workbench["mission_scheduler_card"]["state"] == "blocked"
+    assert workbench["mission_scheduler_card"]["next_transition"] == "blocked"
+    assert workbench["mission_scheduler_card"]["blockers"] == [
+        "terminal Mission retains ambiguous attempt"
+    ]
+    persisted = store.load()
+    assert persisted["missions"][0]["status"] == "interrupted"
+    assert persisted["mission_attempts"][0]["attempt_id"] == attempt["attempt_id"]
+    assert persisted["mission_attempts"][0]["state"] == "ambiguous"
 
 
 @pytest.mark.parametrize("drift", ["task", "order", "add", "remove"])

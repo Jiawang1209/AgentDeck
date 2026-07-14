@@ -524,7 +524,10 @@ def schedule_gate(facts: SchedulerFacts) -> SchedulerDecision:
 def scheduler_observation(facts: SchedulerFacts) -> dict[str, object]:
     """Project one GUI-ready scheduler summary from the exact pure gate."""
     decision = schedule_gate(facts)
-    if facts.mission_state in _TERMINAL_MISSION_STATES:
+    if decision.kind == "blocked":
+        state = "blocked"
+        next_transition = decision.kind
+    elif facts.mission_state in _TERMINAL_MISSION_STATES:
         state = "terminal"
         next_transition = None
     elif decision.kind == "idle":
@@ -532,9 +535,6 @@ def scheduler_observation(facts: SchedulerFacts) -> dict[str, object]:
         next_transition = None
     elif decision.kind in {"wait_human", "wait_ambiguity"}:
         state = "waiting_human"
-        next_transition = decision.kind
-    elif decision.kind == "blocked":
-        state = "blocked"
         next_transition = decision.kind
     else:
         state = "running"

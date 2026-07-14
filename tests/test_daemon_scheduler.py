@@ -729,6 +729,23 @@ def test_scheduler_observation_maps_waiting_human_and_blocked_from_same_gate() -
     }
 
 
+def test_scheduler_observation_never_hides_terminal_ambiguity() -> None:
+    observation = scheduler_observation(
+        facts(
+            mission_state="interrupted",
+            attempt_state="ambiguous",
+            active_attempt_count=0,
+        )
+    )
+    assert observation == {
+        "state": "blocked",
+        "active_mission_id": MISSION_ID,
+        "active_step": STEP_ID,
+        "next_transition": "blocked",
+        "blockers": ["terminal Mission retains ambiguous attempt"],
+    }
+
+
 class RecordingEffects(SchedulerEffects[str]):
     def __init__(self, *, error: Exception | None = None) -> None:
         self.decisions: list[SchedulerDecision] = []

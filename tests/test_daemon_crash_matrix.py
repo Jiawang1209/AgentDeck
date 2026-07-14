@@ -70,10 +70,14 @@ def _write_fake_tmux(bin_dir: Path) -> None:
         " text=sys.stdin.read(); token=re.findall(r'dsp_[0-9a-f]{32}', text)[-1]\n"
         " with log.open('a', encoding='utf-8') as f: f.write(json.dumps({'token':token,'prompt':text})+'\\n')\n"
         "elif 'capture-pane' in args:\n"
-        " if os.environ.get('AGENTDECK_CRASH_NO_REPLY') == '1': pass\n"
+        " if os.environ.get('AGENTDECK_CRASH_NO_REPLY') == '1' and log.exists() and log.read_text().strip(): pass\n"
         " elif log.exists() and log.read_text().strip():\n"
         "  item=json.loads(log.read_text().splitlines()[-1]); token=item['token']\n"
         "  print('\\n'.join([f'handoff_token: {token}','status: completed','summary: crash worker summary','verification: exact crash verification','risks: none','next_steps: continue']))\n"
+        " elif any('%crash-2' in value for value in args):\n"
+        "  print('Claude Code\\ncontext 100%\\n❯ Try \\\"review this project\\\"')\n"
+        " else:\n"
+        "  print('OpenAI Codex\\nmodel: fake\\n› Ask Codex to implement')\n"
         "elif 'display-message' in args: print(args[args.index('-t')+1])\n",
         encoding="utf-8",
     )

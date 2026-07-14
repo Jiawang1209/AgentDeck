@@ -1059,6 +1059,9 @@ The scheduler card faithfully projects ProjectView's current durable
 Mission state (`inactive`, `running`, `waiting_human`, `blocked`, or
 `terminal`) and the pure gate's next bounded transition. Rendering remains
 read-only and never probes tmux or applies that transition.
+An interrupted/stopped Mission with an ambiguous or otherwise conflicting
+Worker effect remains `blocked`; the card must not replace that gate decision
+with a clean `terminal` label.
 M2b additionally embeds `mission_recovery_card`, which must be object-equal to
 `project_view.mission_recovery`. It gives reconnecting clients compact progress,
 completed steps, at most three validated hashed results, the active step/wait

@@ -1226,17 +1226,34 @@ def scheduler_facts_from_state(
     *,
     tmux_backend: RuntimeBackend | None = None,
     probe_runtime: bool,
+    include_terminal: bool = False,
 ) -> SchedulerFacts | None:
     """Project one admitted Mission from one already loaded durable snapshot."""
-    if not isinstance(state, Mapping) or type(probe_runtime) is not bool:
+    if (
+        not isinstance(state, Mapping)
+        or type(probe_runtime) is not bool
+        or type(include_terminal) is not bool
+    ):
         raise ServiceError("scheduler state is invalid")
-    missions = [
+    active_missions = [
         item for item in state.get("missions", [])
         if isinstance(item, dict)
         and item.get("status") not in {"completed", "stopped", "interrupted"}
         and isinstance(item.get("daemon_admission"), dict)
         and item["daemon_admission"].get("state") == "admitted"
     ]
+    terminal_missions = [
+        item for item in state.get("missions", [])
+        if isinstance(item, dict)
+        and item.get("status") in {"completed", "stopped", "interrupted"}
+        and isinstance(item.get("daemon_admission"), dict)
+        and item["daemon_admission"].get("state") == "admitted"
+    ]
+    missions = (
+        active_missions
+        if active_missions or not include_terminal
+        else terminal_missions[-1:]
+    )
     if not missions:
         return None
     if len(missions) != 1:
@@ -1488,6 +1505,7 @@ def scheduler_facts_from_store(
         config,
         tmux_backend=tmux_backend,
         probe_runtime=True,
+        include_terminal=False,
     )
 
 
@@ -1497,7 +1515,11 @@ def scheduler_summary_from_state(
     """Derive ProjectView scheduler state without runtime I/O or mutation."""
     try:
         facts = scheduler_facts_from_state(
-            state, config, tmux_backend=None, probe_runtime=False
+            state,
+            config,
+            tmux_backend=None,
+            probe_runtime=False,
+            include_terminal=True,
         )
     except ServiceError:
         return {
@@ -1509,22 +1531,6 @@ def scheduler_summary_from_state(
         }
     if facts is not None:
         return scheduler_observation(facts)
-    missions = state.get("missions", [])
-    terminal = [
-        item for item in missions
-        if isinstance(item, dict)
-        and item.get("status") in {"completed", "stopped", "interrupted"}
-        and isinstance(item.get("daemon_admission"), dict)
-        and item["daemon_admission"].get("state") == "admitted"
-    ] if isinstance(missions, list) else []
-    if terminal:
-        return {
-            "state": "terminal",
-            "active_mission_id": terminal[-1].get("mission_id"),
-            "active_step": None,
-            "next_transition": None,
-            "blockers": [],
-        }
     return {
         "state": "inactive",
         "active_mission_id": None,

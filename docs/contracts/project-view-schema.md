@@ -557,6 +557,12 @@ project config; it never probes tmux, checks live process readiness, writes
 state, or recursively renders another ProjectView. The daemon may add bounded
 live readiness probes before applying the same gate. These summaries are the
 source for the corresponding workbench cards.
+
+Terminal status never hides uncertain external effects. If an interrupted or
+stopped Mission retains an ambiguous attempt, active attempt, pending
+permission, or other conflict rejected by the pure scheduler gate, ProjectView
+projects `blocked`, `next_transition=blocked`, and the gate's compact blocker;
+it projects `terminal` only when terminal lineage is clean.
 `daemon.controller_present` is a time-aware read-only projection: the exact
 persisted lease must parse, use the active `lse_` namespace, and have an aware
 expiry later than the current UTC instant. Expired, terminal, naive, or malformed

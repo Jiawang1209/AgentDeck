@@ -403,8 +403,13 @@ def test_real_daemon_reaps_blocked_tmux_command_before_process_exit(
         for child_pid in fake_tmux_pids:
             with pytest.raises(ProcessLookupError):
                 os.kill(child_pid, 0)
-        attempt = store.load()["mission_attempts"][0]
-        assert attempt["state"] == "admitting"
+        blocked = store.load()
+        assert blocked["mission_attempts"] == []
+        assert blocked["mission_worker_replies"] == []
+        assert blocked["mission_handoffs"] == []
+        mission = store.mission_by_id(str(preview["mission_id"]))
+        assert mission["status"] == "preparing"
+        assert mission["current_step"] == 0
     finally:
         if daemon_pid is None:
             daemon_pid = _discover_daemon_pid(root)
