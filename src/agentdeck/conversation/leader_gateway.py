@@ -82,6 +82,23 @@ class LeaderGatewayError(RuntimeError):
             or constraint_mode not in LEADER_CONSTRAINT_MODES
         ):
             raise ValueError("invalid Leader Gateway diagnostics")
+        if (
+            (
+                normalized == "json_parse"
+                and diagnostic_code not in {None, "invalid_output_envelope"}
+            )
+            or (
+                normalized == "schema"
+                and diagnostic_code == "invalid_output_envelope"
+            )
+            or (
+                normalized not in {"json_parse", "schema"}
+                and diagnostic_code is not None
+            )
+        ):
+            raise ValueError(
+                "invalid Leader Gateway stage and diagnostic combination"
+            )
         self.stage = normalized
         self.diagnostic_code = diagnostic_code
         self.attempt_count = attempt_count

@@ -316,6 +316,51 @@ def test_gateway_error_rejects_invalid_safe_diagnostics_without_echo(
     assert str(raised.value) == "invalid Leader Gateway diagnostics"
 
 
+@pytest.mark.parametrize(
+    ("stage", "diagnostic_code"),
+    [
+        ("json_parse", "role_mismatch"),
+        ("json_parse", "authority_invalid"),
+        ("schema", "invalid_output_envelope"),
+        ("timeout", "invalid_output_envelope"),
+        ("nonzero", "role_mismatch"),
+        ("oversize", "authority_invalid"),
+        ("cancelled", "invalid_step_count"),
+        ("backend_failure", "native_schema_unavailable"),
+        ("acp_failure", "invalid_string_field"),
+    ],
+)
+def test_gateway_error_rejects_impossible_stage_diagnostic_combinations(
+    stage: str, diagnostic_code: str
+) -> None:
+    with pytest.raises(ValueError) as raised:
+        LeaderGatewayError(stage, diagnostic_code)
+    assert str(raised.value) == (
+        "invalid Leader Gateway stage and diagnostic combination"
+    )
+
+
+@pytest.mark.parametrize(
+    ("stage", "diagnostic_code"),
+    [
+        ("json_parse", None),
+        ("json_parse", "invalid_output_envelope"),
+        ("schema", None),
+        ("schema", "role_mismatch"),
+        ("schema", "native_schema_unavailable"),
+        ("schema", "authority_invalid"),
+        ("timeout", None),
+        ("backend_failure", None),
+    ],
+)
+def test_gateway_error_accepts_valid_stage_diagnostic_combinations(
+    stage: str, diagnostic_code: str | None
+) -> None:
+    error = LeaderGatewayError(stage, diagnostic_code)
+    assert error.stage == stage
+    assert error.diagnostic_code == diagnostic_code
+
+
 def test_gateway_passes_frozen_authority_and_deadline_to_provider(tmp_path: Path) -> None:
     config = _config(tmp_path)
     config = replace(
