@@ -54,6 +54,12 @@ payload contains only:
 - sanitized version strings;
 - the fixed probe timeout.
 
+Each probe is started in a new session and immediately bound to its exact
+process group plus kernel process-birth identity. Success, timeout, and error
+all run bounded TERM/KILL group cleanup followed by a short quiescence check;
+any surviving same-group member produces fixed `probe_residual_process` and
+forces `ready=false`. A successful probe may not leave a background child.
+
 The test snapshots both the disposable project and every actual isolated probe
 root before and after probing, including file bytes, kinds, and directory/file
 mtimes. Any probe write, including a create-then-delete mutation, produces the
@@ -67,8 +73,13 @@ PASS.
 
 The live test requires all four environment variables. Each value must be an
 absolute, non-symlink, regular executable with the expected basename. Missing,
-relative, directory, non-executable, symlink, or replaced inode/device evidence
-fails before project initialization.
+relative, directory, non-executable, symlink, or replaced identity evidence
+fails before project initialization. Initial validation seals path, device,
+inode, owner, mode, size, mtime, and content SHA-256. Every probe, wrapper,
+bare/daemon boundary, pane observation, and cleanup use revalidates that seal
+before and after use. A second four-tool gate runs immediately before project
+initialization; drift returns only fixed `executable_identity_drift` and the
+changed path is not executed.
 
 ```text
 AGENTDECK_M2C_CODEX
@@ -117,8 +128,8 @@ a bare bounded PTY. It requires:
 8. agreement among ProjectView, Mission status, workbench ledger, events,
    traces, execution snapshot, daemon admission, and attempt receipts;
 9. collect-all cleanup that first verifies exact daemon PID/instance/project
-   metadata through a successful daemon handshake, seals no-follow metadata
-   inode/owner/mode/content, Unix-socket inode/type/owner/mode, PID birth
+metadata through a successful daemon handshake, seals no-follow metadata
+   inode/owner/mode/content, Unix-socket inode/type/owner/mode, PID kernel-birth
    fingerprint, process group, and descendants, then revalidates that authority
    before any fallback signal. Missing or drifted authority emits only
    `daemon_cleanup_authority_unverified`, sends zero signals, and blocks PASS.
@@ -132,6 +143,12 @@ process spawn, setup, and cleanup are all enclosed by collect-all failure
 guards that seal the exact new-session process group plus leader birth identity,
 enumerate group members, and apply bounded group TERM/KILL even if the leader
 has already exited. Tracked groups participate in final derived residual counts.
+Each drain call also has explicit byte, chunk, duration, and overall-deadline
+budgets, so a continuous writer must yield control to timeout/process checks.
+Process fingerprints use Linux `/proc/<pid>/stat` start ticks or macOS
+`libproc.proc_pidinfo(PROC_PIDTBSDINFO)` start seconds plus microseconds, bound
+with PID, UID, and PGID; unsupported or unreadable kernel identity fails closed
+without a coarse `ps` timestamp fallback.
 Failures emit only byte count, truncation flag, SHA-256, a fixed stage/code, and
 state cardinalities—never PID, terminal text, paths, commands, environment
 values, or raw exceptions.
@@ -157,6 +174,6 @@ conda run --no-capture-output -n agentdeck \
   pytest tests/test_m2c_live_acceptance.py -q
 ```
 
-Expected portable result: fourteen portable contract/helper tests pass and exactly
+Expected portable result: twenty-two portable contract/helper tests pass and exactly
 one live test skips. A printed `ready=false` payload remains an honest setup
 result, not M2c PASS.

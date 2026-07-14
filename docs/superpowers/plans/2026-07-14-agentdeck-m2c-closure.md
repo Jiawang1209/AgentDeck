@@ -1602,6 +1602,24 @@ git commit -m "Add opt-in real M2c acceptance gate"
   children, compact group-kill failure, tampered PID, symlink/nonregular
   metadata, PID-birth mismatch, and a valid sealed daemon tree.
 
+#### Task 10 Important race-boundary re-review
+
+- [x] Bound each PTY drain call by bytes, chunks, duration, and the caller's
+  overall deadline so a continuous writer cannot starve timeout or cleanup.
+- [x] Replace second-resolution `ps lstart` identity with Linux proc start ticks
+  or exact-sized macOS `PROC_PIDTBSDINFO` seconds/microseconds, bound to PID,
+  UID, and PGID; unsupported/read failure is fail-closed with no fallback.
+- [x] Seal every probe process group immediately and run bounded cleanup plus
+  quiescence after success/timeout/error; surviving members produce fixed
+  `probe_residual_process` and force `ready=false`.
+- [x] Seal all four executable identities with no-follow stat and content hash,
+  revalidate before/after every harness use, and run the second four-seal gate
+  before project initialization; drift never executes and returns fixed
+  `executable_identity_drift`.
+- [x] Add direct non-live regressions for PTY flooding, real/stable and
+  unavailable kernel birth, successful-probe child cleanup, compact residual
+  probe failure, and inode/same-inode executable replacement.
+
 ### Task 11: Run the real frozen-commit rehearsal and record evidence
 
 **Files:**

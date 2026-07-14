@@ -4,6 +4,15 @@
 
 ## 2026-07-15
 
+### Close M2c harness race boundaries
+
+- **Deadline-fair PTY draining**: every drain invocation now has explicit byte, chunk, duration, and caller-deadline budgets. A continuous writer therefore yields back to the wait loop for total timeout and process checks, while the existing 64 KiB diagnostic tail and exact process-group finally cleanup remain bounded and compact.
+- **Kernel process birth identity**: process fingerprints no longer use second-resolution `ps lstart`. Linux reads `/proc/<pid>/stat` start ticks; macOS uses stdlib `ctypes` with the complete SDK `proc_bsdinfo` layout and requires `proc_pidinfo(PROC_PIDTBSDINFO)` to return exactly `ctypes.sizeof`. PID, actual UID, PGID, and kernel birth are hashed together; unsupported or failed reads return no identity and authorize zero signals.
+- **Quiescent capability probes**: every probe starts in a new session, immediately seals its exact group, and performs bounded group TERM/KILL after success, timeout, or failure. A short post-cleanup quiescence check precedes the filesystem snapshot; any remaining group member produces fixed `probe_residual_process` and forces `ready=false` without raw cleanup output.
+- **Persistent executable seals**: the four explicit tools are sealed with no-follow path/fd agreement over device, inode, owner, mode, size, mtime, and content SHA-256. Probes, wrapper generation, the second pre-project-init gate, bare/daemon boundaries, pane observation, and exact tmux cleanup revalidate before and after use. Inode or same-inode content replacement yields fixed `executable_identity_drift` and the drifted file is not executed.
+- **TDD evidence**: the race-boundary target began at `5 failed, 1 passed`, then passed all cases for PTY flooding, real/stable and unavailable kernel birth, successful-probe child collection, compact residual cleanup, and inode/content executable replacement. No real provider run was attempted; Task 11 evidence and M2c status remain unchanged.
+- **Verification**: the default gate produces exactly `22 passed, 1 skipped`; the full suite passes `3331` tests with two skips. `python -m compileall -q src tests`, `git diff --check`, the four-file scope gate, and post-test orphan scans also pass in the `agentdeck` environment.
+
 ### Bind M2c cleanup authority
 
 - **PTY process-group closure**: every bare PTY process is now sealed immediately with its exact new-session process group and a hashed birth fingerprint. Cleanup enumerates the group and applies bounded TERM then KILL even when the session leader has already exited; all tracked groups feed the final derived residual count, and signal failure returns only a fixed compact code plus count.

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import asyncio
+import ctypes
+import ctypes.util
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 import hashlib
@@ -60,6 +62,8 @@ BLOCKER_CODES = frozenset(
         "claude_agent_acp_unavailable",
         "tmux_unavailable",
         "probe_wrote_files",
+        "probe_residual_process",
+        "executable_identity_drift",
     }
 )
 
@@ -75,6 +79,25 @@ class _ProbeIsolation:
     @property
     def roots(self) -> tuple[Path, ...]:
         return (self.home, self.config, self.cache, self.data, self.temporary)
+
+
+@dataclass(frozen=True)
+class _ExecutableSeal:
+    path: Path
+    device: int
+    inode: int
+    owner: int
+    mode: int
+    size: int
+    mtime_ns: int
+    content_hash: str
+
+
+@dataclass(frozen=True)
+class _ProbeOutcome:
+    ok: bool
+    output: bytes
+    blocker: str | None = None
 
 
 def _tree_snapshot(root: Path) -> dict[str, tuple[str, int, str]]:
@@ -142,7 +165,7 @@ def _probe_environment(
     }
 
 
-def _safe_executable(value: str | None) -> Path | None:
+def _seal_executable(value: str | None) -> _ExecutableSeal | None:
     if not value:
         return None
     path = Path(value)
@@ -159,6 +182,14 @@ def _safe_executable(value: str | None) -> Path | None:
         )
         try:
             opened = os.fstat(descriptor)
+            digest = hashlib.sha256()
+            while True:
+                chunk = os.read(descriptor, 1024 * 1024)
+                if not chunk:
+                    break
+                digest.update(chunk)
+            closed_facts = os.fstat(descriptor)
+            final_path = path.lstat()
         finally:
             os.close(descriptor)
     except OSError:
@@ -167,9 +198,52 @@ def _safe_executable(value: str | None) -> Path | None:
         not stat.S_ISREG(opened.st_mode)
         or opened.st_dev != metadata.st_dev
         or opened.st_ino != metadata.st_ino
+        or final_path.st_dev != opened.st_dev
+        or final_path.st_ino != opened.st_ino
+        or (
+            closed_facts.st_dev,
+            closed_facts.st_ino,
+            closed_facts.st_uid,
+            stat.S_IMODE(closed_facts.st_mode),
+            closed_facts.st_size,
+            closed_facts.st_mtime_ns,
+        )
+        != (
+            opened.st_dev,
+            opened.st_ino,
+            opened.st_uid,
+            stat.S_IMODE(opened.st_mode),
+            opened.st_size,
+            opened.st_mtime_ns,
+        )
     ):
         return None
-    return path
+    return _ExecutableSeal(
+        path=path,
+        device=opened.st_dev,
+        inode=opened.st_ino,
+        owner=opened.st_uid,
+        mode=stat.S_IMODE(opened.st_mode),
+        size=opened.st_size,
+        mtime_ns=opened.st_mtime_ns,
+        content_hash=digest.hexdigest(),
+    )
+
+
+def _verify_executable_seal(seal: _ExecutableSeal) -> None:
+    current = _seal_executable(str(seal.path))
+    if current != seal:
+        raise _live_failure("executable_identity_drift")
+
+
+def _verify_all_executable_seals(seals: dict[str, _ExecutableSeal]) -> None:
+    for name in sorted(seals):
+        _verify_executable_seal(seals[name])
+
+
+def _sealed_argv(seal: _ExecutableSeal, *args: str) -> list[str]:
+    _verify_executable_seal(seal)
+    return [str(seal.path), *args]
 
 
 def _limit_probe_output() -> None:
@@ -177,10 +251,17 @@ def _limit_probe_output() -> None:
 
 
 def _bounded_probe(
-    command: list[str], *, cwd: Path, env: dict[str, str]
-) -> tuple[bool, bytes]:
+    seal: _ExecutableSeal,
+    args: tuple[str, ...],
+    *,
+    cwd: Path,
+    env: dict[str, str],
+    signal_group: Any = os.killpg,
+) -> _ProbeOutcome:
     with tempfile.TemporaryFile() as output:
+        process: subprocess.Popen[bytes] | None = None
         try:
+            command = _sealed_argv(seal, *args)
             process = subprocess.Popen(
                 command,
                 stdin=subprocess.DEVNULL,
@@ -192,20 +273,43 @@ def _bounded_probe(
                 cwd=cwd,
                 env=env,
             )
+            scope = _seal_process_group(process.pid)
+        except _LiveHarnessFailure as exc:
+            if process is not None:
+                with __import__("contextlib").suppress(ProcessLookupError):
+                    os.killpg(process.pid, signal.SIGKILL)
+                with __import__("contextlib").suppress(subprocess.TimeoutExpired):
+                    process.wait(timeout=2)
+            blocker = (
+                "executable_identity_drift"
+                if "executable_identity_drift" in str(exc)
+                else "probe_residual_process"
+            )
+            return _ProbeOutcome(False, b"", blocker)
         except OSError:
-            return False, b""
+            return _ProbeOutcome(False, b"")
+        timed_out = False
         try:
             process.wait(timeout=PROBE_TIMEOUT_SECONDS)
         except subprocess.TimeoutExpired:
-            with __import__("contextlib").suppress(ProcessLookupError):
-                os.killpg(process.pid, signal.SIGKILL)
-            process.wait(timeout=PROBE_TIMEOUT_SECONDS)
-            return False, b""
+            timed_out = True
+        cleanup = _terminate_process_group(scope, signal_group=signal_group)
+        with __import__("contextlib").suppress(subprocess.TimeoutExpired):
+            process.wait(timeout=2)
+        time.sleep(0.05)
+        if cleanup["code"] is not None or _process_scope_residual_count(scope):
+            return _ProbeOutcome(False, b"", "probe_residual_process")
+        try:
+            _verify_executable_seal(seal)
+        except _LiveHarnessFailure:
+            return _ProbeOutcome(False, b"", "executable_identity_drift")
+        if timed_out:
+            return _ProbeOutcome(False, b"")
         output.seek(0)
         payload = output.read(PROBE_OUTPUT_LIMIT + 1)
     if process.returncode != 0 or len(payload) > PROBE_OUTPUT_LIMIT:
-        return False, b""
-    return True, payload
+        return _ProbeOutcome(False, b"")
+    return _ProbeOutcome(True, payload)
 
 
 def _option_names(payload: bytes) -> set[str]:
@@ -232,11 +336,11 @@ def _sanitized_version(payload: bytes) -> str | None:
     return line or None
 
 
-def _resolved_probe_path(name: str, env_name: str) -> Path | None:
+def _resolved_probe_seal(name: str, env_name: str) -> _ExecutableSeal | None:
     configured = os.environ.get(env_name)
     if configured is not None:
-        return _safe_executable(configured)
-    return _safe_executable(shutil.which(name))
+        return _seal_executable(configured)
+    return _seal_executable(shutil.which(name))
 
 
 def _live_preflight(
@@ -249,60 +353,67 @@ def _live_preflight(
     before = _roots_snapshot((project, *isolation.roots))
     blockers: list[str] = []
     tools: list[dict[str, object]] = []
-    resolved: list[Path] = []
+    resolved: dict[str, _ExecutableSeal | None] = {}
     for name, env_name, _help_args, _version_args in TOOL_SPECS:
         configured = os.environ.get(env_name)
-        executable = (
-            _safe_executable(configured)
+        resolved[name] = (
+            _seal_executable(configured)
             if require_explicit_paths
-            else _resolved_probe_path(name, env_name)
+            else _resolved_probe_seal(name, env_name)
         )
-        if executable is not None:
-            resolved.append(executable)
-    probe_env = _probe_environment(isolation, tuple(resolved))
+    probe_env = _probe_environment(
+        isolation,
+        tuple(seal.path for seal in resolved.values() if seal is not None),
+    )
     for name, env_name, help_args, version_args in TOOL_SPECS:
-        configured = os.environ.get(env_name)
-        executable = (
-            _safe_executable(configured)
-            if require_explicit_paths
-            else _resolved_probe_path(name, env_name)
-        )
+        executable = resolved[name]
         unavailable = name.replace("-", "_") + "_unavailable"
         tool_ready = executable is not None
         version: str | None = None
         if executable is None:
             blockers.append(unavailable)
         else:
-            version_ok, version_output = _bounded_probe(
-                [str(executable), *version_args], cwd=project, env=probe_env
+            version_probe = _bounded_probe(
+                executable, version_args, cwd=project, env=probe_env
             )
-            version = _sanitized_version(version_output) if version_ok else None
+            if version_probe.blocker is not None:
+                blockers.append(version_probe.blocker)
+            version = (
+                _sanitized_version(version_probe.output)
+                if version_probe.ok
+                else None
+            )
             if version is None:
                 blockers.append(unavailable)
                 tool_ready = False
             if help_args is not None:
-                help_ok, help_output = _bounded_probe(
-                    [str(executable), *help_args], cwd=project, env=probe_env
+                help_probe = _bounded_probe(
+                    executable, help_args, cwd=project, env=probe_env
                 )
+                if help_probe.blocker is not None:
+                    blockers.append(help_probe.blocker)
                 required = (
                     {"--output-schema", "--output-last-message"}
                     if name == "codex"
                     else {"--json-schema", "--output-format"}
                 )
                 capability_blocker = f"{name}_native_schema_unavailable"
-                if not help_ok or not required.issubset(_option_names(help_output)):
+                if not help_probe.ok or not required.issubset(
+                    _option_names(help_probe.output)
+                ):
                     blockers.append(capability_blocker)
                     tool_ready = False
         tools.append(
             {
                 "name": name,
                 "executable_basename": (
-                    executable.name if executable is not None else name
+                    executable.path.name if executable is not None else name
                 ),
                 "version": version,
                 "ready": tool_ready,
             }
         )
+    time.sleep(0.05)
     if _roots_snapshot((project, *isolation.roots)) != before:
         blockers.append("probe_wrote_files")
     unique_blockers = list(dict.fromkeys(blockers))
@@ -528,7 +639,7 @@ def _json_project_command(
 def _observe_exact_pane(
     control: dict[str, object],
     *,
-    tmux: Path,
+    tmux: _ExecutableSeal,
     socket_name: str,
     cwd: Path,
     env: dict[str, str],
@@ -552,14 +663,16 @@ def _observe_exact_pane(
     ):
         raise _live_failure("pane_control_invalid")
     pane_id = argv[5]
+    _verify_executable_seal(tmux)
     code, output = _bounded_project_command(
         argv, cwd=cwd, timeout=10, env=env
     )
+    _verify_executable_seal(tmux)
     if code != 0:
         raise _live_failure("pane_select_failed", output=output)
     verify_code, verify_output = _bounded_project_command(
         [
-            str(tmux),
+            *_sealed_argv(tmux),
             "-L",
             socket_name,
             "display-message",
@@ -578,6 +691,7 @@ def _observe_exact_pane(
         verified = ""
     if verify_code != 0 or verified != pane_id:
         raise _live_failure("pane_target_verification_failed", output=verify_output)
+    _verify_executable_seal(tmux)
 
 
 def _wait_for_state(
@@ -600,18 +714,37 @@ def _wait_for_state(
     raise _live_failure(code, store=store, capture=capture)
 
 
-def _drain_pty(master: int, capture: _PtyTail) -> None:
-    while True:
+def _drain_pty(
+    master: int,
+    capture: _PtyTail,
+    *,
+    max_bytes: int = 256 * 1024,
+    max_chunks: int = 16,
+    max_duration_seconds: float = 0.01,
+    deadline: float | None = None,
+) -> None:
+    drained = 0
+    chunks = 0
+    drain_deadline = time.monotonic() + max_duration_seconds
+    if deadline is not None:
+        drain_deadline = min(drain_deadline, deadline)
+    while (
+        drained < max_bytes
+        and chunks < max_chunks
+        and time.monotonic() < drain_deadline
+    ):
         readable, _, _ = select.select([master], [], [], 0)
         if not readable:
             return
         try:
-            chunk = os.read(master, 65536)
+            chunk = os.read(master, min(65536, max_bytes - drained))
         except OSError:
             return
         if not chunk:
             return
         capture.add(chunk)
+        drained += len(chunk)
+        chunks += 1
 
 
 def _wait_for_pty_prompt(
@@ -619,10 +752,12 @@ def _wait_for_pty_prompt(
     master: int,
     capture: _PtyTail,
     count: int,
+    *,
+    timeout_seconds: float = 30,
 ) -> None:
-    deadline = time.monotonic() + 30
+    deadline = time.monotonic() + timeout_seconds
     while time.monotonic() < deadline:
-        _drain_pty(master, capture)
+        _drain_pty(master, capture, deadline=deadline)
         if capture.tail.count(b"agentdeck> ") >= count:
             return
         if process.poll() is not None:
@@ -631,22 +766,111 @@ def _wait_for_pty_prompt(
     raise _live_failure("bare_pty_prompt_timeout", capture=capture)
 
 
-def _process_birth_fingerprint(pid: int) -> str | None:
+class _DarwinProcBSDInfo(ctypes.Structure):
+    _fields_ = [
+        ("pbi_flags", ctypes.c_uint32),
+        ("pbi_status", ctypes.c_uint32),
+        ("pbi_xstatus", ctypes.c_uint32),
+        ("pbi_pid", ctypes.c_uint32),
+        ("pbi_ppid", ctypes.c_uint32),
+        ("pbi_uid", ctypes.c_uint32),
+        ("pbi_gid", ctypes.c_uint32),
+        ("pbi_ruid", ctypes.c_uint32),
+        ("pbi_rgid", ctypes.c_uint32),
+        ("pbi_svuid", ctypes.c_uint32),
+        ("pbi_svgid", ctypes.c_uint32),
+        ("rfu_1", ctypes.c_uint32),
+        ("pbi_comm", ctypes.c_char * 16),
+        ("pbi_name", ctypes.c_char * 32),
+        ("pbi_nfiles", ctypes.c_uint32),
+        ("pbi_pgid", ctypes.c_uint32),
+        ("pbi_pjobc", ctypes.c_uint32),
+        ("e_tdev", ctypes.c_uint32),
+        ("e_tpgid", ctypes.c_uint32),
+        ("pbi_nice", ctypes.c_int32),
+        ("pbi_start_tvsec", ctypes.c_uint64),
+        ("pbi_start_tvusec", ctypes.c_uint64),
+    ]
+
+
+def _darwin_process_info(pid: int) -> _DarwinProcBSDInfo | None:
+    library_name = ctypes.util.find_library("proc") or "/usr/lib/libproc.dylib"
     try:
-        completed = subprocess.run(
-            ["/bin/ps", "-o", "lstart=", "-o", "uid=", "-o", "pgid=", "-p", str(pid)],
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
-            timeout=2,
-            check=False,
+        library = ctypes.CDLL(library_name, use_errno=True)
+        proc_pidinfo = library.proc_pidinfo
+        proc_pidinfo.argtypes = [
+            ctypes.c_int,
+            ctypes.c_int,
+            ctypes.c_uint64,
+            ctypes.c_void_p,
+            ctypes.c_int,
+        ]
+        proc_pidinfo.restype = ctypes.c_int
+        info = _DarwinProcBSDInfo()
+        size = ctypes.sizeof(_DarwinProcBSDInfo)
+        returned = proc_pidinfo(
+            pid,
+            3,
+            0,
+            ctypes.byref(info),
+            size,
         )
-    except (OSError, subprocess.TimeoutExpired):
+    except (AttributeError, OSError, TypeError, ValueError):
         return None
-    value = completed.stdout.strip()
-    if completed.returncode != 0 or not value:
+    if returned != size or info.pbi_pid != pid:
         return None
-    return hashlib.sha256(value).hexdigest()
+    return info
+
+
+def _kernel_process_birth(pid: int) -> str | None:
+    if type(pid) is not int or pid <= 0:
+        return None
+    if sys.platform.startswith("linux"):
+        try:
+            payload = Path(f"/proc/{pid}/stat").read_text(encoding="ascii")
+            remainder = payload[payload.rfind(")") + 2 :].split()
+            start_ticks = int(remainder[19])
+        except (OSError, UnicodeDecodeError, ValueError, IndexError):
+            return None
+        return f"linux:{start_ticks}"
+    if sys.platform == "darwin":
+        info = _darwin_process_info(pid)
+        if info is None:
+            return None
+        return f"darwin:{info.pbi_start_tvsec}:{info.pbi_start_tvusec}"
+    return None
+
+
+def _kernel_process_uid(pid: int) -> int | None:
+    if sys.platform.startswith("linux"):
+        try:
+            return os.stat(f"/proc/{pid}").st_uid
+        except OSError:
+            return None
+    if sys.platform == "darwin":
+        info = _darwin_process_info(pid)
+        return int(info.pbi_uid) if info is not None else None
+    return None
+
+
+def _process_birth_fingerprint(
+    pid: int,
+    *,
+    kernel_birth_provider: Any = _kernel_process_birth,
+) -> str | None:
+    birth = kernel_birth_provider(pid)
+    uid = _kernel_process_uid(pid)
+    try:
+        pgid = os.getpgid(pid)
+    except OSError:
+        return None
+    if type(birth) is not str or not birth or type(uid) is not int or pgid <= 1:
+        return None
+    payload = json.dumps(
+        [pid, uid, pgid, birth],
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
 
 
 def _seal_process_identity(
@@ -1193,35 +1417,53 @@ def _stop_or_terminate_daemon(
 
 def _cleanup_exact_tmux(
     *,
-    tmux: Path,
+    tmux: _ExecutableSeal,
     socket_name: str,
     session_name: str,
     cwd: Path,
     env: dict[str, str],
     socket_paths: tuple[Path, ...],
 ) -> dict[str, object]:
-    _bounded_project_command(
-        [str(tmux), "-L", socket_name, "kill-session", "-t", session_name],
-        cwd=cwd,
-        timeout=10,
-        env=env,
-    )
-    _bounded_project_command(
-        [str(tmux), "-L", socket_name, "kill-server"],
-        cwd=cwd,
-        timeout=10,
-        env=env,
-    )
-    code, _output = _bounded_project_command(
-        [str(tmux), "-L", socket_name, "has-session", "-t", session_name],
-        cwd=cwd,
-        timeout=10,
-        env=env,
-    )
-    return {
+    try:
+        _bounded_project_command(
+            _sealed_argv(
+                tmux, "-L", socket_name, "kill-session", "-t", session_name
+            ),
+            cwd=cwd,
+            timeout=10,
+            env=env,
+        )
+        _verify_executable_seal(tmux)
+        _bounded_project_command(
+            _sealed_argv(tmux, "-L", socket_name, "kill-server"),
+            cwd=cwd,
+            timeout=10,
+            env=env,
+        )
+        _verify_executable_seal(tmux)
+        code, _output = _bounded_project_command(
+            _sealed_argv(
+                tmux, "-L", socket_name, "has-session", "-t", session_name
+            ),
+            cwd=cwd,
+            timeout=10,
+            env=env,
+        )
+    except _LiveHarnessFailure:
+        return {
+            "reachable": True,
+            "socket_paths_present": sum(path.exists() for path in socket_paths),
+            "identity_drift": True,
+        }
+    result: dict[str, object] = {
         "reachable": code == 0,
         "socket_paths_present": sum(path.exists() for path in socket_paths),
     }
+    try:
+        _verify_executable_seal(tmux)
+    except _LiveHarnessFailure:
+        result["identity_drift"] = True
+    return result
 
 
 def _derive_residual_audit(
@@ -1309,7 +1551,7 @@ def _toml_string(value: str) -> str:
 
 
 def _write_live_config(
-    root: Path, paths: dict[str, Path], *, session_name: str
+    root: Path, paths: dict[str, _ExecutableSeal], *, session_name: str
 ) -> None:
     config = f'''[project]
 name = "m2c-live"
@@ -1324,9 +1566,9 @@ approval_mode = "confirm"
 agent_id = "claude-worker"
 role = "implementation"
 provider = "claude"
-command = {_toml_string(str(paths["claude"]))}
+command = {_toml_string(str(paths["claude"].path))}
 transport = "acp"
-transport_command = [{_toml_string(str(paths["claude-agent-acp"]))}]
+transport_command = [{_toml_string(str(paths["claude-agent-acp"].path))}]
 workspace_mode = "shared"
 role_prompt = "Implement only the exact frozen Mission task. Request edit permission before changing artifact.txt. Return one compact AgentDeck handoff."
 
@@ -1334,7 +1576,7 @@ role_prompt = "Implement only the exact frozen Mission task. Request edit permis
 agent_id = "codex-worker"
 role = "review"
 provider = "codex"
-command = {_toml_string(str(paths["codex"]))}
+command = {_toml_string(str(paths["codex"].path))}
 transport = "tmux"
 workspace_mode = "shared"
 role_prompt = "Review only the exact frozen Mission task. Do not edit artifact.txt. Return one compact AgentDeck handoff."
@@ -1353,11 +1595,11 @@ max_frame_bytes = 1048576
     (root / ".agentdeck" / "config.toml").write_text(config, encoding="utf-8")
 
 
-def _explicit_live_paths() -> dict[str, Path]:
-    paths: dict[str, Path] = {}
+def _explicit_live_paths() -> dict[str, _ExecutableSeal]:
+    paths: dict[str, _ExecutableSeal] = {}
     for name, env_name, _help, _version in TOOL_SPECS:
-        path = _safe_executable(os.environ.get(env_name))
-        if path is None or path.name != name:
+        path = _seal_executable(os.environ.get(env_name))
+        if path is None or path.path.name != name:
             raise _live_failure(f"{name.replace('-', '_')}_path_invalid")
         paths[name] = path
     return paths
@@ -1369,6 +1611,7 @@ def _create_and_confirm_live_mission(
     *,
     env: dict[str, str],
     cleanup_authority: _LiveCleanupAuthority | None = None,
+    executable_seals: dict[str, _ExecutableSeal] | None = None,
     openpty_factory: Any = pty.openpty,
     popen_factory: Any = subprocess.Popen,
 ) -> tuple[str, _PtyTail, dict[str, object]]:
@@ -1378,6 +1621,8 @@ def _create_and_confirm_live_mission(
     process: subprocess.Popen[bytes] | None = None
     process_scope: _ProcessGroupScope | None = None
     try:
+        if executable_seals is not None:
+            _verify_all_executable_seals(executable_seals)
         master, slave = openpty_factory()
         try:
             process = popen_factory(
@@ -1511,6 +1756,8 @@ def _create_and_confirm_live_mission(
             primary.add_note(
                 json.dumps({"stage": "pty_cleanup", "codes": failures}, sort_keys=True)
             )
+        if executable_seals is not None:
+            _verify_all_executable_seals(executable_seals)
 
 
 def _confirm_pending_permission(root: Path, store: StateStore) -> None:
@@ -1604,12 +1851,13 @@ async def _stop_live_daemon(root: Path) -> None:
 def _live_resource_guard(
     root: Path,
     parent: Path,
-    tmux: Path,
+    tmux: _ExecutableSeal,
     *,
     session_name: str,
     cleanup_env: dict[str, str],
     tmux_socket_paths: tuple[Path, ...],
     cleanup_authority: _LiveCleanupAuthority,
+    executable_seals: dict[str, _ExecutableSeal],
 ):
     cleanup_failures: list[str] = []
     audit: dict[str, object] = {
@@ -1620,6 +1868,11 @@ def _live_resource_guard(
     try:
         yield audit
     finally:
+        for seal in executable_seals.values():
+            try:
+                _verify_executable_seal(seal)
+            except _LiveHarnessFailure:
+                cleanup_failures.append("executable_identity_drift")
         endpoint = daemon_endpoint(root)
         endpoint_present = endpoint.socket_path.exists() or endpoint.metadata_path.exists()
         if endpoint_present and cleanup_authority.daemon is None:
@@ -1657,6 +1910,8 @@ def _live_resource_guard(
         )
         if tmux_cleanup["reachable"] or tmux_cleanup["socket_paths_present"]:
             cleanup_failures.append("tmux_cleanup_incomplete")
+        if tmux_cleanup.get("identity_drift") is True:
+            cleanup_failures.append("executable_identity_drift")
         try:
             shutil.rmtree(parent)
         except OSError:
@@ -1711,7 +1966,7 @@ def _run_live_acceptance() -> dict[str, object]:
 
 
 def _run_live_acceptance_in_project(
-    paths: dict[str, Path], parent: Path
+    paths: dict[str, _ExecutableSeal], parent: Path
 ) -> dict[str, object]:
     root = parent / "repo"
     root.mkdir(mode=0o700)
@@ -1726,7 +1981,7 @@ def _run_live_acceptance_in_project(
         "HOME": str(parent),
         "TMPDIR": str(parent),
         "TMUX_TMPDIR": str(tmux_temporary),
-        "PATH": str(paths["tmux"].parent) + os.pathsep + "/usr/bin:/bin",
+        "PATH": str(paths["tmux"].path.parent) + os.pathsep + "/usr/bin:/bin",
         "LANG": "C",
         "LC_ALL": "C",
     }
@@ -1739,7 +1994,9 @@ def _run_live_acceptance_in_project(
         cleanup_env=cleanup_env,
         tmux_socket_paths=tmux_socket_paths,
         cleanup_authority=cleanup_authority,
+        executable_seals=paths,
     ) as cleanup_audit:
+        _verify_all_executable_seals(paths)
         preflight_before = _tree_snapshot(root)
         preflight = _live_preflight(root, require_explicit_paths=True)
         _require_live(_tree_snapshot(root) == preflight_before, "preflight_wrote_project")
@@ -1752,15 +2009,21 @@ def _run_live_acceptance_in_project(
         runtime_bin = parent / "runtime-bin"
         runtime_bin.mkdir(mode=0o700)
         for name in ("codex", "claude", "tmux"):
+            _verify_executable_seal(paths[name])
             wrapper = runtime_bin / name
             wrapper.write_text(
-                "#!/bin/sh\nexec " + shlex.quote(str(paths[name])) + ' "$@"\n',
+                "#!/bin/sh\nexec "
+                + shlex.quote(str(paths[name].path))
+                + ' "$@"\n',
                 encoding="utf-8",
             )
             wrapper.chmod(0o700)
+            _verify_executable_seal(paths[name])
+        _verify_all_executable_seals(paths)
         env = dict(os.environ)
         env["PATH"] = str(runtime_bin) + os.pathsep + env.get("PATH", "")
         env["TMUX_TMPDIR"] = str(tmux_temporary)
+        _verify_all_executable_seals(paths)
         code, _ = _bounded_project_command(
             ["git", "init", "-q"], cwd=root, timeout=10, env=env
         )
@@ -1772,13 +2035,16 @@ def _run_live_acceptance_in_project(
             env=env,
         )
         _require_live(code == 0, "project_init_failed")
+        _verify_all_executable_seals(paths)
         _write_live_config(root, paths, session_name=session_name)
+        _verify_all_executable_seals(paths)
         store = StateStore(root)
         mission_id, capture, admitted = _create_and_confirm_live_mission(
             root,
             store,
             env=env,
             cleanup_authority=cleanup_authority,
+            executable_seals=paths,
         )
         cleanup_authority.daemon = _seal_daemon_cleanup_identity(root)
         _require_live(
@@ -1798,7 +2064,9 @@ def _run_live_acceptance_in_project(
             "first_attempt_cardinality_invalid",
             store=store,
         )
+        _verify_all_executable_seals(paths)
         _confirm_pending_permission(root, store)
+        _verify_all_executable_seals(paths)
         _wait_for_state(
             store,
             lambda state: len(state.get("permission_requests", [])) == 2
@@ -1835,6 +2103,7 @@ def _run_live_acceptance_in_project(
             "codex_pane_control_missing",
             store=store,
         )
+        _verify_all_executable_seals(paths)
         _observe_exact_pane(
             pane_controls[0],
             tmux=paths["tmux"],
@@ -1842,6 +2111,7 @@ def _run_live_acceptance_in_project(
             cwd=root,
             env=env,
         )
+        _verify_all_executable_seals(paths)
         taken = asyncio.run(
             _govern_live_worker(root, method="worker.takeover")
         )
@@ -1850,6 +2120,7 @@ def _run_live_acceptance_in_project(
             "takeover_failed",
             store=store,
         )
+        _verify_all_executable_seals(paths)
         returned = asyncio.run(
             _govern_live_worker(
                 root,
@@ -1863,6 +2134,7 @@ def _run_live_acceptance_in_project(
             store=store,
         )
         _confirm_pending_permission(root, store)
+        _verify_all_executable_seals(paths)
         completed = _wait_for_state(
             store,
             lambda state: state.get("missions")
@@ -2014,6 +2286,7 @@ def _run_live_acceptance_in_project(
             all("/" not in str(tool.get("version") or "") for tool in evidence["tools"]),
             "evidence_version_not_sanitized",
         )
+        _verify_all_executable_seals(paths)
         return evidence
 
 
@@ -2102,6 +2375,8 @@ def test_exact_pane_control_executes_and_verifies_target(
         encoding="utf-8",
     )
     fake_tmux.chmod(0o700)
+    tmux_seal = _seal_executable(str(fake_tmux))
+    assert tmux_seal is not None
     env = {
         "PATH": str(tmp_path) + os.pathsep + "/usr/bin:/bin",
         "HOME": str(tmp_path),
@@ -2114,7 +2389,7 @@ def test_exact_pane_control_executes_and_verifies_target(
             "enabled": True,
             "command": "tmux -L exact-socket select-pane -t %42",
         },
-        tmux=fake_tmux,
+        tmux=tmux_seal,
         socket_name="exact-socket",
         cwd=tmp_path,
         env=env,
@@ -2176,9 +2451,11 @@ def test_tmux_cleanup_targets_only_exact_socket(tmp_path) -> None:
         encoding="utf-8",
     )
     fake_tmux.chmod(0o700)
+    tmux_seal = _seal_executable(str(fake_tmux))
+    assert tmux_seal is not None
 
     result = _cleanup_exact_tmux(
-        tmux=fake_tmux,
+        tmux=tmux_seal,
         socket_name="target-socket",
         session_name="target-session",
         cwd=tmp_path,
@@ -2498,6 +2775,240 @@ def test_valid_sealed_daemon_identity_kills_exact_tree(tmp_path) -> None:
         with __import__("contextlib").suppress(subprocess.TimeoutExpired):
             daemon.wait(timeout=2)
         shutil.rmtree(root, ignore_errors=True)
+
+
+def test_flooding_pty_yields_to_deadline_and_cleans_group(tmp_path) -> None:
+    master, slave = pty.openpty()
+    process: subprocess.Popen[bytes] | None = None
+    scope: _ProcessGroupScope | None = None
+    started = time.monotonic()
+    try:
+        process = subprocess.Popen(
+            [
+                sys.executable,
+                "-c",
+                "import os; payload=b'x'*4096\nwhile True: os.write(1,payload)",
+            ],
+            stdin=subprocess.DEVNULL,
+            stdout=slave,
+            stderr=slave,
+            close_fds=True,
+            start_new_session=True,
+        )
+        scope = _seal_process_group(process.pid)
+        os.close(slave)
+        slave = -1
+        with pytest.raises(_LiveHarnessFailure) as error:
+            _wait_for_pty_prompt(
+                process,
+                master,
+                _PtyTail(),
+                1,
+                timeout_seconds=0.2,
+            )
+        assert "bare_pty_prompt_timeout" in str(error.value)
+        assert time.monotonic() - started < 2
+    finally:
+        if scope is not None:
+            _terminate_process_group(scope)
+            assert _process_scope_residual_count(scope) == 0
+        elif process is not None:
+            with __import__("contextlib").suppress(ProcessLookupError):
+                os.killpg(process.pid, signal.SIGKILL)
+        if process is not None:
+            with __import__("contextlib").suppress(subprocess.TimeoutExpired):
+                process.wait(timeout=2)
+        for descriptor in (master, slave):
+            if descriptor >= 0:
+                with __import__("contextlib").suppress(OSError):
+                    os.close(descriptor)
+
+
+def test_kernel_birth_identity_is_precise_and_stable() -> None:
+    birth = _kernel_process_birth(os.getpid())
+    assert type(birth) is str and birth
+    assert _kernel_process_birth(os.getpid()) == birth
+    first = _process_birth_fingerprint(
+        os.getpid(), kernel_birth_provider=lambda _pid: "kernel-birth-a"
+    )
+    second = _process_birth_fingerprint(
+        os.getpid(), kernel_birth_provider=lambda _pid: "kernel-birth-b"
+    )
+    assert first != second
+
+
+def test_unavailable_kernel_birth_fails_closed_without_signal() -> None:
+    process = subprocess.Popen(
+        [sys.executable, "-c", "import time;time.sleep(60)"],
+        start_new_session=True,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    scope = _seal_process_group(
+        process.pid,
+        fingerprint_provider=lambda _pid: "sealed-kernel-birth",
+    )
+    signalled: list[tuple[int, int]] = []
+    try:
+        result = _terminate_process_group(
+            scope,
+            fingerprint_provider=lambda _pid: None,
+            signal_group=lambda pgid, sig: signalled.append((pgid, sig)),
+        )
+        assert result["code"] == "process_cleanup_authority_unverified"
+        assert result["residual_process_count"] > 0
+        assert signalled == []
+    finally:
+        with __import__("contextlib").suppress(ProcessLookupError):
+            os.killpg(process.pid, signal.SIGKILL)
+        process.wait(timeout=5)
+
+
+def test_successful_probe_reaps_same_group_children(tmp_path, monkeypatch) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    real_home = tmp_path / "real-home"
+    real_home.mkdir()
+    monkeypatch.setenv("HOME", str(real_home))
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    child_pid_file = tmp_path / "probe-children.pid"
+    script = (
+        f"#!{sys.executable}\n"
+        "import os,sys,time\n"
+        "child=os.fork()\n"
+        "if child == 0:\n"
+        "    time.sleep(60)\n"
+        "    os._exit(0)\n"
+        f"with open({str(child_pid_file)!r},'a',encoding='ascii') as stream: stream.write(str(child)+'\\n')\n"
+        "args=set(sys.argv[1:])\n"
+        "if 'exec' in args: text='codex-cli 1.0 --output-schema --output-last-message\\n'\n"
+        "elif '--help' in args: text='claude 1.0 --json-schema --output-format\\n'\n"
+        "else: text='m2c-tool 1.0\\n'\n"
+        "os.write(1,text.encode('ascii'))\n"
+    )
+    children: list[int] = []
+    try:
+        for name, env_name, _help, _version in TOOL_SPECS:
+            executable = fake_bin / name
+            executable.write_text(script, encoding="utf-8")
+            executable.chmod(0o700)
+            monkeypatch.setenv(env_name, str(executable))
+        payload = _live_preflight(project, require_explicit_paths=True)
+        children = [
+            int(item)
+            for item in child_pid_file.read_text(encoding="ascii").splitlines()
+        ]
+        assert payload["ready"] is True
+        assert payload["blockers"] == []
+        assert children
+        assert all(not _process_alive(pid) for pid in children)
+        assert not any(real_home.iterdir())
+    finally:
+        for pid in children:
+            with __import__("contextlib").suppress(ProcessLookupError):
+                os.kill(pid, signal.SIGKILL)
+
+
+def test_probe_cleanup_failure_is_compact_and_blocks_ready(tmp_path) -> None:
+    executable = tmp_path / "probe"
+    child_pid_file = tmp_path / "probe-child.pid"
+    executable.write_text(
+        f"#!{sys.executable}\n"
+        "import os,time\n"
+        "child=os.fork()\n"
+        "if child == 0:\n"
+        "    time.sleep(60)\n"
+        "    os._exit(0)\n"
+        f"open({str(child_pid_file)!r},'w').write(str(child))\n"
+        "os.write(1,b'probe 1.0\\n')\n",
+        encoding="utf-8",
+    )
+    executable.chmod(0o700)
+    seal = _seal_executable(str(executable))
+    assert seal is not None
+    child_pid: int | None = None
+    try:
+        outcome = _bounded_probe(
+            seal,
+            ("--version",),
+            cwd=tmp_path,
+            env={"PATH": "/usr/bin:/bin", "HOME": str(tmp_path)},
+            signal_group=lambda _pgid, _signal: (_ for _ in ()).throw(
+                PermissionError("SECRET path command")
+            ),
+        )
+        child_pid = int(child_pid_file.read_text(encoding="ascii"))
+        assert outcome.blocker == "probe_residual_process"
+        assert "SECRET" not in repr(outcome)
+        assert _process_alive(child_pid)
+    finally:
+        if child_pid is not None:
+            with __import__("contextlib").suppress(ProcessLookupError):
+                os.kill(child_pid, signal.SIGKILL)
+
+
+@pytest.mark.parametrize("replacement", ["inode", "content"])
+def test_executable_seal_rejects_replacement_before_use(
+    tmp_path, replacement,
+) -> None:
+    executable = tmp_path / "tool"
+    marker = tmp_path / "project-init.marker"
+    executable.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    executable.chmod(0o700)
+    seal = _seal_executable(str(executable))
+    assert seal is not None
+    if replacement == "inode":
+        alternate = tmp_path / "alternate"
+        alternate.write_text("#!/bin/sh\ntouch replaced\n", encoding="utf-8")
+        alternate.chmod(0o700)
+        alternate.replace(executable)
+    else:
+        executable.write_text("#!/bin/sh\ntouch replaced\n", encoding="utf-8")
+        executable.chmod(0o700)
+    with pytest.raises(_LiveHarnessFailure) as error:
+        _verify_all_executable_seals({"tool": seal})
+        marker.write_text("initialized", encoding="utf-8")
+    assert "executable_identity_drift" in str(error.value)
+    assert not marker.exists()
+    with pytest.raises(_LiveHarnessFailure):
+        _sealed_argv(seal, "--version")
+
+
+def test_post_preflight_executable_replacement_blocks_project_init(
+    tmp_path, monkeypatch,
+) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    script = (
+        "#!/bin/sh\n"
+        "case \"$1\" in\n"
+        "  exec) echo 'codex 1.0 --output-schema --output-last-message';;\n"
+        "  --help) echo 'claude 1.0 --json-schema --output-format';;\n"
+        "  *) echo 'tool 1.0';;\n"
+        "esac\n"
+    )
+    for name, env_name, _help, _version in TOOL_SPECS:
+        executable = fake_bin / name
+        executable.write_text(script, encoding="utf-8")
+        executable.chmod(0o700)
+        monkeypatch.setenv(env_name, str(executable))
+    seals = _explicit_live_paths()
+    payload = _live_preflight(project, require_explicit_paths=True)
+    assert payload["ready"] is True
+    codex = fake_bin / "codex"
+    replacement = fake_bin / "codex-new"
+    replacement.write_text("#!/bin/sh\ntouch forbidden\n", encoding="utf-8")
+    replacement.chmod(0o700)
+    replacement.replace(codex)
+    marker = tmp_path / "project-init.marker"
+    with pytest.raises(_LiveHarnessFailure) as error:
+        _verify_all_executable_seals(seals)
+        marker.write_text("initialized", encoding="utf-8")
+    assert "executable_identity_drift" in str(error.value)
+    assert not marker.exists()
 
 
 @pytest.mark.skipif(
