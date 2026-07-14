@@ -282,6 +282,22 @@ def test_cli_native_schema_probe_returns_only_fixed_blockers(
             "codex-cli",
             "--output-schema-file --output-last-message-suffix",
         ),
+        (
+            "claude-cli",
+            "---json-schema ---output-format",
+        ),
+        (
+            "claude-cli",
+            "x--json-schema x--output-format",
+        ),
+        (
+            "codex-cli",
+            "---output-schema ---output-last-message",
+        ),
+        (
+            "codex-cli",
+            "x--output-schema x--output-last-message",
+        ),
     ],
 )
 def test_cli_native_schema_probe_rejects_required_flag_substring_spoofs(

@@ -771,7 +771,10 @@ def cli_native_schema_ready(provider: str) -> tuple[bool, str | None]:
         except (CliLeaderProviderError, UnicodeDecodeError):
             return False, _CLI_NATIVE_SCHEMA_UNAVAILABLE
         option_names = set(
-            re.findall(r"--[A-Za-z0-9][A-Za-z0-9-]*", help_text)
+            re.findall(
+                r"(?<![A-Za-z0-9_-])--[A-Za-z0-9][A-Za-z0-9-]*",
+                help_text,
+            )
         )
         if not all(flag in option_names for flag in required_flags):
             return False, _CLI_NATIVE_SCHEMA_UNAVAILABLE
