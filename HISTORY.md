@@ -4,6 +4,14 @@
 
 ## 2026-07-15
 
+### Enforce M2c probe and executable scopes
+
+- **No guessed signals**: probe and PTY setup now preflight exact kernel-birth support and never fall back to `killpg(process.pid, ...)` after sealing failure. A fast-exited child is reaped without a signal; a still-live but unsealable child returns fixed `probe_scope_unverified` with zero guessed signals.
+- **Escaped-descendant closure**: every probe receives an opaque inherited marker. Root-lifetime recursive polling records exact birth identities, then a post-root same-UID environment scan finds children that forked, called `setsid`, or reparented. Exact group/per-PID cleanup repeats to marker quiescence; enumeration, environment inspection, or sealing failure is fail-closed.
+- **Per-invocation executable gate**: private mode-`0500` controlled launchers use `O_NOFOLLOW`, fd metadata/hash comparison, and a final path-inode check on every provider/tmux invocation. This preserves the real Claude Agent ACP Node ESM package-relative imports and rejects source replacement completed before launch. macOS lacks Python `fexecve`, so the final `lstat`-to-`execve(path)` interval is explicitly documented rather than misrepresented as inode-bound execution.
+- **TDD evidence**: six focused tests were RED for missing scope-sealer injection, escaped `setsid` cleanup, unavailable enumeration, controlled launcher behavior, and PTY zero-signal cleanup. The 1 ms parent-exit escape test passed five consecutive runs after the marker scanner was added. No real provider run was attempted; Task 11 evidence and M2c status remain unchanged.
+- **Verification**: the default M2c harness passes `28` tests with the live node skipped; the full suite passes `3337` tests with two skips. `python -m compileall -q src tests`, `git diff --check`, the four-file scope gate, raw guessed-`killpg` scan, and post-test orphan scan also pass in the `agentdeck` environment.
+
 ### Close M2c harness race boundaries
 
 - **Deadline-fair PTY draining**: every drain invocation now has explicit byte, chunk, duration, and caller-deadline budgets. A continuous writer therefore yields back to the wait loop for total timeout and process checks, while the existing 64 KiB diagnostic tail and exact process-group finally cleanup remain bounded and compact.

@@ -1620,6 +1620,25 @@ git commit -m "Add opt-in real M2c acceptance gate"
   unavailable kernel birth, successful-probe child cleanup, compact residual
   probe failure, and inode/same-inode executable replacement.
 
+#### Task 10 Important probe/launch-scope closure
+
+- [x] Remove every unsealed `killpg(process.pid, ...)` fallback. Kernel-birth
+  support is checked before spawn; post-spawn seal failure emits zero guessed
+  signals and returns fixed `probe_scope_unverified`.
+- [x] Add a per-probe opaque inherited scope marker, root-lifetime recursive
+  descendant ledger, post-root same-UID environment scan, exact birth sealing,
+  cross-session per-PID cleanup, and repeated quiescence. This covers a child
+  that forks, calls `setsid`, and survives a successful parent exit.
+- [x] Replace ordinary shell wrappers with private mode-`0500` controlled
+  launchers. Every invocation performs `O_NOFOLLOW` fd metadata/hash and path
+  inode checks before executing the original, preserving Node/npm relative
+  package semantics. On macOS, lack of `fexecve` leaves a documented final
+  `lstat`-to-`execve(path)` interval; all detectable drift fails closed and no
+  broken single-file ACP snapshot is used.
+- [x] Add direct RED/GREEN regressions for fast-exit and live-unsealable zero
+  signal behavior, PTY seal failure, unavailable enumeration, 1 ms-parent
+  fork/`setsid` escape cleanup, and source replacement before launcher use.
+
 ### Task 11: Run the real frozen-commit rehearsal and record evidence
 
 **Files:**

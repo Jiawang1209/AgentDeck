@@ -17,8 +17,8 @@ package, performs login, changes global settings, or touches a user tmux
 socket/session. Capability probes run from the disposable project with a
 minimal environment and isolated `HOME`, `XDG_CONFIG_HOME`, `XDG_CACHE_HOME`,
 `XDG_DATA_HOME`, and `TMPDIR`. Live writes are confined to that disposable
-tree, including exact-name wrappers that bind name-based provider/tmux calls to
-the four validated executable paths.
+tree, including exact-name controlled launchers that bind name-based
+provider/tmux calls to the four validated executable paths.
 
 ## 1. Freeze and inspect the checkout
 
@@ -55,10 +55,16 @@ payload contains only:
 - the fixed probe timeout.
 
 Each probe is started in a new session and immediately bound to its exact
-process group plus kernel process-birth identity. Success, timeout, and error
-all run bounded TERM/KILL group cleanup followed by a short quiescence check;
-any surviving same-group member produces fixed `probe_residual_process` and
-forces `ready=false`. A successful probe may not leave a background child.
+process group plus kernel process-birth identity. A unique opaque scope marker
+is inherited only by that probe tree. While the root lives, bounded polling
+records recursively discovered descendants with exact birth identities. After
+the root exits, a same-UID marker scan (Linux `/proc/<pid>/environ`; macOS
+`sysctl(KERN_PROCARGS2)`) closes the fork-then-`setsid`/reparent window. Exact
+group and per-PID cleanup repeats until a marker scan proves quiescence.
+Unavailable enumeration, environment inspection, or birth sealing produces
+fixed `probe_scope_unverified`; a residual produces
+`probe_residual_process`. Both force `ready=false`, and no unsealed PID/PGID is
+signalled. The opaque marker is never returned in probe output or diagnostics.
 
 The test snapshots both the disposable project and every actual isolated probe
 root before and after probing, including file bytes, kinds, and directory/file
@@ -75,11 +81,21 @@ The live test requires all four environment variables. Each value must be an
 absolute, non-symlink, regular executable with the expected basename. Missing,
 relative, directory, non-executable, symlink, or replaced identity evidence
 fails before project initialization. Initial validation seals path, device,
-inode, owner, mode, size, mtime, and content SHA-256. Every probe, wrapper,
+inode, owner, mode, size, mtime, and content SHA-256. Every probe, launcher,
 bare/daemon boundary, pane observation, and cleanup use revalidates that seal
-before and after use. A second four-tool gate runs immediately before project
-initialization; drift returns only fixed `executable_identity_drift` and the
-changed path is not executed.
+before and after use. Each private mode-`0500` controlled launcher also opens
+the original with `O_NOFOLLOW`, hashes and compares fd metadata, rechecks the
+path inode, and only then executes it. This preserves Node/npm package-relative
+imports while rejecting replacement completed before an invocation. A second
+four-tool gate runs immediately before project initialization; drift returns
+only fixed `executable_identity_drift` and the changed path is not executed.
+
+macOS does not expose `fexecve` through this Python runtime. Therefore the
+final verified `lstat` to `execve(path)` interval is a documented platform
+TOCTOU residual; the harness does not claim inode-bound exec. Any earlier
+identity/hash mismatch fails closed with exit 126, and it never falls back to
+an unverified executable or a single-file copy that would break
+`claude-agent-acp` ESM-relative imports.
 
 ```text
 AGENTDECK_M2C_CODEX

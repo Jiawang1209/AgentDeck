@@ -63,6 +63,7 @@ BLOCKER_CODES = frozenset(
         "tmux_unavailable",
         "probe_wrote_files",
         "probe_residual_process",
+        "probe_scope_unverified",
         "executable_identity_drift",
     }
 )
@@ -246,6 +247,82 @@ def _sealed_argv(seal: _ExecutableSeal, *args: str) -> list[str]:
     return [str(seal.path), *args]
 
 
+def _write_controlled_launcher(
+    name: str,
+    source: _ExecutableSeal,
+    destination: Path,
+) -> _ExecutableSeal:
+    if not re.fullmatch(r"[A-Za-z0-9._-]+", name):
+        raise _live_failure("executable_identity_drift")
+    _verify_executable_seal(source)
+    destination.mkdir(mode=0o700, parents=True, exist_ok=True)
+    if stat.S_IMODE(destination.stat().st_mode) != 0o700:
+        raise _live_failure("executable_identity_drift")
+    launcher = destination / name
+    expected = {
+        "device": source.device,
+        "inode": source.inode,
+        "owner": source.owner,
+        "mode": source.mode,
+        "size": source.size,
+        "mtime_ns": source.mtime_ns,
+        "content_hash": source.content_hash,
+    }
+    payload = (
+        f"#!{sys.executable}\n"
+        "import hashlib, os, stat, sys\n"
+        f"PATH = {str(source.path)!r}\n"
+        f"EXPECTED = {expected!r}\n"
+        "def facts(value):\n"
+        "    return {\n"
+        "        'device': value.st_dev, 'inode': value.st_ino,\n"
+        "        'owner': value.st_uid, 'mode': stat.S_IMODE(value.st_mode),\n"
+        "        'size': value.st_size, 'mtime_ns': value.st_mtime_ns,\n"
+        "    }\n"
+        "try:\n"
+        "    fd = os.open(PATH, os.O_RDONLY | getattr(os, 'O_NOFOLLOW', 0))\n"
+        "    first = os.fstat(fd)\n"
+        "    digest = hashlib.sha256()\n"
+        "    while True:\n"
+        "        chunk = os.read(fd, 1024 * 1024)\n"
+        "        if not chunk: break\n"
+        "        digest.update(chunk)\n"
+        "    second = os.fstat(fd)\n"
+        "    current = os.lstat(PATH)\n"
+        "    valid = (stat.S_ISREG(first.st_mode) and facts(first) == facts(second)\n"
+        "             and facts(second) == {k: EXPECTED[k] for k in facts(second)}\n"
+        "             and current.st_dev == first.st_dev and current.st_ino == first.st_ino\n"
+        "             and digest.hexdigest() == EXPECTED['content_hash'])\n"
+        "    os.close(fd)\n"
+        "    if not valid: os._exit(126)\n"
+        "    os.execve(PATH, [PATH, *sys.argv[1:]], dict(os.environ))\n"
+        "except (OSError, ValueError):\n"
+        "    os._exit(126)\n"
+    )
+    try:
+        descriptor = os.open(
+            launcher,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0),
+            0o500,
+        )
+        try:
+            encoded = payload.encode("utf-8")
+            offset = 0
+            while offset < len(encoded):
+                offset += os.write(descriptor, encoded[offset:])
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+        launcher.chmod(0o500)
+    except OSError:
+        raise _live_failure("executable_identity_drift") from None
+    _verify_executable_seal(source)
+    sealed = _seal_executable(str(launcher))
+    if sealed is None or sealed.mode != 0o500:
+        raise _live_failure("executable_identity_drift")
+    return sealed
+
+
 def _limit_probe_output() -> None:
     resource.setrlimit(resource.RLIMIT_FSIZE, (PROBE_OUTPUT_LIMIT, PROBE_OUTPUT_LIMIT))
 
@@ -257,12 +334,25 @@ def _bounded_probe(
     cwd: Path,
     env: dict[str, str],
     signal_group: Any = os.killpg,
+    scope_sealer: Any = None,
+    descendant_provider: Any = None,
+    popen_factory: Any = subprocess.Popen,
 ) -> _ProbeOutcome:
+    if _kernel_process_birth(os.getpid()) is None or _kernel_process_uid(os.getpid()) is None:
+        return _ProbeOutcome(False, b"", "probe_scope_unverified")
+    baseline_pids = _all_process_pids()
+    if baseline_pids is None:
+        return _ProbeOutcome(False, b"", "probe_scope_unverified")
+    marker = hashlib.sha256(os.urandom(32)).hexdigest()
+    probe_env = dict(env)
+    probe_env["AGENTDECK_M2C_PROBE_SCOPE"] = marker
+    scope_sealer = scope_sealer or _seal_process_group
+    descendant_provider = descendant_provider or _probe_descendant_pids
     with tempfile.TemporaryFile() as output:
         process: subprocess.Popen[bytes] | None = None
         try:
             command = _sealed_argv(seal, *args)
-            process = subprocess.Popen(
+            process = popen_factory(
                 command,
                 stdin=subprocess.DEVNULL,
                 stdout=output,
@@ -271,33 +361,85 @@ def _bounded_probe(
                 start_new_session=True,
                 preexec_fn=_limit_probe_output,
                 cwd=cwd,
-                env=env,
+                env=probe_env,
             )
-            scope = _seal_process_group(process.pid)
+            scope = scope_sealer(process.pid)
         except _LiveHarnessFailure as exc:
             if process is not None:
-                with __import__("contextlib").suppress(ProcessLookupError):
-                    os.killpg(process.pid, signal.SIGKILL)
-                with __import__("contextlib").suppress(subprocess.TimeoutExpired):
-                    process.wait(timeout=2)
+                with __import__("contextlib").suppress(
+                    subprocess.TimeoutExpired,
+                    subprocess.SubprocessError,
+                ):
+                    process.wait(timeout=1)
             blocker = (
                 "executable_identity_drift"
                 if "executable_identity_drift" in str(exc)
-                else "probe_residual_process"
+                else "probe_scope_unverified"
             )
             return _ProbeOutcome(False, b"", blocker)
         except OSError:
             return _ProbeOutcome(False, b"")
+        descendants: dict[int, _ProcessIdentity] = {}
+        scope_verified = True
         timed_out = False
-        try:
-            process.wait(timeout=PROBE_TIMEOUT_SECONDS)
-        except subprocess.TimeoutExpired:
-            timed_out = True
+        deadline = time.monotonic() + PROBE_TIMEOUT_SECONDS
+        while True:
+            observed = descendant_provider(process.pid)
+            if observed is None:
+                scope_verified = False
+            else:
+                for pid in sorted(observed):
+                    if pid in descendants or not _process_alive(pid):
+                        continue
+                    try:
+                        descendants[pid] = _seal_process_identity(pid)
+                    except _LiveHarnessFailure:
+                        if _process_alive(pid):
+                            scope_verified = False
+            if process.poll() is not None:
+                break
+            if time.monotonic() >= deadline:
+                timed_out = True
+                break
+            time.sleep(0.01)
+        marked = _scan_probe_marker(marker, baseline_pids)
+        if marked is None:
+            scope_verified = False
+        else:
+            for identity in marked:
+                descendants.setdefault(identity.pid, identity)
         cleanup = _terminate_process_group(scope, signal_group=signal_group)
+        descendant_cleanup = _terminate_process_identities(
+            tuple(descendants.values())
+        )
         with __import__("contextlib").suppress(subprocess.TimeoutExpired):
             process.wait(timeout=2)
-        time.sleep(0.05)
-        if cleanup["code"] is not None or _process_scope_residual_count(scope):
+        quiescent = False
+        for _ in range(5):
+            marked = _scan_probe_marker(marker, baseline_pids)
+            if marked is None:
+                scope_verified = False
+                break
+            if not marked:
+                quiescent = True
+                break
+            extra_cleanup = _terminate_process_identities(marked)
+            if extra_cleanup["code"] is not None:
+                scope_verified = False
+                break
+            time.sleep(0.05)
+        if not quiescent:
+            scope_verified = False
+        if (
+            not scope_verified
+            or descendant_cleanup["code"] is not None
+        ):
+            return _ProbeOutcome(False, b"", "probe_scope_unverified")
+        if (
+            cleanup["code"] is not None
+            or _process_scope_residual_count(scope)
+            or descendant_cleanup["residual_process_count"]
+        ):
             return _ProbeOutcome(False, b"", "probe_residual_process")
         try:
             _verify_executable_seal(seal)
@@ -307,6 +449,8 @@ def _bounded_probe(
             return _ProbeOutcome(False, b"")
         output.seek(0)
         payload = output.read(PROBE_OUTPUT_LIMIT + 1)
+        if marker.encode("ascii") in payload:
+            return _ProbeOutcome(False, b"", "probe_scope_unverified")
     if process.returncode != 0 or len(payload) > PROBE_OUTPUT_LIMIT:
         return _ProbeOutcome(False, b"")
     return _ProbeOutcome(True, payload)
@@ -793,19 +937,31 @@ class _DarwinProcBSDInfo(ctypes.Structure):
     ]
 
 
+_DARWIN_PROC_PIDINFO: Any = None
+_DARWIN_PROC_PIDINFO_LOADED = False
+
+
 def _darwin_process_info(pid: int) -> _DarwinProcBSDInfo | None:
-    library_name = ctypes.util.find_library("proc") or "/usr/lib/libproc.dylib"
+    global _DARWIN_PROC_PIDINFO, _DARWIN_PROC_PIDINFO_LOADED
     try:
-        library = ctypes.CDLL(library_name, use_errno=True)
-        proc_pidinfo = library.proc_pidinfo
-        proc_pidinfo.argtypes = [
-            ctypes.c_int,
-            ctypes.c_int,
-            ctypes.c_uint64,
-            ctypes.c_void_p,
-            ctypes.c_int,
-        ]
-        proc_pidinfo.restype = ctypes.c_int
+        if not _DARWIN_PROC_PIDINFO_LOADED:
+            library_name = (
+                ctypes.util.find_library("proc") or "/usr/lib/libproc.dylib"
+            )
+            library = ctypes.CDLL(library_name, use_errno=True)
+            _DARWIN_PROC_PIDINFO = library.proc_pidinfo
+            _DARWIN_PROC_PIDINFO.argtypes = [
+                ctypes.c_int,
+                ctypes.c_int,
+                ctypes.c_uint64,
+                ctypes.c_void_p,
+                ctypes.c_int,
+            ]
+            _DARWIN_PROC_PIDINFO.restype = ctypes.c_int
+            _DARWIN_PROC_PIDINFO_LOADED = True
+        proc_pidinfo = _DARWIN_PROC_PIDINFO
+        if proc_pidinfo is None:
+            return None
         info = _DarwinProcBSDInfo()
         size = ctypes.sizeof(_DarwinProcBSDInfo)
         returned = proc_pidinfo(
@@ -1059,7 +1215,131 @@ def _process_alive(pid: int) -> bool:
     return bool(status) and not status.startswith("Z")
 
 
-def _descendant_pids(root_pid: int) -> set[int]:
+def _all_process_pids() -> set[int] | None:
+    try:
+        completed = subprocess.run(
+            ["/bin/ps", "-axo", "pid="],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            timeout=3,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if completed.returncode != 0:
+        return None
+    return {
+        int(item)
+        for item in completed.stdout.decode("ascii", errors="ignore").split()
+        if item.isdigit()
+    }
+
+
+def _darwin_process_environment(pid: int) -> dict[str, str] | None:
+    try:
+        libc = ctypes.CDLL(None, use_errno=True)
+        sysctl = libc.sysctl
+        sysctl.argtypes = [
+            ctypes.POINTER(ctypes.c_int),
+            ctypes.c_uint,
+            ctypes.c_void_p,
+            ctypes.POINTER(ctypes.c_size_t),
+            ctypes.c_void_p,
+            ctypes.c_size_t,
+        ]
+        sysctl.restype = ctypes.c_int
+        mib = (ctypes.c_int * 3)(1, 49, pid)
+        size = ctypes.c_size_t(0)
+        if sysctl(mib, 3, None, ctypes.byref(size), None, 0) != 0:
+            return None
+        if size.value < 8 or size.value > 16 * 1024 * 1024:
+            return None
+        buffer = ctypes.create_string_buffer(size.value)
+        if sysctl(mib, 3, buffer, ctypes.byref(size), None, 0) != 0:
+            return None
+        raw = bytes(buffer.raw[: size.value])
+        argc = int.from_bytes(raw[:4], byteorder=sys.byteorder, signed=True)
+        if argc < 0 or argc > 1_000_000:
+            return None
+        index = raw.find(b"\0", 4)
+        if index < 0:
+            return None
+        index += 1
+        while index < len(raw) and raw[index] == 0:
+            index += 1
+        for _ in range(argc):
+            end = raw.find(b"\0", index)
+            if end < 0:
+                return None
+            index = end + 1
+        environment: dict[str, str] = {}
+        while index < len(raw):
+            end = raw.find(b"\0", index)
+            if end < 0 or end == index:
+                break
+            item = raw[index:end]
+            if b"=" in item:
+                key, value = item.split(b"=", 1)
+                environment[key.decode("utf-8", errors="ignore")] = value.decode(
+                    "utf-8", errors="ignore"
+                )
+            index = end + 1
+        return environment
+    except (AttributeError, OSError, TypeError, ValueError):
+        return None
+
+
+def _process_environment(pid: int) -> dict[str, str] | None:
+    if sys.platform.startswith("linux"):
+        try:
+            raw = Path(f"/proc/{pid}/environ").read_bytes()
+        except OSError:
+            return None
+        environment: dict[str, str] = {}
+        for item in raw.split(b"\0"):
+            if b"=" not in item:
+                continue
+            key, value = item.split(b"=", 1)
+            environment[key.decode("utf-8", errors="ignore")] = value.decode(
+                "utf-8", errors="ignore"
+            )
+        return environment
+    if sys.platform == "darwin":
+        return _darwin_process_environment(pid)
+    return None
+
+
+def _scan_probe_marker(
+    marker: str,
+    baseline_pids: set[int],
+) -> tuple[_ProcessIdentity, ...] | None:
+    pids = _all_process_pids()
+    if pids is None:
+        return None
+    identities: list[_ProcessIdentity] = []
+    for pid in sorted(pids - baseline_pids):
+        if pid == os.getpid() or not _process_alive(pid):
+            continue
+        uid = _kernel_process_uid(pid)
+        if uid != os.getuid():
+            continue
+        environment = _process_environment(pid)
+        if environment is None:
+            if _process_alive(pid):
+                return None
+            continue
+        if environment.get("AGENTDECK_M2C_PROBE_SCOPE") != marker:
+            continue
+        try:
+            identities.append(_seal_process_identity(pid))
+        except _LiveHarnessFailure:
+            if _process_alive(pid):
+                return None
+    return tuple(identities)
+
+
+def _probe_descendant_pids(root_pid: int) -> set[int] | None:
     try:
         completed = subprocess.run(
             ["/bin/ps", "-axo", "pid=,ppid="],
@@ -1070,7 +1350,9 @@ def _descendant_pids(root_pid: int) -> set[int]:
             check=False,
         )
     except (OSError, subprocess.TimeoutExpired):
-        return set()
+        return None
+    if completed.returncode != 0:
+        return None
     children: dict[int, set[int]] = {}
     for line in completed.stdout.decode("ascii", errors="ignore").splitlines():
         parts = line.split()
@@ -1087,6 +1369,58 @@ def _descendant_pids(root_pid: int) -> set[int]:
         descendants.add(pid)
         pending.extend(children.get(pid, ()))
     return descendants
+
+
+def _descendant_pids(root_pid: int) -> set[int]:
+    return _probe_descendant_pids(root_pid) or set()
+
+
+def _terminate_process_identities(
+    identities: tuple[_ProcessIdentity, ...],
+    *,
+    signal_process: Any = os.kill,
+    fingerprint_provider: Any = _process_birth_fingerprint,
+) -> dict[str, object]:
+    for signal_number in (signal.SIGTERM, signal.SIGKILL):
+        active = [item for item in identities if _process_alive(item.pid)]
+        if not active:
+            break
+        for identity in active:
+            if not _process_identity_matches(
+                identity,
+                fingerprint_provider=fingerprint_provider,
+            ):
+                return {
+                    "code": "process_cleanup_authority_unverified",
+                    "residual_process_count": len(active),
+                }
+        failed = False
+        for identity in active:
+            try:
+                signal_process(identity.pid, signal_number)
+            except ProcessLookupError:
+                continue
+            except (OSError, PermissionError):
+                failed = True
+                break
+        if failed:
+            return {
+                "code": "process_cleanup_authority_unverified",
+                "residual_process_count": sum(
+                    _process_alive(item.pid) for item in identities
+                ),
+            }
+        deadline = time.monotonic() + 3
+        while (
+            time.monotonic() < deadline
+            and any(_process_alive(item.pid) for item in active)
+        ):
+            time.sleep(0.05)
+    residual = sum(_process_alive(item.pid) for item in identities)
+    return {
+        "code": "probe_residual_process" if residual else None,
+        "residual_process_count": residual,
+    }
 
 
 def _read_daemon_authority_facts(
@@ -1614,7 +1948,11 @@ def _create_and_confirm_live_mission(
     executable_seals: dict[str, _ExecutableSeal] | None = None,
     openpty_factory: Any = pty.openpty,
     popen_factory: Any = subprocess.Popen,
+    scope_sealer: Any = None,
 ) -> tuple[str, _PtyTail, dict[str, object]]:
+    if _kernel_process_birth(os.getpid()) is None or _kernel_process_uid(os.getpid()) is None:
+        raise _live_failure("process_cleanup_authority_unverified", store=store)
+    scope_sealer = scope_sealer or _seal_process_group
     capture = _PtyTail()
     master: int | None = None
     slave: int | None = None
@@ -1635,7 +1973,7 @@ def _create_and_confirm_live_mission(
                 start_new_session=True,
                 env=env,
             )
-            process_scope = _seal_process_group(process.pid)
+            process_scope = scope_sealer(process.pid)
             if cleanup_authority is not None:
                 cleanup_authority.process_scopes.append(process_scope)
         except (OSError, subprocess.SubprocessError):
@@ -1733,11 +2071,13 @@ def _create_and_confirm_live_mission(
             failures.extend(_stop_pty(process, master, process_scope))
             master = None
         elif process is not None:
-            try:
-                os.killpg(process.pid, signal.SIGKILL)
-                process.wait(timeout=2)
-            except (OSError, subprocess.SubprocessError):
-                failures.append("pty_process_group_cleanup_failed")
+            if process.poll() is None:
+                failures.append("pty_process_scope_unverified")
+            else:
+                with __import__("contextlib").suppress(
+                    subprocess.SubprocessError
+                ):
+                    process.wait(timeout=0)
         if master is not None:
             try:
                 os.close(master)
@@ -1968,12 +2308,23 @@ def _run_live_acceptance() -> dict[str, object]:
 def _run_live_acceptance_in_project(
     paths: dict[str, _ExecutableSeal], parent: Path
 ) -> dict[str, object]:
+    source_paths = paths
     root = parent / "repo"
     root.mkdir(mode=0o700)
     session_name = "agentdeck-m2c-" + parent.name[-8:]
     artifact = root / "artifact.txt"
     tmux_temporary = parent / "tmux-tmp"
     tmux_temporary.mkdir(mode=0o700)
+    runtime_bin = parent / "runtime-bin"
+    runtime_bin.mkdir(mode=0o700)
+    launch_paths = {
+        name: _write_controlled_launcher(name, source, runtime_bin)
+        for name, source in source_paths.items()
+    }
+    all_seals = {
+        **{f"source:{name}": seal for name, seal in source_paths.items()},
+        **{f"launcher:{name}": seal for name, seal in launch_paths.items()},
+    }
     tmux_socket_paths = (
         tmux_temporary / f"tmux-{os.getuid()}" / session_name,
     )
@@ -1981,7 +2332,7 @@ def _run_live_acceptance_in_project(
         "HOME": str(parent),
         "TMPDIR": str(parent),
         "TMUX_TMPDIR": str(tmux_temporary),
-        "PATH": str(paths["tmux"].path.parent) + os.pathsep + "/usr/bin:/bin",
+        "PATH": str(runtime_bin) + os.pathsep + "/usr/bin:/bin",
         "LANG": "C",
         "LC_ALL": "C",
     }
@@ -1989,14 +2340,14 @@ def _run_live_acceptance_in_project(
     with _live_resource_guard(
         root,
         parent,
-        paths["tmux"],
+        launch_paths["tmux"],
         session_name=session_name,
         cleanup_env=cleanup_env,
         tmux_socket_paths=tmux_socket_paths,
         cleanup_authority=cleanup_authority,
-        executable_seals=paths,
+        executable_seals=all_seals,
     ) as cleanup_audit:
-        _verify_all_executable_seals(paths)
+        _verify_all_executable_seals(all_seals)
         preflight_before = _tree_snapshot(root)
         preflight = _live_preflight(root, require_explicit_paths=True)
         _require_live(_tree_snapshot(root) == preflight_before, "preflight_wrote_project")
@@ -2006,24 +2357,12 @@ def _run_live_acceptance_in_project(
             checkout not in root.parents and root not in checkout.parents,
             "project_not_disposable",
         )
-        runtime_bin = parent / "runtime-bin"
-        runtime_bin.mkdir(mode=0o700)
-        for name in ("codex", "claude", "tmux"):
-            _verify_executable_seal(paths[name])
-            wrapper = runtime_bin / name
-            wrapper.write_text(
-                "#!/bin/sh\nexec "
-                + shlex.quote(str(paths[name].path))
-                + ' "$@"\n',
-                encoding="utf-8",
-            )
-            wrapper.chmod(0o700)
-            _verify_executable_seal(paths[name])
-        _verify_all_executable_seals(paths)
+        paths = launch_paths
+        _verify_all_executable_seals(all_seals)
         env = dict(os.environ)
         env["PATH"] = str(runtime_bin) + os.pathsep + env.get("PATH", "")
         env["TMUX_TMPDIR"] = str(tmux_temporary)
-        _verify_all_executable_seals(paths)
+        _verify_all_executable_seals(all_seals)
         code, _ = _bounded_project_command(
             ["git", "init", "-q"], cwd=root, timeout=10, env=env
         )
@@ -2035,16 +2374,16 @@ def _run_live_acceptance_in_project(
             env=env,
         )
         _require_live(code == 0, "project_init_failed")
-        _verify_all_executable_seals(paths)
+        _verify_all_executable_seals(all_seals)
         _write_live_config(root, paths, session_name=session_name)
-        _verify_all_executable_seals(paths)
+        _verify_all_executable_seals(all_seals)
         store = StateStore(root)
         mission_id, capture, admitted = _create_and_confirm_live_mission(
             root,
             store,
             env=env,
             cleanup_authority=cleanup_authority,
-            executable_seals=paths,
+            executable_seals=all_seals,
         )
         cleanup_authority.daemon = _seal_daemon_cleanup_identity(root)
         _require_live(
@@ -2064,9 +2403,9 @@ def _run_live_acceptance_in_project(
             "first_attempt_cardinality_invalid",
             store=store,
         )
-        _verify_all_executable_seals(paths)
+        _verify_all_executable_seals(all_seals)
         _confirm_pending_permission(root, store)
-        _verify_all_executable_seals(paths)
+        _verify_all_executable_seals(all_seals)
         _wait_for_state(
             store,
             lambda state: len(state.get("permission_requests", [])) == 2
@@ -2103,7 +2442,7 @@ def _run_live_acceptance_in_project(
             "codex_pane_control_missing",
             store=store,
         )
-        _verify_all_executable_seals(paths)
+        _verify_all_executable_seals(all_seals)
         _observe_exact_pane(
             pane_controls[0],
             tmux=paths["tmux"],
@@ -2111,7 +2450,7 @@ def _run_live_acceptance_in_project(
             cwd=root,
             env=env,
         )
-        _verify_all_executable_seals(paths)
+        _verify_all_executable_seals(all_seals)
         taken = asyncio.run(
             _govern_live_worker(root, method="worker.takeover")
         )
@@ -2120,7 +2459,7 @@ def _run_live_acceptance_in_project(
             "takeover_failed",
             store=store,
         )
-        _verify_all_executable_seals(paths)
+        _verify_all_executable_seals(all_seals)
         returned = asyncio.run(
             _govern_live_worker(
                 root,
@@ -2134,7 +2473,7 @@ def _run_live_acceptance_in_project(
             store=store,
         )
         _confirm_pending_permission(root, store)
-        _verify_all_executable_seals(paths)
+        _verify_all_executable_seals(all_seals)
         completed = _wait_for_state(
             store,
             lambda state: state.get("missions")
@@ -2559,8 +2898,8 @@ def test_pty_cleanup_kills_child_after_session_leader_exits(tmp_path) -> None:
         assert audit["residual_process_count"] == 0
         assert not _process_alive(child_pid)
     finally:
-        with __import__("contextlib").suppress(ProcessLookupError):
-            os.killpg(process.pid, signal.SIGKILL)
+        if process.poll() is None:
+            process.kill()
         if child_pid is not None:
             with __import__("contextlib").suppress(ProcessLookupError):
                 os.kill(child_pid, signal.SIGKILL)
@@ -2585,8 +2924,8 @@ def test_pty_group_kill_failure_is_compact_and_residual_is_derived(tmp_path) -> 
         assert result["residual_process_count"] > 0
         assert "SECRET" not in repr(result)
     finally:
-        with __import__("contextlib").suppress(ProcessLookupError):
-            os.killpg(process.pid, signal.SIGKILL)
+        if process.poll() is None:
+            process.kill()
         with __import__("contextlib").suppress(subprocess.TimeoutExpired):
             process.wait(timeout=5)
 
@@ -2659,8 +2998,8 @@ def test_daemon_tampered_pid_never_signals_unrelated_process(tmp_path) -> None:
         if server is not None:
             server.close()
         for process in (daemon, unrelated):
-            with __import__("contextlib").suppress(ProcessLookupError):
-                os.killpg(os.getpgid(process.pid), signal.SIGKILL)
+            if process.poll() is None:
+                process.kill()
             process.wait(timeout=5)
         shutil.rmtree(root, ignore_errors=True)
 
@@ -2716,8 +3055,8 @@ def test_daemon_birth_mismatch_never_signals(tmp_path) -> None:
     finally:
         if server is not None:
             server.close()
-        with __import__("contextlib").suppress(ProcessLookupError):
-            os.killpg(daemon.pid, signal.SIGKILL)
+        if daemon.poll() is None:
+            daemon.kill()
         with __import__("contextlib").suppress(subprocess.TimeoutExpired):
             daemon.wait(timeout=5)
         shutil.rmtree(root, ignore_errors=True)
@@ -2813,8 +3152,8 @@ def test_flooding_pty_yields_to_deadline_and_cleans_group(tmp_path) -> None:
             _terminate_process_group(scope)
             assert _process_scope_residual_count(scope) == 0
         elif process is not None:
-            with __import__("contextlib").suppress(ProcessLookupError):
-                os.killpg(process.pid, signal.SIGKILL)
+            if process.poll() is None:
+                process.kill()
         if process is not None:
             with __import__("contextlib").suppress(subprocess.TimeoutExpired):
                 process.wait(timeout=2)
@@ -2859,8 +3198,8 @@ def test_unavailable_kernel_birth_fails_closed_without_signal() -> None:
         assert result["residual_process_count"] > 0
         assert signalled == []
     finally:
-        with __import__("contextlib").suppress(ProcessLookupError):
-            os.killpg(process.pid, signal.SIGKILL)
+        if process.poll() is None:
+            process.kill()
         process.wait(timeout=5)
 
 
@@ -2941,7 +3280,7 @@ def test_probe_cleanup_failure_is_compact_and_blocks_ready(tmp_path) -> None:
         child_pid = int(child_pid_file.read_text(encoding="ascii"))
         assert outcome.blocker == "probe_residual_process"
         assert "SECRET" not in repr(outcome)
-        assert _process_alive(child_pid)
+        assert not _process_alive(child_pid)
     finally:
         if child_pid is not None:
             with __import__("contextlib").suppress(ProcessLookupError):
@@ -3009,6 +3348,214 @@ def test_post_preflight_executable_replacement_blocks_project_init(
         marker.write_text("initialized", encoding="utf-8")
     assert "executable_identity_drift" in str(error.value)
     assert not marker.exists()
+
+
+def test_probe_fast_exit_after_scope_seal_failure_emits_no_signal(tmp_path) -> None:
+    executable = tmp_path / "probe"
+    executable.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    executable.chmod(0o700)
+    seal = _seal_executable(str(executable))
+    assert seal is not None
+    signalled: list[tuple[int, int]] = []
+    spawned: list[subprocess.Popen[bytes]] = []
+
+    def popen(*args, **kwargs):
+        process = subprocess.Popen(*args, **kwargs)
+        spawned.append(process)
+        return process
+
+    outcome = _bounded_probe(
+        seal,
+        (),
+        cwd=tmp_path,
+        env={"PATH": "/usr/bin:/bin", "HOME": str(tmp_path)},
+        scope_sealer=lambda _pid: (_ for _ in ()).throw(
+            _live_failure("process_cleanup_authority_unverified")
+        ),
+        popen_factory=popen,
+        signal_group=lambda pgid, sig: signalled.append((pgid, sig)),
+    )
+
+    assert outcome.blocker == "probe_scope_unverified"
+    assert signalled == []
+    assert len(spawned) == 1 and spawned[0].returncode == 0
+
+
+def test_probe_live_unsealable_process_emits_no_guessed_signal(tmp_path) -> None:
+    executable = tmp_path / "probe"
+    executable.write_text(
+        f"#!{sys.executable}\nimport time\ntime.sleep(60)\n",
+        encoding="utf-8",
+    )
+    executable.chmod(0o700)
+    seal = _seal_executable(str(executable))
+    assert seal is not None
+    signalled: list[tuple[int, int]] = []
+    spawned: list[subprocess.Popen[bytes]] = []
+
+    def popen(*args, **kwargs):
+        process = subprocess.Popen(*args, **kwargs)
+        spawned.append(process)
+        return process
+
+    try:
+        outcome = _bounded_probe(
+            seal,
+            (),
+            cwd=tmp_path,
+            env={"PATH": "/usr/bin:/bin", "HOME": str(tmp_path)},
+            scope_sealer=lambda _pid: (_ for _ in ()).throw(
+                _live_failure("process_cleanup_authority_unverified")
+            ),
+            popen_factory=popen,
+            signal_group=lambda pgid, sig: signalled.append((pgid, sig)),
+        )
+        assert outcome.blocker == "probe_scope_unverified"
+        assert signalled == []
+        assert len(spawned) == 1 and spawned[0].poll() is None
+    finally:
+        for process in spawned:
+            if process.poll() is None:
+                process.kill()
+            process.wait(timeout=5)
+
+
+def test_live_mission_scope_seal_failure_emits_no_guessed_signal(
+    tmp_path, monkeypatch,
+) -> None:
+    spawned: list[subprocess.Popen[bytes]] = []
+    signalled: list[tuple[int, int]] = []
+
+    def popen(*args, **kwargs):
+        process = subprocess.Popen(*args, **kwargs)
+        spawned.append(process)
+        return process
+
+    monkeypatch.setattr(
+        os,
+        "killpg",
+        lambda pgid, sig: signalled.append((pgid, sig)),
+    )
+    try:
+        with pytest.raises(_LiveHarnessFailure):
+            _create_and_confirm_live_mission(
+                tmp_path,
+                StateStore(tmp_path),
+                env=dict(os.environ),
+                popen_factory=popen,
+                scope_sealer=lambda _pid: (_ for _ in ()).throw(
+                    _live_failure("process_cleanup_authority_unverified")
+                ),
+            )
+        assert signalled == []
+    finally:
+        for process in spawned:
+            if process.poll() is None:
+                process.kill()
+            process.wait(timeout=5)
+
+
+def test_probe_cleans_forked_setsid_descendant_after_parent_exits_zero(
+    tmp_path,
+) -> None:
+    child_pid_file = tmp_path / "setsid-child.pid"
+    executable = tmp_path / "probe"
+    executable.write_text(
+        f"#!{sys.executable}\n"
+        "import os,time\n"
+        "child=os.fork()\n"
+        "if child == 0:\n"
+        "    os.setsid()\n"
+        "    time.sleep(60)\n"
+        "    os._exit(0)\n"
+        f"open({str(child_pid_file)!r},'w').write(str(child))\n"
+        "time.sleep(0.001)\n"
+        "os.write(1,b'probe 1.0\\n')\n",
+        encoding="utf-8",
+    )
+    executable.chmod(0o700)
+    seal = _seal_executable(str(executable))
+    assert seal is not None
+    child_pid: int | None = None
+    try:
+        outcome = _bounded_probe(
+            seal,
+            (),
+            cwd=tmp_path,
+            env={"PATH": "/usr/bin:/bin", "HOME": str(tmp_path)},
+        )
+        child_pid = int(child_pid_file.read_text(encoding="ascii"))
+        assert outcome.ok is True
+        assert outcome.blocker is None
+        assert not _process_alive(child_pid)
+    finally:
+        if child_pid is not None and _process_alive(child_pid):
+            os.kill(child_pid, signal.SIGKILL)
+
+
+def test_probe_fails_closed_when_descendant_enumeration_unavailable(
+    tmp_path,
+) -> None:
+    executable = tmp_path / "probe"
+    executable.write_text("#!/bin/sh\nsleep 0.1\n", encoding="utf-8")
+    executable.chmod(0o700)
+    seal = _seal_executable(str(executable))
+    assert seal is not None
+
+    outcome = _bounded_probe(
+        seal,
+        (),
+        cwd=tmp_path,
+        env={"PATH": "/usr/bin:/bin", "HOME": str(tmp_path)},
+        descendant_provider=lambda _pid: None,
+    )
+
+    assert outcome.blocker == "probe_scope_unverified"
+
+
+def test_controlled_launcher_rejects_source_replacement_before_invocation(
+    tmp_path,
+) -> None:
+    source = tmp_path / "provider"
+    replacement_marker = tmp_path / "replacement.marker"
+    source.write_text("#!/bin/sh\nprintf 'original\\n'\n", encoding="utf-8")
+    source.chmod(0o700)
+    source_seal = _seal_executable(str(source))
+    assert source_seal is not None
+    wrappers = tmp_path / "wrappers"
+    wrappers.mkdir(mode=0o700)
+    wrapper = _write_controlled_launcher("provider", source_seal, wrappers)
+    original = subprocess.run(
+        _sealed_argv(wrapper),
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        timeout=5,
+        check=False,
+    )
+    assert original.returncode == 0
+    assert original.stdout == b"original\n"
+    replacement = tmp_path / "replacement"
+    replacement.write_text(
+        "#!/bin/sh\n" + f"touch {shlex.quote(str(replacement_marker))}\n",
+        encoding="utf-8",
+    )
+    replacement.chmod(0o700)
+    replacement.replace(source)
+
+    completed = subprocess.run(
+        _sealed_argv(wrapper),
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        timeout=5,
+        check=False,
+    )
+
+    assert completed.returncode != 0
+    assert completed.stdout == b""
+    assert not replacement_marker.exists()
+    assert wrapper.mode == 0o500
 
 
 @pytest.mark.skipif(
