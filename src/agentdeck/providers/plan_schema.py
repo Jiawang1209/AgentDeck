@@ -105,14 +105,17 @@ def build_leader_plan_schema(request: LeaderPlanRequest) -> dict[str, object]:
     }
 
 
-def canonical_leader_plan_schema_hash(schema: dict[str, object]) -> str:
-    canonical = json.dumps(
+def _canonical_leader_plan_schema_bytes(schema: dict[str, object]) -> bytes:
+    return json.dumps(
         schema,
         ensure_ascii=False,
         sort_keys=True,
         separators=(",", ":"),
     ).encode("utf-8")
-    return f"sha256:{hashlib.sha256(canonical).hexdigest()}"
+
+
+def canonical_leader_plan_schema_hash(schema: dict[str, object]) -> str:
+    return f"sha256:{hashlib.sha256(_canonical_leader_plan_schema_bytes(schema)).hexdigest()}"
 
 
 def build_leader_generation_provenance(
@@ -133,8 +136,18 @@ def build_leader_generation_provenance(
         raise ValueError("leader generation attempt count is invalid")
 
     selected_agent_ids, step_count = leader_plan_authority(request)
-    if schema is not None and schema != build_leader_plan_schema(request):
-        raise ValueError("leader generation schema does not match request authority")
+    if schema is not None:
+        try:
+            supplied_schema_bytes = _canonical_leader_plan_schema_bytes(schema)
+            expected_schema_bytes = _canonical_leader_plan_schema_bytes(
+                build_leader_plan_schema(request)
+            )
+        except (TypeError, ValueError):
+            raise ValueError(
+                "leader generation schema does not match request authority"
+            ) from None
+        if supplied_schema_bytes != expected_schema_bytes:
+            raise ValueError("leader generation schema does not match request authority")
 
     return {
         "provider": provider,

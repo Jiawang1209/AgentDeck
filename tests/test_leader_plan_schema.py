@@ -380,3 +380,28 @@ def test_generation_provenance_rejects_invalid_inputs_without_echoing_values(
         build_leader_generation_provenance(**values)
 
     assert str(raised.value) == message
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    ["boolean_as_integer", "integer_as_float", "non_json_value"],
+)
+def test_generation_provenance_rejects_noncanonical_schema_types(mutation: str) -> None:
+    request = _four_step_request()
+    schema = deepcopy(build_leader_plan_schema(request))
+    if mutation == "boolean_as_integer":
+        schema["properties"]["steps"]["items"]["properties"]["requires_approval"]["const"] = 1
+    elif mutation == "integer_as_float":
+        schema["properties"]["steps"]["maxItems"] = 4.0
+    else:
+        schema["properties"]["steps"]["maxItems"] = {4}
+
+    with pytest.raises(ValueError) as raised:
+        build_leader_generation_provenance(
+            request=request,
+            provider="codex-cli",
+            constraint_mode="native_json_schema",
+            schema=schema,
+        )
+
+    assert str(raised.value) == "leader generation schema does not match request authority"
