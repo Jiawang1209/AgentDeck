@@ -23,6 +23,7 @@ from agentdeck.daemon.scheduler import (
     SchedulerFacts,
     run_scheduler_once,
     schedule_gate,
+    WORKER_START_REQUIRED_BLOCKER,
 )
 
 
@@ -53,6 +54,20 @@ def facts(**changes: object) -> SchedulerFacts:
     }
     values.update(changes)
     return SchedulerFacts(**values)  # type: ignore[arg-type]
+
+
+def test_scheduler_selects_explicit_worker_start_before_dispatch() -> None:
+    decision = schedule_gate(facts(
+        step_state="pending",
+        attempt_id=None,
+        attempt_state="none",
+        active_attempt_count=0,
+        worker_ready=False,
+        blocker=WORKER_START_REQUIRED_BLOCKER,
+    ))
+    assert decision.kind == "start_worker"
+    assert decision.step_id == STEP_ID
+    assert decision.attempt_id is None
 
 
 @pytest.mark.parametrize(
@@ -294,8 +309,9 @@ def test_scheduler_state_enums_match_durable_mission_and_attempt_records() -> No
     assert LINEAGE_STATES == frozenset({"valid", "missing"})
     assert OWNERSHIP_STATES == frozenset({"owned", "conflict"})
     assert DECISION_KINDS == frozenset(
-        {
-            "prepare_dispatch",
+            {
+                "start_worker",
+                "prepare_dispatch",
             "dispatch_prepared",
             "await_worker",
             "validate_reply",

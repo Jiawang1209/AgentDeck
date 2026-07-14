@@ -226,6 +226,7 @@ One exact Mission confirmation freezes:
 - goal and ordered steps;
 - assigned Workers and roles;
 - configured transport per Worker;
+- compact runtime identity hash over Worker command, adapter argv, role prompt, and project runtime backend/session/socket identity;
 - allowed project/file scope and action classes;
 - approval and policy snapshot;
 - compact Skill and Memory provenance;
@@ -257,6 +258,7 @@ approval, ownership, recovery, and stopping conditions.
 
 Within the frozen snapshot the daemon may:
 
+- persist one exact tmux Worker start claim and start that frozen Worker;
 - dispatch the assigned Worker;
 - wait for and capture a reply;
 - validate structured reply, artifact, and declared tests;

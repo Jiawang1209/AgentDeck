@@ -217,6 +217,10 @@ def _write_fake_tmux(bin_dir: Path, prompt_path: Path, order_path: Path) -> None
         "args=sys.argv[1:]\n"
         "prompt=Path(os.environ['AGENTDECK_ACCEPTANCE_TMUX_PROMPT'])\n"
         "order=Path(os.environ['AGENTDECK_ACCEPTANCE_ORDER'])\n"
+        "if 'new-session' in args:\n"
+        " order.open('a').write('tmux-session\\n')\n"
+        "elif 'split-window' in args:\n"
+        " order.open('a').write('tmux-spawn:' + args[-1] + '\\n'); print('%daemon-reviewer')\n"
         "if 'load-buffer' in args:\n"
         " prompt.write_text(sys.stdin.read(), encoding='utf-8'); order.open('a').write('tmux-admit\\n')\n"
         "elif 'capture-pane' in args:\n"
@@ -381,16 +385,6 @@ def test_background_mission_acceptance_orders_workers_and_recovers_controller(
 
     config = load_config(root)
     store = StateStore(root)
-    state = store.load()
-    for index, agent_id in enumerate(("planner", "reviewer"), start=1):
-        state["agents"][agent_id] = {
-            "agent_id": agent_id,
-            "pane_id": f"%acceptance-{index}",
-            "session_name": config.runtime.session_name,
-            "cwd": str(root),
-            "status": "running",
-        }
-    store.save(state)
     with _acceptance_resource_guard(root=root, parent=parent) as resources:
         mission_id, initial_render, initial_run_card = (
             _create_and_confirm_through_bare_pty(root, store)
@@ -434,6 +428,19 @@ def test_background_mission_acceptance_orders_workers_and_recovers_controller(
             and item["missions"][-1].get("status") == "completed",
         )
         attempts = completed["mission_attempts"]
+        order_lines = order_log.read_text(encoding="utf-8").splitlines()
+        assert order_lines.count("tmux-session") == 1
+        assert order_lines.count("tmux-spawn:claude") == 1
+        assert order_lines.index("tmux-spawn:claude") < order_lines.index("tmux-admit")
+        assert "planner" not in completed["agents"]
+        reviewer_binding = completed["agents"]["reviewer"]
+        assert reviewer_binding == {
+            "agent_id": "reviewer",
+            "pane_id": "%daemon-reviewer",
+            "session_name": config.runtime.session_name,
+            "cwd": str(root),
+            "status": "running",
+        }
         assert [item["configured_transport"] for item in attempts] == ["acp", "tmux"]
         assert [item["state"] for item in attempts] == ["succeeded", "succeeded"]
         assert [item["state"] for item in completed["mission_handoffs"]] == ["recorded", "recorded"]

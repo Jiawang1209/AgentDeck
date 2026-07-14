@@ -22,7 +22,11 @@ import subprocess
 from typing import Any, Protocol
 
 from .scheduler import SchedulerDecision, SchedulerFacts, schedule_gate
+from .scheduler import WORKER_START_REQUIRED_BLOCKER
 from .supervisor import SubmittedReceipt, TransportResult
+from ..runtime.base import RuntimeBackend
+from ..runtime.readiness import classify_worker_readiness
+from ..state import worker_runtime_identity_hash
 from ..workflow import build_canonical_handoff, validate_canonical_handoff
 
 
@@ -1186,7 +1190,34 @@ def apply_transport_reroute_request(
         raise ServiceError("transport reroute confirmation failed") from None
 
 
-def scheduler_facts_from_store(store: object) -> SchedulerFacts | None:
+def probe_tmux_worker_readiness(
+    backend: RuntimeBackend, *, runtime_config: object, agent: object, pane_id: str
+) -> tuple[bool, str | None]:
+    """Read only trusted CLI chrome; never answer first-run setup prompts."""
+    try:
+        if not backend.pane_exists(runtime_config, pane_id):
+            return False, "tmux Worker pane is unavailable"
+        readiness = classify_worker_readiness(
+            agent.provider,
+            backend.capture_output(runtime_config, pane_id, lines=200),
+        )
+    except Exception:
+        return False, "tmux Worker readiness check failed"
+    if readiness.status == "ready":
+        return True, None
+    blocker = (
+        "tmux Worker setup required"
+        if readiness.status == "setup_required"
+        else "tmux Worker is not ready"
+    )
+    if readiness.reason:
+        blocker += f": {readiness.reason}"
+    return False, blocker
+
+
+def scheduler_facts_from_store(
+    store: object, *, tmux_backend: RuntimeBackend | None = None
+) -> SchedulerFacts | None:
     """Project one admitted Mission from one durable StateStore snapshot."""
     if not callable(getattr(store, "load", None)):
         raise ServiceError("scheduler store is invalid")
@@ -1266,6 +1297,7 @@ def scheduler_facts_from_store(store: object) -> SchedulerFacts | None:
             raise ServiceError("scheduler recovery decision is invalid")
         recovery_blocker = reason
     reconciliation_blocker = None
+    runtime_blocker = None
     if step is not None:
         reconciliation_matches = [
             item for item in state.get("worker_reconciliation_decisions", [])
@@ -1350,6 +1382,43 @@ def scheduler_facts_from_store(store: object) -> SchedulerFacts | None:
                     and runtime.get("status") == "running"
                     and isinstance(runtime.get("pane_id"), str)
                 )
+                starts = [
+                    item for item in state.get("mission_worker_starts", [])
+                    if isinstance(item, dict)
+                    and item.get("mission_id") == mission["mission_id"]
+                    and item.get("step_id") == step.get("step_id")
+                    and item.get("agent_id") == agent.agent_id
+                ]
+                if len(starts) > 1:
+                    raise ServiceError("Worker startup ledger is invalid")
+                if not worker_ready:
+                    if not starts:
+                        startup = [
+                            item for item in mission.get("startup_actions", [])
+                            if isinstance(item, dict)
+                            and item.get("agent_id") == agent.agent_id
+                        ]
+                        runtime_blocker = (
+                            WORKER_START_REQUIRED_BLOCKER
+                            if len(startup) == 1 and startup[0].get("action") == "spawn"
+                            else "frozen tmux Worker reuse target is unavailable"
+                        )
+                    elif starts[0].get("state") == "claimed":
+                        runtime_blocker = "tmux Worker startup outcome is ambiguous"
+                    elif starts[0].get("state") == "blocked":
+                        runtime_blocker = starts[0].get("blocker")
+                    else:
+                        runtime_blocker = "tmux Worker runtime binding drift"
+                elif tmux_backend is not None and (
+                    current is None or current.get("state") == "prepared"
+                ):
+                    pane_id = runtime["pane_id"]
+                    worker_ready, runtime_blocker = probe_tmux_worker_readiness(
+                        tmux_backend,
+                        runtime_config=config.runtime,
+                        agent=agent,
+                        pane_id=pane_id,
+                    )
         except (AttributeError, KeyError, OSError, StopIteration, TypeError, ValueError):
             worker_ready = False
     return SchedulerFacts(
@@ -1377,6 +1446,7 @@ def scheduler_facts_from_store(store: object) -> SchedulerFacts | None:
         blocker=(
             reconciliation_blocker
             or recovery_blocker
+            or runtime_blocker
             or mission["daemon_admission"].get("blocker")
         ),
     )
@@ -1614,10 +1684,60 @@ class DaemonWorkerCoordinator:
         self.service.start_worker_io(admit(), on_completion=admission_completed)
 
 
+class DaemonTmuxWorkerStarter:
+    """Apply one claimed tmux startup effect; a lost receipt is never replayed."""
+
+    def __init__(self, store: object, backend: RuntimeBackend) -> None:
+        self.store = store
+        self.backend = backend
+
+    def __call__(self, decision: SchedulerDecision) -> object:
+        from ..config import load_config
+
+        if decision.kind != "start_worker" or decision.step_id is None:
+            raise ServiceError("Worker startup decision is invalid")
+        mission = self.store.mission_by_id(decision.mission_id)
+        snapshot = mission.get("execution_snapshot")
+        step = next(
+            item for item in snapshot["mission"]["steps"]
+            if item["step_id"] == decision.step_id
+        )
+        claim = self.store.claim_mission_worker_start(
+            mission_id=decision.mission_id,
+            step_id=decision.step_id,
+            agent_id=step["agent_id"],
+        )
+        config = load_config(Path(self.store.root))
+        agent = next(item for item in config.agents if item.agent_id == step["agent_id"])
+        worker = next(item for item in snapshot["workers"] if item["agent_id"] == agent.agent_id)
+        if worker_runtime_identity_hash(agent, config.runtime) != worker["runtime_identity_hash"]:
+            return self.store.finish_mission_worker_start(
+                start_id=claim["start_id"], pane_id="",
+                session_name=config.runtime.session_name, cwd=config.root,
+                blocker="Worker startup runtime identity drift",
+            )
+        try:
+            self.backend.create_session(config.runtime)
+            pane_id = self.backend.spawn_agent(config.runtime, agent, config.root)
+            if type(pane_id) is not str or not pane_id:
+                raise RuntimeError("invalid pane")
+        except Exception:
+            return self.store.finish_mission_worker_start(
+                start_id=claim["start_id"], pane_id="",
+                session_name=config.runtime.session_name, cwd=config.root,
+                blocker="tmux Worker startup failed",
+            )
+        return self.store.finish_mission_worker_start(
+            start_id=claim["start_id"], pane_id=pane_id,
+            session_name=config.runtime.session_name, cwd=config.root,
+        )
+
+
 class DaemonTransitionEffects:
-    def __init__(self, store: object, *, launch_attempt: Callable[[dict[str, object]], object], refresh_recovery: Callable[[], object] = lambda: None) -> None:
+    def __init__(self, store: object, *, launch_attempt: Callable[[dict[str, object]], object], start_worker: Callable[[SchedulerDecision], object], refresh_recovery: Callable[[], object] = lambda: None) -> None:
         self.store = store
         self.launch_attempt = launch_attempt
+        self.start_worker = start_worker
         self.refresh_recovery = refresh_recovery
 
     def _applied(self, value: object) -> object:
@@ -1627,6 +1747,8 @@ class DaemonTransitionEffects:
     def apply(self, decision: SchedulerDecision) -> object:
         if decision.kind in {"idle", "await_worker", "wait_human", "wait_ambiguity", "blocked"}:
             return None
+        if decision.kind == "start_worker":
+            return self._applied(self.start_worker(decision))
         if decision.kind == "prepare_dispatch":
             from .governance import effective_transport_for_step
 

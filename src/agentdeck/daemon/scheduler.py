@@ -36,8 +36,10 @@ PERMISSION_STATES = frozenset({"none", "pending", "approved", "denied", "expired
 SNAPSHOT_STATES = frozenset({"valid", "missing", "drift"})
 LINEAGE_STATES = frozenset({"valid", "missing"})
 OWNERSHIP_STATES = frozenset({"owned", "conflict"})
+WORKER_START_REQUIRED_BLOCKER = "frozen tmux Worker startup required"
 DECISION_KINDS = frozenset(
     {
+        "start_worker",
         "prepare_dispatch",
         "dispatch_prepared",
         "await_worker",
@@ -127,6 +129,7 @@ SnapshotState = Literal["valid", "missing", "drift"]
 LineageState = Literal["valid", "missing"]
 OwnershipState = Literal["owned", "conflict"]
 DecisionKind = Literal[
+    "start_worker",
     "prepare_dispatch",
     "dispatch_prepared",
     "await_worker",
@@ -290,7 +293,7 @@ class SchedulerDecision:
             raise SchedulerError("invalid scheduler decision")
         if self.kind != "idle" and self.mission_id is None:
             raise SchedulerError("invalid scheduler decision")
-        if self.kind == "prepare_dispatch" and (
+        if self.kind in {"start_worker", "prepare_dispatch"} and (
             self.step_id is None or self.attempt_id is not None
         ):
             raise SchedulerError("invalid scheduler decision")
@@ -363,6 +366,15 @@ def schedule_gate(facts: SchedulerFacts) -> SchedulerDecision:
         return _decision(
             "blocked", facts, blocker="terminal Mission conflicts with active attempt"
         )
+
+    if (
+        facts.blocker == WORKER_START_REQUIRED_BLOCKER
+        and facts.step_state == "pending"
+        and facts.attempt_state == "none"
+        and facts.attempt_id is None
+        and facts.active_attempt_count == 0
+    ):
+        return _decision("start_worker", facts)
 
     if facts.blocker is not None:
         return _decision("blocked", facts, blocker=facts.blocker)

@@ -22,6 +22,8 @@ from agentdeck.mission_orchestration import (
     prepare_attempt,
 )
 from agentdeck.providers import LeaderPlanRequest
+from agentdeck.daemon.scheduler import SchedulerDecision
+from agentdeck.daemon.service import DaemonTmuxWorkerStarter
 from agentdeck.state import MissionStateError, StateStore, worker_runtime_identity_hash
 
 
@@ -167,7 +169,8 @@ def test_worker_runtime_identity_is_hashed_into_frozen_authority(
     )
     workers = {item["agent_id"]: item for item in snapshot["workers"]}
     assert workers["planner"]["runtime_identity_hash"] == worker_runtime_identity_hash(
-        next(item for item in config.agents if item.agent_id == "planner")
+        next(item for item in config.agents if item.agent_id == "planner"),
+        config.runtime,
     )
     persisted = json.dumps(snapshot, sort_keys=True)
     assert '"--token"' not in persisted
@@ -175,15 +178,20 @@ def test_worker_runtime_identity_is_hashed_into_frozen_authority(
     assert "你是 AgentDeck 的规划 Agent" not in persisted
 
 
-def test_confirmation_rejects_worker_command_drift_after_preview(
-    tmp_path, monkeypatch
+@pytest.mark.parametrize(
+    ("old", "new"),
+    [
+        ('command = "codex"', 'command = "changed-worker-command"'),
+        ('session_name = "agentdeck"', 'session_name = "changed-session"'),
+    ],
+)
+def test_confirmation_rejects_worker_runtime_drift_after_preview(
+    tmp_path, monkeypatch, old: str, new: str
 ) -> None:
     root, _config, store, preview = _seed(tmp_path, monkeypatch)
     path = root / ".agentdeck" / "config.toml"
     path.write_text(
-        path.read_text(encoding="utf-8").replace(
-            'command = "codex"', 'command = "changed-worker-command"', 1
-        ),
+        path.read_text(encoding="utf-8").replace(old, new, 1),
         encoding="utf-8",
     )
     before = _tree_bytes(root)
@@ -193,6 +201,46 @@ def test_confirmation_rejects_worker_command_drift_after_preview(
             confirmed_at=store.mission_by_id(preview["mission_id"])["created_at"],
         )
     assert _tree_bytes(root) == before
+
+
+def test_claimed_tmux_start_is_ambiguous_and_never_spawned_twice(
+    tmp_path, monkeypatch
+) -> None:
+    root, config, store, preview = _seed(tmp_path, monkeypatch)
+    result = confirm_mission_for_daemon(
+        config=config, store=store, mission_id=preview["mission_id"]
+    )
+    store.admit_mission_execution(
+        preview["mission_id"], snapshot_hash=result["snapshot_hash"]
+    )
+    state = store.load()
+    state["missions"][0].update({"current_step": 1, "status": "running"})
+    store.save(state)
+    calls: list[str] = []
+
+    class CrashAfterEffect(BaseException):
+        pass
+
+    class Backend:
+        def create_session(self, _config):
+            calls.append("session")
+
+        def spawn_agent(self, _config, _agent, _cwd):
+            calls.append("spawn")
+            raise CrashAfterEffect
+
+    starter = DaemonTmuxWorkerStarter(store, Backend())
+    decision = SchedulerDecision(
+        "start_worker", preview["mission_id"], "step_2", None, None
+    )
+    with pytest.raises(CrashAfterEffect):
+        starter(decision)
+    persisted = store.load()["mission_worker_starts"]
+    assert len(persisted) == 1
+    assert persisted[0]["state"] == "claimed"
+    with pytest.raises(ValueError, match="already recorded"):
+        starter(decision)
+    assert calls == ["session", "spawn"]
 
 
 @pytest.mark.parametrize("drift", ["task", "order", "add", "remove"])

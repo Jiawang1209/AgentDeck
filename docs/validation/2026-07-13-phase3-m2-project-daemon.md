@@ -1,5 +1,19 @@
 # Phase 3 M2 Project Daemon Validation
 
+## tmux startup/readiness correction
+
+The production daemon acceptance now begins with no pre-created Worker panes.
+After the ACP first step records its handoff, the pure scheduler selects one
+`start_worker` transition, the StateStore records one compact start claim, and
+the daemon creates/binds exactly the frozen tmux reviewer before dispatch. The
+test asserts one session creation, one `claude` spawn, spawn-before-prompt order,
+no pane for the ACP Worker, and final two-step Mission completion.
+
+Focused regressions also prove that an injected crash after tmux spawn leaves a
+durable claimed/ambiguous start and a second invocation cannot spawn again;
+Claude first-run trust is classified as `setup_required` with zero `send_input`;
+and command/task drift fails before transport construction.
+
 Date: 2026-07-14
 
 ## Verdict

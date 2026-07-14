@@ -170,6 +170,8 @@ from .state import (
     leader_provider_backend,
     leader_provider_transport,
     migration_preview,
+    canonical_snapshot_hash,
+    worker_runtime_identity_hash,
 )
 from .workflow import authorized_steps, run_sequential_workflow, workflow_plan_hash
 from .daemon.client import DaemonClient, DaemonUnavailable, admit_confirmed_mission, connect_or_start, govern_mission, install_bounded_daemon_stdio_from_env
@@ -202,6 +204,7 @@ from .daemon.service import (
     apply_transport_reroute_request,
     authorize_mission_acp_effect,
     DaemonTransitionEffects,
+    DaemonTmuxWorkerStarter,
     DaemonWorkerCoordinator,
     ProjectDaemonService,
     ServiceError,
@@ -7101,13 +7104,16 @@ async def _serve_daemon(root: Path, config: ProjectConfig, store: StateStore) ->
                     state = store.load()
 
         effects: DaemonTransitionEffects
+        daemon_tmux_backend = TmuxBackend()
         service = ProjectDaemonService(
             server=server,
             reconcile_all=lambda: reconcile_startup(
                 store, enable_scheduler=lambda: None
             ),
             flush_safe_outboxes=flush_pending_outboxes,
-            load_scheduler_facts=lambda: scheduler_facts_from_store(store),
+            load_scheduler_facts=lambda: scheduler_facts_from_store(
+                store, tmux_backend=daemon_tmux_backend
+            ),
             apply_transition=lambda decision: effects.apply(decision),
         )
         def transport_for(attempt: dict[str, object]):
@@ -7148,6 +7154,23 @@ async def _serve_daemon(root: Path, config: ProjectConfig, store: StateStore) ->
             )
             if raw_step is None or not isinstance(raw_step.get("task"), str):
                 raise ServiceError("Worker task authority is invalid")
+            worker = next(
+                (
+                    item for item in snapshot.get("workers", [])
+                    if isinstance(item, dict)
+                    and item.get("agent_id") == agent.agent_id
+                ),
+                None,
+            )
+            if (
+                canonical_snapshot_hash({"task": raw_step["task"]})
+                != step.get("task_hash")
+                or not isinstance(worker, dict)
+                or worker.get("configured_transport") != agent.transport
+                or worker_runtime_identity_hash(agent, config.runtime)
+                != worker.get("runtime_identity_hash")
+            ):
+                raise ServiceError("Worker execution authority drift")
             previous_handoff = resolve_previous_handoff(store.load(), attempt)
             effective_agent = replace(
                 agent, transport=str(attempt["configured_transport"])
@@ -7205,6 +7228,7 @@ async def _serve_daemon(root: Path, config: ProjectConfig, store: StateStore) ->
         effects = DaemonTransitionEffects(
             store,
             launch_attempt=coordinator.launch,
+            start_worker=DaemonTmuxWorkerStarter(store, daemon_tmux_backend),
             refresh_recovery=refresh_recovery_authority,
         )
         await service.start()

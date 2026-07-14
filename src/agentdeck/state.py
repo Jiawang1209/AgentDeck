@@ -52,6 +52,7 @@ from .models import (
     EventRecord,
     ProjectConfig,
     ProjectView,
+    RuntimeConfig,
     new_id,
     utc_now,
 )
@@ -1035,15 +1036,22 @@ def canonical_snapshot_hash(value: object) -> str:
     return f"sha256:{hashlib.sha256(_canonical_snapshot_bytes(value)).hexdigest()}"
 
 
-def worker_runtime_identity_hash(agent: AgentSpec) -> str:
+def worker_runtime_identity_hash(
+    agent: AgentSpec, runtime_config: RuntimeConfig
+) -> str:
     """Freeze executable/instruction identity without persisting raw invocation data."""
-    if not isinstance(agent, AgentSpec):
+    if not isinstance(agent, AgentSpec) or not isinstance(runtime_config, RuntimeConfig):
         raise TypeError("Worker runtime identity requires AgentSpec")
     return canonical_snapshot_hash(
         {
             "command": agent.command,
             "transport_command": list(agent.transport_command),
             "role_prompt": agent.role_prompt,
+            "runtime": {
+                "backend": runtime_config.backend,
+                "session_name": runtime_config.session_name,
+                "socket_name": runtime_config.socket_name,
+            },
         }
     )
 
@@ -1920,7 +1928,9 @@ def build_execution_snapshot_authority(
                 "provider": agent.provider,
                 "workspace_mode": agent.workspace_mode,
                 "configured_transport": agent.transport,
-                "runtime_identity_hash": worker_runtime_identity_hash(agent),
+                "runtime_identity_hash": worker_runtime_identity_hash(
+                    agent, config.runtime
+                ),
                 "capability_provenance": {
                     "source": "project_config",
                     "transport": agent.transport,
@@ -2203,6 +2213,7 @@ class StateStore:
                 "messages": [],
                 "attempts": [],
                 "mission_attempts": [],
+                "mission_worker_starts": [],
                 "jobs": [],
                 "replies": [],
                 "artifacts": [],
@@ -5113,6 +5124,145 @@ class StateStore:
                 state,
                 "mission_admitted",
                 {"mission_id": mission_id, "snapshot_hash": snapshot_hash},
+            )
+            self._atomic_save(state)
+            return copy.deepcopy(record)
+
+    def claim_mission_worker_start(
+        self, *, mission_id: str, step_id: str, agent_id: str
+    ) -> dict[str, Any]:
+        """Persist exact tmux startup intent before any runtime effect."""
+        with self._protocol_mutation_lock():
+            state = self.load()
+            mission = self._unique_mission_record(state, mission_id)
+            snapshot = validate_execution_snapshot(mission.get("execution_snapshot"))
+            admission = mission.get("daemon_admission")
+            if (
+                mission.get("status") not in {"preparing", "running"}
+                or type(admission) is not dict
+                or admission.get("state") != "admitted"
+                or admission.get("snapshot_hash") != snapshot["execution_hash"]
+                or mission.get("snapshot_hash") != snapshot["execution_hash"]
+            ):
+                raise ValueError("Worker startup Mission authority is invalid")
+            steps = snapshot["mission"]["steps"]
+            cursor = mission.get("current_step")
+            if type(cursor) is not int or cursor >= len(steps):
+                raise ValueError("Worker startup step authority is invalid")
+            step = steps[cursor]
+            workers = [
+                item for item in snapshot["workers"]
+                if item["agent_id"] == agent_id
+            ]
+            actions = [
+                item for item in mission.get("startup_actions", [])
+                if type(item) is dict and item.get("agent_id") == agent_id
+            ]
+            if (
+                step.get("step_id") != step_id
+                or step.get("agent_id") != agent_id
+                or len(workers) != 1
+                or workers[0]["configured_transport"] != "tmux"
+                or len(actions) != 1
+                or actions[0].get("action") != "spawn"
+            ):
+                raise ValueError("Worker startup frozen scope is invalid")
+            config = load_config(self.root)
+            agents = [item for item in config.agents if item.agent_id == agent_id]
+            if (
+                len(agents) != 1
+                or agents[0].transport != "tmux"
+                or any(
+                    workers[0].get(field) != getattr(agents[0], field)
+                    for field in ("provider", "role", "workspace_mode")
+                )
+                or worker_runtime_identity_hash(agents[0], config.runtime)
+                != workers[0]["runtime_identity_hash"]
+            ):
+                raise ValueError("Worker startup runtime identity drift")
+            starts = state.setdefault("mission_worker_starts", [])
+            if type(starts) is not list or any(type(item) is not dict for item in starts):
+                raise ValueError("Worker startup ledger is invalid")
+            if any(
+                item.get("mission_id") == mission_id
+                and item.get("step_id") == step_id
+                for item in starts
+            ):
+                raise ValueError("Worker startup already recorded")
+            now = utc_now()
+            record = {
+                "start_id": new_id("wst"),
+                "mission_id": mission_id,
+                "step_id": step_id,
+                "agent_id": agent_id,
+                "runtime_identity_hash": workers[0]["runtime_identity_hash"],
+                "state": "claimed",
+                "pane_id": None,
+                "blocker": None,
+                "created_at": now,
+                "updated_at": now,
+            }
+            starts.append(record)
+            state.setdefault("daemon_event_outbox", []).append(
+                asdict(EventRecord.create("mission_worker_start_claimed", {
+                    "start_id": record["start_id"], "mission_id": mission_id,
+                    "step_id": step_id, "agent_id": agent_id,
+                    "runtime_identity_hash": record["runtime_identity_hash"],
+                }))
+            )
+            self._atomic_save(state)
+            return copy.deepcopy(record)
+
+    def finish_mission_worker_start(
+        self, *, start_id: str, pane_id: str, session_name: str, cwd: str,
+        blocker: str | None = None,
+    ) -> dict[str, Any]:
+        """Persist the sole terminal receipt for a claimed tmux startup."""
+        with self._protocol_mutation_lock():
+            state = self.load()
+            starts = state.setdefault("mission_worker_starts", [])
+            matches = [item for item in starts if type(item) is dict and item.get("start_id") == start_id]
+            if len(matches) != 1 or matches[0].get("state") != "claimed":
+                raise ValueError("Worker startup claim is invalid")
+            record = matches[0]
+            if blocker is None:
+                if type(pane_id) is not str or not pane_id:
+                    raise ValueError("Worker startup pane is invalid")
+                config = load_config(self.root)
+                agents = [
+                    item for item in config.agents
+                    if item.agent_id == record.get("agent_id")
+                ]
+                if (
+                    len(agents) != 1
+                    or worker_runtime_identity_hash(agents[0], config.runtime)
+                    != record.get("runtime_identity_hash")
+                    or session_name != config.runtime.session_name
+                    or cwd != config.root
+                ):
+                    raise ValueError("Worker startup receipt authority drift")
+                record.update({"state": "started", "pane_id": pane_id, "blocker": None})
+                state.setdefault("agents", {})[record["agent_id"]] = asdict(
+                    AgentRuntimeBinding(record["agent_id"], pane_id, session_name, cwd, "running")
+                )
+                event_type = "agent_spawned"
+                payload = {
+                    "mission_id": record["mission_id"], "agent_id": record["agent_id"],
+                    "pane_id": pane_id, "session_name": session_name, "cwd": cwd,
+                }
+            else:
+                if type(blocker) is not str or not blocker:
+                    raise ValueError("Worker startup blocker is invalid")
+                record.update({"state": "blocked", "pane_id": None, "blocker": blocker})
+                event_type = "mission_worker_start_blocked"
+                payload = {
+                    "start_id": start_id, "mission_id": record["mission_id"],
+                    "step_id": record["step_id"], "agent_id": record["agent_id"],
+                    "reason": blocker,
+                }
+            record["updated_at"] = utc_now()
+            state.setdefault("daemon_event_outbox", []).append(
+                asdict(EventRecord.create(event_type, payload))
             )
             self._atomic_save(state)
             return copy.deepcopy(record)
@@ -9601,6 +9751,7 @@ class StateStore:
 
 
 AUTHORITATIVE_STATE_MUTATION_METHODS = (
+    "claim_mission_worker_start",
     "ack_inbox_item",
     "admit_mission_execution",
     "advance_mission_after_handoff",
@@ -9629,6 +9780,7 @@ AUTHORITATIVE_STATE_MUTATION_METHODS = (
     "flush_protocol_event_outbox",
     "force_stop_with_governance_preview",
     "freeze_mission_execution",
+    "finish_mission_worker_start",
     "interrupt_prepared_mission_attempt",
     "mark_agent_stale",
     "mark_agent_stopped",

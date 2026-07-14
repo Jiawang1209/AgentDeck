@@ -20,13 +20,36 @@ from agentdeck.daemon.service import (
     ProjectDaemonService,
     ServiceError,
     resolve_previous_handoff,
+    probe_tmux_worker_readiness,
     validate_confirmed_mission_admission,
 )
 from agentdeck.daemon.supervisor import SubmittedReceipt, TransportResult
 from agentdeck.daemon.transports import AcpWorkerTransport, WorkerTransportError
+from agentdeck.models import AgentSpec, RuntimeConfig
 
 
 MISSION_ID = "mis_0123456789ab"
+
+
+def test_tmux_readiness_probe_blocks_first_run_trust_without_sending_input() -> None:
+    calls: list[str] = []
+    backend = SimpleNamespace(
+        pane_exists=lambda _config, _pane: True,
+        capture_output=lambda _config, _pane, lines=200: (
+            "Claude Code context 100%\nDo you trust the files in this folder?\n"
+            "Yes, I trust this folder\n"
+        ),
+        send_input=lambda *_args: calls.append("send"),
+    )
+    ready, blocker = probe_tmux_worker_readiness(
+        backend,
+        runtime_config=RuntimeConfig(),
+        agent=AgentSpec("reviewer", "review", "claude", "claude"),
+        pane_id="%1",
+    )
+    assert ready is False
+    assert blocker == "tmux Worker setup required: directory trust required"
+    assert calls == []
 
 
 def _compact_handoff(token: str, summary: str = "planner compact summary") -> dict[str, object]:
