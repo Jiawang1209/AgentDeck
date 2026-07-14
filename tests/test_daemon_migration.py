@@ -322,6 +322,84 @@ def test_event_journal_replacement_between_open_and_append_fails_closed(
     assert journal.read_bytes() == b""
 
 
+def test_event_journal_replacement_after_proof_never_appends_detached_inode(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = StateStore(tmp_path)
+    store.append_event(EventRecord.create("durable_before_race", {}))
+    journal = tmp_path / ".agentdeck" / "state" / "events.jsonl"
+    detached = tmp_path / "detached-after-proof-events.jsonl"
+    before = journal.read_bytes()
+    original_write = state_module.os.write
+    raced = False
+
+    def replace_after_proof(fd: int, payload: bytes | memoryview) -> int:
+        nonlocal raced
+        if not raced:
+            journal.rename(detached)
+            journal.write_bytes(before)
+            raced = True
+        return original_write(fd, payload)
+
+    monkeypatch.setattr(state_module.os, "write", replace_after_proof)
+
+    with pytest.raises(ValueError, match="event journal changed"):
+        store.append_event(EventRecord.create("must_not_reach_detached_inode", {}))
+
+    assert raced is True
+    assert detached.read_bytes() == before
+    assert journal.read_bytes() == before
+    assert not any(
+        path.name.startswith(".events.jsonl.")
+        for path in journal.parent.iterdir()
+    )
+
+
+def test_post_proof_journal_race_preserves_outbox_and_retries_idempotently(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = StateStore(tmp_path)
+    event = EventRecord.create("pending_post_proof_race", {})
+    state = store.load()
+    state["protocol_event_outbox"] = [asdict(event)]
+    store.save(state)
+    journal = tmp_path / ".agentdeck" / "state" / "events.jsonl"
+    detached = tmp_path / "detached-outbox-events.jsonl"
+    before = journal.read_bytes()
+    original_write = state_module.os.write
+    raced = False
+
+    def replace_during_transaction(fd: int, payload: bytes | memoryview) -> int:
+        nonlocal raced
+        if not raced:
+            journal.rename(detached)
+            journal.write_bytes(before)
+            raced = True
+        return original_write(fd, payload)
+
+    monkeypatch.setattr(state_module.os, "write", replace_during_transaction)
+
+    with pytest.raises(ValueError, match="event journal changed"):
+        store.flush_protocol_event_outbox()
+
+    assert store.load()["protocol_event_outbox"] == [asdict(event)]
+    assert detached.read_bytes() == before
+    assert journal.read_bytes() == before
+    assert not any(
+        path.name.startswith(".events.jsonl.")
+        for path in journal.parent.iterdir()
+    )
+
+    monkeypatch.setattr(state_module.os, "write", original_write)
+    assert store.flush_protocol_event_outbox() == 1
+    assert store.flush_protocol_event_outbox() == 0
+    assert sum(
+        item.get("event_id") == event.event_id for item in store.all_events()
+    ) == 1
+
+
 @pytest.mark.parametrize(
     ("outbox_name", "flush_name"),
     [
@@ -367,7 +445,11 @@ def test_protocol_mutation_lock_replacement_after_flock_fails_closed(
     def replace_after_lock(fd: int, operation: int) -> None:
         nonlocal replaced
         original_flock(fd, operation)
-        if operation == fcntl.LOCK_EX and not replaced:
+        if (
+            operation == fcntl.LOCK_EX
+            and stat.S_ISREG(os.fstat(fd).st_mode)
+            and not replaced
+        ):
             lock_path.rename(replaced_lock)
             lock_path.write_bytes(b"replacement")
             replaced = True
@@ -378,6 +460,81 @@ def test_protocol_mutation_lock_replacement_after_flock_fails_closed(
         store.record_chat_turn("status", "must not commit", None, None)
 
     assert store.load()["chat_turns"] == []
+
+
+def test_protocol_mutation_directory_guard_prevents_post_proof_lock_split(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = StateStore(tmp_path)
+    lock_path = tmp_path / ".agentdeck" / "state" / "protocol-mutation.lock"
+    detached_lock = tmp_path / "detached-after-proof.lock"
+    proof_reached = threading.Event()
+    release_first = threading.Event()
+    second_finished = threading.Event()
+    errors: list[BaseException] = []
+    first_thread_id: int | None = None
+    original_verify = state_module._verify_regular_file_at
+
+    def pause_after_lock_proof(
+        directory_fd: int,
+        name: str,
+        descriptor: int,
+        *,
+        error: str,
+    ) -> None:
+        original_verify(directory_fd, name, descriptor, error=error)
+        if (
+            error == "protocol mutation lock changed after acquisition"
+            and threading.get_ident() == first_thread_id
+        ):
+            proof_reached.set()
+            assert release_first.wait(timeout=2)
+
+    monkeypatch.setattr(
+        state_module, "_verify_regular_file_at", pause_after_lock_proof
+    )
+
+    def first_writer() -> None:
+        nonlocal first_thread_id
+        first_thread_id = threading.get_ident()
+        try:
+            store.record_chat_turn("status", "first-writer", None, None)
+        except BaseException as exc:
+            errors.append(exc)
+
+    def second_writer() -> None:
+        try:
+            StateStore.open_existing(tmp_path).record_chat_turn(
+                "status", "second-writer", None, None
+            )
+        except BaseException as exc:
+            errors.append(exc)
+        finally:
+            second_finished.set()
+
+    first = threading.Thread(target=first_writer, daemon=True)
+    first.start()
+    assert proof_reached.wait(timeout=1)
+    lock_path.rename(detached_lock)
+    lock_path.write_bytes(b"replacement")
+    second = threading.Thread(target=second_writer, daemon=True)
+    second.start()
+
+    assert not second_finished.wait(timeout=0.2), (
+        "a replacement lock inode must not split the authoritative lock domain"
+    )
+    release_first.set()
+    first.join(timeout=2)
+    second.join(timeout=2)
+
+    assert not first.is_alive()
+    assert not second.is_alive()
+    assert errors == []
+    assert [item["message"] for item in store.load()["chat_turns"][-2:]] == [
+        "first-writer",
+        "second-writer",
+    ]
 
 
 def test_legacy_state_lock_inode_blocks_new_authoritative_writer(

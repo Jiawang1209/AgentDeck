@@ -340,12 +340,17 @@ def _verify_regular_file_at(
         raise ValueError(error)
 
 
-def _read_event_journal_at(state_fd: int) -> bytes | None:
+_EVENT_JOURNAL_MAX_BYTES = 64 * 1024 * 1024
+
+
+def _read_event_journal_snapshot_at(
+    state_fd: int,
+) -> tuple[bytes | None, tuple[int, int] | None]:
     flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
     try:
         descriptor = os.open("events.jsonl", flags, dir_fd=state_fd)
     except FileNotFoundError:
-        return None
+        return None, None
     except OSError as exc:
         raise ValueError("event journal is unsafe") from exc
     try:
@@ -355,42 +360,81 @@ def _read_event_journal_at(state_fd: int) -> bytes | None:
             descriptor,
             error="event journal is unsafe",
         )
+        opened = os.fstat(descriptor)
+        if opened.st_size > _EVENT_JOURNAL_MAX_BYTES:
+            raise ValueError("event journal exceeds size limit")
         chunks: list[bytes] = []
+        total = 0
         while True:
-            chunk = os.read(descriptor, 64 * 1024)
+            chunk = os.read(
+                descriptor,
+                min(64 * 1024, _EVENT_JOURNAL_MAX_BYTES + 1 - total),
+            )
             if not chunk:
                 break
             chunks.append(chunk)
+            total += len(chunk)
+            if total > _EVENT_JOURNAL_MAX_BYTES:
+                raise ValueError("event journal exceeds size limit")
         _verify_regular_file_at(
             state_fd,
             "events.jsonl",
             descriptor,
             error="event journal changed during read",
         )
-        return b"".join(chunks)
+        return b"".join(chunks), (opened.st_dev, opened.st_ino)
     finally:
         os.close(descriptor)
 
 
+def _read_event_journal_at(state_fd: int) -> bytes | None:
+    return _read_event_journal_snapshot_at(state_fd)[0]
+
+
+def _verify_event_journal_identity_at(
+    state_fd: int, expected: tuple[int, int] | None
+) -> None:
+    try:
+        current = os.stat("events.jsonl", dir_fd=state_fd, follow_symlinks=False)
+    except FileNotFoundError:
+        if expected is None:
+            return
+        raise ValueError("event journal changed during append") from None
+    except OSError as exc:
+        raise ValueError("event journal changed during append") from exc
+    if (
+        expected is None
+        or not stat.S_ISREG(current.st_mode)
+        or (current.st_dev, current.st_ino) != expected
+    ):
+        raise ValueError("event journal changed during append")
+
+
 def _append_event_journal_at(state_fd: int, payload: bytes) -> None:
+    source, expected_identity = _read_event_journal_snapshot_at(state_fd)
+    content = (source or b"") + payload
+    if len(content) > _EVENT_JOURNAL_MAX_BYTES:
+        raise ValueError("event journal exceeds size limit")
+    temporary = f".events.jsonl.{os.getpid()}.{new_id('tmp')}.tmp"
     flags = (
         os.O_WRONLY
-        | os.O_APPEND
         | os.O_CREAT
+        | os.O_EXCL
         | getattr(os, "O_NOFOLLOW", 0)
     )
+    descriptor: int | None = None
     try:
-        descriptor = os.open("events.jsonl", flags, 0o600, dir_fd=state_fd)
+        descriptor = os.open(temporary, flags, 0o600, dir_fd=state_fd)
     except OSError as exc:
         raise ValueError("event journal is unsafe") from exc
     try:
         _verify_regular_file_at(
             state_fd,
-            "events.jsonl",
+            temporary,
             descriptor,
             error="event journal is unsafe",
         )
-        view = memoryview(payload)
+        view = memoryview(content)
         while view:
             written = os.write(descriptor, view)
             if written <= 0:
@@ -399,13 +443,32 @@ def _append_event_journal_at(state_fd: int, payload: bytes) -> None:
         os.fsync(descriptor)
         _verify_regular_file_at(
             state_fd,
+            temporary,
+            descriptor,
+            error="event journal changed during append",
+        )
+        _verify_event_journal_identity_at(state_fd, expected_identity)
+        os.replace(
+            temporary,
+            "events.jsonl",
+            src_dir_fd=state_fd,
+            dst_dir_fd=state_fd,
+        )
+        _verify_regular_file_at(
+            state_fd,
             "events.jsonl",
             descriptor,
             error="event journal changed during append",
         )
         os.fsync(state_fd)
     finally:
-        os.close(descriptor)
+        try:
+            os.close(descriptor)
+        finally:
+            try:
+                os.unlink(temporary, dir_fd=state_fd)
+            except FileNotFoundError:
+                pass
 
 
 def _verify_project_state_anchor(root: Path, deck_fd: int, state_fd: int) -> None:
@@ -3905,21 +3968,28 @@ class StateStore:
         ) as anchored:
             _deck_fd, state_fd = anchored
             flags = os.O_RDWR | getattr(os, "O_NOFOLLOW", 0)
+            lock_fd: int | None = None
+            directory_locked = False
             try:
+                fcntl.flock(state_fd, fcntl.LOCK_EX)
+                directory_locked = True
+                _verify_project_state_anchor(
+                    self.root.resolve(), _deck_fd, state_fd
+                )
                 try:
-                    lock_fd = os.open(
-                        "protocol-mutation.lock",
-                        flags | os.O_CREAT | os.O_EXCL,
-                        0o600,
-                        dir_fd=state_fd,
-                    )
-                except FileExistsError:
-                    lock_fd = os.open(
-                        "protocol-mutation.lock", flags, dir_fd=state_fd
-                    )
-            except OSError as exc:
-                raise ValueError("protocol mutation lock is unsafe") from exc
-            try:
+                    try:
+                        lock_fd = os.open(
+                            "protocol-mutation.lock",
+                            flags | os.O_CREAT | os.O_EXCL,
+                            0o600,
+                            dir_fd=state_fd,
+                        )
+                    except FileExistsError:
+                        lock_fd = os.open(
+                            "protocol-mutation.lock", flags, dir_fd=state_fd
+                        )
+                except OSError as exc:
+                    raise ValueError("protocol mutation lock is unsafe") from exc
                 _verify_regular_file_at(
                     state_fd,
                     "protocol-mutation.lock",
@@ -3935,11 +4005,15 @@ class StateStore:
                 )
                 _verify_project_state_anchor(self.root.resolve(), _deck_fd, state_fd)
             except BaseException:
-                try:
-                    fcntl.flock(lock_fd, fcntl.LOCK_UN)
-                finally:
-                    os.close(lock_fd)
+                if lock_fd is not None:
+                    try:
+                        fcntl.flock(lock_fd, fcntl.LOCK_UN)
+                    finally:
+                        os.close(lock_fd)
+                if directory_locked:
+                    fcntl.flock(state_fd, fcntl.LOCK_UN)
                 raise
+            assert lock_fd is not None
             entries[key] = {"depth": 1, "anchored": anchored, "lock_fd": lock_fd}
             try:
                 yield anchored
@@ -3947,8 +4021,13 @@ class StateStore:
                 entry = entries.pop(key)
                 if entry["depth"] != 1:
                     raise RuntimeError("state mutation lock depth is unbalanced")
-                fcntl.flock(lock_fd, fcntl.LOCK_UN)
-                os.close(lock_fd)
+                try:
+                    fcntl.flock(lock_fd, fcntl.LOCK_UN)
+                finally:
+                    try:
+                        os.close(lock_fd)
+                    finally:
+                        fcntl.flock(state_fd, fcntl.LOCK_UN)
 
     def _protocol_event_ids(self) -> set[str]:
         event_ids: set[str] = set()
