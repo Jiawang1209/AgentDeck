@@ -350,7 +350,7 @@ conda run --no-capture-output -n agentdeck \
 
 Expected: PASS. Existing OpenAI-compatible exception strings remain unchanged.
 
-- [ ] **Step 6: Update history and commit**
+- [x] **Step 6: Update history and commit**
 
 Add a `HISTORY.md` entry describing the canonical schema as generation
 constraint rather than authorization, then commit:
@@ -1211,8 +1211,8 @@ assert [a["agent_id"] for a in attempts] == [
 assert [a["state"] for a in attempts] == ["succeeded"] * 4
 assert len(state["mission_handoffs"]) == 4
 assert all(item["state"] == "recorded" for item in state["mission_handoffs"])
-# The first three handoffs link predecessor evidence into the next stage prompt;
-# the fourth is the terminal attempt's canonical evidence, not another transition.
+# Each of the three inter-stage transitions links its predecessor handoff into
+# the next stage prompt; the terminal handoff is canonical completion evidence.
 assert artifact.read_bytes() == b"accepted-v2\n"
 assert mission["status"] == "completed"
 assert mission["current_step"] == mission["step_count"] == 4
@@ -1455,7 +1455,7 @@ controller active after the public five-minute handle had ended.
 - Create: `docs/validation/phase3-m2c-live-acceptance-sop.md`
 - Modify: `HISTORY.md`
 
-- [ ] **Step 1: Write the skipped-by-default live gate**
+- [x] **Step 1: Write the skipped-by-default live gate**
 
 At module scope:
 
@@ -1481,7 +1481,7 @@ does not search/install/login after opt-in. It records basenames, version
 strings, and SHA-256 of the frozen AgentDeck commit only; it never records home
 paths or environment values.
 
-- [ ] **Step 2: Add a read-only preflight test that runs by default**
+- [x] **Step 2: Add a read-only preflight test that runs by default**
 
 Keep preflight in a separate unskipped test. It checks:
 
@@ -1501,7 +1501,7 @@ an explicit non-PASS product result without making the portable test suite
 environment-dependent. The opt-in live test must require `ready=true` and
 refuse before project initialization otherwise.
 
-- [ ] **Step 3: Implement the live scenario harness**
+- [x] **Step 3: Implement the live scenario harness**
 
 The live test must:
 
@@ -1520,7 +1520,8 @@ The live test must:
 11. perform takeover/return-control at the safe step-3 pause;
 12. finish all four attempts and verify the disposable artifact bytes/hash;
 13. compare ProjectView, Mission status, workbench, ledger, events, trace,
-    snapshot, admission, receipt, and three handoff facts;
+    snapshot, admission, receipt, four canonical handoff evidence rows, and
+    exactly three predecessor-to-next-stage links;
 14. collect only compact sanitized evidence;
 15. clean every process/socket/tmux/project resource in one collect-all guard.
 
@@ -1528,7 +1529,7 @@ All PTY buffers are bounded tails. Failure diagnostics contain byte count,
 truncation bool, SHA-256, terminal stage/code, and state cardinalities only.
 They never contain captured terminal text.
 
-- [ ] **Step 4: Write the SOP before running live**
+- [x] **Step 4: Write the SOP before running live**
 
 The SOP includes exact preflight and opt-in commands:
 
@@ -1548,7 +1549,7 @@ conda run --no-capture-output -n agentdeck \
 The SOP states that a skip or setup blocker is not PASS and reserves the final
 validation report update for a genuine completed run.
 
-- [ ] **Step 5: Run default non-live verification**
+- [x] **Step 5: Run default non-live verification**
 
 ```bash
 conda run --no-capture-output -n agentdeck \
@@ -1602,9 +1603,10 @@ and do not mark M2c PASS.
 - [ ] **Step 3: Run the opt-in live acceptance once**
 
 Run the exact environment-bound command from Task 10. Expected for PASS:
-`1 passed`, four succeeded attempts, three handoffs, at least one explicitly
-approved permission, successful takeover/return-control, completed Mission,
-and clean resource audit.
+`1 passed`, four succeeded attempts, four canonical handoff evidence rows,
+exactly three predecessor-to-next-stage links, at least one explicitly approved
+permission, successful takeover/return-control, completed Mission, and clean
+resource audit.
 
 If it fails, do not improvise a second transport/provider or weaken policy.
 Classify the compact failure. Any code fix requires a deterministic RED test,
@@ -1629,7 +1631,8 @@ Include:
 - four phase/Worker/transport statuses;
 - permission and ownership transition facts;
 - disconnect/reconnect identity;
-- three handoff lineage/hash facts;
+- four canonical handoff evidence rows plus exactly three inter-stage
+  predecessor lineage/hash links;
 - artifact byte count/hash and expected disposable content;
 - ProjectView/ledger/events/trace/snapshot agreement;
 - cleanup result and residual-process count;

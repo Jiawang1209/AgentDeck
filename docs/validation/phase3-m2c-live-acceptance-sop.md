@@ -1,0 +1,142 @@
+# Phase 3 M2c Real Four-Stage Acceptance SOP
+
+## Purpose and evidence boundary
+
+This SOP runs the opt-in, real-provider M2c gate against one frozen AgentDeck
+commit. The gate uses Codex CLI as the Leader, Claude Agent ACP as the
+`claude-worker` transport, and Codex in a project-specific tmux socket/session
+as `codex-worker`.
+
+The portable suite does **not** run this scenario by default. A skipped live
+test, a `ready=false` preflight, a missing executable, an authentication/setup
+prompt, or any not-reached stage is **not M2c PASS**. Only a genuinely completed
+live run may update the Task 11 validation report or product status.
+
+The harness never searches for a replacement provider after opt-in, installs a
+package, performs login, changes global settings, or touches a user tmux
+socket/session. All writes are confined to a disposable Git project under
+`/tmp`, including exact-name wrappers that bind name-based provider/tmux calls
+to the four validated executable paths.
+
+## 1. Freeze and inspect the checkout
+
+Run from the AgentDeck implementation checkout:
+
+```bash
+git rev-parse HEAD
+git diff --check
+git status --short
+```
+
+The live report records only the frozen AgentDeck commit hash, executable
+basenames, and sanitized bounded version strings. It never records executable
+paths, environment values, home paths, raw help output, terminal text, auth
+material, or provider transcripts.
+
+## 2. Run the read-only portable preflight
+
+```bash
+conda run --no-capture-output -n agentdeck \
+  pytest tests/test_m2c_live_acceptance.py::test_m2c_live_preflight_is_read_only -q -s
+```
+
+The probe has a five-second bound per command. It checks exact native flags
+`--output-schema` and `--output-last-message` for Codex, `--json-schema` plus
+JSON output capability for Claude, and version commands for
+`claude-agent-acp` and tmux. Probe output is bounded and never printed; the
+payload contains only:
+
+- `ready`;
+- fixed allowlisted blocker codes;
+- executable basenames;
+- sanitized version strings;
+- the fixed probe timeout.
+
+The test snapshots a disposable tree before and after probing and requires
+byte-identical contents. It also deterministically rejects a relative path and
+a symlink path without executing either. The portable test passes when this
+contract is honored even if the product result is `ready=false`; that result is
+still a setup blocker, not M2c PASS.
+
+## 3. Validate exact executable inputs
+
+The live test requires all four environment variables. Each value must be an
+absolute, non-symlink, regular executable with the expected basename. Missing,
+relative, directory, non-executable, symlink, or replaced inode/device evidence
+fails before project initialization.
+
+```text
+AGENTDECK_M2C_CODEX
+AGENTDECK_M2C_CLAUDE
+AGENTDECK_M2C_CLAUDE_ACP
+AGENTDECK_M2C_TMUX
+```
+
+Resolve and inspect these paths yourself before opt-in. Do not run install or
+login commands as part of this SOP.
+
+## 4. Run the real gate once
+
+```bash
+AGENTDECK_M2C_LIVE=1 \
+AGENTDECK_M2C_CODEX="$(command -v codex)" \
+AGENTDECK_M2C_CLAUDE="$(command -v claude)" \
+AGENTDECK_M2C_CLAUDE_ACP="$(command -v claude-agent-acp)" \
+AGENTDECK_M2C_TMUX="$(command -v tmux)" \
+conda run --no-capture-output -n agentdeck \
+  pytest tests/test_m2c_live_acceptance.py::test_real_four_stage_m2c_acceptance -q -s
+```
+
+If `command -v` returns a symlink, the test intentionally blocks. Supply the
+audited absolute regular executable instead; do not weaken the path check.
+
+The gate creates a fresh disposable project outside the checkout, initializes
+only project-local AgentDeck state, and sends one natural-language request via
+a bare bounded PTY. It requires:
+
+1. one Codex native-schema preview with exact `implementation`, `review`,
+   `revision`, and `acceptance` phases;
+2. exactly one natural-language preview confirmation and durable daemon
+   admission before the first PTY closes;
+3. both real Claude ACP edit permissions confirmed through the Task 9 public
+   scoped-handle preview/confirm commands with no controller credential in
+   public JSON or argv;
+4. the exact ProjectView/workbench `codex-worker` pane control;
+5. a safe step-3 pause, explicit `codex-worker` takeover, no-change
+   return-control reconciliation, then continuation;
+6. four succeeded attempts, **four canonical recorded handoff evidence rows**,
+   and **exactly three predecessor-to-next-stage links**;
+7. exact `artifact.txt` bytes `accepted-v2\n` and their byte count/hash;
+8. agreement among ProjectView, Mission status, workbench ledger, events,
+   traces, execution snapshot, daemon admission, and attempt receipts;
+9. collect-all cleanup of the daemon endpoint, exact disposable tmux
+   socket/session, project tree, and managed processes with residual count zero.
+
+PTY output is retained only as a 64 KiB tail for in-process parsing. Failures
+emit only byte count, truncation flag, SHA-256, a fixed stage/code, and state
+cardinalities—never terminal text.
+
+## 5. Classify the result
+
+- `1 passed` from the opt-in live node plus all nine evidence groups above is a
+  candidate PASS for Task 11 documentation.
+- Skip, `ready=false`, fixed setup blocker, timeout, cleanup failure, or a
+  not-reached stage is BLOCKED—not partial PASS.
+- Do not retry an unknown external effect. A second run is permitted only after
+  a specific in-scope defect has a deterministic RED regression, a minimal
+  committed fix, focused/full green verification, and a newly frozen commit.
+
+Only Task 11 may append a genuine PASS or BLOCKED live report to
+`docs/validation/2026-07-13-phase3-m2-project-daemon.md`. This Task 10 SOP and
+gate do not claim that a real run has occurred.
+
+## 6. Default non-live verification
+
+```bash
+conda run --no-capture-output -n agentdeck \
+  pytest tests/test_m2c_live_acceptance.py -q
+```
+
+Expected portable result: one preflight-contract test passes and exactly one
+live test skips. A printed `ready=false` payload remains an honest setup result,
+not M2c PASS.
