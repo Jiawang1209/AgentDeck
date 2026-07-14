@@ -8,7 +8,18 @@
 
 Phase 3 M1 前台持续会话已经实现：裸 `agentdeck` 是真实 TTY 中的主交互入口，`leader chat --message` 退居脚本化/调试入口；ConversationSession 支持项目初始化 preview、显式 API/Agent-CLI Leader、确定性无 LLM intent、自然语言 Mission preview 与精确确认、ACP/tmux Worker transport 事实、single-writer ownership，以及 ProjectView/Workbench/contract 观察面。M1 复用现有 Mission、审批、workflow、ledger、trace 与恢复内核，没有替换历史能力。
 
-本阶段仍是 foreground + project-local。M2 daemon、退出客户端后的后台续跑、完整 transcript 恢复、global roaming、Workspace Client、自动 install/auth 与原生同会话 TUI attach 仍是后续独立里程碑，不能从 M1 状态推断为已经交付。
+## 2026-07-14 Phase 3 M2 落地状态
+
+M2 project-local daemon 已实现：确认后的 frozen Mission 由单项目 authoritative
+daemon 在客户端断开后继续推进；AgentDeck 通过显式 ACP/tmux transport 调度，
+在前序 compact handoff 持久化后才启动下一 Worker，并在 permission、歧义、
+ownership、drift 与 safety 边界暂停。bare `agentdeck` 可确定性重连，已有项目
+通过显式 migration preview/confirm 迁移。九点 crash matrix 和 deterministic
+product acceptance 通过；真实 CLI Leader/Worker rehearsal 的 blocker 如实记录于
+`docs/validation/2026-07-13-phase3-m2-project-daemon.md`，未宣称 live PASS。
+
+完整 transcript 恢复、A2A、remote daemon、global roaming、Workspace Client、
+通知、自动 install/auth 与原生同会话 TUI attach 仍是后续独立里程碑。
 
 ## 1. 终极目标
 

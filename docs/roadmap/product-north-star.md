@@ -1,6 +1,17 @@
 # AgentDeck Product North Star
 
-Updated: 2026-07-11
+Updated: 2026-07-14
+
+## Phase 3 M2 delivery status
+
+The project-local authoritative daemon, disconnect-safe frozen Mission
+scheduler, explicit ACP/tmux supervision, exact governance pauses, crash
+reconciliation, deterministic reconnect, and explicit migration are delivered.
+The deterministic M2 acceptance and nine-point crash matrix pass. The real
+component rehearsal remains honestly blocked at strict CLI Leader plan JSON and
+the real Codex tmux correlated-reply boundary; see
+`docs/validation/2026-07-13-phase3-m2-project-daemon.md`. Remote/global clients,
+A2A, notifications, and transcript persistence remain future work.
 
 ## Product promise
 

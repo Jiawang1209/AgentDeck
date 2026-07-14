@@ -106,7 +106,7 @@ class FakeAgent:
             os._exit(0)
         if self.scenario == "cancel_or_ignore_terminate":
             await asyncio.sleep(60)
-        if self.scenario == "permission":
+        if self.scenario in {"permission", "mission_worker_permission"}:
             await self.client.request_permission(
                 session_id,
                 schema.ToolCallUpdate(toolCallId="call-1", title="Edit notes", kind="edit"),
@@ -117,7 +117,7 @@ class FakeAgent:
                 ],
             )
         text = prompt[0].text
-        if self.scenario == "mission_worker":
+        if self.scenario in {"mission_worker", "mission_worker_permission"}:
             label = self.args[1] if len(self.args) > 1 else "worker"
             state_path = Path.cwd() / ".agentdeck" / "state" / "state.json"
             durable = json.loads(state_path.read_text(encoding="utf-8"))

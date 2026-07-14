@@ -165,6 +165,7 @@ from .skills import browse_skill_source, discover_skills, find_skill, import_pro
 from .state import (
     StateStore,
     agentdeck_dir,
+    canonical_snapshot_hash,
     confirm_migration,
     leader_backend_identity,
     leader_provider_backend,
@@ -1565,6 +1566,10 @@ class _DaemonAcpWorkerSink:
         encoded = len(
             json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8")
         )
+        durable_payload = {
+            "content_hash": canonical_snapshot_hash(payload),
+            "byte_count": encoded,
+        }
         ensure_turn_within_bounds(
             self.payload_bytes + encoded + MAX_ACP_TERMINAL_UPDATE_BYTES,
             self.sequence + 2,
@@ -1579,7 +1584,7 @@ class _DaemonAcpWorkerSink:
                     "daemon_session_update_received", {},
                 )
             return self.store.record_transport_update(
-                session_id, turn_id, sequence, kind, payload
+                session_id, turn_id, sequence, kind, durable_payload
             )
 
         record = await self._mutate(persist)
