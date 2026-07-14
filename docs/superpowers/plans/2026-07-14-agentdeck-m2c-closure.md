@@ -1738,7 +1738,7 @@ do not stage them.
 - Modify: `HISTORY.md`
 - Modify: any plan-touched file only through a new regression-backed fix
 
-- [ ] **Step 1: Run focused Leader suites**
+- [x] **Step 1: Run focused Leader suites**
 
 ```bash
 conda run --no-capture-output -n agentdeck \
@@ -1752,7 +1752,7 @@ conda run --no-capture-output -n agentdeck \
 
 Expected: all pass, zero failures.
 
-- [ ] **Step 2: Run focused Mission/contract suites**
+- [x] **Step 2: Run focused Mission/contract suites**
 
 ```bash
 conda run --no-capture-output -n agentdeck \
@@ -1764,7 +1764,7 @@ conda run --no-capture-output -n agentdeck \
 
 Expected: all pass, zero failures.
 
-- [ ] **Step 3: Run focused daemon/governance/recovery suites**
+- [x] **Step 3: Run focused daemon/governance/recovery suites**
 
 ```bash
 conda run --no-capture-output -n agentdeck \
@@ -1780,7 +1780,7 @@ conda run --no-capture-output -n agentdeck \
 
 Expected: all deterministic tests pass, zero failures.
 
-- [ ] **Step 4: Run the complete verification gate after the last semantic change**
+- [x] **Step 4: Run the complete verification gate after the last semantic change**
 
 ```bash
 conda run --no-capture-output -n agentdeck pytest -q
@@ -1791,7 +1791,7 @@ git diff --check
 Expected: full suite has zero failures; only explicitly opt-in live tests may be
 skipped; compileall and diff check exit 0.
 
-- [ ] **Step 5: Audit spec coverage and forbidden behavior**
+- [x] **Step 5: Audit spec coverage and forbidden behavior**
 
 Review every section of the approved design and prove:
 
@@ -1809,7 +1809,7 @@ Review every section of the approved design and prove:
 - A2A/remote/global/workspace/terminal-emulator work did not enter the diff;
 - M3 did not begin.
 
-- [ ] **Step 6: Inspect every commit and worktree boundary**
+- [x] **Step 6: Inspect every commit and worktree boundary**
 
 ```bash
 git log --oneline --decorate -15
@@ -1821,7 +1821,7 @@ Confirm every semantic commit contains its `HISTORY.md` entry, no runtime
 `.agentdeck/` state is tracked, and user-owned `.omc`/`AGENTS.md` paths remain
 untouched.
 
-- [ ] **Step 7: Record final verified counts and commit handoff**
+- [x] **Step 7: Record final verified counts and commit handoff**
 
 Update handoff and HISTORY with fresh focused/full counts, compile/diff result,
 real PASS/BLOCKED verdict, frozen live commit, and exact next gate. If M2c is

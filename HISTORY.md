@@ -4,6 +4,14 @@
 
 ## 2026-07-15
 
+### Close Phase 3 M2c verification boundary
+
+- **Fresh deterministic gates**: the exact Task 12 commands pass `389` Leader tests, `1134` Mission/contract tests, and `349` daemon/governance/recovery tests with zero failures. The final full suite passes `3348` tests with `2` explicit skips; `python -m compileall -q src tests` and `git diff --check` exit 0.
+- **Approved-design self-review**: the canonical schema remains one source of truth; native Codex/Claude paths and AgentDeck-owned semantic validation are covered; retry remains same-Leader and deadline-bounded; no provider/model/transport fallback, local intent repair, durable raw provider output, A2A, remote/global/Workspace Client, terminal-emulator, or M3 work entered this closure.
+- **Commit/worktree boundary**: all `41` commits on `codex/m2c-closure`, including this handoff boundary, contain their `HISTORY.md` entry; no `.agentdeck/` runtime state is tracked, and the user-owned main-checkout `.omc/` state plus untracked `AGENTS.md` remain outside the clean closure worktree and were not staged or modified here.
+- **Honest live verdict**: frozen live commit `650d6fc4` has sole preflight blocker `probe_wrote_files`; opt-in live attempts remain exactly `0`; M2c is **BLOCKED**, the M2 `/goal` is not complete, and M3 remains locked.
+- **Exact next gate**: locate the capability probe writing inside isolated roots, prove it with a deterministic regression, apply the minimal in-scope fix, freeze a new commit, then rerun read-only preflight. Do not run the live node before preflight is ready and do not retry an unknown external effect.
+
 ### Record blocked Phase 3 M2c preflight
 
 - **Frozen evidence boundary**: froze the hardened M2c closure implementation at commit `650d6fc4` and ran the exact read-only preflight once with four explicit basename-matched, non-symlink executable files in an ephemeral same-filesystem staging area. The pytest node passed in 9.32 seconds, but its strict `m2c-live-preflight/v1` payload returned `ready=false` with the sole fixed blocker `probe_wrote_files` under the five-second probe bound.
