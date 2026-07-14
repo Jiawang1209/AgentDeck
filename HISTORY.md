@@ -4,6 +4,13 @@
 
 ## 2026-07-15
 
+### Record blocked Phase 3 M2c preflight
+
+- **Frozen evidence boundary**: froze the hardened M2c closure implementation at commit `650d6fc4` and ran the exact read-only preflight once with four explicit basename-matched, non-symlink executable files in an ephemeral same-filesystem staging area. The pytest node passed in 9.32 seconds, but its strict `m2c-live-preflight/v1` payload returned `ready=false` with the sole fixed blocker `probe_wrote_files` under the five-second probe bound.
+- **Sanitized capability facts**: Codex CLI `codex-cli 0.131.0`, Claude CLI `2.1.208 (Claude Code)`, Claude Agent ACP `0.58.1`, and tmux `tmux 3.6a` all reported ready. No executable path, home path, environment value, raw probe output, prompt, transcript, or authentication material is retained in the evidence.
+- **Honest BLOCKED verdict**: the opt-in live node was not run. Live attempt count is zero; native live constraint/schema facts, plan/Mission creation, four stages, permissions, disconnect/reconnect, takeover/return-control, four handoffs, three inter-stage links, artifact, ledger, trace, snapshot, and acceptance agreement are all not reached. The earlier two-step transport PASS remains historical evidence and is not promoted to M2c PASS.
+- **Zero residual/global mutation**: the ephemeral staging area and M2c temporary roots were removed with zero residual staged resources. No package install, login, authentication, global-setting, README, or north-star change was made.
+
 ### Preserve M2c setup interrupts through cleanup
 
 - **BaseException-safe setup boundary**: pre-guard repo/tmux/runtime/launcher setup now routes every `BaseException` through one parent-removal helper. `KeyboardInterrupt`, `SystemExit`, and `_LiveHarnessFailure` retain the identical exception object and type after cleanup; ordinary exceptions retain the existing compact harness-failure conversion.

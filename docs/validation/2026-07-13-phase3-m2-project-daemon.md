@@ -1,6 +1,6 @@
 # Phase 3 M2 Project Daemon Validation
 
-Date: 2026-07-14
+Date: 2026-07-15
 
 ## Verdict
 
@@ -151,6 +151,36 @@ were cleaned and are retained only as development history.
 No transcript, raw prompt/tool I/O, credentials, authentication data,
 environment dump, opaque native session id, or absolute home path is included
 in this report.
+
+## Frozen M2c closure preflight
+
+The hardened M2c closure implementation was frozen at commit `650d6fc4`. A
+single read-only preflight used four explicit basename-matched, non-symlink
+executable files from an ephemeral same-filesystem staging area. The preflight
+test node passed in 9.32 seconds and returned the strict
+`m2c-live-preflight/v1` payload in `m2c_live_preflight` mode, but readiness was
+`false` with the sole fixed blocker `probe_wrote_files` under the five-second
+per-probe bound.
+
+All four capability probes otherwise reported ready: Codex CLI
+`codex-cli 0.131.0`, Claude CLI `2.1.208 (Claude Code)`, Claude Agent ACP
+`0.58.1`, and tmux `tmux 3.6a`. This proves only bounded capability discovery;
+it is not a live Mission acceptance result. The opt-in live node was not run.
+
+The terminal classification is `stage=preflight`, `code=probe_wrote_files`.
+Live attempt count is zero. Native live constraint mode and schema hash were
+not reached. Plan and Mission creation, exact preview confirmation, all four
+implementation/review/revision/acceptance stages, ACP permissions, tmux
+visibility, disconnect/reconnect, takeover/return-control, four canonical
+handoff evidence rows, three inter-stage lineage links, artifact effects, and
+ProjectView/ledger/events/trace/snapshot agreement were all not reached. None
+may be inferred from the passing preflight test node or from the earlier
+two-step transport proof.
+
+The ephemeral staging area and every M2c live temporary root were removed, and
+the post-check found zero residual staged resources. No package install,
+login, authentication, or global-setting change was made. The full approved
+four-stage M2c verdict therefore remains **BLOCKED**, not PASS.
 
 ## Scope boundary
 

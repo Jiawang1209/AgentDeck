@@ -1649,7 +1649,7 @@ git commit -m "Add opt-in real M2c acceptance gate"
 - Modify: `README.zh-CN.md`
 - Modify: `HISTORY.md`
 
-- [ ] **Step 1: Freeze the implementation commit and verify a clean tracked tree**
+- [x] **Step 1: Freeze the implementation commit and verify a clean tracked tree**
 
 Run:
 
@@ -1663,14 +1663,14 @@ Record the commit id. Existing user-owned `.omc`/`AGENTS.md` changes may remain,
 but every tracked implementation/doc file in this plan must be clean. Do not
 stash or delete user-owned paths.
 
-- [ ] **Step 2: Run the read-only preflight**
+- [x] **Step 2: Run the read-only preflight**
 
 Run the exact SOP preflight. Expected: native schema flags, adapter, and tmux
 are ready with no project/global writes. If blocked, update validation,
 handoff, and HISTORY with the fixed compact blocker; do not run the live test
 and do not mark M2c PASS.
 
-- [ ] **Step 3: Run the opt-in live acceptance once**
+- [ ] **Step 3: Run the opt-in live acceptance once — BLOCKED, not run because preflight returned `probe_wrote_files`**
 
 Run the exact environment-bound command from Task 10. Expected for PASS:
 `1 passed`, four succeeded attempts, four canonical handoff evidence rows,
@@ -1683,14 +1683,14 @@ Classify the compact failure. Any code fix requires a deterministic RED test,
 minimal implementation, focused/full regression, a new commit, and a newly
 frozen live attempt.
 
-- [ ] **Step 4: Re-run once only after a proven semantic fix**
+- [ ] **Step 4: Re-run once only after a proven semantic fix — not applicable; no live attempt was authorized**
 
 A second fresh-project attempt is permitted only when Step 3 exposed a specific
 in-scope defect that is now covered by a committed deterministic regression.
 Never retry an unknown external effect. If the same blocker recurs, keep M2c
 BLOCKED and stop.
 
-- [ ] **Step 5: Write PASS or BLOCKED evidence honestly**
+- [x] **Step 5: Write PASS or BLOCKED evidence honestly**
 
 Update the existing validation report without deleting historical evidence.
 Include:
@@ -1711,7 +1711,7 @@ Include:
 On BLOCKED, include the fixed stage/code and zero/not-reached facts. Do not
 write a partial PASS.
 
-- [ ] **Step 6: Update product docs according to evidence**
+- [x] **Step 6: Update product docs according to evidence**
 
 Only on real PASS may `product-north-star.md` mark delivery step 5 complete and
 README state that the real four-stage Mission is proven. On BLOCKED, preserve
