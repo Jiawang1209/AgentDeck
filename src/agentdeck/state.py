@@ -455,6 +455,7 @@ def _append_event_journal_at(state_fd: int, payload: bytes) -> None:
             src_dir_fd=state_fd,
             dst_dir_fd=state_fd,
         )
+        _mark_mutation_effect_installed("events.jsonl")
         _verify_regular_file_at(
             state_fd,
             "events.jsonl",
@@ -759,6 +760,7 @@ def _atomic_save_state_at(state_fd: int, state: dict[str, object]) -> None:
         os.replace(
             temporary, "state.json", src_dir_fd=state_fd, dst_dir_fd=state_fd
         )
+        _mark_mutation_effect_installed("state.json")
         os.fsync(state_fd)
     finally:
         if descriptor is not None:
@@ -882,6 +884,15 @@ def _release_effect_guard(entry: dict[str, object]) -> None:
             fcntl.flock(replacement_fd, fcntl.LOCK_UN)
         finally:
             os.close(replacement_fd)
+
+
+def _mark_mutation_effect_installed(target: str) -> None:
+    entry = _active_state_lock_entry()
+    if entry is None:
+        return
+    guard = entry.get("effect_guard")
+    if isinstance(guard, dict) and guard.get("target") == target:
+        guard["effect_installed"] = True
 
 
 def _open_migration_directory(parent_fd: int, name: str) -> int:
@@ -2823,6 +2834,7 @@ class StateStore:
             "target": "events.jsonl",
             "source": None if displaced_fd is None else source,
             "identity": displaced_identity,
+            "effect_installed": False,
             "max_bytes": _EVENT_JOURNAL_MAX_BYTES,
             "limit_error": "event journal exceeds size limit",
         }
@@ -2839,7 +2851,8 @@ class StateStore:
                     limit_error="event journal exceeds size limit",
                 )
                 if (
-                    current is not None
+                    entry["effect_guard"].get("effect_installed") is True
+                    and current is not None
                     and current[0] == installed
                     and current[1] != displaced_identity
                 ):
@@ -4176,6 +4189,7 @@ class StateStore:
             "target": "state.json",
             "source": displaced_source,
             "identity": displaced_identity,
+            "effect_installed": False,
         }
         try:
             try:
@@ -4197,7 +4211,8 @@ class StateStore:
             except BaseException:
                 current = _named_regular_snapshot_at(state_fd, "state.json")
                 if (
-                    current is not None
+                    entry["effect_guard"].get("effect_installed") is True
+                    and current is not None
                     and current[0] == expected_install
                     and current[1] != displaced_identity
                 ):

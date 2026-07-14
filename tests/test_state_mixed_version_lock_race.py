@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import asdict
 import fcntl
 import json
+import multiprocessing
 import os
 from pathlib import Path
 import threading
@@ -12,6 +13,100 @@ import pytest
 from agentdeck.models import EventRecord
 from agentdeck import state as state_module
 from agentdeck.state import StateStore
+
+
+def _run_identical_atomic_state_race(root_text: str, result_text: str) -> None:
+    root = Path(root_text)
+    result_path = Path(result_text)
+    store = StateStore(root)
+    store.save(store.load())
+    original_atomic_save = state_module._atomic_save_state_at
+    b_inode: int | None = None
+
+    def raced_atomic_save(state_fd: int, state: dict[str, object]) -> None:
+        nonlocal b_inode
+        if b_inode is None:
+            _replace_legacy_lock(root, "identical-state-before-effect")
+            path = root / ".agentdeck" / "state" / "state.json"
+            temporary = path.with_name(".legacy-identical-state.tmp")
+            temporary.write_bytes(state_module._encoded_state(state))
+            os.replace(temporary, path)
+            b_inode = path.stat().st_ino
+        original_atomic_save(state_fd, state)
+
+    state_module._atomic_save_state_at = raced_atomic_save
+    try:
+        store.record_chat_turn("status", "current-writer-A", None, None)
+    except ValueError as exc:
+        canonical = root / ".agentdeck" / "state" / "state.json"
+        result_path.write_text(
+            json.dumps(
+                {
+                    "error": str(exc),
+                    "b_inode": b_inode,
+                    "canonical_inode": canonical.stat().st_ino,
+                }
+            ),
+            encoding="utf-8",
+        )
+
+
+def _run_identical_atomic_journal_race(root_text: str, result_text: str) -> None:
+    root = Path(root_text)
+    result_path = Path(result_text)
+    store = StateStore(root)
+    pending = EventRecord.create("current_pending", {})
+    state = store.load()
+    state["protocol_event_outbox"] = [asdict(pending)]
+    store.save(state)
+    journal = root / ".agentdeck" / "state" / "events.jsonl"
+    original_append = state_module._append_event_journal_at
+    b_inode: int | None = None
+
+    def raced_append(state_fd: int, payload: bytes) -> None:
+        nonlocal b_inode
+        if b_inode is None:
+            _replace_legacy_lock(root, "identical-journal-before-effect")
+            temporary = journal.with_name(".legacy-identical-journal.tmp")
+            temporary.write_bytes(journal.read_bytes() + payload)
+            os.replace(temporary, journal)
+            b_inode = journal.stat().st_ino
+        original_append(state_fd, payload)
+
+    state_module._append_event_journal_at = raced_append
+    try:
+        store.flush_protocol_event_outbox()
+    except ValueError as exc:
+        result_path.write_text(
+            json.dumps(
+                {
+                    "error": str(exc),
+                    "b_inode": b_inode,
+                    "canonical_inode": journal.stat().st_ino,
+                    "outbox": StateStore.open_existing(root).load()[
+                        "protocol_event_outbox"
+                    ],
+                    "pending": asdict(pending),
+                }
+            ),
+            encoding="utf-8",
+        )
+
+
+def _run_race_child(target, tmp_path: Path) -> dict[str, object]:
+    result_path = tmp_path / "child-result.json"
+    process = multiprocessing.get_context("spawn").Process(
+        target=target,
+        args=(str(tmp_path), str(result_path)),
+    )
+    process.start()
+    process.join(timeout=3)
+    if process.is_alive():
+        process.terminate()
+        process.join(timeout=3)
+        pytest.fail("mixed-version race child timed out")
+    assert process.exitcode == 0
+    return json.loads(result_path.read_text(encoding="utf-8"))
 
 
 def _replace_legacy_lock(root: Path, suffix: str) -> None:
@@ -330,3 +425,22 @@ def test_atomic_legacy_journal_write_after_initial_cas_wins_before_current_repla
     assert StateStore.open_existing(tmp_path).load()["protocol_event_outbox"] == [
         asdict(pending)
     ]
+
+
+def test_identical_atomic_state_replacement_does_not_self_deadlock_or_rollback_b(
+    tmp_path: Path,
+) -> None:
+    result = _run_race_child(_run_identical_atomic_state_race, tmp_path)
+
+    assert result["error"] == "protocol mutation lock changed during state mutation"
+    assert result["canonical_inode"] == result["b_inode"]
+
+
+def test_identical_atomic_journal_replacement_does_not_self_deadlock_or_clear_outbox(
+    tmp_path: Path,
+) -> None:
+    result = _run_race_child(_run_identical_atomic_journal_race, tmp_path)
+
+    assert result["error"] == "protocol mutation lock changed during state mutation"
+    assert result["canonical_inode"] == result["b_inode"]
+    assert result["outbox"] == [result["pending"]]
