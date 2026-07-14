@@ -4,6 +4,11 @@
 
 ## 2026-07-14
 
+### Plan the Phase 3 M2c acceptance closure
+
+- **Executable TDD plan**: added `docs/superpowers/plans/2026-07-14-agentdeck-m2c-closure.md`, a twelve-task, north-star-bound implementation plan with an isolated worktree prerequisite, exact file ownership, RED/GREEN commands, locked authority/provenance types, per-slice regression gates, and one local commit boundary per semantic task.
+- **Honest completion gate**: the plan first closes native Codex/Claude structured Leader output and durable safe diagnostics, then requires deterministic and opt-in real implementation → review → revision → acceptance proofs across Claude ACP and Codex tmux. Schema success, a skipped live test, or a read-only preflight blocker cannot mark M2c PASS; M3 remains locked until the frozen-commit live Mission and cleanup audit pass.
+
 ### Design the Phase 3 M2c acceptance closure
 
 - **North-star-first closure design**: approved and recorded `docs/superpowers/specs/2026-07-14-agentdeck-m2c-closure-design.md`. The design treats native CLI JSON Schema as only the first reliability boundary, keeps AgentDeck's frozen Mission validation and governance authoritative, and requires the complete real implementation → review → revision → acceptance path before M2c may become PASS.
