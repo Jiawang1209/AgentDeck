@@ -110,6 +110,10 @@ def test_bare_tty_runs_foreground_ui(monkeypatch: pytest.MonkeyPatch) -> None:
     calls: list[str] = []
     monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: True)
 
+    async def fake_start(*_args, **_kwargs):
+        calls.append("daemon")
+        return {}, True
+
     class FakeUI:
         def __init__(self, _session):
             calls.append("ui")
@@ -118,8 +122,9 @@ def test_bare_tty_runs_foreground_ui(monkeypatch: pytest.MonkeyPatch) -> None:
             calls.append("run")
             return 0
 
+    monkeypatch.setattr(cli, "_start_daemon", fake_start)
     monkeypatch.setattr(cli, "TerminalConversationUI", FakeUI, raising=False)
     monkeypatch.setattr(cli, "_foreground_conversation_session", lambda: object(), raising=False)
 
     assert cli.main([]) == 0
-    assert calls == ["ui", "run"]
+    assert calls == ["daemon", "ui", "run"]

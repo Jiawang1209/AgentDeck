@@ -4,6 +4,12 @@
 
 ## 2026-07-15
 
+### Isolate bare TTY daemon startup test
+
+- **Root cause**: `test_bare_tty_runs_foreground_ui` mocked the foreground UI/session but not `_start_daemon`. In an initialized main checkout it therefore spawned a real detached project daemon while still passing, retained one reaper thread, and caused later daemon/IPC tests to fail as a cascade.
+- **Deterministic boundary**: the test now injects a fake daemon start and asserts the intended `daemon -> ui -> run` order without creating project runtime state or a background process. Production behavior is unchanged.
+- **Merged-main verification**: the isolated regression passes without creating daemon metadata or a background process; the complete suite then passes `3348` tests with `2` explicit skips, and `python -m compileall -q src tests` plus `git diff --check` exit 0 from the merged `main` checkout.
+
 ### Close Phase 3 M2c verification boundary
 
 - **Fresh deterministic gates**: the exact Task 12 commands pass `389` Leader tests, `1134` Mission/contract tests, and `349` daemon/governance/recovery tests with zero failures. The final full suite passes `3348` tests with `2` explicit skips; `python -m compileall -q src tests` and `git diff --check` exit 0.
