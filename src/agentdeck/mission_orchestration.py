@@ -46,6 +46,7 @@ from .state import (
     build_execution_snapshot_authority,
     canonical_snapshot_hash,
     collect_execution_memory_provenance,
+    compact_daemon_admission,
     derive_attempt_dispatch_key,
     execution_policy_snapshot,
     leader_backend_identity,
@@ -691,6 +692,12 @@ def mission_status_payload(
 ) -> dict[str, object]:
     mission_id = str(mission.get("mission_id") or "")
     commands = mission_commands(mission_id)
+    daemon_admission, _invalid_daemon_admission = compact_daemon_admission(
+        mission.get("daemon_admission"),
+        mission_id=mission_id,
+        confirmation_command=commands["confirmation_command"],
+        safe_updated_at=mission.get("updated_at"),
+    )
     blockers = list(mission.get("blockers") or [])
     authority_state = daemon_mission_authority_state(mission)
     if authority_state == "incomplete" and DAEMON_MISSION_RESUME_BLOCKER not in blockers:
@@ -718,6 +725,7 @@ def mission_status_payload(
         "plan_id": mission.get("plan_id"),
         "plan_hash": mission.get("plan_hash"),
         "workflow_run_id": mission.get("workflow_run_id"),
+        "daemon_admission": daemon_admission,
         "current_step": mission.get("current_step", 0),
         "step_count": mission.get("step_count"),
         "timeout_seconds": mission.get("timeout_seconds"),

@@ -6,28 +6,35 @@ Date: 2026-07-14
 
 **Deterministic M2 acceptance: PASS. Real end-to-end Leader rehearsal: BLOCKED.**
 
-The committed acceptance starts a real project daemon, admits one exact frozen
-two-Worker Mission, disconnects the client, reaches an ACP permission pause,
-renders deterministic recovery through a new bare `agentdeck` PTY, confirms the
-exact permission preview, and completes ACP then tmux with two succeeded
+The committed acceptance uses a bare `agentdeck` PTY to create a natural-language
+two-Worker Mission preview and confirm that exact preview into a real project
+daemon, then disconnects the first client. It reaches an ACP permission pause,
+renders deterministic recovery through a second bare `agentdeck` PTY, confirms
+the exact permission preview, and completes ACP then tmux with two succeeded
 attempts, two validated replies, and two recorded compact handoffs. Worker B is
 not admitted until Worker A's validated handoff is durable. ProjectView,
 daemon/scheduler contracts, ledger records, events, snapshot hash, and bounded
 file effects agree. Durable state contains hashes and byte counts for streamed
 ACP updates, not transcript chunks, private reasoning, or secret markers.
 
-The crash matrix terminates a real child process with SIGKILL at nine durable
-boundaries. Classifications are `resumable` at before-prepare,
-after-prepare, receipt, reply, handoff, and outbox boundaries; `ambiguous` after
-dispatch before receipt; `waiting_human` for permission; and `interrupted` for
-shutdown. Every case records zero duplicate dispatches.
+The crash matrix terminates a real daemon child process with SIGKILL at nine
+durable boundaries. Startup recovery classifies before-prepare, after-prepare,
+after-receipt-before-reply, after-reply-before-handoff, and
+after-handoff-before-next-dispatch as `resumable`; after-dispatch-before-receipt
+and daemon loss during a pending ACP permission remain `ambiguous` because the
+lost ACP process cannot prove that no external effect occurred. The permission
+record itself remains pending for human inspection. The outbox case proves the
+already-flushed event is not replayed, and the shutdown case proves a durable
+force stop leaves the Mission `interrupted` while preserving the active
+attempt's unknown external outcome as `ambiguous`. Every case records zero
+duplicate external admissions.
 
 ## Automated evidence
 
-- Focused acceptance and crash matrix, repeated twice: `10 passed` each run.
-- Acceptance/crash/recovery regression: `117 passed`.
-- Daemon suite: `889 passed`.
-- Full suite: `2757 passed, 1 skipped`.
+- Real crash matrix, repeated twice: `9 passed` in each run.
+- Acceptance/crash/recovery regression: `124 passed`.
+- Daemon suite: `896 passed`.
+- Full suite: `2765 passed, 1 skipped`.
 - Compileall and `git diff --check`: PASS.
 
 ## Real component evidence and blocker

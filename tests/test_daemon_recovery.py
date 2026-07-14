@@ -25,15 +25,75 @@ from agentdeck.daemon.service import (
     apply_permission_decision_request,
     authorize_mission_acp_effect,
 )
-from agentdeck.cli import _DaemonAcpWorkerSink
+from agentdeck.cli import _DaemonAcpWorkerSink, _daemon_acp_update_digest
 from agentdeck.daemon.transports import AcpWorkerTransport
 from agentdeck.models import AgentSpec
 from agentdeck.runtime.protocol import TransportCapabilities
-from agentdeck.state import StateStore, canonical_snapshot_hash
+from agentdeck.state import (
+    StateStore,
+    _is_force_stop_terminal_ambiguity,
+    canonical_snapshot_hash,
+)
 
 
 MISSION_ID = "mis_aaaaaaaaaaaa"
 ATTEMPT_ID = "mat_bbbbbbbbbbbb"
+
+
+def test_daemon_acp_update_digest_accepts_full_turn_sized_payload() -> None:
+    payload = {"content": "x" * (300 * 1024), "sequence": 7}
+    encoded = json.dumps(
+        payload,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+    ).encode("utf-8")
+
+    digest = _daemon_acp_update_digest(payload, payload_bytes=0, update_count=0)
+
+    assert digest == {
+        "content_hash": "sha256:"
+        + __import__("hashlib").sha256(encoded).hexdigest(),
+        "byte_count": len(encoded),
+    }
+
+
+def test_daemon_acp_update_digest_rejects_true_turn_overflow() -> None:
+    payload = {"content": "x" * (2 * 1024 * 1024)}
+
+    with pytest.raises(ValueError, match="ACP turn payload exceeds"):
+        _daemon_acp_update_digest(payload, payload_bytes=0, update_count=0)
+
+
+@pytest.mark.parametrize(
+    ("mission_status", "attempt_state", "terminal_reason", "classification", "expected"),
+    [
+        ("interrupted", "ambiguous", "force_daemon_stop_outcome_unknown", "ambiguous", True),
+        ("completed", "ambiguous", "force_daemon_stop_outcome_unknown", "ambiguous", False),
+        ("stopped", "ambiguous", "force_daemon_stop_outcome_unknown", "ambiguous", False),
+        ("interrupted", "ambiguous", "admission_outcome_unknown", "ambiguous", False),
+        ("interrupted", "ambiguous", "force_daemon_stop_outcome_unknown", "blocked", False),
+    ],
+)
+def test_force_stop_terminal_ambiguity_exception_is_exactly_bounded(
+    mission_status: str,
+    attempt_state: str,
+    terminal_reason: str,
+    classification: str,
+    expected: bool,
+) -> None:
+    assert _is_force_stop_terminal_ambiguity(
+        {"mission_id": MISSION_ID, "status": mission_status},
+        [
+            {
+                "mission_id": MISSION_ID,
+                "state": attempt_state,
+                "terminal_reason": terminal_reason,
+            }
+        ],
+        classification,
+    ) is expected
 
 
 def compact_handoff(token: str) -> dict[str, object]:

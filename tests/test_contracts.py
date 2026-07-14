@@ -6161,6 +6161,42 @@ def test_mission_status_validator_accepts_each_coherent_lifecycle_status(status)
     assert validate_mission_status_contract(payload)["ok"] is True
 
 
+def test_mission_status_validator_allows_daemon_admitted_workflow_without_legacy_run_id() -> None:
+    from agentdeck.contracts import validate_mission_status_contract
+
+    payload = _mission_status_payload("completed")
+    payload["workflow_run_id"] = None
+    payload["daemon_admission"] = {
+        "state": "admitted",
+        "snapshot_hash": "sha256:" + "b" * 64,
+        "blocker": None,
+        "recovery_command": None,
+        "updated_at": "2026-07-11T00:00:02+00:00",
+    }
+
+    assert validate_mission_status_contract(payload)["ok"] is True
+
+    without_admission = dict(payload)
+    without_admission["daemon_admission"] = None
+    missing_result = validate_mission_status_contract(without_admission)
+    assert missing_result["ok"] is False
+    assert "mission_status.workflow_run_id is required for an active workflow" in missing_result["errors"]
+
+    not_admitted = dict(payload)
+    not_admitted["daemon_admission"] = {
+        "state": "confirmed_not_admitted",
+        "snapshot_hash": "sha256:" + "b" * 64,
+        "blocker": "daemon unavailable",
+        "recovery_command": (
+            f"agentdeck mission run --mission-id {payload['mission_id']} --confirm"
+        ),
+        "updated_at": "2026-07-11T00:00:02+00:00",
+    }
+    nonadmitted_result = validate_mission_status_contract(not_admitted)
+    assert nonadmitted_result["ok"] is False
+    assert "mission_status.workflow_run_id is required for an active workflow" in nonadmitted_result["errors"]
+
+
 @pytest.mark.parametrize(
     ("status", "changes"),
     [

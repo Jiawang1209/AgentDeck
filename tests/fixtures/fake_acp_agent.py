@@ -21,7 +21,11 @@ class FakeAgent:
         self.cancelled = asyncio.Event()
 
     def log_request(self, method: str, **facts: object) -> None:
-        if self.scenario not in {"full_reconnect_log", "mission_worker"} or not self.args:
+        if self.scenario not in {
+            "full_reconnect_log",
+            "mission_worker",
+            "mission_worker_permission",
+        } or not self.args:
             return
         with Path(self.args[0]).open("a", encoding="utf-8") as stream:
             stream.write(json.dumps({"method": method, **facts}, sort_keys=True) + "\n")
@@ -147,6 +151,14 @@ class FakeAgent:
                     "full_transcript: FULL_TRANSCRIPT_MARKER",
                     "secret: SECRET_MARKER",
                 )
+            )
+        if self.scenario == "mission_worker_permission":
+            self.log_request(
+                "session_update",
+                payload={
+                    "role": "agent",
+                    "content": {"type": "text", "text": text},
+                },
             )
         await self.client.session_update(
             session_id,

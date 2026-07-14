@@ -165,7 +165,6 @@ from .skills import browse_skill_source, discover_skills, find_skill, import_pro
 from .state import (
     StateStore,
     agentdeck_dir,
-    canonical_snapshot_hash,
     confirm_migration,
     leader_backend_identity,
     leader_provider_backend,
@@ -240,16 +239,15 @@ def _foreground_conversation_session() -> ConversationSession:
     except FileNotFoundError:
         return ConversationSession(root=root)
     store = StateStore.open_existing(root)
-    backend = TmuxBackend()
     return ConversationSession(
         root=root,
         config=config,
         store=store,
-        preview_executor=lambda mission_id: run_mission(
-            config=config,
-            store=store,
-            backend=backend,
-            mission_id=mission_id,
+        preview_executor=lambda mission_id: _admit_mission_card(
+            config,
+            store,
+            store.mission_by_id(mission_id),
+            include_admission=True,
         ),
     )
 
@@ -1452,6 +1450,30 @@ class _AcpRunLedgerSink:
             self._transition_turn("streaming", "permission_settled")
 
 
+def _daemon_acp_update_digest(
+    payload: Mapping[str, object], *, payload_bytes: int, update_count: int
+) -> dict[str, object]:
+    """Return the compact durable identity for one bounded ACP update."""
+    try:
+        encoded = json.dumps(
+            payload,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        ).encode("utf-8")
+    except (UnicodeEncodeError, ValueError, TypeError):
+        raise ValueError("ACP update encoding is invalid") from None
+    ensure_turn_within_bounds(
+        payload_bytes + len(encoded) + MAX_ACP_TERMINAL_UPDATE_BYTES,
+        update_count + 2,
+    )
+    return {
+        "content_hash": f"sha256:{hashlib.sha256(encoded).hexdigest()}",
+        "byte_count": len(encoded),
+    }
+
+
 class _DaemonAcpWorkerSink:
     """Queue ACP callbacks into the daemon's single authoritative writer."""
 
@@ -1563,17 +1585,12 @@ class _DaemonAcpWorkerSink:
         self, native_session_id: str, kind: str, payload: dict[str, Any]
     ) -> object:
         session_id, turn_id = self._correlate(native_session_id)
-        encoded = len(
-            json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8")
+        durable_payload = _daemon_acp_update_digest(
+            payload,
+            payload_bytes=self.payload_bytes,
+            update_count=self.sequence,
         )
-        durable_payload = {
-            "content_hash": canonical_snapshot_hash(payload),
-            "byte_count": encoded,
-        }
-        ensure_turn_within_bounds(
-            self.payload_bytes + encoded + MAX_ACP_TERMINAL_UPDATE_BYTES,
-            self.sequence + 2,
-        )
+        encoded = int(durable_payload["byte_count"])
         sequence = self.sequence
         prior = self.turn_state
 

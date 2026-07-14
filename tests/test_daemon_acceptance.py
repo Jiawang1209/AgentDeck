@@ -20,34 +20,15 @@ from agentdeck import cli as cli_module
 from agentdeck.contracts import (
     validate_daemon_runtime_contract,
     validate_mission_scheduler_contract,
+    validate_workbench_contract,
 )
-from agentdeck.daemon.client import DaemonClient, admit_confirmed_mission, connect_or_start
+from agentdeck.daemon.client import DaemonClient
 from agentdeck.daemon.lifecycle import daemon_endpoint
-from agentdeck.mission_orchestration import confirm_mission_for_daemon, create_mission_preview
-from agentdeck.providers import LeaderPlanRequest
 from agentdeck.state import StateStore
 
 
 FAKE_AGENT = Path(__file__).parent / "fixtures" / "fake_acp_agent.py"
-
-
-class AcceptanceProvider:
-    name = "fake"
-
-    def plan(self, request: LeaderPlanRequest) -> dict[str, object]:
-        del request
-        return {
-            "goal": "implement then review",
-            "summary": "two ordered workers",
-            "steps": [
-                {"step": 1, "agent_id": "planner", "role": "planning", "task": "implement", "risk": "review", "requires_approval": True},
-                {"step": 2, "agent_id": "reviewer", "role": "review", "task": "review", "risk": "review", "requires_approval": True},
-            ],
-            "approval_required": True,
-            "dispatch_ready": False,
-            "declared_tests": ["deterministic acceptance"],
-            "acceptance_criteria": ["ordered handoff"],
-        }
+CONVERSATION_WRAPPER = Path(__file__).parent / "fixtures" / "conversation_cli_wrapper.py"
 
 
 def _wait(store: StateStore, predicate, timeout: float = 12) -> dict[str, object]:
@@ -121,10 +102,13 @@ def _write_fake_tmux(bin_dir: Path, prompt_path: Path, order_path: Path) -> None
         "if 'load-buffer' in args:\n"
         " prompt.write_text(sys.stdin.read(), encoding='utf-8'); order.open('a').write('tmux-admit\\n')\n"
         "elif 'capture-pane' in args:\n"
-        " text=prompt.read_text(encoding='utf-8'); token=re.findall(r'dsp_[0-9a-f]{32}', text)[-1]\n"
-        " print('\\n'.join([f'handoff_token: {token}','status: completed','summary: reviewer compact summary','verification: reviewer deterministic verification','risks: none','next_steps: done']))\n"
+        " if not prompt.exists(): print('OpenAI Codex\\nmodel: test\\n› Ask Codex\\nClaude Code context 100%\\n❯ try review')\n"
+        " else:\n"
+        "  text=prompt.read_text(encoding='utf-8'); token=re.findall(r'dsp_[0-9a-f]{32}', text)[-1]\n"
+        "  Path(os.environ['AGENTDECK_ACCEPTANCE_ARTIFACT']).write_text('reviewer verified\\n', encoding='utf-8')\n"
+        "  print('\\n'.join([f'handoff_token: {token}','status: completed','summary: reviewer compact summary','verification: reviewer deterministic verification','risks: none','next_steps: done']))\n"
         "elif 'display-message' in args:\n"
-        " print('%acceptance')\n",
+        " print(args[args.index('-t') + 1])\n",
         encoding="utf-8",
     )
     executable.chmod(0o755)
@@ -165,6 +149,80 @@ def _render_recovery_through_bare_pty(root: Path, mission_id: str) -> bytes:
         os.close(master)
 
 
+def _create_and_confirm_through_bare_pty(root: Path, store: StateStore) -> tuple[str, bytes]:
+    master, slave = pty.openpty()
+    process = subprocess.Popen(
+        [sys.executable, str(CONVERSATION_WRAPPER)],
+        cwd=root,
+        stdin=slave,
+        stdout=slave,
+        stderr=slave,
+        close_fds=True,
+    )
+    os.close(slave)
+    output = bytearray()
+
+    def drain() -> None:
+        while True:
+            readable, _, _ = select.select([master], [], [], 0)
+            if not readable:
+                return
+            output.extend(os.read(master, 65536))
+
+    def wait_for_prompt_count(count: int) -> None:
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            drain()
+            if output.count(b"agentdeck> ") >= count:
+                return
+            if process.poll() is not None:
+                raise AssertionError(f"bare conversation exited early: {bytes(output)!r}")
+            time.sleep(0.02)
+        raise AssertionError(f"bare conversation prompt was not rendered: {bytes(output)!r}")
+
+    try:
+        wait_for_prompt_count(1)
+        os.write(master, "让 planner 实现，再让 reviewer 审阅，共2轮\n".encode())
+        previewed = _wait(
+            store,
+            lambda state: bool(state.get("conversation_preview_bindings"))
+            and bool(state.get("missions")),
+        )
+        drain()
+        mission_id = str(previewed["missions"][-1]["mission_id"])
+        wait_for_prompt_count(2)
+        os.write(master, "确认执行当前预览\n".encode())
+        _wait(
+            store,
+            lambda state: any(
+                item.get("mission_id") == mission_id
+                and isinstance(item.get("execution_snapshot"), dict)
+                for item in state.get("missions", [])
+            ),
+        )
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            if any(
+                item.get("event_type") == "conversation_preview_consumed"
+                and item.get("payload", {}).get("mission_id") == mission_id
+                for item in store.all_events()
+            ):
+                break
+            if process.poll() is not None:
+                raise AssertionError(f"bare conversation exited early: {bytes(output)!r}")
+            time.sleep(0.02)
+        else:
+            raise AssertionError("bare conversation did not durably consume preview")
+        wait_for_prompt_count(3)
+        drain()
+        return mission_id, bytes(output)
+    finally:
+        if process.poll() is None:
+            process.terminate()
+            process.wait(timeout=3)
+        os.close(master)
+
+
 def test_background_mission_acceptance_orders_workers_and_recovers_controller(
     monkeypatch,
 ) -> None:
@@ -190,36 +248,27 @@ def test_background_mission_acceptance_orders_workers_and_recovers_controller(
     fake_bin = parent / "bin"
     fake_bin.mkdir()
     tmux_prompt = root / "tmux-prompt.txt"
+    reviewer_artifact = root / "reviewer-output.txt"
     order_log = root / "transport-order.log"
     _write_fake_tmux(fake_bin, tmux_prompt, order_log)
     monkeypatch.setenv("PATH", f"{fake_bin}{os.pathsep}{os.environ['PATH']}")
     monkeypatch.setenv("AGENTDECK_ACCEPTANCE_TMUX_PROMPT", str(tmux_prompt))
     monkeypatch.setenv("AGENTDECK_ACCEPTANCE_ORDER", str(order_log))
+    monkeypatch.setenv("AGENTDECK_ACCEPTANCE_ARTIFACT", str(reviewer_artifact))
 
     config = load_config(root)
     store = StateStore(root)
     state = store.load()
-    state["agents"]["reviewer"] = {
-        "agent_id": "reviewer", "pane_id": "%acceptance",
-        "session_name": config.runtime.session_name, "cwd": str(root), "status": "running",
-    }
+    for index, agent_id in enumerate(("planner", "reviewer"), start=1):
+        state["agents"][agent_id] = {
+            "agent_id": agent_id,
+            "pane_id": f"%acceptance-{index}",
+            "session_name": config.runtime.session_name,
+            "cwd": str(root),
+            "status": "running",
+        }
     store.save(state)
-    preview = create_mission_preview(
-        config=config, store=store, provider=AcceptanceProvider(),
-        user_message="让 Codex 和 Claude 严格串行完成实现与审阅，共2轮",
-        timeout_seconds=20,
-    )
-    confirmed = confirm_mission_for_daemon(
-        config=config, store=store, mission_id=str(preview["mission_id"])
-    )
-
-    async def admit_and_disconnect() -> None:
-        client = await connect_or_start(root, config)
-        await client.close()
-        accepted = await admit_confirmed_mission(root, config, confirmed, state_store=store)
-        assert accepted["accepted"] is True
-
-    asyncio.run(admit_and_disconnect())
+    mission_id, initial_render = _create_and_confirm_through_bare_pty(root, store)
     try:
         pending = _wait(
             store,
@@ -233,9 +282,10 @@ def test_background_mission_acceptance_orders_workers_and_recovers_controller(
             daemon_endpoint(root).metadata_path.read_text(encoding="utf-8")
         )
         rendered = _render_recovery_through_bare_pty(
-            root, str(preview["mission_id"])
+            root, mission_id
         )
-        assert str(preview["mission_id"]).encode() in rendered
+        assert mission_id.encode() in rendered
+        assert mission_id.encode() in initial_render
         assert json.loads(
             daemon_endpoint(root).metadata_path.read_text(encoding="utf-8")
         )["instance_id"] == daemon_metadata["instance_id"]
@@ -256,6 +306,72 @@ def test_background_mission_acceptance_orders_workers_and_recovers_controller(
         assert completed["mission_handoffs"][0]["attempt_id"] == attempts[0]["attempt_id"]
         assert completed["mission_handoffs"][1]["attempt_id"] == attempts[1]["attempt_id"]
 
+        replies = completed["mission_worker_replies"]
+        handoffs = completed["mission_handoffs"]
+        assert [item["state"] for item in replies] == ["validated", "validated"]
+        assert replies[0]["canonical_handoff"] == {
+            "handoff_token": attempts[0]["dispatch_key"],
+            "status": "completed",
+            "summary": "planner compact summary",
+            "verification": "planner deterministic verification",
+            "risks": "none",
+            "next_steps": "continue",
+            "artifacts": [],
+            "trace_ids": [],
+        }
+        assert replies[1]["canonical_handoff"] == {
+            "handoff_token": attempts[1]["dispatch_key"],
+            "status": "completed",
+            "summary": "reviewer compact summary",
+            "verification": "reviewer deterministic verification",
+            "risks": "none",
+            "next_steps": "done",
+            "artifacts": [],
+            "trace_ids": [],
+        }
+        assert [item["canonical_handoff"] for item in handoffs] == [
+            item["canonical_handoff"] for item in replies
+        ]
+
+        assert len(completed["permission_requests"]) == 1
+        assert completed["permission_requests"][0]["permission_id"] == permission_id
+        assert completed["permission_requests"][0]["status"] == "pending"
+        assert any(
+            item.get("entity_type") == "permission"
+            and item.get("entity_id") == permission_id
+            and item.get("from_state") == "pending"
+            and item.get("to_state") == "approved"
+            for item in completed["protocol_state_transitions"]
+        )
+        assert completed["mission_permission_bindings"] == [
+            {
+                "mission_id": mission_id,
+                "attempt_id": attempts[0]["attempt_id"],
+                "permission_id": permission_id,
+            }
+        ]
+
+        acp_records = [
+            json.loads(line) for line in prompt_log.read_text(encoding="utf-8").splitlines()
+        ]
+        raw_updates = [item["payload"] for item in acp_records if item.get("method") == "session_update"]
+        assert len(raw_updates) == 1
+        encoded_update = json.dumps(
+            raw_updates[0],
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        ).encode("utf-8")
+        persisted_text_updates = [
+            item for item in completed["transport_updates"] if item.get("kind") == "text"
+        ]
+        assert len(persisted_text_updates) == 1
+        assert persisted_text_updates[0]["payload"] == {
+            "content_hash": "sha256:" + hashlib.sha256(encoded_update).hexdigest(),
+            "byte_count": len(encoded_update),
+        }
+
         view = asdict(store.project_view(config))
         assert view["missions"]["items"][-1]["status"] == "completed"
         assert view["scheduler"]["state"] == "inactive"
@@ -265,24 +381,53 @@ def test_background_mission_acceptance_orders_workers_and_recovers_controller(
         assert validate_mission_scheduler_contract(
             cli_module._mission_scheduler_card(view)
         )["ok"] is True
+        workbench = cli_module._workbench_snapshot_payload(view, store)
+        workbench_validation = validate_workbench_contract(workbench)
+        assert workbench_validation["ok"] is True, workbench_validation["errors"]
+        assert workbench["mission_card"]["mission_id"] == mission_id
+        assert workbench["mission_card"]["status"] == "completed"
+        assert workbench["mission_recovery_card"] == view["mission_recovery"]
+        assert workbench["ledger_card"]["messages"] == view["messages"]
+        assert workbench["ledger_card"]["jobs"] == view["jobs"]
+        assert workbench["ledger_card"]["replies"] == view["replies"]
+        assert workbench["ledger_card"]["artifacts"] == view["artifacts"]
+        assert workbench["ledger_card"]["trace_commands"] == []
         assert view["artifacts"]["count"] == 0
         assert len(completed["mission_worker_replies"]) == 2
         assert [item["attempt_id"] for item in completed["mission_worker_replies"]] == [
             item["attempt_id"] for item in attempts
         ]
-        assert all(
-            not item["canonical_handoff"].get("trace_ids")
-            and not item["canonical_handoff"].get("artifacts")
-            for item in completed["mission_handoffs"]
-        )
+        assert completed["artifacts"] == []
         assert completed["missions"][-1]["execution_snapshot"]["execution_hash"] == completed["missions"][-1]["snapshot_hash"]
         tmux_bytes = tmux_prompt.read_bytes()
-        assert hashlib.sha256(tmux_bytes).hexdigest()
         assert attempts[1]["dispatch_key"].encode() in tmux_bytes
+        assert reviewer_artifact.read_bytes() == b"reviewer verified\n"
+        assert hashlib.sha256(reviewer_artifact.read_bytes()).hexdigest() == (
+            "75467be335fedefc6148531d89d4db6de00125f42ce6f78162b5a04ed7862599"
+        )
         persisted = json.dumps(completed, sort_keys=True)
         for forbidden in ("PRIVATE_REASONING_MARKER", "FULL_TRANSCRIPT_MARKER", "SECRET_MARKER"):
             assert forbidden not in persisted
-        assert store.all_events()
+        events = store.all_events()
+        consumed = [
+            item for item in events if item["event_type"] == "conversation_preview_consumed"
+        ]
+        assert len(consumed) == 1
+        assert consumed[0]["payload"] == {
+            "conversation_id": completed["conversation_sessions"][0]["conversation_id"],
+            "preview_id": completed["conversation_preview_bindings"][0]["preview_id"],
+            "mission_id": mission_id,
+        }
+        for event_type, expected_attempt_ids in (
+            ("mission_attempt_submitted", [item["attempt_id"] for item in attempts]),
+            ("mission_reply_evidence_recorded", [item["attempt_id"] for item in attempts] * 2),
+            ("mission_handoff_evidence_recorded", [item["attempt_id"] for item in attempts] * 2),
+        ):
+            matching = [item for item in events if item["event_type"] == event_type]
+            assert sorted(item["payload"]["attempt_id"] for item in matching) == sorted(expected_attempt_ids)
+            assert {item["payload"]["mission_id"] for item in matching} == {mission_id}
+        completed_events = [item for item in events if item["event_type"] == "mission_completed"]
+        assert [item["payload"] for item in completed_events] == [{"mission_id": mission_id}]
         assert daemon_endpoint(root).metadata_path.exists()
     finally:
         try:

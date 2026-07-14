@@ -16,7 +16,7 @@ import shutil
 import stat
 import time
 import threading
-from typing import Any, Callable, Mapping
+from typing import Any, Callable, Iterable, Mapping
 import weakref
 
 from .config import CONFIG_DIR, ensure_project_layout, load_config, project_root
@@ -754,7 +754,7 @@ def _confirm_migration_locked(
     return response
 
 
-def _compact_daemon_admission(
+def compact_daemon_admission(
     value: object,
     *,
     mission_id: str,
@@ -1023,6 +1023,26 @@ def _canonical_snapshot_bytes(value: object) -> bytes:
 
 def canonical_snapshot_hash(value: object) -> str:
     return f"sha256:{hashlib.sha256(_canonical_snapshot_bytes(value)).hexdigest()}"
+
+
+def _is_force_stop_terminal_ambiguity(
+    mission: Mapping[str, object],
+    attempts: Iterable[Mapping[str, object]],
+    classification: object,
+) -> bool:
+    """Recognize only the force-stop ambiguity preserved by interrupted Missions."""
+    mission_id = mission.get("mission_id")
+    return (
+        mission.get("status") == "interrupted"
+        and classification == "ambiguous"
+        and any(
+            item.get("mission_id") == mission_id
+            and item.get("state") == "ambiguous"
+            and item.get("terminal_reason")
+            == "force_daemon_stop_outcome_unknown"
+            for item in attempts
+        )
+    )
 
 
 def _recovery_authority_hash(value: object) -> str:
@@ -1394,7 +1414,10 @@ def _validate_mission_admission_claim_history(
                 else {"claimed", "submitted"}
             )
             if prior_stage not in allowed_prior_stages or (
-                reason == "receipt_persistence_unknown"
+                reason in {
+                    "receipt_persistence_unknown",
+                    "force_daemon_stop_outcome_unknown",
+                }
                 and (
                     type(observed_dispatch_key) is not str
                     or re.fullmatch(r"dsp_[0-9a-f]{32}", observed_dispatch_key)
@@ -1406,6 +1429,7 @@ def _validate_mission_admission_claim_history(
             ) or reason not in {
                 "receipt_persistence_unknown",
                 "admission_outcome_unknown",
+                "force_daemon_stop_outcome_unknown",
             } or payload.get("expected_dispatch_key") != dispatch_key:
                 raise ValueError("mission admission claim history is invalid")
             next_stage = "ambiguous"
@@ -2606,13 +2630,30 @@ class StateStore:
                     "terminal_reason": reason,
                 }
                 next_attempts.append(_validate_mission_attempt_record(candidate))
+                if target == "ambiguous":
+                    self._append_recovery_audit_locked(
+                        state,
+                        "mission_attempt_ambiguous",
+                        {
+                            "attempt_id": attempt["attempt_id"],
+                            "mission_id": attempt["mission_id"],
+                            "step_id": attempt["step_id"],
+                            "dispatch_key": attempt["dispatch_key"],
+                            "admission_claim_id": attempt["admission_claim_id"],
+                            "reason": "force_daemon_stop_outcome_unknown",
+                            "expected_dispatch_key": attempt["dispatch_key"],
+                            "observed_dispatch_key": attempt["dispatch_key"],
+                        },
+                    )
             for mission in missions:
                 if type(mission) is not dict or mission.get("status") in {
                     "completed", "stopped", "interrupted"
                 }:
                     continue
                 status = mission.get("status")
-                if not mission_status_transition_allowed(status, "interrupted"):
+                if status != "preparing" and not mission_status_transition_allowed(
+                    status, "interrupted"
+                ):
                     raise ValueError("force-stop Mission transition is invalid")
                 mission.update(
                     {
@@ -5554,7 +5595,15 @@ class StateStore:
                 terminal_decision = reconcile_gate(
                     recovery_facts_from_persisted_state(state, mission_id)
                 )
-                if terminal_decision.classification != "terminal":
+                force_stop_ambiguity = _is_force_stop_terminal_ambiguity(
+                    mission,
+                    attempts,
+                    terminal_decision.classification,
+                )
+                if (
+                    terminal_decision.classification != "terminal"
+                    and not force_stop_ambiguity
+                ):
                     raise ValueError("terminal Mission recovery integrity is invalid")
         authority = {
             "missions": missions,
@@ -8391,7 +8440,7 @@ class StateStore:
                     "recovery_command": commands["confirmation_command"],
                     "updated_at": mission.get("updated_at"),
                 }
-            daemon_admission, invalid_daemon_admission = _compact_daemon_admission(
+            daemon_admission, invalid_daemon_admission = compact_daemon_admission(
                 daemon_admission,
                 mission_id=mission_id,
                 confirmation_command=commands["confirmation_command"],

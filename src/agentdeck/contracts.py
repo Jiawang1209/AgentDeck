@@ -2830,7 +2830,7 @@ MISSION_PREVIEW_RESPONSE_FIELDS = (
 )
 MISSION_STATUS_RESPONSE_FIELDS = (
     "schema_version", "ok", "mode", "mission_id", "status", "user_message",
-    "plan_id", "plan_hash", "workflow_run_id", "current_step", "step_count",
+    "plan_id", "plan_hash", "workflow_run_id", "daemon_admission", "current_step", "step_count",
     "timeout_seconds", "selected_agents", "blockers", "stop_reason",
     "created_at", "updated_at", "confirmed_at", "completed_at", "can_resume",
     "status_command", "resume_command", "attach_command", "workbench_command",
@@ -2854,6 +2854,9 @@ MISSION_PLAN_FIELDS = ("goal", "summary", "steps")
 MISSION_PLAN_STEP_FIELDS = ("step", "agent_id", "role", "task")
 MISSION_CONTROL_FIELDS = (
     "kind", "label", "command", "safety", "enabled", "blocker",
+)
+MISSION_DAEMON_ADMISSION_FIELDS = (
+    "state", "snapshot_hash", "blocker", "recovery_command", "updated_at",
 )
 
 WORKFLOW_STATUSES = ("running", "completed", "stopped", "interrupted")
@@ -5799,6 +5802,7 @@ def mission_example(kind: str) -> dict[str, object]:
         "plan_id": "pln_deadbeefcafe",
         "plan_hash": "sha256:" + "a" * 64,
         "workflow_run_id": "wfr_deadbeefcafe",
+        "daemon_admission": None,
         "current_step": 4,
         "step_count": 8,
         "timeout_seconds": 300,
@@ -6246,7 +6250,16 @@ def _validate_mission_status_lifecycle(
             errors.append("mission_status.pending_confirmation.stop_reason must be null")
     if status in ("preparing", "running", "completed", "stopped", "interrupted") and not _mission_nonempty_string(confirmed_at):
         errors.append("mission_status.confirmed_at must be non-empty after confirmation")
-    if status in ("running", "completed", "interrupted") and not _mission_nonempty_string(workflow_run_id):
+    daemon_admission = payload.get("daemon_admission")
+    daemon_managed = (
+        isinstance(daemon_admission, dict)
+        and daemon_admission.get("state") == "admitted"
+    )
+    if (
+        status in ("running", "completed", "interrupted")
+        and not _mission_nonempty_string(workflow_run_id)
+        and not daemon_managed
+    ):
         errors.append("mission_status.workflow_run_id is required for an active workflow")
     if status in ("stopped", "interrupted") and not _mission_nonempty_string(stop_reason):
         errors.append("mission_status.stop_reason is required for a stopped mission")
@@ -6261,6 +6274,56 @@ def _validate_mission_status_lifecycle(
             errors.append("mission_status.completed_at is required for completed status")
         if stop_reason is not None:
             errors.append("mission_status.completed.stop_reason must be null")
+
+
+def _validate_mission_daemon_admission(
+    errors: list[str], payload: dict[str, object]
+) -> None:
+    admission = payload.get("daemon_admission")
+    if admission is None:
+        return
+    if not isinstance(admission, dict) or set(admission) != set(
+        MISSION_DAEMON_ADMISSION_FIELDS
+    ):
+        errors.append("mission_status.daemon_admission is invalid")
+        return
+    state = admission.get("state")
+    snapshot_hash = admission.get("snapshot_hash")
+    blocker = admission.get("blocker")
+    recovery_command = admission.get("recovery_command")
+    updated_at = admission.get("updated_at")
+    valid_hash = isinstance(snapshot_hash, str) and re.fullmatch(
+        r"sha256:[0-9a-f]{64}", snapshot_hash
+    ) is not None
+    valid_updated_at = updated_at is None or _mission_nonempty_string(updated_at)
+    mission_id = payload.get("mission_id")
+    if state == "not_confirmed":
+        valid = (
+            snapshot_hash is None
+            and _mission_nonempty_string(blocker)
+            and recovery_command
+            == f'agentdeck leader chat --message "批准执行 {mission_id}"'
+            and valid_updated_at
+        )
+    elif state == "confirmed_not_admitted":
+        valid = (
+            valid_hash
+            and _mission_nonempty_string(blocker)
+            and recovery_command
+            == f"agentdeck mission run --mission-id {mission_id} --confirm"
+            and _mission_nonempty_string(updated_at)
+        )
+    elif state == "admitted":
+        valid = (
+            valid_hash
+            and blocker is None
+            and recovery_command is None
+            and _mission_nonempty_string(updated_at)
+        )
+    else:
+        valid = False
+    if not valid:
+        errors.append("mission_status.daemon_admission is invalid")
 
 
 def validate_mission_status_contract(payload: object) -> dict[str, object]:
@@ -6314,6 +6377,7 @@ def validate_mission_status_contract(payload: object) -> dict[str, object]:
     for field in ("workflow_run_id", "stop_reason", "confirmed_at", "completed_at"):
         if not _mission_optional_nonempty_string(payload.get(field)):
             errors.append(f"mission_status.{field} must be a non-empty string or null")
+    _validate_mission_daemon_admission(errors, payload)
     _validate_mission_status_lifecycle(errors, payload)
     if payload.get("workbench_command") != "agentdeck workbench":
         errors.append("mission_status.workbench_command must be agentdeck workbench")
@@ -12611,7 +12675,9 @@ def project_view_example() -> dict[str, object]:
                         "state": "not_confirmed",
                         "snapshot_hash": None,
                         "blocker": "Mission confirmation is required",
-                        "recovery_command": None,
+                        "recovery_command": (
+                            'agentdeck leader chat --message "批准执行 mis_0123456789ab"'
+                        ),
                         "updated_at": None,
                     },
                     "status_command": (
@@ -15955,6 +16021,10 @@ def workbench_example() -> dict[str, object]:
     ):
         latest_item[field] = deepcopy(status_example[field])
     latest_item["confirmation_command"] = mission_commands(str(latest_item["mission_id"]))["confirmation_command"]
+    latest_item["daemon_admission"] = {
+        **latest_item["daemon_admission"],
+        "recovery_command": latest_item["confirmation_command"],
+    }
     latest_item["can_start"] = False
     mission_summary["latest_id"] = latest_item["mission_id"]
     mission_summary["by_status"] = {str(latest_item["status"]): 1}

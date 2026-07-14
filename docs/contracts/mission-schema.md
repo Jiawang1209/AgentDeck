@@ -79,7 +79,7 @@ Control `kind`, `label`, `command`, and `safety` are non-empty strings; `enabled
 
 ## Status and run responses
 
-`MISSION_STATUS_RESPONSE_FIELDS` projects the persisted facts: identity, one of the six statuses, plan/workflow ids and hash, progress bounds, selected agents, blockers/stop reason, timestamps, resume gate, terminal/workbench commands, controls, and safety metadata.
+`MISSION_STATUS_RESPONSE_FIELDS` projects the persisted facts: identity, one of the six statuses, plan/workflow ids and hash, the nullable legacy `workflow_run_id`, the nullable compact `daemon_admission`, progress bounds, selected agents, blockers/stop reason, timestamps, resume gate, terminal/workbench commands, controls, and safety metadata. A present `daemon_admission` has the exact five-field ProjectView shape (`state`, `snapshot_hash`, `blocker`, `recovery_command`, `updated_at`); `null` preserves the legacy foreground Mission contract.
 
 The six statuses and approved transitions are:
 
@@ -98,10 +98,10 @@ Lifecycle fields are validated together:
 
 - `pending_confirmation`: `workflow_run_id`, `confirmed_at`, `completed_at`, and `stop_reason` are null.
 - `preparing`: `confirmed_at` is non-empty; no workflow id is required yet; `stop_reason` and `completed_at` are null.
-- `running`: `confirmed_at` and `workflow_run_id` are non-empty; `stop_reason` and `completed_at` are null.
-- `completed`: `confirmed_at`, `workflow_run_id`, and `completed_at` are non-empty; `current_step == step_count`; `stop_reason` is null.
+- `running`: `confirmed_at` is non-empty; `workflow_run_id` is non-empty for a legacy foreground workflow, while an exact `daemon_admission.state=admitted` permits it to remain null; `stop_reason` and `completed_at` are null.
+- `completed`: `confirmed_at` and `completed_at` are non-empty; `workflow_run_id` follows the same legacy-versus-daemon rule; `current_step == step_count`; `stop_reason` is null.
 - `stopped`: `confirmed_at` and `stop_reason` are non-empty; `workflow_run_id` remains optional because setup may fail before a workflow exists; `completed_at` is null.
-- `interrupted`: `confirmed_at`, `workflow_run_id`, and `stop_reason` are non-empty; `completed_at` is null.
+- `interrupted`: `confirmed_at` and `stop_reason` are non-empty; `workflow_run_id` follows the same legacy-versus-daemon rule; `completed_at` is null.
 
 For `stopped`/`interrupted`, `can_resume` is true only when blockers are empty. A daemon-admitted Mission routes that enabled control through daemon governance; an incomplete daemon authority adds `daemon-managed Mission requires daemon governance resume preview`, disables resume, and never claims or dispatches in the foreground. The resume control must use the same enabled value and must explain a disabled state with a non-empty blocker.
 
