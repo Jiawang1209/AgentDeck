@@ -22,6 +22,7 @@ from agentdeck.mission_orchestration import (
 from agentdeck.models import AgentSpec
 from agentdeck.models import EventRecord
 from agentdeck.providers import LeaderPlanRequest
+from agentdeck.providers.plan_schema import build_leader_generation_provenance
 from agentdeck.state import StateStore
 
 
@@ -127,6 +128,18 @@ def test_candidate_frozen_authority_survives_redacted_message_and_excludes_third
         timeout_seconds=180,
         selected_agent_ids=("planner", "reviewer"),
         step_count=8,
+        leader_generation=build_leader_generation_provenance(
+            request=LeaderPlanRequest(
+                task="[persisted provenance redacted]",
+                config=config,
+                model="fake-plan",
+                selected_agent_ids=("planner", "reviewer"),
+                step_count=8,
+                timeout_seconds=180,
+            ),
+            provider="fake",
+            constraint_mode="local",
+        ),
     )
 
     payload = create_mission_preview_from_candidate(

@@ -13,13 +13,17 @@ from agentdeck.conversation.leader_gateway import (
     LeaderGateway,
     LeaderGatewayError,
     LeaderRequest,
+    leader_gateway_diagnostics,
 )
 from agentdeck.conversation.session import ConversationSession
 from agentdeck.mission_orchestration import LeaderMissionCandidate
 from agentdeck.models import AgentSpec
-from agentdeck.providers import LeaderPlanRequest
+from agentdeck.providers import LeaderPlanRequest, LeaderPlanResult
 from agentdeck.providers.cli_subprocess import CliLeaderProviderError, CodexCliProvider
-from agentdeck.providers.plan_schema import build_leader_generation_provenance
+from agentdeck.providers.plan_schema import (
+    build_leader_generation_provenance,
+    build_leader_plan_schema,
+)
 from agentdeck.state import StateStore
 
 
@@ -332,3 +336,161 @@ def test_conversation_leader_receives_only_uniquely_requested_workers(
         "planner",
         "reviewer",
     ]
+
+
+@pytest.mark.parametrize(
+    ("constraint_mode", "attempt_count", "scenario", "expected_stage"),
+    [
+        ("local", 1, "cancelled", "cancelled"),
+        ("local", 1, "serialization", "schema"),
+        ("local", 1, "oversize", "oversize"),
+        ("native_json_schema", 2, "cancelled", "cancelled"),
+        ("native_json_schema", 2, "serialization", "schema"),
+        ("native_json_schema", 2, "oversize", "oversize"),
+    ],
+)
+def test_gateway_post_generation_failures_preserve_validated_generation_facts(
+    tmp_path: Path,
+    constraint_mode: str,
+    attempt_count: int,
+    scenario: str,
+    expected_stage: str,
+) -> None:
+    config, _store = _project(tmp_path)
+    provider_name = "fake" if constraint_mode == "local" else "codex-cli"
+    model = "fake-plan" if constraint_mode == "local" else "gpt-test"
+    config = replace(
+        config,
+        leader=replace(config.leader, provider=provider_name, model=model),
+        agents=tuple(
+            agent
+            for agent in config.agents
+            if agent.agent_id in {"planner", "reviewer"}
+        ),
+    )
+    cancel = CancellationToken()
+    raw_secret = f"SECRET_POST_GENERATION_{scenario}_{tmp_path}"
+
+    class ResultProvider:
+        name = provider_name
+
+        def plan_result(self, request: LeaderPlanRequest) -> LeaderPlanResult:
+            plan = _plan()
+            if scenario == "cancelled":
+                cancel.cancel()
+            elif scenario == "serialization":
+                plan["unsafe_extra"] = object()
+            elif scenario == "oversize":
+                plan["oversize_extra"] = raw_secret + ("x" * (2 * 1024 * 1024))
+            schema = (
+                build_leader_plan_schema(request)
+                if constraint_mode == "native_json_schema"
+                else None
+            )
+            return LeaderPlanResult(
+                plan=plan,
+                leader_generation=build_leader_generation_provenance(
+                    request=request,
+                    provider=provider_name,
+                    constraint_mode=constraint_mode,
+                    schema=schema,
+                    attempt_count=attempt_count,
+                ),
+            )
+
+    with pytest.raises(LeaderGatewayError) as raised:
+        LeaderGateway(
+            provider_factory=lambda _name: ResultProvider(),
+            which=lambda _name: "/safe/executable",
+            leader_cli_probe=lambda _name: (True, None),
+        ).generate_mission(
+            LeaderRequest(
+                config,
+                "mission",
+                "task",
+                180,
+                None,
+                ("planner", "reviewer"),
+                2,
+            ),
+            cancel,
+        )
+
+    error = raised.value
+    assert error.stage == expected_stage
+    assert error.diagnostic_code is None
+    assert error.attempt_count == attempt_count
+    assert error.constraint_mode == constraint_mode
+    rendered = repr(error) + repr(vars(error)) + repr(error.args)
+    assert raw_secret not in rendered
+    assert str(tmp_path) not in rendered
+
+
+@pytest.mark.parametrize(
+    ("selected_agent_ids", "step_count"),
+    [
+        (("planner", "reviewer"), None),
+        (None, 2),
+        (("planner", "unknown"), 2),
+        (("planner", "planner"), 2),
+        (("planner", "reviewer"), True),
+        (("planner", "reviewer"), 1),
+        (("planner", "reviewer"), 65),
+    ],
+)
+def test_gateway_rejects_invalid_frozen_authority_before_backend_boundary(
+    tmp_path: Path,
+    selected_agent_ids: tuple[str, ...] | None,
+    step_count: int | None,
+) -> None:
+    config, _store = _project(tmp_path)
+    config = replace(
+        config,
+        leader=replace(config.leader, provider="codex-cli", model="gpt-test"),
+    )
+    calls = {"which": 0, "probe": 0, "factory": 0, "plan": 0}
+
+    class NeverProvider:
+        name = "codex-cli"
+
+        def plan(self, _request):
+            calls["plan"] += 1
+            raise AssertionError("invalid authority must not reach provider plan")
+
+    def which(_name):
+        calls["which"] += 1
+        return "/safe/executable"
+
+    def probe(_name):
+        calls["probe"] += 1
+        return True, None
+
+    def factory(_name):
+        calls["factory"] += 1
+        return NeverProvider()
+
+    with pytest.raises(LeaderGatewayError) as raised:
+        LeaderGateway(
+            provider_factory=factory,
+            which=which,
+            leader_cli_probe=probe,
+        ).generate_mission(
+            LeaderRequest(
+                config,
+                "mission",
+                "task",
+                180,
+                None,
+                selected_agent_ids,
+                step_count,
+            ),
+            CancellationToken(),
+        )
+
+    assert calls == {"which": 0, "probe": 0, "factory": 0, "plan": 0}
+    assert leader_gateway_diagnostics(raised.value) == {
+        "stage": "schema",
+        "diagnostic_code": "authority_invalid",
+        "attempt_count": 0,
+        "constraint_mode": "prompt_only",
+    }

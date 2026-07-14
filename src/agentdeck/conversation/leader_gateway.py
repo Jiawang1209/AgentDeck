@@ -19,6 +19,7 @@ from ..providers.plan_schema import (
     LEADER_PLAN_DIAGNOSTIC_CODES,
     ProviderPlanValidationError,
     build_leader_generation_provenance,
+    leader_plan_authority,
     validate_provider_plan_schema,
 )
 from ..runtime.acp import AcpTransport
@@ -104,6 +105,17 @@ def leader_gateway_diagnostics(error: LeaderGatewayError) -> dict[str, object]:
         "attempt_count": error.attempt_count,
         "constraint_mode": error.constraint_mode,
     }
+
+
+def _post_generation_failure(
+    stage: str, leader_generation: dict[str, object]
+) -> LeaderGatewayError:
+    """Rebuild a fixed failure from already-validated generation provenance."""
+    return LeaderGatewayError(
+        stage,
+        attempt_count=leader_generation.get("attempt_count"),
+        constraint_mode=leader_generation.get("constraint_mode"),
+    )
 
 
 class CancellationToken:
@@ -296,6 +308,29 @@ class LeaderGateway:
     ) -> LeaderMissionCandidate:
         if cancel.cancelled:
             raise LeaderGatewayError("cancelled")
+        if request.selected_agent_ids is not None or request.step_count is not None:
+            invalid_authority = False
+            try:
+                leader_plan_authority(
+                    LeaderPlanRequest(
+                        task=request.planning_task,
+                        config=request.config,
+                        model=request.config.leader.model,
+                        skill_context=request.skill_context,
+                        selected_agent_ids=request.selected_agent_ids,
+                        step_count=request.step_count,
+                        timeout_seconds=request.timeout_seconds,
+                    )
+                )
+            except ProviderPlanValidationError:
+                invalid_authority = True
+            if invalid_authority:
+                raise LeaderGatewayError(
+                    "schema",
+                    "authority_invalid",
+                    attempt_count=0,
+                    constraint_mode="prompt_only",
+                ) from None
         status = self.describe(request.config.leader)
         if status.readiness != "ready":
             raise LeaderGatewayError("backend_blocked")
@@ -381,13 +416,13 @@ class LeaderGateway:
             if gateway_failure is not None:
                 raise gateway_failure
         if cancel.cancelled:
-            raise LeaderGatewayError("cancelled")
+            raise _post_generation_failure("cancelled", leader_generation)
         try:
             encoded = json.dumps(plan, ensure_ascii=False, allow_nan=False).encode("utf-8")
         except (TypeError, ValueError):
-            raise LeaderGatewayError("schema") from None
+            raise _post_generation_failure("schema", leader_generation) from None
         if len(encoded) > MAX_LEADER_OUTPUT_BYTES:
-            raise LeaderGatewayError("oversize")
+            raise _post_generation_failure("oversize", leader_generation)
         return LeaderMissionCandidate(
             provider=status.provider,
             model=status.model,

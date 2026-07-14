@@ -20,6 +20,8 @@ from agentdeck.conversation.transports import (
     dispatch_worker_route,
 )
 from agentdeck.mission_orchestration import LeaderMissionCandidate
+from agentdeck.providers import LeaderPlanRequest
+from agentdeck.providers.plan_schema import build_leader_generation_provenance
 
 
 MISSION_TEXT = "让 planner 和 reviewer 串行完成验收，共2轮，secret=must-not-persist"
@@ -62,6 +64,19 @@ class _FakeLeader:
             timeout_seconds=request.timeout_seconds,
             selected_agent_ids=request.selected_agent_ids,
             step_count=request.step_count,
+            leader_generation=build_leader_generation_provenance(
+                request=LeaderPlanRequest(
+                    task=request.planning_task,
+                    config=request.config,
+                    model=request.config.leader.model,
+                    skill_context=request.skill_context,
+                    selected_agent_ids=request.selected_agent_ids,
+                    step_count=request.step_count,
+                    timeout_seconds=request.timeout_seconds,
+                ),
+                provider=request.config.leader.provider,
+                constraint_mode="local",
+            ),
         )
 
 

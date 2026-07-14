@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from agentdeck import cli
 from agentdeck.mission_orchestration import LeaderMissionCandidate
+from agentdeck.providers import LeaderPlanRequest
+from agentdeck.providers.plan_schema import build_leader_generation_provenance
 
 
 def deterministic_mission(self, request, cancel):
@@ -17,6 +19,19 @@ def deterministic_mission(self, request, cancel):
         timeout_seconds=request.timeout_seconds,
         selected_agent_ids=request.selected_agent_ids,
         step_count=request.step_count,
+        leader_generation=build_leader_generation_provenance(
+            request=LeaderPlanRequest(
+                task=request.planning_task,
+                config=request.config,
+                model=request.config.leader.model,
+                skill_context=request.skill_context,
+                selected_agent_ids=request.selected_agent_ids,
+                step_count=request.step_count,
+                timeout_seconds=request.timeout_seconds,
+            ),
+            provider=request.config.leader.provider,
+            constraint_mode="local",
+        ),
         plan={
             "goal": "implement then review",
             "summary": "two ordered workers",
