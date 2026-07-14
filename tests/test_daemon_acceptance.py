@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import asdict
+from contextlib import contextmanager
+from dataclasses import asdict, dataclass
 import hashlib
 import json
 import os
@@ -34,6 +35,118 @@ from agentdeck.state import StateStore
 
 FAKE_AGENT = Path(__file__).parent / "fixtures" / "fake_acp_agent.py"
 CONVERSATION_WRAPPER = Path(__file__).parent / "fixtures" / "conversation_cli_wrapper.py"
+
+
+def _cleanup_pty(process: subprocess.Popen[bytes], master: int) -> None:
+    primary = sys.exception()
+    errors: list[BaseException] = []
+    try:
+        if process.poll() is None:
+            process.terminate()
+            try:
+                process.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait(timeout=3)
+        if process.poll() is None:
+            raise AssertionError("acceptance PTY process did not exit")
+    except BaseException as error:
+        errors.append(error)
+    try:
+        os.close(master)
+    except BaseException as error:
+        errors.append(error)
+    if errors:
+        summary = "; ".join(repr(error) for error in errors)
+        if primary is not None:
+            primary.add_note(f"acceptance PTY cleanup failures: {summary}")
+        else:
+            raise ExceptionGroup("acceptance PTY cleanup failed", errors)
+
+
+def _pid_alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    return True
+
+
+@dataclass
+class _AcceptanceResources:
+    root: Path
+    parent: Path
+    daemon_pid: int | None = None
+
+    def cleanup(self) -> list[BaseException]:
+        errors: list[BaseException] = []
+        try:
+            asyncio.run(_stop(self.root))
+        except BaseException:
+            # Active recovery/permission facts legitimately reject ordinary stop;
+            # the verified PID fallback below remains the cleanup authority.
+            pass
+        metadata = daemon_endpoint(self.root).metadata_path
+        if metadata.exists():
+            try:
+                self.daemon_pid = int(json.loads(metadata.read_text())["pid"])
+            except BaseException as error:
+                errors.append(error)
+        if self.daemon_pid is not None and _pid_alive(self.daemon_pid):
+            try:
+                os.kill(self.daemon_pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            except BaseException as error:
+                errors.append(error)
+        if self.daemon_pid is not None:
+            try:
+                deadline = time.monotonic() + 5
+                while time.monotonic() < deadline and _pid_alive(self.daemon_pid):
+                    time.sleep(0.05)
+                if _pid_alive(self.daemon_pid):
+                    raise AssertionError("acceptance daemon did not exit")
+            except BaseException as error:
+                errors.append(error)
+        try:
+            reconcile_endpoint(
+                self.root,
+                expected_project_hash=project_root_hash(self.root),
+                health_probe=lambda _: {"healthy": False},
+            )
+            endpoint = daemon_endpoint(self.root)
+            if endpoint.socket_path.exists() or endpoint.metadata_path.exists():
+                raise AssertionError("acceptance daemon endpoint was not reconciled")
+        except BaseException as error:
+            errors.append(error)
+        try:
+            shutil.rmtree(self.parent, ignore_errors=False)
+            if self.parent.exists():
+                raise AssertionError("acceptance temporary project was not removed")
+        except FileNotFoundError:
+            pass
+        except BaseException as error:
+            errors.append(error)
+        return errors
+
+
+@contextmanager
+def _acceptance_resource_guard(*, root: Path, parent: Path):
+    resources = _AcceptanceResources(root=root, parent=parent)
+    primary: BaseException | None = None
+    try:
+        yield resources
+    except BaseException as error:
+        primary = error
+        raise
+    finally:
+        cleanup_errors = resources.cleanup()
+        if cleanup_errors:
+            summary = "; ".join(repr(error) for error in cleanup_errors)
+            if primary is not None:
+                primary.add_note(f"acceptance cleanup failures: {summary}")
+            else:
+                raise ExceptionGroup("acceptance cleanup failed", cleanup_errors)
 
 
 def _wait(store: StateStore, predicate, timeout: float = 12) -> dict[str, object]:
@@ -144,14 +257,7 @@ def _render_recovery_through_bare_pty(root: Path, mission_id: str) -> bytes:
                 break
         return bytes(output)
     finally:
-        if process.poll() is None:
-            process.terminate()
-            try:
-                process.wait(timeout=3)
-            except subprocess.TimeoutExpired:
-                process.kill()
-                process.wait(timeout=3)
-        os.close(master)
+        _cleanup_pty(process, master)
 
 
 def _create_and_confirm_through_bare_pty(
@@ -237,15 +343,7 @@ def _create_and_confirm_through_bare_pty(
         assert len(run_cards) == 1
         return mission_id, bytes(output), run_cards[0]
     finally:
-        if process.poll() is None:
-            process.terminate()
-            try:
-                process.wait(timeout=3)
-            except subprocess.TimeoutExpired:
-                process.kill()
-                process.wait(timeout=3)
-        assert process.poll() is not None
-        os.close(master)
+        _cleanup_pty(process, master)
 
 
 def test_background_mission_acceptance_orders_workers_and_recovers_controller(
@@ -293,9 +391,7 @@ def test_background_mission_acceptance_orders_workers_and_recovers_controller(
             "status": "running",
         }
     store.save(state)
-    mission_id: str | None = None
-    daemon_pid: int | None = None
-    try:
+    with _acceptance_resource_guard(root=root, parent=parent) as resources:
         mission_id, initial_render, initial_run_card = (
             _create_and_confirm_through_bare_pty(root, store)
         )
@@ -319,7 +415,7 @@ def test_background_mission_acceptance_orders_workers_and_recovers_controller(
         daemon_metadata = json.loads(
             daemon_endpoint(root).metadata_path.read_text(encoding="utf-8")
         )
-        daemon_pid = int(daemon_metadata["pid"])
+        resources.daemon_pid = int(daemon_metadata["pid"])
         rendered = _render_recovery_through_bare_pty(
             root, mission_id
         )
@@ -469,34 +565,3 @@ def test_background_mission_acceptance_orders_workers_and_recovers_controller(
         completed_events = [item for item in events if item["event_type"] == "mission_completed"]
         assert [item["payload"] for item in completed_events] == [{"mission_id": mission_id}]
         assert daemon_endpoint(root).metadata_path.exists()
-    finally:
-        try:
-            asyncio.run(_stop(root))
-        except Exception:
-            metadata = daemon_endpoint(root).metadata_path
-            if metadata.exists():
-                daemon_pid = int(json.loads(metadata.read_text())["pid"])
-                try:
-                    os.kill(daemon_pid, signal.SIGKILL)
-                except ProcessLookupError:
-                    pass
-        if daemon_pid is not None:
-            deadline = time.monotonic() + 5
-            while time.monotonic() < deadline:
-                try:
-                    os.kill(daemon_pid, 0)
-                except ProcessLookupError:
-                    break
-                time.sleep(0.05)
-            else:
-                raise AssertionError("acceptance daemon did not exit")
-        reconcile_endpoint(
-            root,
-            expected_project_hash=project_root_hash(root),
-            health_probe=lambda _: {"healthy": False},
-        )
-        endpoint = daemon_endpoint(root)
-        assert not endpoint.socket_path.exists()
-        assert not endpoint.metadata_path.exists()
-        shutil.rmtree(parent, ignore_errors=True)
-        assert not parent.exists()

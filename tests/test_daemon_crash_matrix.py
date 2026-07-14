@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import asyncio
 from collections import Counter
-from dataclasses import asdict
+from contextlib import contextmanager
+from dataclasses import asdict, dataclass, field
 import json
 import os
 from pathlib import Path
@@ -129,21 +130,37 @@ async def _force_stop(root: Path) -> None:
 
 def _start(root: Path, point: str, marker: Path, env: dict[str, str]) -> subprocess.Popen[bytes]:
     process = subprocess.Popen([sys.executable, str(WRAPPER), point, str(marker), str(root)], env=env)
+    try:
+        if point == "observe_after_cycle":
+            _wait(lambda: daemon_endpoint(root).metadata_path.exists())
+            return process
 
-    if point == "observe_after_cycle":
-        _wait(lambda: daemon_endpoint(root).metadata_path.exists())
+        async def probe() -> bool:
+            try:
+                client = await DaemonClient.connect_verified(root, timeout_seconds=0.2)
+            except Exception:
+                return False
+            await client.close()
+            return True
+
+        _wait(lambda: asyncio.run(probe()))
         return process
-
-    async def probe() -> bool:
+    except BaseException as primary:
+        cleanup_errors: list[BaseException] = []
         try:
-            client = await DaemonClient.connect_verified(root, timeout_seconds=0.2)
-        except Exception:
-            return False
-        await client.close()
-        return True
-
-    _wait(lambda: asyncio.run(probe()))
-    return process
+            _kill_and_wait(process)
+        except BaseException as error:
+            cleanup_errors.append(error)
+        try:
+            _reconcile(root)
+        except BaseException as error:
+            cleanup_errors.append(error)
+        if cleanup_errors:
+            primary.add_note(
+                "daemon start cleanup failures: "
+                + "; ".join(repr(error) for error in cleanup_errors)
+            )
+        raise
 
 
 def _kill_and_wait(process: subprocess.Popen[bytes] | None) -> None:
@@ -164,6 +181,61 @@ def _reconcile(root: Path) -> None:
     endpoint = daemon_endpoint(root)
     assert not endpoint.socket_path.exists()
     assert not endpoint.metadata_path.exists()
+
+
+@dataclass
+class _TestResources:
+    root: Path
+    parent: Path
+    processes: list[object] = field(default_factory=list)
+    threads: list[threading.Thread] = field(default_factory=list)
+
+    def cleanup(self) -> list[BaseException]:
+        errors: list[BaseException] = []
+        for process in reversed(self.processes):
+            try:
+                _kill_and_wait(process)  # type: ignore[arg-type]
+            except BaseException as error:
+                errors.append(error)
+        for thread in reversed(self.threads):
+            try:
+                thread.join(timeout=3)
+                if thread.is_alive():
+                    raise AssertionError("daemon test request thread did not exit")
+            except BaseException as error:
+                errors.append(error)
+        try:
+            _reconcile(self.root)
+        except BaseException as error:
+            errors.append(error)
+        try:
+            shutil.rmtree(self.parent, ignore_errors=False)
+            if self.parent.exists():
+                raise AssertionError("daemon test temporary project was not removed")
+        except FileNotFoundError:
+            pass
+        except BaseException as error:
+            errors.append(error)
+        return errors
+
+
+@contextmanager
+def _resource_guard(*, root: Path, parent: Path):
+    resources = _TestResources(root=root, parent=parent)
+    primary: BaseException | None = None
+    try:
+        yield resources
+    except BaseException as error:
+        primary = error
+        raise
+    finally:
+        cleanup_errors = resources.cleanup()
+        if cleanup_errors:
+            summary = "; ".join(repr(error) for error in cleanup_errors)
+            if primary is not None:
+                primary.add_note(f"daemon test cleanup failures: {summary}")
+            else:
+                raise ExceptionGroup("daemon test cleanup failed", cleanup_errors)
 
 
 def _logical_admission_counts(
@@ -195,6 +267,76 @@ def _logical_admission_counts(
     return Counter(by_token[token] for token in tokens)
 
 
+def test_start_reaps_spawned_daemon_when_readiness_wait_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = (tmp_path / "start-failure").resolve()
+    _config, _store, _confirmed = _seed(root)
+    spawned: list[subprocess.Popen[bytes]] = []
+    real_popen = subprocess.Popen
+
+    def recording_popen(*args, **kwargs):
+        process = real_popen(*args, **kwargs)
+        spawned.append(process)
+        return process
+
+    def fail_wait(*_args, **_kwargs):
+        raise RuntimeError("injected readiness failure")
+
+    monkeypatch.setattr(subprocess, "Popen", recording_popen)
+    monkeypatch.setattr(sys.modules[__name__], "_wait", fail_wait)
+    try:
+        with pytest.raises(RuntimeError, match="injected readiness failure"):
+            _start(root, "none", tmp_path / "marker.json", dict(os.environ))
+        assert len(spawned) == 1
+        assert spawned[0].poll() is not None
+        endpoint = daemon_endpoint(root)
+        assert not endpoint.socket_path.exists()
+        assert not endpoint.metadata_path.exists()
+    finally:
+        for process in spawned:
+            if process.poll() is None:
+                process.kill()
+            process.wait(timeout=3)
+        reconcile_endpoint(
+            root,
+            expected_project_hash=project_root_hash(root),
+            health_probe=lambda _: {"healthy": False},
+        )
+
+
+def test_resource_guard_runs_all_cleanup_without_masking_primary(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    parent = tmp_path / "guard"
+    root = parent / "r"
+    root.mkdir(parents=True)
+    first = object()
+    second = object()
+    calls: list[object] = []
+    reconciled: list[Path] = []
+
+    def cleanup(process) -> None:
+        calls.append(process)
+        if process is first:
+            raise RuntimeError("injected first cleanup failure")
+
+    monkeypatch.setattr(sys.modules[__name__], "_kill_and_wait", cleanup)
+    monkeypatch.setattr(
+        sys.modules[__name__], "_reconcile", lambda value: reconciled.append(value)
+    )
+
+    with pytest.raises(AssertionError, match="primary failure") as caught:
+        with _resource_guard(root=root, parent=parent) as resources:
+            resources.processes.extend((second, first))
+            raise AssertionError("primary failure")
+
+    assert calls == [first, second]
+    assert reconciled == [root]
+    assert not parent.exists()
+    assert any("injected first cleanup failure" in note for note in caught.value.__notes__)
+
+
 @pytest.mark.parametrize(
     "crash_point",
     ["before_prepare", "after_prepare_before_dispatch", "after_dispatch_before_receipt", "after_receipt_before_reply", "after_reply_before_handoff", "after_handoff_before_next_dispatch", "permission_pending"],
@@ -207,10 +349,9 @@ def test_real_daemon_crash_boundaries_never_duplicate_external_admission(
     fake_bin = parent / "bin"; fake_bin.mkdir(); _write_fake_tmux(fake_bin)
     config, store, confirmed = _seed(root, permission=crash_point == "permission_pending")
     env = dict(os.environ, PATH=f"{fake_bin}{os.pathsep}{os.environ['PATH']}", AGENTDECK_CRASH_ADMISSIONS=str(admissions))
-    process: subprocess.Popen[bytes] | None = None
-    restarted: subprocess.Popen[bytes] | None = None
-    try:
+    with _resource_guard(root=root, parent=parent) as resources:
         process = _start(root, crash_point, marker, env)
+        resources.processes.append(process)
         asyncio.run(_admit(root, config, confirmed))
         _wait(marker.exists)
         os.kill(process.pid, signal.SIGKILL)
@@ -222,6 +363,7 @@ def test_real_daemon_crash_boundaries_never_duplicate_external_admission(
         restarted = _start(
             root, "observe_after_cycle", cycle_marker, env
         )
+        resources.processes.append(restarted)
         _wait(cycle_marker.exists)
         cycle = json.loads(cycle_marker.read_text(encoding="utf-8"))
         assert cycle["scheduler_decision_kind"] != "idle"
@@ -248,12 +390,6 @@ def test_real_daemon_crash_boundaries_never_duplicate_external_admission(
         assert _logical_admission_counts(
             store, admissions, root / "acp.jsonl"
         ) == expected_counts
-    finally:
-        _kill_and_wait(restarted)
-        _kill_and_wait(process)
-        _reconcile(root)
-        shutil.rmtree(parent, ignore_errors=True)
-        assert not parent.exists()
 
 
 def test_real_daemon_crash_after_protocol_outbox_flush_replays_no_event(
@@ -264,13 +400,12 @@ def test_real_daemon_crash_after_protocol_outbox_flush_replays_no_event(
     state = store.load(); state["protocol_event_outbox"] = [asdict(event)]; store.save(state)
     marker = tmp_path / "marker.json"; admissions = tmp_path / "admissions.jsonl"
     env = dict(os.environ, AGENTDECK_CRASH_ADMISSIONS=str(admissions))
-    process: subprocess.Popen[bytes] | None = None
-    restarted: subprocess.Popen[bytes] | None = None
-    try:
+    with _resource_guard(root=root, parent=parent) as resources:
         process = subprocess.Popen(
             [sys.executable, str(WRAPPER), "outbox_flush", str(marker), str(root)],
             env=env,
         )
+        resources.processes.append(process)
         _wait(marker.exists)
         os.kill(process.pid, signal.SIGKILL)
         process.wait(timeout=3)
@@ -279,15 +414,10 @@ def test_real_daemon_crash_after_protocol_outbox_flush_replays_no_event(
         assert [item["event_id"] for item in store.all_events()].count(event.event_id) == 1
         _reconcile(root)
         restarted = _start(root, "none", parent / "restart.json", env)
+        resources.processes.append(restarted)
         assert StateStore(root).load()["protocol_event_outbox"] == []
         assert [item["event_id"] for item in StateStore(root).all_events()].count(event.event_id) == 1
         assert _logical_admission_counts(store, admissions, root / "acp.jsonl") == Counter()
-    finally:
-        _kill_and_wait(restarted)
-        _kill_and_wait(process)
-        _reconcile(root)
-        shutil.rmtree(parent, ignore_errors=True)
-        assert not parent.exists()
 
 
 def test_real_daemon_crash_after_durable_shutdown_state_is_observed(
@@ -297,9 +427,6 @@ def test_real_daemon_crash_after_durable_shutdown_state_is_observed(
     fake_bin = parent / "bin"; fake_bin.mkdir(); _write_fake_tmux(fake_bin)
     config, store, confirmed = _seed(root)
     marker = parent / "marker.json"; env = dict(os.environ, PATH=f"{fake_bin}{os.pathsep}{os.environ['PATH']}", AGENTDECK_CRASH_ADMISSIONS=str(parent / "admissions.jsonl"), AGENTDECK_CRASH_NO_REPLY="1")
-    process: subprocess.Popen[bytes] | None = None
-    restarted: subprocess.Popen[bytes] | None = None
-    request: threading.Thread | None = None
     force_error: list[BaseException] = []
 
     def force_stop() -> None:
@@ -308,8 +435,9 @@ def test_real_daemon_crash_after_durable_shutdown_state_is_observed(
         except BaseException as exc:
             force_error.append(exc)
 
-    try:
+    with _resource_guard(root=root, parent=parent) as resources:
         process = _start(root, "shutdown", marker, env)
+        resources.processes.append(process)
         asyncio.run(_admit(root, config, confirmed))
         _wait(
             lambda: bool(store.load().get("mission_attempts"))
@@ -317,6 +445,7 @@ def test_real_daemon_crash_after_durable_shutdown_state_is_observed(
         )
         request = threading.Thread(target=force_stop, daemon=True)
         request.start()
+        resources.threads.append(request)
         _wait(lambda: marker.exists() or not request.is_alive())
         assert marker.exists(), repr(force_error)
         os.kill(process.pid, signal.SIGKILL)
@@ -330,17 +459,9 @@ def test_real_daemon_crash_after_durable_shutdown_state_is_observed(
         assert crashed["mission_attempts"][-1]["state"] == "ambiguous"
         _reconcile(root)
         restarted = _start(root, "none", parent / "restart.json", env)
+        resources.processes.append(restarted)
         assert store.mission_by_id(str(confirmed["mission_id"]))["status"] == "interrupted"
         logical_key = (str(confirmed["mission_id"]), "step_1", "planner")
         assert _logical_admission_counts(
             store, parent / "admissions.jsonl", root / "acp.jsonl"
         ) == Counter({logical_key: 1})
-    finally:
-        _kill_and_wait(restarted)
-        _kill_and_wait(process)
-        if request is not None:
-            request.join(timeout=3)
-            assert not request.is_alive()
-        _reconcile(root)
-        shutil.rmtree(parent, ignore_errors=True)
-        assert not parent.exists()

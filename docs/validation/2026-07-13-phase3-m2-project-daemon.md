@@ -34,16 +34,21 @@ duplicate logical external admissions by mapping each observed tmux/ACP prompt
 token back to its durable `(mission_id, step_id, agent_id)`. Each restart applies
 one real first non-idle scheduler transition before its deterministic stop
 marker, so the cardinality assertion is made after a completed scheduler cycle,
-not a fixed sleep. Failure cleanup terminates and waits every managed process,
-joins the force-stop request thread, reconciles the endpoint, and removes the
-disposable project.
+not a fixed sleep. Startup owns each spawned daemon immediately: readiness or
+probe failure reaps it and best-effort reconciles the endpoint before the
+original exception is re-raised. One collect-all teardown guard attempts every
+managed process kill/wait, force-stop request-thread join, endpoint
+reconciliation, and disposable-project removal even when an earlier cleanup
+stage fails. Cleanup diagnostics are attached to the primary failure instead of
+masking it. Injected regressions cover both post-spawn readiness failure and a
+first cleanup-stage failure.
 
 ## Automated evidence
 
-- Real crash matrix, repeated twice: `9 passed` in each run.
-- Acceptance/crash/recovery regression: `125 passed`.
-- Daemon suite: `897 passed`.
-- Full suite: `2776 passed, 1 skipped`.
+- Crash/acceptance focused group, repeated twice: `12 passed` in each run.
+- Acceptance/crash/recovery regression: `127 passed`.
+- Daemon suite: `899 passed`.
+- Full suite: `2778 passed, 1 skipped`.
 - Compileall and `git diff --check`: PASS.
 
 ## Real component evidence and blocker
