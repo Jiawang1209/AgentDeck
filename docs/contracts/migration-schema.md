@@ -60,14 +60,16 @@ the first safety boundary.
 
 Project, `.agentdeck`, and `state` are opened as no-follow directory
 descriptors before the shared protocol lock is acquired. The shared lock lives
-under the anchored `.agentdeck` descriptor, so all authoritative writers retain
-one exclusion domain. Every public `StateStore` entrypoint that transitively
+under the anchored `state` descriptor at the original
+`.agentdeck/state/protocol-mutation.lock` inode, so mixed-version and current
+authoritative writers retain one exclusion domain. Every public `StateStore` entrypoint that transitively
 writes state acquires that transaction before its first load and keeps it
 through atomic replacement; same-thread nested helpers reuse the transaction.
 The explicit writer registry is checked against the `StateStore` call graph,
 and stale public snapshots are rejected by exact source-hash comparison rather
 than overwriting a completed migration. Confirmation rechecks the current
-directory device/inode binding after acquiring the lock, and all migration state reads, exclusive temp
+directory device/inode binding after acquiring the lock, and all migration
+state reads, exclusive temp
 creation, state rename, rollback, and fsync operations are relative to the
 anchored state descriptor. A state-directory symlink or replacement therefore
 fails before backup/state effects and cannot redirect writes outside the

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+import stat
 import tomllib
 
 from .models import (
@@ -78,27 +79,107 @@ def config_path(root: Path | None = None) -> Path:
     return base / CONFIG_DIR / CONFIG_FILE
 
 
+_LAYOUT_DIRECTORY_FLAGS = (
+    os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
+)
+
+
+def _open_or_create_layout_directory(parent_fd: int, name: str) -> int:
+    created = False
+    try:
+        os.mkdir(name, 0o700, dir_fd=parent_fd)
+        created = True
+    except FileExistsError:
+        pass
+    try:
+        descriptor = os.open(name, _LAYOUT_DIRECTORY_FLAGS, dir_fd=parent_fd)
+    except OSError as exc:
+        raise ValueError("project layout contains an unsafe directory") from exc
+    if not stat.S_ISDIR(os.fstat(descriptor).st_mode):
+        os.close(descriptor)
+        raise ValueError("project layout path must be a directory")
+    if created:
+        os.fsync(parent_fd)
+    return descriptor
+
+
+def _ensure_layout_file(parent_fd: int, name: str) -> None:
+    nofollow = getattr(os, "O_NOFOLLOW", 0)
+    created = False
+    try:
+        descriptor = os.open(
+            name,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | nofollow,
+            0o600,
+            dir_fd=parent_fd,
+        )
+        created = True
+    except FileExistsError:
+        try:
+            descriptor = os.open(name, os.O_RDONLY | nofollow, dir_fd=parent_fd)
+        except OSError as exc:
+            raise ValueError("project layout contains an unsafe file") from exc
+    try:
+        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+            raise ValueError("project layout path must be a regular file")
+        if created:
+            os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+    if created:
+        os.fsync(parent_fd)
+
+
+def _open_or_create_project_root(root: Path) -> int:
+    absolute = Path(os.path.abspath(root))
+    if absolute == Path(absolute.anchor):
+        return os.open(absolute, _LAYOUT_DIRECTORY_FLAGS)
+    missing = [absolute.name]
+    ancestor = absolute.parent
+    while not ancestor.exists():
+        if ancestor == Path(ancestor.anchor):
+            break
+        missing.append(ancestor.name)
+        ancestor = ancestor.parent
+    descriptor = os.open(ancestor.resolve(), _LAYOUT_DIRECTORY_FLAGS)
+    try:
+        for component in reversed(missing):
+            child = _open_or_create_layout_directory(descriptor, component)
+            os.close(descriptor)
+            descriptor = child
+        return descriptor
+    except BaseException:
+        os.close(descriptor)
+        raise
+
+
 def ensure_project_layout(root: Path | None = None) -> Path:
     base = root or project_root()
     deck_dir = base / CONFIG_DIR
-    for child in [
-        deck_dir,
-        deck_dir / "state",
-        deck_dir / "logs" / "agents",
-        deck_dir / "artifacts",
-        deck_dir / "skills",
-    ]:
-        child.mkdir(parents=True, exist_ok=True)
-    for filename in ["events.jsonl", "approvals.jsonl"]:
-        path = deck_dir / "state" / filename
-        path.touch(exist_ok=True)
-    lock_flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
     try:
-        lock_fd = os.open(deck_dir / "protocol-mutation.lock", lock_flags, 0o600)
-    except FileExistsError:
-        pass
-    else:
-        os.close(lock_fd)
+        root_fd = _open_or_create_project_root(base)
+    except (OSError, ValueError) as exc:
+        raise ValueError("project root is not a safe directory") from exc
+    descriptors = [root_fd]
+    try:
+        deck_fd = _open_or_create_layout_directory(root_fd, CONFIG_DIR)
+        descriptors.append(deck_fd)
+        state_fd = _open_or_create_layout_directory(deck_fd, "state")
+        descriptors.append(state_fd)
+        logs_fd = _open_or_create_layout_directory(deck_fd, "logs")
+        descriptors.append(logs_fd)
+        descriptors.append(_open_or_create_layout_directory(logs_fd, "agents"))
+        descriptors.append(_open_or_create_layout_directory(deck_fd, "artifacts"))
+        descriptors.append(_open_or_create_layout_directory(deck_fd, "skills"))
+        for filename in (
+            "events.jsonl",
+            "approvals.jsonl",
+            "protocol-mutation.lock",
+        ):
+            _ensure_layout_file(state_fd, filename)
+    finally:
+        for descriptor in reversed(descriptors):
+            os.close(descriptor)
     return deck_dir
 
 

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import asdict
-from collections import OrderedDict
 from datetime import datetime, timedelta, timezone
 import copy
 from contextlib import contextmanager
@@ -18,6 +17,7 @@ import stat
 import time
 import threading
 from typing import Any, Callable, Mapping
+import weakref
 
 from .config import CONFIG_DIR, ensure_project_layout, load_config, project_root
 from .conversation.lifecycle import validate_conversation_history
@@ -323,6 +323,26 @@ def _verify_project_state_anchor(root: Path, deck_fd: int, state_fd: int) -> Non
             raise ValueError("migration state directory changed during confirmation")
 
 
+_STATE_SOURCE_TOKEN_KEY = "__agentdeck_transient_state_source__"
+
+
+class _StateSourceToken(dict[str, object]):
+    __slots__ = ("__weakref__",)
+    __hash__ = object.__hash__
+
+    def __deepcopy__(self, memo: dict[int, object]) -> _StateSourceToken:
+        del memo
+        return self
+
+
+def _persistent_state(state: Mapping[str, object]) -> dict[str, object]:
+    return {
+        key: value
+        for key, value in state.items()
+        if key != _STATE_SOURCE_TOKEN_KEY
+    }
+
+
 def _atomic_save_state_at(state_fd: int, state: dict[str, object]) -> None:
     temporary = f".state.json.{os.getpid()}.{new_id('tmp')}.tmp"
     flags = (
@@ -332,7 +352,12 @@ def _atomic_save_state_at(state_fd: int, state: dict[str, object]) -> None:
     try:
         descriptor = os.open(temporary, flags, 0o600, dir_fd=state_fd)
         encoded = (
-            json.dumps(state, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+            json.dumps(
+                _persistent_state(state),
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+            ) + "\n"
         ).encode("utf-8")
         with os.fdopen(descriptor, "wb", closefd=False) as handle:
             handle.write(encoded)
@@ -355,10 +380,9 @@ def _atomic_save_state_at(state_fd: int, state: dict[str, object]) -> None:
 
 _STATE_MUTATION_LOCAL = threading.local()
 _LOADED_STATE_SOURCES_LOCK = threading.Lock()
-_LOADED_STATE_SOURCES: OrderedDict[
-    tuple[str, int], tuple[dict[str, Any], str | None]
-] = OrderedDict()
-_LOADED_STATE_SOURCES_LIMIT = 512
+_STATE_SOURCE_FACTS: weakref.WeakKeyDictionary[
+    _StateSourceToken, tuple[str, str | None]
+] = weakref.WeakKeyDictionary()
 
 
 def _state_lock_entries() -> dict[str, dict[str, object]]:
@@ -2039,19 +2063,21 @@ class StateStore:
     def _remember_loaded_state(
         self, state: dict[str, Any], source_hash: str | None
     ) -> dict[str, Any]:
-        key = (str(self.root.resolve()), id(state))
+        token = state.get(_STATE_SOURCE_TOKEN_KEY)
+        if not isinstance(token, _StateSourceToken):
+            token = _StateSourceToken()
+            state[_STATE_SOURCE_TOKEN_KEY] = token
         with _LOADED_STATE_SOURCES_LOCK:
-            _LOADED_STATE_SOURCES[key] = (state, source_hash)
-            _LOADED_STATE_SOURCES.move_to_end(key)
-            while len(_LOADED_STATE_SOURCES) > _LOADED_STATE_SOURCES_LIMIT:
-                _LOADED_STATE_SOURCES.popitem(last=False)
+            _STATE_SOURCE_FACTS[token] = (str(self.root.resolve()), source_hash)
         return state
 
     def _loaded_state_source(self, state: dict[str, Any]) -> tuple[bool, str | None]:
-        key = (str(self.root.resolve()), id(state))
+        token = state.get(_STATE_SOURCE_TOKEN_KEY)
+        if not isinstance(token, _StateSourceToken):
+            return False, None
         with _LOADED_STATE_SOURCES_LOCK:
-            remembered = _LOADED_STATE_SOURCES.get(key)
-        if remembered is None or remembered[0] is not state:
+            remembered = _STATE_SOURCE_FACTS.get(token)
+        if remembered is None or remembered[0] != str(self.root.resolve()):
             return False, None
         return True, remembered[1]
 
@@ -2121,6 +2147,7 @@ class StateStore:
         decoded = json.loads(source.decode("utf-8"))
         if not isinstance(decoded, dict):
             raise ValueError("state must be an object")
+        decoded.pop(_STATE_SOURCE_TOKEN_KEY, None)
         return self._remember_loaded_state(
             decoded, "sha256:" + hashlib.sha256(source).hexdigest()
         )
@@ -3636,7 +3663,7 @@ class StateStore:
         with _secure_project_state_directory(
             self.root.resolve(), create_state=True
         ) as anchored:
-            _deck_fd, _state_fd = anchored
+            _deck_fd, state_fd = anchored
             flags = os.O_RDWR | getattr(os, "O_NOFOLLOW", 0)
             try:
                 try:
@@ -3644,11 +3671,11 @@ class StateStore:
                         "protocol-mutation.lock",
                         flags | os.O_CREAT | os.O_EXCL,
                         0o600,
-                        dir_fd=_deck_fd,
+                        dir_fd=state_fd,
                     )
                 except FileExistsError:
                     lock_fd = os.open(
-                        "protocol-mutation.lock", flags, dir_fd=_deck_fd
+                        "protocol-mutation.lock", flags, dir_fd=state_fd
                     )
             except OSError as exc:
                 raise ValueError("protocol mutation lock is unsafe") from exc

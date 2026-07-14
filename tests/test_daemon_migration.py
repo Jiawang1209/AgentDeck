@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+from copy import deepcopy
 from pathlib import Path
 import ast
 from datetime import datetime, timedelta, timezone
+import fcntl
+import gc
 import hashlib
 import json
 import os
@@ -11,6 +14,7 @@ import subprocess
 import sys
 import threading
 import time
+import weakref
 
 import pytest
 
@@ -26,6 +30,14 @@ def _tree_bytes(root: Path) -> dict[str, bytes]:
         str(path.relative_to(root)): path.read_bytes()
         for path in sorted(root.rglob("*"))
         if path.is_file() and path.name != "protocol-mutation.lock"
+    }
+
+
+def _tree_facts(root: Path) -> dict[str, tuple[bytes, int]]:
+    return {
+        str(path.relative_to(root)): (path.read_bytes(), path.stat().st_mtime_ns)
+        for path in sorted(root.rglob("*"))
+        if path.is_file()
     }
 
 
@@ -138,7 +150,7 @@ def test_state_directory_symlink_is_rejected_before_lock_backup_or_external_writ
     assert _tree_bytes(outside) == outside_before
     assert not (tmp_path / ".agentdeck" / "backups").exists()
     assert not any(".tmp" in path.name for path in outside.iterdir())
-    assert not (outside / "protocol-mutation.lock").exists()
+    assert (outside / "protocol-mutation.lock").is_file()
 
 
 def test_partial_project_read_is_zero_write_and_first_mutation_creates_safe_state(
@@ -183,26 +195,166 @@ def test_public_mutation_rejects_symlinked_state_directory_without_external_writ
         )
 
     assert _tree_bytes(outside) == outside_before
-    assert not (outside / "protocol-mutation.lock").exists()
+    assert (outside / "protocol-mutation.lock").is_file()
 
 
-def test_layout_never_follows_preexisting_protocol_lock_symlink(
+@pytest.mark.parametrize(
+    "unsafe_path",
+    [
+        ".agentdeck",
+        "state",
+        "events.jsonl",
+        "approvals.jsonl",
+        "protocol-mutation.lock",
+    ],
+)
+def test_default_constructor_layout_is_dirfd_anchored_and_symlink_safe(
     tmp_path: Path,
+    unsafe_path: str,
 ) -> None:
     (tmp_path / ".git").mkdir()
-    deck_dir = tmp_path / ".agentdeck"
-    deck_dir.mkdir()
-    outside = tmp_path / "outside-lock"
-    outside.write_text("do not touch\n", encoding="utf-8")
-    before = (outside.read_bytes(), outside.stat().st_mtime_ns)
-    (deck_dir / "protocol-mutation.lock").symlink_to(outside)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "sentinel").write_text("unchanged\n", encoding="utf-8")
+    if unsafe_path == ".agentdeck":
+        (tmp_path / ".agentdeck").symlink_to(outside, target_is_directory=True)
+    else:
+        deck = tmp_path / ".agentdeck"
+        deck.mkdir()
+        if unsafe_path == "state":
+            (deck / "state").symlink_to(outside, target_is_directory=True)
+        else:
+            state_dir = deck / "state"
+            state_dir.mkdir()
+            (state_dir / unsafe_path).symlink_to(outside / "sentinel")
+    before = _tree_facts(outside)
 
+    with pytest.raises((OSError, ValueError)):
+        StateStore(tmp_path)
+
+    assert _tree_facts(outside) == before
+
+
+@pytest.mark.parametrize(
+    "unsafe_path",
+    [
+        ".agentdeck",
+        "state",
+        "events.jsonl",
+        "approvals.jsonl",
+        "protocol-mutation.lock",
+    ],
+)
+def test_default_constructor_rejects_non_directory_or_non_regular_layout_nodes(
+    tmp_path: Path,
+    unsafe_path: str,
+) -> None:
+    (tmp_path / ".git").mkdir()
+    if unsafe_path == ".agentdeck":
+        (tmp_path / ".agentdeck").write_text("not a directory\n", encoding="utf-8")
+    else:
+        deck = tmp_path / ".agentdeck"
+        deck.mkdir()
+        if unsafe_path == "state":
+            (deck / "state").write_text("not a directory\n", encoding="utf-8")
+        else:
+            state_dir = deck / "state"
+            state_dir.mkdir()
+            (state_dir / unsafe_path).mkdir()
+
+    with pytest.raises(ValueError, match="project layout"):
+        StateStore(tmp_path)
+
+
+def test_legacy_state_lock_inode_blocks_new_authoritative_writer(
+    tmp_path: Path,
+) -> None:
+    _seed_m1_state_without_execution_snapshot(tmp_path)
+    lock_path = tmp_path / ".agentdeck" / "state" / "protocol-mutation.lock"
+    lock_identity = (lock_path.stat().st_dev, lock_path.stat().st_ino)
+    started = tmp_path / "legacy-writer-started"
+    finished = tmp_path / "legacy-writer-finished"
+    script = (
+        "from pathlib import Path\n"
+        "from agentdeck.state import StateStore\n"
+        f"root = Path({str(tmp_path)!r})\n"
+        f"Path({str(started)!r}).write_text('started')\n"
+        "StateStore.open_existing(root).record_chat_turn("
+        "'status', 'legacy-lock-compatible', None, None)\n"
+        f"Path({str(finished)!r}).write_text('finished')\n"
+    )
+
+    with lock_path.open("r+b") as legacy_lock:
+        fcntl.flock(legacy_lock.fileno(), fcntl.LOCK_EX)
+        writer = subprocess.Popen(
+            [sys.executable, "-c", script],
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        deadline = time.monotonic() + 2
+        while not started.exists() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert started.exists()
+        assert not finished.exists()
+        assert writer.poll() is None
+        fcntl.flock(legacy_lock.fileno(), fcntl.LOCK_UN)
+
+    stdout, stderr = writer.communicate(timeout=2)
+    assert (writer.returncode, stdout, stderr) == (0, "", "")
+    assert finished.exists()
+    assert (lock_path.stat().st_dev, lock_path.stat().st_ino) == lock_identity
+    assert StateStore.open_existing(tmp_path).load()["chat_turns"][-1][
+        "message"
+    ] == "legacy-lock-compatible"
+
+
+def test_state_source_provenance_survives_unrelated_loads_without_strong_state_refs(
+    tmp_path: Path,
+) -> None:
     store = StateStore(tmp_path)
+    held = store.load()
+    held["plans"] = [{"plan_id": "pln_held_snapshot"}]
+    fact_count = len(state_module._STATE_SOURCE_FACTS)
+    for _ in range(700):
+        StateStore.open_existing(tmp_path).load()
 
-    assert (outside.read_bytes(), outside.stat().st_mtime_ns) == before
-    with pytest.raises(ValueError, match="protocol mutation lock is unsafe"):
-        store.record_chat_turn("status", "must not escape", None, None)
-    assert (outside.read_bytes(), outside.stat().st_mtime_ns) == before
+    gc.collect()
+    assert len(state_module._STATE_SOURCE_FACTS) <= fact_count
+    store.save(held)
+
+    assert store.load()["plans"] == [{"plan_id": "pln_held_snapshot"}]
+    assert all(
+        not isinstance(value, dict)
+        for value in state_module._STATE_SOURCE_FACTS.values()
+    )
+
+
+def test_state_source_provenance_is_gc_reclaimed_and_deepcopy_stable(
+    tmp_path: Path,
+) -> None:
+    write_default_config(tmp_path)
+    store = StateStore(tmp_path)
+    state = store.load()
+    token = state[state_module._STATE_SOURCE_TOKEN_KEY]
+    token_ref = weakref.ref(token)
+    clone = deepcopy(state)
+    assert clone[state_module._STATE_SOURCE_TOKEN_KEY] is token
+    clone["plans"] = [{"plan_id": "pln_deepcopy"}]
+    store.save(clone)
+    assert state_module._STATE_SOURCE_TOKEN_KEY not in store.state_path.read_text(
+        encoding="utf-8"
+    )
+    assert state_module._STATE_SOURCE_TOKEN_KEY not in repr(
+        store.project_view(state_module.load_config(tmp_path))
+    )
+
+    del state
+    del clone
+    del token
+    gc.collect()
+
+    assert token_ref() is None
 
 
 def test_state_directory_replace_race_fails_before_backup_or_external_write(
