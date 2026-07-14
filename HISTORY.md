@@ -4,6 +4,13 @@
 
 ## 2026-07-14
 
+### Add authority-aware Leader plan schema
+
+- **Canonical provider-neutral schema**: added the deterministic `leader-plan/v1` JSON Schema and canonical SHA-256 helper. The schema freezes Mission-selected Worker ids in order, freezes the authoritative step count, requires approval on every step, excludes project paths and operational secrets, and uses no provider-specific schema extensions.
+- **Single semantic validation authority**: moved provider plan validation into `providers/plan_schema.py` with fixed safe diagnostic codes while preserving the existing human-readable API/CLI exception messages and output-envelope normalization. Explicit selected-Worker/count validation is additive; legacy callers retain their prior config-based behavior.
+- **Frozen request authority**: extended `LeaderPlanRequest` after its existing four fields with optional selected Worker ids, step count, and timeout. Malformed, partial, duplicate, unknown, boolean, and out-of-range authority fails closed as `authority_invalid` without leaking malformed values into diagnostic codes.
+- **TDD and compatibility evidence**: the first schema test run failed at collection with the expected missing `agentdeck.providers.plan_schema`; construction/authority tests then passed, semantic validation tests drove the validator extraction, and the focused schema suite passes 26 tests while the legacy OpenAI-compatible provider suite passes 31 tests.
+
 ### Plan the Phase 3 M2c acceptance closure
 
 - **Executable TDD plan**: added `docs/superpowers/plans/2026-07-14-agentdeck-m2c-closure.md`, a twelve-task, north-star-bound implementation plan with an isolated worktree prerequisite, exact file ownership, RED/GREEN commands, locked authority/provenance types, per-slice regression gates, and one local commit boundary per semantic task.
