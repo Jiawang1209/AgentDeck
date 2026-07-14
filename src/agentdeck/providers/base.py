@@ -25,6 +25,12 @@ class LeaderPlanRequest:
     timeout_seconds: int | None = None
 
 
+@dataclass(frozen=True)
+class LeaderPlanResult:
+    plan: dict[str, object]
+    leader_generation: dict[str, object]
+
+
 class LeaderProvider(Protocol):
     name: str
 

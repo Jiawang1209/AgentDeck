@@ -1,4 +1,4 @@
-from .base import LeaderPlanRequest, LeaderProvider
+from .base import LeaderPlanRequest, LeaderPlanResult, LeaderProvider
 from .cli_subprocess import ClaudeCliProvider, CodexCliProvider
 from .deepseek import DeepSeekProvider
 from .fake import FakeLeaderProvider
@@ -25,6 +25,7 @@ __all__ = [
     "DeepSeekProvider",
     "FakeLeaderProvider",
     "LeaderPlanRequest",
+    "LeaderPlanResult",
     "LeaderProvider",
     "OpenAICompatibleProvider",
     "leader_provider",

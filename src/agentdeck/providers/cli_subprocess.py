@@ -27,6 +27,7 @@ class CliLeaderProviderError(RuntimeError):
 
 class CliLeaderProvider:
     name = "cli"
+    constraint_mode = "prompt_only"
     command_name = ""
     command: list[str] = []
     timeout = 120

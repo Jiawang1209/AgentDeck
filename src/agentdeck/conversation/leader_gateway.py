@@ -242,11 +242,15 @@ class LeaderGateway:
         else:
             try:
                 provider = self._provider_factory(status.provider)
-                plan = LeaderOrchestrator(request.config, provider).plan(
+                result = LeaderOrchestrator(request.config, provider).plan_result(
                     request.planning_task,
                     request.config.leader.model,
                     skill_context=request.skill_context,
+                    selected_agent_ids=request.selected_agent_ids,
+                    step_count=request.step_count,
+                    timeout_seconds=request.timeout_seconds,
                 )
+                plan = result.plan
             except CliLeaderProviderError as error:
                 raise LeaderGatewayError(error.stage) from None
             except Exception:

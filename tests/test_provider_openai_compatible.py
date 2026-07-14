@@ -390,6 +390,14 @@ def test_openai_compatible_provider_requires_api_key(monkeypatch) -> None:
     assert provider.doctor() == (False, "AGENTDECK_LEADER_API_KEY is not set; provider calls are disabled")
 
 
+def test_legacy_provider_constraint_modes_match_transport_guarantees() -> None:
+    assert leader_provider("fake").constraint_mode == "local"
+    assert leader_provider("deepseek").constraint_mode == "json_object"
+    assert leader_provider("openai-compatible").constraint_mode == "json_object"
+    assert leader_provider("codex-cli").constraint_mode == "prompt_only"
+    assert leader_provider("claude-cli").constraint_mode == "prompt_only"
+
+
 def test_deepseek_provider_uses_deepseek_env_and_openai_compatible_plan_shape(tmp_path, monkeypatch) -> None:
     root = tmp_path / "repo"
     root.mkdir()

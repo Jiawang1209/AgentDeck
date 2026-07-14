@@ -42,6 +42,7 @@ from .conversation.models import ConversationMutation
 from .orchestration.leader import LeaderOrchestrator
 from .providers import LeaderProvider
 from .providers.base import validate_provider_plan_schema
+from .providers.plan_schema import ProviderPlanValidationError
 from .state import StateStore
 from .state import (
     build_execution_snapshot_authority,
@@ -847,6 +848,8 @@ def create_mission_preview(
             config.leader.model,
             skill_context=skill_context,
         )
+    except ProviderPlanValidationError:
+        raise MissionPreviewError("mission preview plan invalid") from None
     except Exception:
         raise MissionPreviewError("mission preview provider failed") from None
     return create_mission_preview_from_candidate(

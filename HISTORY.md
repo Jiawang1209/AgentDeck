@@ -4,6 +4,14 @@
 
 ## 2026-07-14
 
+### Propagate frozen Leader planning authority
+
+- **Typed planning result boundary**: added exported `LeaderPlanResult` and `LeaderOrchestrator.plan_result()`. The orchestrator constructs one `LeaderPlanRequest`, forwards the frozen selected Worker ids, step count, deadline, model, and compact skill context, accepts a native typed result exactly once, or validates and wraps a legacy `.plan()` result with compact generation provenance. Public `LeaderOrchestrator.plan()` still returns the plain plan dict for every existing direct caller.
+- **Constraint provenance without fallback**: legacy fake, OpenAI-compatible/DeepSeek, and CLI providers now declare `local`, `json_object`, and `prompt_only` constraint modes respectively; unknown recording providers retain the compatible `local` default. The Task 1 provenance builder remains the authority and validates all provider/mode/model facts. No provider, model, or transport fallback was added.
+- **Conversation Gateway authority propagation**: the non-ACP planning branch now calls `plan_result()` with the request's already frozen authority and timeout, then uses only `result.plan` for the existing candidate. The ACP branch and candidate shape remain unchanged; final candidate provenance, retry, diagnostics persistence, and native schema flags remain owned by later slices.
+- **Compatibility and fail-closed errors**: recording-provider coverage first failed because all three new request fields were `None`, then passed after propagation. Native typed providers are called once without legacy fallback, malformed legacy plans still fail at the typed validator, and direct `.plan()` remains dict-returning. Mission preview maps only that earlier typed validation failure back to its established `mission preview plan invalid` public error while retaining the existing provider-failure mapping for every other exception.
+- **Verification**: `conda run --no-capture-output -n agentdeck pytest tests/test_conversation_leader_gateway.py tests/test_provider_openai_compatible.py tests/test_mission_orchestration.py -q` passes 104 tests; `python -m compileall -q src tests` and `git diff --check` pass.
+
 ### Add authority-aware Leader plan schema
 
 - **Canonical provider-neutral schema**: added the deterministic `leader-plan/v1` JSON Schema and canonical SHA-256 helper. The schema freezes Mission-selected Worker ids in order, freezes the authoritative step count, requires approval on every step, excludes project paths and operational secrets, and uses no provider-specific schema extensions.

@@ -10,6 +10,7 @@ from .base import LeaderPlanRequest, leader_skill_context_prompt_lines, validate
 
 class OpenAICompatibleProvider:
     name = "openai-compatible"
+    constraint_mode = "json_object"
 
     api_key_env = "AGENTDECK_LEADER_API_KEY"
     base_url_env = "AGENTDECK_LEADER_BASE_URL"

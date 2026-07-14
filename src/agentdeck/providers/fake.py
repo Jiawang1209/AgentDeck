@@ -5,6 +5,7 @@ from .base import LeaderPlanRequest
 
 class FakeLeaderProvider:
     name = "fake"
+    constraint_mode = "local"
 
     def plan(self, request: LeaderPlanRequest) -> dict[str, object]:
         steps = []

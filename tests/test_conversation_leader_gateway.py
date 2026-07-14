@@ -14,7 +14,9 @@ from agentdeck.conversation.leader_gateway import (
     LeaderGatewayError,
     LeaderRequest,
 )
-from agentdeck.providers import LeaderPlanRequest
+from agentdeck.orchestration.leader import LeaderOrchestrator
+from agentdeck.providers import LeaderPlanRequest, LeaderPlanResult
+from agentdeck.providers.plan_schema import ProviderPlanValidationError
 
 
 def _plan() -> dict[str, object]:
@@ -121,6 +123,144 @@ def test_gateway_generates_candidate_through_exact_provider_once(tmp_path: Path)
     assert candidate.plan["goal"] == "demo"
     assert candidate.selected_agent_ids == ("planner", "reviewer")
     assert candidate.step_count == 2
+
+
+def test_gateway_passes_frozen_authority_and_deadline_to_provider(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    config = replace(
+        config,
+        leader=replace(config.leader, provider="fake", model="fake-plan"),
+    )
+    seen: list[LeaderPlanRequest] = []
+
+    class RecordingProvider:
+        name = "fake"
+
+        def plan(self, request: LeaderPlanRequest) -> dict[str, object]:
+            seen.append(request)
+            return _plan()
+
+    candidate = LeaderGateway(
+        provider_factory=lambda _name: RecordingProvider()
+    ).generate_mission(
+        LeaderRequest(
+            config,
+            "mission",
+            "structured mission task",
+            180,
+            None,
+            selected_agent_ids=("planner", "reviewer"),
+            step_count=2,
+        ),
+        CancellationToken(),
+    )
+
+    assert seen[0].selected_agent_ids == ("planner", "reviewer")
+    assert seen[0].step_count == 2
+    assert seen[0].timeout_seconds == 180
+    assert candidate.selected_agent_ids == seen[0].selected_agent_ids
+    assert candidate.step_count == seen[0].step_count
+
+
+def test_gateway_uses_native_plan_result_once_without_legacy_fallback(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    config = replace(
+        config,
+        leader=replace(config.leader, provider="fake", model="fake-plan"),
+    )
+
+    class NativeProvider:
+        name = "fake"
+
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def plan_result(self, request: LeaderPlanRequest) -> LeaderPlanResult:
+            self.calls += 1
+            assert request.timeout_seconds == 180
+            return LeaderPlanResult(
+                plan=_plan(),
+                leader_generation={"constraint_mode": "native_json_schema"},
+            )
+
+        def plan(self, _request: LeaderPlanRequest) -> dict[str, object]:
+            pytest.fail("legacy plan fallback must not be called")
+
+    provider = NativeProvider()
+    candidate = LeaderGateway(provider_factory=lambda _name: provider).generate_mission(
+        LeaderRequest(
+            config,
+            "mission",
+            "structured mission task",
+            180,
+            None,
+            selected_agent_ids=("planner", "reviewer"),
+            step_count=2,
+        ),
+        CancellationToken(),
+    )
+
+    assert provider.calls == 1
+    assert candidate.plan["goal"] == "demo"
+
+
+def test_orchestrator_preserves_plain_plan_and_wraps_legacy_result(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+
+    class LegacyProvider:
+        name = "recording"
+
+        def plan(self, _request: LeaderPlanRequest) -> dict[str, object]:
+            return _plan()
+
+    orchestrator = LeaderOrchestrator(config, LegacyProvider())
+    result = orchestrator.plan_result(
+        "structured mission task",
+        "fake-plan",
+        selected_agent_ids=("planner", "reviewer"),
+        step_count=2,
+        timeout_seconds=180,
+    )
+    plan = orchestrator.plan(
+        "structured mission task",
+        "fake-plan",
+        selected_agent_ids=("planner", "reviewer"),
+        step_count=2,
+        timeout_seconds=180,
+    )
+
+    assert isinstance(result, LeaderPlanResult)
+    assert result.leader_generation == {
+        "provider": "recording",
+        "model": "fake-plan",
+        "constraint_mode": "local",
+        "schema_version": None,
+        "schema_hash": None,
+        "attempt_count": 1,
+        "regeneration_used": False,
+        "selected_agent_ids": ["planner", "reviewer"],
+        "step_count": 2,
+    }
+    assert isinstance(plan, dict)
+    assert plan["goal"] == "demo"
+
+
+def test_orchestrator_validates_malformed_legacy_provider_result(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+
+    class MalformedProvider:
+        name = "fake"
+
+        def plan(self, _request: LeaderPlanRequest) -> dict[str, object]:
+            return {"goal": "incomplete"}
+
+    with pytest.raises(ProviderPlanValidationError, match="missing required field: summary"):
+        LeaderOrchestrator(config, MalformedProvider()).plan_result(
+            "structured mission task",
+            selected_agent_ids=("planner", "reviewer"),
+            step_count=2,
+            timeout_seconds=180,
+        )
 
 
 def test_gateway_failure_never_tries_another_backend(tmp_path: Path) -> None:
