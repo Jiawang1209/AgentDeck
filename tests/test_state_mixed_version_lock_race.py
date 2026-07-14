@@ -181,6 +181,43 @@ def test_rollback_waits_for_replacement_legacy_lock_and_restores_its_write(
     )
 
 
+def test_atomic_legacy_state_write_after_initial_cas_wins_before_current_replace(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = StateStore(tmp_path)
+    store.save(store.load())
+    original_atomic_save = state_module._atomic_save_state_at
+    injected = False
+
+    def raced_atomic_save(state_fd: int, state: dict[str, object]) -> None:
+        nonlocal injected
+        if not injected:
+            injected = True
+            _replace_legacy_lock(tmp_path, "atomic-state-before-effect")
+            lock = tmp_path / ".agentdeck" / "state" / "protocol-mutation.lock"
+            with lock.open("r+b") as handle:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+                _legacy_write_state(
+                    tmp_path, "atomic-state-before-effect", atomic=True
+                )
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        original_atomic_save(state_fd, state)
+
+    monkeypatch.setattr(state_module, "_atomic_save_state_at", raced_atomic_save)
+
+    with pytest.raises(ValueError, match="protocol mutation lock changed"):
+        store.record_chat_turn("status", "current-writer-A", None, None)
+
+    canonical = StateStore.open_existing(tmp_path).load()
+    assert canonical["mixed_version_writer"] == "atomic-state-before-effect"
+    assert not any(
+        item.get("message") == "current-writer-A"
+        for item in canonical.get("chat_turns", [])
+        if isinstance(item, dict)
+    )
+
+
 @pytest.mark.parametrize("race_stage", ["before_replace", "post_effect"])
 def test_mixed_version_journal_race_preserves_legacy_event_and_outbox(
     tmp_path: Path,
@@ -244,6 +281,52 @@ def test_mixed_version_journal_race_preserves_legacy_event_and_outbox(
     assert sum(item.get("event_id") == pending.event_id for item in events) == (
         1 if race_stage == "post_effect" else 0
     )
+    assert StateStore.open_existing(tmp_path).load()["protocol_event_outbox"] == [
+        asdict(pending)
+    ]
+
+
+def test_atomic_legacy_journal_write_after_initial_cas_wins_before_current_replace(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = StateStore(tmp_path)
+    pending = EventRecord.create("current_pending", {})
+    state = store.load()
+    state["protocol_event_outbox"] = [asdict(pending)]
+    store.save(state)
+    journal = tmp_path / ".agentdeck" / "state" / "events.jsonl"
+    legacy_event = EventRecord.create("legacy_event", {"writer": "atomic-B"})
+    legacy_line = (
+        json.dumps(asdict(legacy_event), ensure_ascii=False, sort_keys=True) + "\n"
+    ).encode("utf-8")
+    original_append = state_module._append_event_journal_at
+    injected = False
+
+    def raced_append(state_fd: int, payload: bytes) -> None:
+        nonlocal injected
+        if not injected:
+            injected = True
+            _replace_legacy_lock(tmp_path, "atomic-journal-before-effect")
+            lock = tmp_path / ".agentdeck" / "state" / "protocol-mutation.lock"
+            with lock.open("r+b") as handle:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+                temporary = journal.with_name(
+                    ".legacy-journal-atomic-before-effect.tmp"
+                )
+                temporary.write_bytes(journal.read_bytes() + legacy_line)
+                os.replace(temporary, journal)
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        original_append(state_fd, payload)
+
+    monkeypatch.setattr(state_module, "_append_event_journal_at", raced_append)
+
+    with pytest.raises(ValueError, match="protocol mutation lock changed"):
+        store.flush_protocol_event_outbox()
+
+    events = StateStore.open_existing(tmp_path).all_events()
+    assert sum(item.get("event_id") == legacy_event.event_id for item in events) == 1
+    assert sum(item.get("event_id") == pending.event_id for item in events) == 0
     assert StateStore.open_existing(tmp_path).load()["protocol_event_outbox"] == [
         asdict(pending)
     ]

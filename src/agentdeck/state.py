@@ -448,6 +448,7 @@ def _append_event_journal_at(state_fd: int, payload: bytes) -> None:
             error="event journal changed during append",
         )
         _verify_event_journal_identity_at(state_fd, expected_identity)
+        _guard_mutation_effect_before_replace(state_fd, "events.jsonl")
         os.replace(
             temporary,
             "events.jsonl",
@@ -754,6 +755,7 @@ def _atomic_save_state_at(state_fd: int, state: dict[str, object]) -> None:
         os.fsync(descriptor)
         os.close(descriptor)
         descriptor = None
+        _guard_mutation_effect_before_replace(state_fd, "state.json")
         os.replace(
             temporary, "state.json", src_dir_fd=state_fd, dst_dir_fd=state_fd
         )
@@ -780,6 +782,106 @@ def _state_lock_entries() -> dict[str, dict[str, object]]:
         entries = {}
         _STATE_MUTATION_LOCAL.entries = entries
     return entries
+
+
+def _active_state_lock_entry() -> dict[str, object] | None:
+    entries = _state_lock_entries()
+    if len(entries) != 1:
+        return None
+    return next(iter(entries.values()))
+
+
+def _guard_mutation_effect_before_replace(state_fd: int, target: str) -> None:
+    """Lock the currently named legacy authority and repeat target CAS at commit."""
+    entry = _active_state_lock_entry()
+    if entry is None:
+        return
+    guard = entry.get("effect_guard")
+    if not isinstance(guard, dict) or guard.get("target") != target:
+        return
+    held_lock_fd = entry.get("lock_fd")
+    if not isinstance(held_lock_fd, int):
+        raise RuntimeError("state mutation lock descriptor is invalid")
+    held = os.fstat(held_lock_fd)
+    held_identity = (held.st_dev, held.st_ino)
+    try:
+        named = os.stat(
+            "protocol-mutation.lock",
+            dir_fd=state_fd,
+            follow_symlinks=False,
+        )
+    except OSError as exc:
+        raise ValueError("protocol mutation lock changed during state mutation") from exc
+    named_identity = (named.st_dev, named.st_ino)
+    authority_changed = named_identity != held_identity
+    authority_fd = held_lock_fd
+    if authority_changed:
+        replacement_fd = _open_retained_regular_at(
+            state_fd,
+            "protocol-mutation.lock",
+            error="protocol mutation lock changed during state mutation",
+        )
+        if replacement_fd is None:
+            raise ValueError("protocol mutation lock changed during state mutation")
+        try:
+            fcntl.flock(replacement_fd, fcntl.LOCK_EX)
+            _verify_regular_file_at(
+                state_fd,
+                "protocol-mutation.lock",
+                replacement_fd,
+                error="protocol mutation lock changed during state mutation",
+            )
+        except BaseException:
+            os.close(replacement_fd)
+            raise
+        guard["replacement_lock_fd"] = replacement_fd
+        authority_fd = replacement_fd
+    _verify_regular_file_at(
+        state_fd,
+        "protocol-mutation.lock",
+        authority_fd,
+        error="protocol mutation lock changed during state mutation",
+    )
+    maximum = guard.get("max_bytes")
+    max_bytes = maximum if isinstance(maximum, int) else None
+    limit_error = guard.get("limit_error")
+    if not isinstance(limit_error, str):
+        limit_error = "state mutation target exceeds size limit"
+    current = _named_regular_snapshot_at(
+        state_fd,
+        target,
+        max_bytes=max_bytes,
+        limit_error=limit_error,
+    )
+    expected_source = guard.get("source")
+    expected_identity = guard.get("identity")
+    expected = (
+        None
+        if expected_identity is None
+        else (expected_source, expected_identity)
+    )
+    if current != expected:
+        raise ValueError("protocol mutation lock changed during state mutation")
+    _verify_regular_file_at(
+        state_fd,
+        "protocol-mutation.lock",
+        authority_fd,
+        error="protocol mutation lock changed during state mutation",
+    )
+    if authority_changed:
+        raise ValueError("protocol mutation lock changed during state mutation")
+
+
+def _release_effect_guard(entry: dict[str, object]) -> None:
+    guard = entry.pop("effect_guard", None)
+    if not isinstance(guard, dict):
+        return
+    replacement_fd = guard.get("replacement_lock_fd")
+    if isinstance(replacement_fd, int):
+        try:
+            fcntl.flock(replacement_fd, fcntl.LOCK_UN)
+        finally:
+            os.close(replacement_fd)
 
 
 def _open_migration_directory(parent_fd: int, name: str) -> int:
@@ -2715,6 +2817,15 @@ class StateStore:
             )
         )
         installed = source + encoded
+        if "effect_guard" in entry:
+            raise RuntimeError("state mutation effect guard is already active")
+        entry["effect_guard"] = {
+            "target": "events.jsonl",
+            "source": None if displaced_fd is None else source,
+            "identity": displaced_identity,
+            "max_bytes": _EVENT_JOURNAL_MAX_BYTES,
+            "limit_error": "event journal exceeds size limit",
+        }
         try:
             try:
                 self._verify_current_mutation_anchor()
@@ -2743,8 +2854,11 @@ class StateStore:
                     )
                 raise
         finally:
-            if displaced_fd is not None:
-                os.close(displaced_fd)
+            try:
+                _release_effect_guard(entry)
+            finally:
+                if displaced_fd is not None:
+                    os.close(displaced_fd)
 
     def append_event(self, event: EventRecord) -> None:
         encoded = (
@@ -4056,6 +4170,13 @@ class StateStore:
             None if displaced_fd is None else _read_retained_bytes(displaced_fd)
         )
         expected_install = _encoded_state(state)
+        if "effect_guard" in entry:
+            raise RuntimeError("state mutation effect guard is already active")
+        entry["effect_guard"] = {
+            "target": "state.json",
+            "source": displaced_source,
+            "identity": displaced_identity,
+        }
         try:
             try:
                 self._verify_current_mutation_anchor()
@@ -4089,8 +4210,11 @@ class StateStore:
                     )
                 raise
         finally:
-            if displaced_fd is not None:
-                os.close(displaced_fd)
+            try:
+                _release_effect_guard(entry)
+            finally:
+                if displaced_fd is not None:
+                    os.close(displaced_fd)
         self._remember_loaded_state(
             state,
             "sha256:" + hashlib.sha256(installed).hexdigest(),
