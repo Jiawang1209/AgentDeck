@@ -24,6 +24,7 @@ from .leader_gateway import (
     LeaderGateway,
     LeaderGatewayError,
     LeaderRequest,
+    leader_gateway_diagnostics,
 )
 from .lifecycle import validate_conversation_history
 from .models import (
@@ -477,7 +478,7 @@ class ConversationSession:
             state = self.store.load()
             bindings = state.get("agents") if isinstance(state, dict) else None
             if not isinstance(bindings, dict):
-                raise LeaderGatewayError("schema")
+                raise LeaderGatewayError("schema", "authority_invalid")
             selection = select_mission_agents(
                 self.config,
                 requested_agent_ids=requested_agent_ids,
@@ -485,13 +486,13 @@ class ConversationSession:
                 bindings=bindings,
             )
             if selection.blockers or len(selection.agents) < 2:
-                raise LeaderGatewayError("schema")
+                raise LeaderGatewayError("schema", "authority_invalid")
             selected = tuple(agent.agent_id for agent in selection.agents)
             planning_config = replace(self.config, agents=selection.agents)
             try:
                 step_count = requested_mission_step_count(text, default=2)
             except ValueError:
-                raise LeaderGatewayError("schema") from None
+                raise LeaderGatewayError("schema", "authority_invalid") from None
             planning_task = mission_planning_task(
                 text,
                 selected_agent_ids=selected,
@@ -586,6 +587,7 @@ class ConversationSession:
             return ConversationResponse("mission_preview", payload)
         except LeaderGatewayError as error:
             state = "cancelled" if error.stage == "cancelled" else "failed"
+            diagnostics = leader_gateway_diagnostics(error)
             durable_turn_state = self._durable_turn_state(turn_id)
             if durable_turn_state != "waiting_leader":
                 return self._durable_leader_fail_stop(turn_id, durable_turn_state)
@@ -604,7 +606,12 @@ class ConversationSession:
                                 self._transition("conversation", self.conversation_id, "busy", "ready", "leader_turn_terminal"),
                             )
                         },
-                        events=(EventRecord.create("conversation_turn_terminal", {"conversation_id": self.conversation_id, "turn_id": turn_id, "state": state, "stage": error.stage}),),
+                        events=(EventRecord.create("conversation_turn_terminal", {
+                            "conversation_id": self.conversation_id,
+                            "turn_id": turn_id,
+                            "state": state,
+                            **diagnostics,
+                        }),),
                     )
                 )
             except Exception:
@@ -615,7 +622,7 @@ class ConversationSession:
                 state,
                 {
                     "blocker": f"Leader planning failed at stage: {error.stage}",
-                    "stage": error.stage,
+                    **diagnostics,
                 },
             )
 

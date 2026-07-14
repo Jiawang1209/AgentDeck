@@ -9,10 +9,28 @@ from agentdeck.config import load_config, write_default_config
 from agentdeck.conversation.leader_gateway import LeaderGatewayError
 from agentdeck.conversation.session import ConversationSession
 from agentdeck.mission_orchestration import LeaderMissionCandidate
+from agentdeck.providers import LeaderPlanRequest
+from agentdeck.providers.plan_schema import build_leader_generation_provenance
 from agentdeck.state import StateStore
 
 
 MESSAGE = "让 Codex 和 Claude 一人一句接龙百家姓，共2轮"
+
+
+def _generation(request) -> dict[str, object]:
+    return build_leader_generation_provenance(
+        request=LeaderPlanRequest(
+            task=request.planning_task,
+            config=request.config,
+            model=request.config.leader.model,
+            skill_context=request.skill_context,
+            selected_agent_ids=request.selected_agent_ids,
+            step_count=request.step_count,
+            timeout_seconds=request.timeout_seconds,
+        ),
+        provider=request.config.leader.provider,
+        constraint_mode="local",
+    )
 
 
 def _plan() -> dict[str, object]:
@@ -68,6 +86,7 @@ class _Gateway:
             timeout_seconds=request.timeout_seconds,
             selected_agent_ids=request.selected_agent_ids,
             step_count=request.step_count,
+            leader_generation=_generation(request),
         )
 
 
@@ -212,6 +231,9 @@ def test_candidate_landing_failure_terminalizes_turn_instead_of_leaving_waiting(
     assert response.payload == {
         "blocker": "Leader planning failed at stage: schema",
         "stage": "schema",
+        "diagnostic_code": None,
+        "attempt_count": 0,
+        "constraint_mode": "prompt_only",
     }
     assert store.project_view(config).conversation["latest_turn_state"] == "failed"
     assert store.all_events()[-1]["payload"]["stage"] == "schema"
@@ -457,6 +479,7 @@ def test_session_freezes_shared_parser_count_for_chinese_step_phrases(
                 timeout_seconds=request.timeout_seconds,
                 selected_agent_ids=request.selected_agent_ids,
                 step_count=request.step_count,
+                leader_generation=_generation(request),
             )
 
     monkeypatch.setattr(

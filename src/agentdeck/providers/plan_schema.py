@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from agentdeck.models import ProjectConfig
 
@@ -160,6 +160,64 @@ def build_leader_generation_provenance(
         "selected_agent_ids": list(selected_agent_ids),
         "step_count": step_count,
     }
+
+
+def _exact_json_value(left: object, right: object) -> bool:
+    if type(left) is not type(right):
+        return False
+    if type(left) is dict:
+        left_dict = cast(dict[object, object], left)
+        right_dict = cast(dict[object, object], right)
+        return (
+            len(left_dict) == len(right_dict)
+            and all(type(key) is str and key in right_dict for key in left_dict)
+            and all(
+                _exact_json_value(value, right_dict[key])
+                for key, value in left_dict.items()
+            )
+        )
+    if type(left) is list:
+        left_list = cast(list[object], left)
+        right_list = cast(list[object], right)
+        return len(left_list) == len(right_list) and all(
+            _exact_json_value(left_item, right_item)
+            for left_item, right_item in zip(left_list, right_list)
+        )
+    return type(left) in {str, int, bool, type(None)} and left == right
+
+
+def validate_leader_generation_provenance(
+    *,
+    request: LeaderPlanRequest,
+    provider: str,
+    provenance: object,
+) -> dict[str, object]:
+    """Reconstruct and exactly validate compact generation provenance."""
+    if type(provenance) is not dict:
+        raise ValueError("leader generation provenance is invalid")
+    candidate = cast(dict[object, object], provenance)
+    constraint_mode = candidate.get("constraint_mode")
+    attempt_count = candidate.get("attempt_count")
+    if type(constraint_mode) is not str or type(attempt_count) is not int:
+        raise ValueError("leader generation provenance is invalid")
+    schema = (
+        build_leader_plan_schema(request)
+        if constraint_mode == "native_json_schema"
+        else None
+    )
+    try:
+        expected = build_leader_generation_provenance(
+            request=request,
+            provider=provider,
+            constraint_mode=constraint_mode,
+            schema=schema,
+            attempt_count=attempt_count,
+        )
+    except (ProviderPlanValidationError, TypeError, ValueError):
+        raise ValueError("leader generation provenance is invalid") from None
+    if not _exact_json_value(provenance, expected):
+        raise ValueError("leader generation provenance is invalid")
+    return expected
 
 
 def _validate_explicit_authority(

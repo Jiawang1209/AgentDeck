@@ -1,43 +1,17 @@
 from __future__ import annotations
 
 from dataclasses import asdict
-from typing import Any, cast
+from typing import Any
 
 from agentdeck.models import ProjectConfig
 from agentdeck.providers import LeaderPlanRequest, LeaderPlanResult, LeaderProvider
 from agentdeck.providers.plan_schema import (
     ProviderPlanValidationError,
     build_leader_generation_provenance,
-    build_leader_plan_schema,
     leader_plan_authority,
+    validate_leader_generation_provenance,
     validate_provider_plan_schema,
 )
-
-
-def _exact_json_value(left: object, right: object) -> bool:
-    if type(left) is not type(right):
-        return False
-    if type(left) is dict:
-        left_dict = cast(dict[object, object], left)
-        right_dict = cast(dict[object, object], right)
-        if len(left_dict) != len(right_dict):
-            return False
-        if any(type(key) is not str or key not in right_dict for key in left_dict):
-            return False
-        return all(
-            _exact_json_value(value, right_dict[key])
-            for key, value in left_dict.items()
-        )
-    if type(left) is list:
-        left_list = cast(list[object], left)
-        right_list = cast(list[object], right)
-        return len(left_list) == len(right_list) and all(
-            _exact_json_value(left_item, right_item)
-            for left_item, right_item in zip(left_list, right_list)
-        )
-    if type(left) in {str, int, bool, type(None)}:
-        return left == right
-    return False
 
 
 def _invalid_native_provenance() -> ProviderPlanValidationError:
@@ -118,29 +92,14 @@ class LeaderOrchestrator:
                 step_count=resolved_step_count,
             )
             provenance = result.leader_generation
-            if type(provenance) is not dict:
-                raise _invalid_native_provenance()
-            constraint_mode = provenance.get("constraint_mode")
-            attempt_count = provenance.get("attempt_count")
-            if type(constraint_mode) is not str or type(attempt_count) is not int:
-                raise _invalid_native_provenance()
-            schema = (
-                build_leader_plan_schema(request)
-                if constraint_mode == "native_json_schema"
-                else None
-            )
             try:
-                expected_provenance = build_leader_generation_provenance(
+                expected_provenance = validate_leader_generation_provenance(
                     request=request,
                     provider=self.provider.name,
-                    constraint_mode=constraint_mode,
-                    schema=schema,
-                    attempt_count=attempt_count,
+                    provenance=provenance,
                 )
             except (ProviderPlanValidationError, TypeError, ValueError):
                 raise _invalid_native_provenance() from None
-            if not _exact_json_value(provenance, expected_provenance):
-                raise _invalid_native_provenance()
             return LeaderPlanResult(
                 plan=plan,
                 leader_generation=expected_provenance,

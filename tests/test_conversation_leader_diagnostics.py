@@ -19,6 +19,7 @@ from agentdeck.mission_orchestration import LeaderMissionCandidate
 from agentdeck.models import AgentSpec
 from agentdeck.providers import LeaderPlanRequest
 from agentdeck.providers.cli_subprocess import CliLeaderProviderError, CodexCliProvider
+from agentdeck.providers.plan_schema import build_leader_generation_provenance
 from agentdeck.state import StateStore
 
 
@@ -171,15 +172,106 @@ def test_session_immediately_surfaces_durable_leader_terminal_stage(
     assert response.payload == {
         "blocker": f"Leader planning failed at stage: {stage}",
         "stage": stage,
+        "diagnostic_code": None,
+        "attempt_count": 0,
+        "constraint_mode": "prompt_only",
     }
     assert store.project_view(config).conversation["latest_turn_state"] == terminal
     event = store.all_events()[-1]
     assert event["event_type"] == "conversation_turn_terminal"
-    assert event["payload"]["state"] == terminal
-    assert event["payload"]["stage"] == stage
+    assert event["payload"] == {
+        "conversation_id": event["payload"]["conversation_id"],
+        "turn_id": event["payload"]["turn_id"],
+        "state": terminal,
+        "stage": stage,
+        "diagnostic_code": None,
+        "attempt_count": 0,
+        "constraint_mode": "prompt_only",
+    }
+    state = store.load()
+    for key in (
+        "plans",
+        "missions",
+        "mission_attempts",
+        "protocol_sessions",
+        "messages",
+        "jobs",
+        "inboxes",
+        "artifacts",
+        "approvals",
+    ):
+        assert state.get(key, []) == []
     persisted = json.dumps(store.load(), ensure_ascii=False)
     assert "Traceback" not in persisted
     assert "exception" not in persisted.lower()
+
+
+def test_session_persists_exact_safe_cli_diagnostics_without_retryable(
+    tmp_path: Path,
+) -> None:
+    config, store = _project(tmp_path)
+
+    class FailedGateway:
+        def generate_mission(self, _request, _cancel):
+            raise LeaderGatewayError(
+                "schema",
+                "role_mismatch",
+                attempt_count=2,
+                constraint_mode="native_json_schema",
+            )
+
+    response = ConversationSession(
+        root=tmp_path,
+        config=config,
+        store=store,
+        leader_gateway=FailedGateway(),
+    ).handle("让 planner 和 reviewer 协作完成任务，共2轮")
+
+    assert response.payload == {
+        "blocker": "Leader planning failed at stage: schema",
+        "stage": "schema",
+        "diagnostic_code": "role_mismatch",
+        "attempt_count": 2,
+        "constraint_mode": "native_json_schema",
+    }
+    event = store.all_events()[-1]
+    assert set(event["payload"]) == {
+        "conversation_id",
+        "turn_id",
+        "state",
+        "stage",
+        "diagnostic_code",
+        "attempt_count",
+        "constraint_mode",
+    }
+    assert "retryable" not in json.dumps(store.load(), ensure_ascii=False)
+
+
+def test_session_rejects_invalid_authority_before_gateway_call(tmp_path: Path) -> None:
+    config, store = _project(tmp_path)
+    calls = 0
+
+    class RecordingGateway:
+        def generate_mission(self, _request, _cancel):
+            nonlocal calls
+            calls += 1
+            raise AssertionError("gateway must not be called")
+
+    response = ConversationSession(
+        root=tmp_path,
+        config=config,
+        store=store,
+        leader_gateway=RecordingGateway(),
+    ).handle("让 missing-worker 和 planner 协作完成任务，共2轮")
+
+    assert calls == 0
+    assert response.payload == {
+        "blocker": "Leader planning failed at stage: schema",
+        "stage": "schema",
+        "diagnostic_code": "authority_invalid",
+        "attempt_count": 0,
+        "constraint_mode": "prompt_only",
+    }
 
 
 def test_conversation_leader_receives_only_uniquely_requested_workers(
@@ -207,6 +299,19 @@ def test_conversation_leader_receives_only_uniquely_requested_workers(
                 timeout_seconds=request.timeout_seconds,
                 selected_agent_ids=request.selected_agent_ids,
                 step_count=request.step_count,
+                leader_generation=build_leader_generation_provenance(
+                    request=LeaderPlanRequest(
+                        task=request.planning_task,
+                        config=request.config,
+                        model=request.config.leader.model,
+                        skill_context=request.skill_context,
+                        selected_agent_ids=request.selected_agent_ids,
+                        step_count=request.step_count,
+                        timeout_seconds=request.timeout_seconds,
+                    ),
+                    provider=request.config.leader.provider,
+                    constraint_mode="local",
+                ),
             )
 
     monkeypatch.setattr(

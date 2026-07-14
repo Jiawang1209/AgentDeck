@@ -40,9 +40,12 @@ from .models import (
 )
 from .conversation.models import ConversationMutation
 from .orchestration.leader import LeaderOrchestrator
-from .providers import LeaderProvider
+from .providers import LeaderPlanRequest, LeaderProvider
 from .providers.base import validate_provider_plan_schema
-from .providers.plan_schema import ProviderPlanValidationError
+from .providers.plan_schema import (
+    ProviderPlanValidationError,
+    validate_leader_generation_provenance,
+)
 from .state import StateStore
 from .state import (
     build_execution_snapshot_authority,
@@ -201,6 +204,7 @@ class LeaderMissionCandidate:
     timeout_seconds: int
     selected_agent_ids: tuple[str, ...] | None = None
     step_count: int | None = None
+    leader_generation: dict[str, object] | None = None
 
 
 _CHINESE_COUNT_DIGITS = {
@@ -597,6 +601,8 @@ def create_mission_preview_from_candidate(
         raise ValueError("mission retry limit must be non-negative")
     if (candidate.selected_agent_ids is None) != (candidate.step_count is None):
         raise MissionPreviewError("mission preview candidate authority invalid")
+    if candidate.selected_agent_ids is None and candidate.leader_generation is not None:
+        raise MissionPreviewError("mission preview generation invalid")
     if candidate.step_count is not None and (
         type(candidate.step_count) is not int
         or candidate.step_count < 2
@@ -622,6 +628,24 @@ def create_mission_preview_from_candidate(
         if candidate.step_count is not None
         else requested_mission_step_count(candidate.user_message, default=8)
     )
+    leader_generation: dict[str, object] | None = None
+    if candidate.selected_agent_ids is not None:
+        try:
+            leader_generation = validate_leader_generation_provenance(
+                request=LeaderPlanRequest(
+                    task=candidate.user_message,
+                    config=selected_config,
+                    model=candidate.model,
+                    skill_context=skill_context,
+                    selected_agent_ids=candidate.selected_agent_ids,
+                    step_count=candidate.step_count,
+                    timeout_seconds=candidate.timeout_seconds,
+                ),
+                provider=provider,
+                provenance=candidate.leader_generation,
+            )
+        except Exception:
+            raise MissionPreviewError("mission preview generation invalid") from None
     try:
         raw_plan = deepcopy(candidate.plan)
         validate_provider_plan_schema(raw_plan, config=selected_config)
@@ -672,6 +696,7 @@ def create_mission_preview_from_candidate(
         candidate.model,
         plan,
         skill_context=skill_context,
+        leader_generation=leader_generation,
     )
     plan_hash = canonical_workflow_plan_hash(plan_record)
     mission = store.build_mission_record(
@@ -839,7 +864,7 @@ def create_mission_preview(
     except Exception:
         raise MissionPreviewError("mission preview state invalid") from None
     try:
-        plan = LeaderOrchestrator(selected_config, provider).plan(
+        result = LeaderOrchestrator(selected_config, provider).plan_result(
             mission_planning_task(
                 user_message,
                 selected_agent_ids=selected_agent_ids,
@@ -855,6 +880,8 @@ def create_mission_preview(
         raise MissionPreviewError("mission preview plan invalid") from None
     except Exception:
         raise MissionPreviewError("mission preview provider failed") from None
+    leader_generation = deepcopy(result.leader_generation)
+    leader_generation["provider"] = canonical_provider
     return create_mission_preview_from_candidate(
         config=config,
         store=store,
@@ -862,10 +889,11 @@ def create_mission_preview(
             provider=canonical_provider,
             model=config.leader.model,
             user_message=user_message,
-            plan=plan,
+            plan=result.plan,
             timeout_seconds=timeout_seconds,
             selected_agent_ids=selected_agent_ids,
             step_count=step_count,
+            leader_generation=leader_generation,
         ),
         retry_limit=retry_limit,
     )

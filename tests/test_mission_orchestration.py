@@ -13,7 +13,10 @@ import pytest
 from agentdeck.config import load_config, write_default_config
 from agentdeck.contracts import validate_mission_preview_contract
 from agentdeck.mission_orchestration import (
+    LeaderMissionCandidate,
+    MissionPreviewError,
     create_mission_preview,
+    create_mission_preview_from_candidate,
     interrupt_mission,
     mission_status_payload,
     resume_mission,
@@ -22,6 +25,11 @@ from agentdeck.mission_orchestration import (
 )
 from agentdeck.runtime.readiness import WorkerReadiness, WorkerReadinessBatch
 from agentdeck.providers import LeaderPlanRequest
+from agentdeck.providers.plan_schema import (
+    build_leader_generation_provenance,
+    build_leader_plan_schema,
+)
+from agentdeck.mission_authority import canonical_workflow_plan_hash
 from agentdeck.state import StateStore
 
 
@@ -868,6 +876,217 @@ def test_create_preview_selects_workers_freezes_serial_plan_and_never_touches_ru
         "mission_preview_created"
     ]
     assert root.exists()
+
+
+def _candidate_generation(config, *, mode: str = "local", attempt_count: int = 1):
+    request = LeaderPlanRequest(
+            task="mission",
+            config=config,
+            model=config.leader.model,
+            selected_agent_ids=("planner", "reviewer"),
+            step_count=8,
+            timeout_seconds=180,
+        )
+    return build_leader_generation_provenance(
+        request=request,
+        provider="fake",
+        constraint_mode=mode,
+        schema=build_leader_plan_schema(request) if mode == "native_json_schema" else None,
+        attempt_count=attempt_count,
+    )
+
+
+def test_candidate_generation_is_validated_and_deep_copied_into_plan(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _root, config, store, _path = project(tmp_path)
+    monkeypatch.setattr(
+        "agentdeck.mission_orchestration.shutil.which",
+        lambda command: f"/bin/{command}",
+    )
+    generation = _candidate_generation(config)
+    preview = create_mission_preview_from_candidate(
+        config=config,
+        store=store,
+        candidate=LeaderMissionCandidate(
+            provider="fake",
+            model=config.leader.model,
+            user_message=MESSAGE,
+            plan=eight_step_plan(),
+            timeout_seconds=180,
+            selected_agent_ids=("planner", "reviewer"),
+            step_count=8,
+            leader_generation=generation,
+        ),
+    )
+
+    stored = store.plan_by_id(preview["plan_id"])
+    assert stored["leader_generation"] == generation
+    assert stored["leader_generation"] is not generation
+    generation["selected_agent_ids"] = ["spoofed"]
+    assert stored["leader_generation"]["selected_agent_ids"] == [
+        "planner",
+        "reviewer",
+    ]
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        lambda value: None,
+        lambda value: {key: item for key, item in value.items() if key != "provider"},
+        lambda value: {**value, "extra": "spoofed"},
+        lambda value: {**value, "provider": "spoofed"},
+        lambda value: {**value, "model": "spoofed"},
+        lambda value: {**value, "selected_agent_ids": ["reviewer", "planner"]},
+        lambda value: {**value, "selected_agent_ids": ["planner", "spoofed"]},
+        lambda value: {**value, "step_count": True},
+        lambda value: {**value, "step_count": 7},
+        lambda value: {**value, "constraint_mode": "hostile"},
+        lambda value: {**value, "constraint_mode": "native_json_schema"},
+        lambda value: {**value, "attempt_count": True},
+        lambda value: {**value, "attempt_count": 0},
+        lambda value: {**value, "regeneration_used": True},
+        lambda value: {**value, "schema_version": "leader-plan/v1"},
+        lambda value: {**value, "schema_hash": "sha256:" + "0" * 64},
+    ],
+)
+def test_invalid_candidate_generation_rejects_before_domain_writes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    mutation,
+) -> None:
+    _root, config, store, _path = project(tmp_path)
+    monkeypatch.setattr(
+        "agentdeck.mission_orchestration.shutil.which",
+        lambda command: f"/bin/{command}",
+    )
+    generation = mutation(_candidate_generation(config))
+
+    with pytest.raises(
+        MissionPreviewError, match="^mission preview generation invalid$"
+    ):
+        create_mission_preview_from_candidate(
+            config=config,
+            store=store,
+            candidate=LeaderMissionCandidate(
+                provider="fake",
+                model=config.leader.model,
+                user_message=MESSAGE,
+                plan=eight_step_plan(),
+                timeout_seconds=180,
+                selected_agent_ids=("planner", "reviewer"),
+                step_count=8,
+                leader_generation=generation,
+            ),
+        )
+
+    state = store.load()
+    assert state["plans"] == []
+    assert state.get("missions", []) == []
+
+
+@pytest.mark.parametrize(
+    ("mode", "attempt_count"),
+    [("local", 1), ("json_object", 1), ("prompt_only", 1), ("native_json_schema", 2)],
+)
+def test_candidate_landing_accepts_exact_constraint_provenance(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    mode: str,
+    attempt_count: int,
+) -> None:
+    _root, config, store, _path = project(tmp_path)
+    monkeypatch.setattr(
+        "agentdeck.mission_orchestration.shutil.which",
+        lambda command: f"/bin/{command}",
+    )
+    generation = _candidate_generation(
+        config, mode=mode, attempt_count=attempt_count
+    )
+    preview = create_mission_preview_from_candidate(
+        config=config,
+        store=store,
+        candidate=LeaderMissionCandidate(
+            provider="fake",
+            model=config.leader.model,
+            user_message=MESSAGE,
+            plan=eight_step_plan(),
+            timeout_seconds=180,
+            selected_agent_ids=("planner", "reviewer"),
+            step_count=8,
+            leader_generation=generation,
+        ),
+    )
+    assert store.plan_by_id(preview["plan_id"])["leader_generation"] == generation
+
+
+def test_legacy_candidate_and_plan_hash_remain_compatible(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _root, config, store, _path = project(tmp_path)
+    monkeypatch.setattr(
+        "agentdeck.mission_orchestration.shutil.which",
+        lambda command: f"/bin/{command}",
+    )
+    preview = create_mission_preview_from_candidate(
+        config=config,
+        store=store,
+        candidate=LeaderMissionCandidate(
+            provider="fake",
+            model=config.leader.model,
+            user_message=MESSAGE,
+            plan=eight_step_plan(),
+            timeout_seconds=180,
+        ),
+    )
+    record = store.plan_by_id(preview["plan_id"])
+    assert "leader_generation" not in record
+    with_generation = dict(record)
+    with_generation["leader_generation"] = _candidate_generation(config)
+    assert canonical_workflow_plan_hash(record) == canonical_workflow_plan_hash(
+        with_generation
+    )
+
+
+def test_generation_without_frozen_authority_is_rejected(tmp_path: Path) -> None:
+    _root, config, store, _path = project(tmp_path)
+    with pytest.raises(
+        MissionPreviewError, match="^mission preview generation invalid$"
+    ):
+        create_mission_preview_from_candidate(
+            config=config,
+            store=store,
+            candidate=LeaderMissionCandidate(
+                provider="fake",
+                model=config.leader.model,
+                user_message=MESSAGE,
+                plan=eight_step_plan(),
+                timeout_seconds=180,
+                leader_generation=_candidate_generation(config),
+            ),
+        )
+    assert store.load()["plans"] == []
+
+
+def test_direct_preview_persists_orchestrator_generation_provenance(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _root, config, store, _path = project(tmp_path)
+    monkeypatch.setattr(
+        "agentdeck.mission_orchestration.shutil.which",
+        lambda command: f"/bin/{command}",
+    )
+    preview = create_mission_preview(
+        config=config,
+        store=store,
+        provider=RecordingProvider(),
+        user_message=MESSAGE,
+        timeout_seconds=180,
+    )
+    assert store.plan_by_id(preview["plan_id"])["leader_generation"] == (
+        _candidate_generation(config)
+    )
 
 
 def test_create_preview_preserves_compact_loaded_leader_skill_context(tmp_path, monkeypatch) -> None:

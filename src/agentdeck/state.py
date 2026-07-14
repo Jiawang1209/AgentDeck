@@ -8233,8 +8233,9 @@ class StateStore:
         model: str,
         plan: dict[str, Any],
         skill_context: dict[str, Any] | None = None,
+        leader_generation: dict[str, object] | None = None,
     ) -> dict[str, Any]:
-        return {
+        record = {
             "plan_id": new_id("pln"),
             "task": task,
             "provider": provider,
@@ -8250,6 +8251,9 @@ class StateStore:
             "plan": copy.deepcopy(plan),
             "created_at": utc_now(),
         }
+        if leader_generation is not None:
+            record["leader_generation"] = copy.deepcopy(leader_generation)
+        return record
 
     def list_plans(self) -> list[dict[str, Any]]:
         return list(self.load().get("plans", []))

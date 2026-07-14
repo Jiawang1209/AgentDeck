@@ -16,6 +16,7 @@ from agentdeck.conversation.leader_gateway import (
 )
 from agentdeck.orchestration.leader import LeaderOrchestrator
 from agentdeck.providers import LeaderPlanRequest, LeaderPlanResult
+from agentdeck.providers.cli_subprocess import CliLeaderProviderError
 from agentdeck.providers.plan_schema import (
     ProviderPlanValidationError,
     build_leader_generation_provenance,
@@ -226,6 +227,93 @@ def test_gateway_generates_candidate_through_exact_provider_once(tmp_path: Path)
     assert candidate.plan["goal"] == "demo"
     assert candidate.selected_agent_ids == ("planner", "reviewer")
     assert candidate.step_count == 2
+    assert candidate.leader_generation == {
+        "provider": "fake",
+        "model": "fake-plan",
+        "constraint_mode": "local",
+        "schema_version": None,
+        "schema_hash": None,
+        "attempt_count": 1,
+        "regeneration_used": False,
+        "selected_agent_ids": ["planner", "reviewer"],
+        "step_count": 2,
+    }
+
+
+def test_gateway_copies_only_safe_cli_diagnostics(tmp_path: Path) -> None:
+    secret = "SECRET token=/Users/private/provider-output"
+    provider_error = CliLeaderProviderError(
+        "schema",
+        "role_mismatch",
+        attempt_count=2,
+        constraint_mode="native_json_schema",
+    )
+    provider_error.__cause__ = RuntimeError(secret)
+
+    class FailedProvider:
+        name = "codex-cli"
+
+        def plan_result(self, _request):
+            raise provider_error
+
+    base = _config(tmp_path)
+    config = replace(
+        base,
+        leader=replace(base.leader, provider="codex-cli", model="gpt-test"),
+    )
+    gateway = LeaderGateway(
+        provider_factory=lambda _name: FailedProvider(),
+        which=lambda _name: "/safe/codex",
+        leader_cli_probe=lambda _provider: (True, None),
+    )
+
+    with pytest.raises(LeaderGatewayError) as raised:
+        gateway.generate_mission(
+            LeaderRequest(
+                config,
+                secret,
+                secret,
+                180,
+                None,
+                ("planner", "reviewer"),
+                2,
+            ),
+            CancellationToken(),
+        )
+
+    error = raised.value
+    assert error.__dict__ == {
+        "stage": "schema",
+        "diagnostic_code": "role_mismatch",
+        "attempt_count": 2,
+        "constraint_mode": "native_json_schema",
+    }
+    rendered = repr(error) + repr(error.__dict__) + str(error)
+    assert secret not in rendered
+    assert error.__cause__ is None
+    assert error.__context__ is None
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"stage": True},
+        {"stage": "hostile"},
+        {"stage": "schema", "diagnostic_code": True},
+        {"stage": "schema", "diagnostic_code": "hostile"},
+        {"stage": "schema", "attempt_count": True},
+        {"stage": "schema", "attempt_count": -1},
+        {"stage": "schema", "attempt_count": 3},
+        {"stage": "schema", "constraint_mode": True},
+        {"stage": "schema", "constraint_mode": "hostile"},
+    ],
+)
+def test_gateway_error_rejects_invalid_safe_diagnostics_without_echo(
+    kwargs: dict[str, object],
+) -> None:
+    with pytest.raises(ValueError) as raised:
+        LeaderGatewayError(**kwargs)  # type: ignore[arg-type]
+    assert str(raised.value) == "invalid Leader Gateway diagnostics"
 
 
 def test_gateway_passes_frozen_authority_and_deadline_to_provider(tmp_path: Path) -> None:
@@ -263,6 +351,71 @@ def test_gateway_passes_frozen_authority_and_deadline_to_provider(tmp_path: Path
     assert seen[0].timeout_seconds == 180
     assert candidate.selected_agent_ids == seen[0].selected_agent_ids
     assert candidate.step_count == seen[0].step_count
+
+
+def test_gateway_carries_json_object_candidate_provenance(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    config = replace(
+        config,
+        leader=replace(config.leader, provider="deepseek", model="deepseek-chat"),
+    )
+    provider = _Provider()
+    provider.name = "deepseek"
+    provider.constraint_mode = "json_object"
+
+    candidate = LeaderGateway(
+        provider_factory=lambda _name: provider
+    ).generate_mission(
+        LeaderRequest(
+            config,
+            "mission",
+            "structured mission task",
+            180,
+            None,
+            selected_agent_ids=("planner", "reviewer"),
+            step_count=2,
+        ),
+        CancellationToken(),
+    )
+
+    assert candidate.leader_generation["provider"] == "deepseek"
+    assert candidate.leader_generation["constraint_mode"] == "json_object"
+    assert candidate.leader_generation["schema_hash"] is None
+
+
+def test_gateway_rejects_authority_before_provider_generation(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    calls = 0
+
+    class Provider:
+        name = "fake"
+
+        def plan(self, _request):
+            nonlocal calls
+            calls += 1
+            return _plan()
+
+    with pytest.raises(LeaderGatewayError) as raised:
+        LeaderGateway(provider_factory=lambda _name: Provider()).generate_mission(
+            LeaderRequest(
+                config,
+                "mission",
+                "structured mission task",
+                180,
+                None,
+                selected_agent_ids=("planner", "missing"),
+                step_count=2,
+            ),
+            CancellationToken(),
+        )
+
+    assert calls == 0
+    assert raised.value.__dict__ == {
+        "stage": "schema",
+        "diagnostic_code": "authority_invalid",
+        "attempt_count": 0,
+        "constraint_mode": "prompt_only",
+    }
 
 
 def test_gateway_uses_native_plan_result_once_without_legacy_fallback(tmp_path: Path) -> None:
@@ -311,6 +464,8 @@ def test_gateway_uses_native_plan_result_once_without_legacy_fallback(tmp_path: 
 
     assert provider.calls == 1
     assert candidate.plan["goal"] == "demo"
+    assert candidate.leader_generation["constraint_mode"] == "native_json_schema"
+    assert candidate.leader_generation["schema_version"] == "leader-plan/v1"
 
 
 @pytest.mark.parametrize(
@@ -655,12 +810,26 @@ def test_acp_leader_runs_new_prompt_and_returns_one_json_candidate(tmp_path: Pat
             json.dumps(_plan()),
             180,
             None,
+            selected_agent_ids=("planner", "reviewer"),
+            step_count=2,
         ),
         CancellationToken(),
     )
 
     assert candidate.provider == "claude-cli"
     assert candidate.plan["steps"][1]["agent_id"] == "reviewer"
+    assert candidate.leader_generation == {
+        "provider": "claude-cli",
+        "model": "claude-sonnet",
+        "constraint_mode": "prompt_only",
+        "schema_version": None,
+        "schema_hash": None,
+        "attempt_count": 1,
+        "regeneration_used": False,
+        "selected_agent_ids": ["planner", "reviewer"],
+        "step_count": 2,
+    }
+    assert json.dumps(candidate.leader_generation) not in json.dumps(_plan())
     assert provider_calls == []
 
 

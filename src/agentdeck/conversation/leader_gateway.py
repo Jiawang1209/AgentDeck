@@ -9,10 +9,17 @@ from typing import Callable
 from ..mission_orchestration import LeaderMissionCandidate
 from ..models import LeaderConfig, ProjectConfig
 from ..orchestration.leader import LeaderOrchestrator
-from ..providers import LeaderProvider, leader_provider
+from ..providers import LeaderPlanRequest, LeaderProvider, leader_provider
 from ..providers.cli_subprocess import (
     CliLeaderProviderError,
     cli_native_schema_ready,
+)
+from ..providers.plan_schema import (
+    LEADER_CONSTRAINT_MODES,
+    LEADER_PLAN_DIAGNOSTIC_CODES,
+    ProviderPlanValidationError,
+    build_leader_generation_provenance,
+    validate_provider_plan_schema,
 )
 from ..runtime.acp import AcpTransport
 from ..runtime.acp_client import AgentDeckAcpClient, PermissionDecision
@@ -44,16 +51,40 @@ LEADER_FAILURE_STAGES = frozenset(
 class LeaderGatewayError(RuntimeError):
     """A fixed-stage Leader failure safe for durable diagnostics."""
 
-    def __init__(self, stage: str) -> None:
+    def __init__(
+        self,
+        stage: str,
+        diagnostic_code: str | None = None,
+        *,
+        attempt_count: int = 0,
+        constraint_mode: str = "prompt_only",
+    ) -> None:
         legacy = {
             "Leader request cancelled": "cancelled",
             "Leader backend failed": "backend_failure",
             "ACP Leader backend failed": "acp_failure",
         }
-        normalized = legacy.get(stage, stage)
-        if normalized not in LEADER_FAILURE_STAGES:
-            normalized = "backend_failure"
+        normalized = legacy.get(stage, stage) if type(stage) is str else None
+        if (
+            normalized not in LEADER_FAILURE_STAGES
+            or (
+                diagnostic_code is not None
+                and (
+                    type(diagnostic_code) is not str
+                    or diagnostic_code not in LEADER_PLAN_DIAGNOSTIC_CODES
+                )
+            )
+            or type(attempt_count) is not int
+            or attempt_count < 0
+            or attempt_count > 2
+            or type(constraint_mode) is not str
+            or constraint_mode not in LEADER_CONSTRAINT_MODES
+        ):
+            raise ValueError("invalid Leader Gateway diagnostics")
         self.stage = normalized
+        self.diagnostic_code = diagnostic_code
+        self.attempt_count = attempt_count
+        self.constraint_mode = constraint_mode
         messages = {
             "cancelled": "Leader request cancelled",
             "backend_blocked": "Leader backend blocked",
@@ -63,6 +94,16 @@ class LeaderGatewayError(RuntimeError):
         super().__init__(
             messages.get(normalized, f"Leader planning failed at stage: {normalized}")
         )
+
+
+def leader_gateway_diagnostics(error: LeaderGatewayError) -> dict[str, object]:
+    """Project only the closed, credential-free durable diagnostic facts."""
+    return {
+        "stage": error.stage,
+        "diagnostic_code": error.diagnostic_code,
+        "attempt_count": error.attempt_count,
+        "constraint_mode": error.constraint_mode,
+    }
 
 
 class CancellationToken:
@@ -138,6 +179,16 @@ def _derived_backend(leader: LeaderConfig) -> tuple[str, str]:
     if leader.provider == "fake":
         return "api", "local"
     return "api", "http"
+
+
+def _constraint_mode(leader: LeaderConfig, transport: str) -> str:
+    if transport == "acp":
+        return "prompt_only"
+    if transport == "cli_subprocess":
+        return "native_json_schema"
+    if leader.provider == "fake" or transport == "local":
+        return "local"
+    return "json_object"
 
 
 class LeaderGateway:
@@ -249,14 +300,52 @@ class LeaderGateway:
         if status.readiness != "ready":
             raise LeaderGatewayError("backend_blocked")
         if status.transport == "acp":
+            acp_failure: LeaderGatewayError | None = None
             try:
                 plan = asyncio.run(self._generate_acp_plan(request))
-            except LeaderGatewayError:
-                raise
+                plan_request = LeaderPlanRequest(
+                    task=request.planning_task,
+                    config=request.config,
+                    model=request.config.leader.model,
+                    skill_context=request.skill_context,
+                    selected_agent_ids=request.selected_agent_ids,
+                    step_count=request.step_count,
+                    timeout_seconds=request.timeout_seconds,
+                )
+                plan = validate_provider_plan_schema(
+                    plan,
+                    config=request.config,
+                    selected_agent_ids=request.selected_agent_ids,
+                    step_count=request.step_count,
+                )
+                leader_generation = build_leader_generation_provenance(
+                    request=plan_request,
+                    provider=status.provider,
+                    constraint_mode="prompt_only",
+                )
+            except LeaderGatewayError as error:
+                acp_failure = LeaderGatewayError(
+                    error.stage,
+                    error.diagnostic_code,
+                    attempt_count=error.attempt_count,
+                    constraint_mode=error.constraint_mode,
+                )
+            except ProviderPlanValidationError as error:
+                acp_failure = LeaderGatewayError(
+                    "schema",
+                    error.code,
+                    attempt_count=1,
+                    constraint_mode="prompt_only",
+                )
             except Exception:
-                raise LeaderGatewayError("acp_failure") from None
+                acp_failure = LeaderGatewayError(
+                    "acp_failure", constraint_mode="prompt_only"
+                )
+            if acp_failure is not None:
+                raise acp_failure
         else:
-            gateway_failure: str | None = None
+            gateway_failure: LeaderGatewayError | None = None
+            mode = _constraint_mode(request.config.leader, status.transport)
             try:
                 provider = self._provider_factory(status.provider)
                 result = LeaderOrchestrator(request.config, provider).plan_result(
@@ -268,12 +357,29 @@ class LeaderGateway:
                     timeout_seconds=request.timeout_seconds,
                 )
                 plan = result.plan
+                leader_generation = result.leader_generation
             except CliLeaderProviderError as error:
-                gateway_failure = error.stage
+                gateway_failure = LeaderGatewayError(
+                    error.stage,
+                    error.diagnostic_code,
+                    attempt_count=error.attempt_count,
+                    constraint_mode=error.constraint_mode or mode,
+                )
+            except ProviderPlanValidationError as error:
+                gateway_failure = LeaderGatewayError(
+                    "schema",
+                    error.code,
+                    attempt_count=0 if error.code == "authority_invalid" else 1,
+                    constraint_mode=(
+                        "prompt_only" if error.code == "authority_invalid" else mode
+                    ),
+                )
             except Exception:
-                gateway_failure = "backend_failure"
+                gateway_failure = LeaderGatewayError(
+                    "backend_failure", constraint_mode=mode
+                )
             if gateway_failure is not None:
-                raise LeaderGatewayError(gateway_failure)
+                raise gateway_failure
         if cancel.cancelled:
             raise LeaderGatewayError("cancelled")
         try:
@@ -290,4 +396,5 @@ class LeaderGateway:
             timeout_seconds=request.timeout_seconds,
             selected_agent_ids=request.selected_agent_ids,
             step_count=request.step_count,
+            leader_generation=leader_generation,
         )
