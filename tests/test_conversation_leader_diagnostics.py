@@ -88,17 +88,24 @@ def test_cli_leader_failures_are_typed_stage_only_and_redacted(
             return subprocess.CompletedProcess(command, 17, stdout=secrets["stdout"], stderr=secrets["stderr"])
         if scenario == "json_parse":
             return subprocess.CompletedProcess(command, 0, stdout=secrets["stdout"], stderr="")
+        result_path = Path(command[command.index("--output-last-message") + 1])
         if scenario == "schema":
+            result_path.write_text(
+                json.dumps({"goal": secrets["prompt"], "summary": "bad", "steps": []}),
+                encoding="utf-8",
+            )
             return subprocess.CompletedProcess(
                 command,
                 0,
-                stdout=json.dumps({"goal": secrets["prompt"], "summary": "bad", "steps": []}),
+                stdout=secrets["stdout"],
                 stderr="",
             )
+        with result_path.open("wb") as output:
+            output.truncate(2 * 1024 * 1024 + 1)
         return subprocess.CompletedProcess(
             command,
             0,
-            stdout=secrets["stdout"] + "x" * (2 * 1024 * 1024),
+            stdout=secrets["stdout"],
             stderr="",
         )
 

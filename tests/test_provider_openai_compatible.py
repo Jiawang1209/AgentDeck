@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 import subprocess
 
 import pytest
@@ -116,6 +117,41 @@ def cli_plan_stdout() -> str:
             "dispatch_ready": False,
         }
     )
+
+
+def codex_plan_stdout() -> str:
+    plan = json.loads(cli_plan_stdout())
+    plan["steps"] = [
+        plan["steps"][0],
+        {
+            "step": 2,
+            "agent_id": "coder",
+            "role": "implementation",
+            "task": "Implement the work",
+            "risk": "requires human review before dispatch",
+            "requires_approval": True,
+        },
+        {
+            "step": 3,
+            "agent_id": "reviewer",
+            "role": "review",
+            "task": "Review the work",
+            "risk": "requires human review before dispatch",
+            "requires_approval": True,
+        },
+    ]
+    return json.dumps(plan)
+
+
+def write_codex_result(command: list[str], payload: str) -> Path:
+    assert "--output-schema" in command
+    assert "--output-last-message" in command
+    schema_path = Path(command[command.index("--output-schema") + 1])
+    result_path = Path(command[command.index("--output-last-message") + 1])
+    assert schema_path.exists()
+    assert not result_path.exists()
+    result_path.write_text(payload, encoding="utf-8")
+    return result_path
 
 
 def unsafe_control_flags_plan_stdout() -> str:
@@ -394,7 +430,7 @@ def test_legacy_provider_constraint_modes_match_transport_guarantees() -> None:
     assert leader_provider("fake").constraint_mode == "local"
     assert leader_provider("deepseek").constraint_mode == "json_object"
     assert leader_provider("openai-compatible").constraint_mode == "json_object"
-    assert leader_provider("codex-cli").constraint_mode == "prompt_only"
+    assert leader_provider("codex-cli").constraint_mode == "native_json_schema"
     assert leader_provider("claude-cli").constraint_mode == "prompt_only"
 
 
@@ -454,6 +490,7 @@ def test_codex_cli_provider_runs_non_interactive_command_and_parses_json_plan(
         seen["cwd"] = cwd
         seen["timeout"] = timeout
         seen["check"] = check
+        write_codex_result(command, codex_plan_stdout())
         return subprocess.CompletedProcess(command, 0, stdout=cli_plan_stdout(), stderr="")
 
     monkeypatch.setattr("agentdeck.providers.cli_subprocess.subprocess.run", fake_run)
@@ -464,7 +501,10 @@ def test_codex_cli_provider_runs_non_interactive_command_and_parses_json_plan(
 
     assert isinstance(provider, CodexCliProvider)
     assert provider.doctor() == (True, "codex is available")
-    assert seen["command"] == ["codex", "exec", "--sandbox", "read-only", "-"]
+    command = seen["command"]
+    assert command[:5] == ["codex", "exec", "--sandbox", "read-only", "--output-schema"]
+    assert command[-3] == "--output-last-message"
+    assert command[-1] == "-"
     assert "Return only a JSON object plan" in str(seen["input"])
     assert "You are the logical Leader Agent with agent_id=leader" in str(seen["input"])
     assert "Do not reuse worker tmux panes or claim a dedicated Leader pane" in str(seen["input"])
@@ -487,6 +527,7 @@ def test_codex_cli_provider_passes_requested_model_to_local_command(tmp_path, mo
 
     def fake_run(command, **_kwargs):
         seen["command"] = command
+        write_codex_result(command, codex_plan_stdout())
         return subprocess.CompletedProcess(command, 0, stdout=cli_plan_stdout(), stderr="")
 
     monkeypatch.setattr("agentdeck.providers.cli_subprocess.subprocess.run", fake_run)
@@ -494,15 +535,18 @@ def test_codex_cli_provider_passes_requested_model_to_local_command(tmp_path, mo
     provider = CodexCliProvider()
     provider.plan(LeaderPlanRequest(task="指定 Codex 模型", config=config, model="gpt-5-codex"))
 
-    assert seen["command"] == [
+    command = seen["command"]
+    assert command[:7] == [
         "codex",
         "--model",
         "gpt-5-codex",
         "exec",
         "--sandbox",
         "read-only",
-        "-",
+        "--output-schema",
     ]
+    assert command[-3] == "--output-last-message"
+    assert command[-1] == "-"
 
 
 def test_claude_cli_provider_runs_print_command_and_parses_json_plan(tmp_path, monkeypatch) -> None:
@@ -579,7 +623,7 @@ def test_cli_provider_extracts_fenced_json_plan_from_local_cli_output(tmp_path, 
 
     monkeypatch.setattr("agentdeck.providers.cli_subprocess.subprocess.run", fake_run)
 
-    provider = CodexCliProvider()
+    provider = ClaudeCliProvider()
     plan = provider.plan(LeaderPlanRequest(task="解析 CLI fenced JSON", config=config))
 
     assert plan["goal"] == "CLI Leader"
@@ -603,7 +647,7 @@ def test_cli_provider_rejects_multiple_fenced_json_plans(tmp_path, monkeypatch) 
 
     monkeypatch.setattr("agentdeck.providers.cli_subprocess.subprocess.run", fake_run)
 
-    provider = CodexCliProvider()
+    provider = ClaudeCliProvider()
 
     with pytest.raises(CliLeaderProviderError) as raised:
         provider.plan(LeaderPlanRequest(task="多个 JSON plan", config=config))
@@ -621,7 +665,7 @@ def test_cli_provider_normalizes_missing_plan_control_flags(tmp_path, monkeypatc
 
     monkeypatch.setattr("agentdeck.providers.cli_subprocess.subprocess.run", fake_run)
 
-    provider = CodexCliProvider()
+    provider = ClaudeCliProvider()
     plan = provider.plan(LeaderPlanRequest(task="归一化 CLI plan", config=config))
 
     assert plan["approval_required"] is True
@@ -641,7 +685,7 @@ def test_cli_provider_forces_approval_gates_when_provider_returns_unsafe_control
 
     monkeypatch.setattr("agentdeck.providers.cli_subprocess.subprocess.run", fake_run)
 
-    provider = CodexCliProvider()
+    provider = ClaudeCliProvider()
     plan = provider.plan(LeaderPlanRequest(task="收敛 CLI provider flags", config=config))
 
     assert plan["approval_required"] is True
@@ -659,7 +703,7 @@ def test_cli_provider_rejects_plan_steps_missing_required_schema_fields(tmp_path
 
     monkeypatch.setattr("agentdeck.providers.cli_subprocess.subprocess.run", fake_run)
 
-    provider = CodexCliProvider()
+    provider = ClaudeCliProvider()
 
     with pytest.raises(CliLeaderProviderError) as raised:
         provider.plan(LeaderPlanRequest(task="拒绝缺字段 CLI plan", config=config))
@@ -677,7 +721,7 @@ def test_cli_provider_rejects_plan_missing_required_top_level_fields(tmp_path, m
 
     monkeypatch.setattr("agentdeck.providers.cli_subprocess.subprocess.run", fake_run)
 
-    provider = CodexCliProvider()
+    provider = ClaudeCliProvider()
 
     with pytest.raises(CliLeaderProviderError) as raised:
         provider.plan(LeaderPlanRequest(task="拒绝缺顶层字段 CLI plan", config=config))
@@ -695,7 +739,7 @@ def test_cli_provider_rejects_blank_top_level_display_fields(tmp_path, monkeypat
 
     monkeypatch.setattr("agentdeck.providers.cli_subprocess.subprocess.run", fake_run)
 
-    provider = CodexCliProvider()
+    provider = ClaudeCliProvider()
 
     with pytest.raises(CliLeaderProviderError) as raised:
         provider.plan(LeaderPlanRequest(task="拒绝空 goal CLI plan", config=config))
@@ -713,7 +757,7 @@ def test_cli_provider_rejects_steps_for_unconfigured_agents(tmp_path, monkeypatc
 
     monkeypatch.setattr("agentdeck.providers.cli_subprocess.subprocess.run", fake_run)
 
-    provider = CodexCliProvider()
+    provider = ClaudeCliProvider()
 
     with pytest.raises(CliLeaderProviderError) as raised:
         provider.plan(LeaderPlanRequest(task="拒绝未知 agent CLI plan", config=config))
@@ -731,7 +775,7 @@ def test_cli_provider_rejects_non_positive_step_numbers(tmp_path, monkeypatch) -
 
     monkeypatch.setattr("agentdeck.providers.cli_subprocess.subprocess.run", fake_run)
 
-    provider = CodexCliProvider()
+    provider = ClaudeCliProvider()
 
     with pytest.raises(CliLeaderProviderError) as raised:
         provider.plan(LeaderPlanRequest(task="拒绝不可排序 CLI plan", config=config))
@@ -749,7 +793,7 @@ def test_cli_provider_rejects_duplicate_step_numbers(tmp_path, monkeypatch) -> N
 
     monkeypatch.setattr("agentdeck.providers.cli_subprocess.subprocess.run", fake_run)
 
-    provider = CodexCliProvider()
+    provider = ClaudeCliProvider()
 
     with pytest.raises(CliLeaderProviderError) as raised:
         provider.plan(LeaderPlanRequest(task="拒绝重复 step CLI plan", config=config))
@@ -772,7 +816,7 @@ def test_cli_provider_rejects_non_contiguous_step_numbers(tmp_path, monkeypatch)
 
     monkeypatch.setattr("agentdeck.providers.cli_subprocess.subprocess.run", fake_run)
 
-    provider = CodexCliProvider()
+    provider = ClaudeCliProvider()
 
     with pytest.raises(CliLeaderProviderError) as raised:
         provider.plan(LeaderPlanRequest(task="拒绝跳号 CLI plan", config=config))
@@ -790,7 +834,7 @@ def test_cli_provider_rejects_role_that_does_not_match_agent(tmp_path, monkeypat
 
     monkeypatch.setattr("agentdeck.providers.cli_subprocess.subprocess.run", fake_run)
 
-    provider = CodexCliProvider()
+    provider = ClaudeCliProvider()
 
     with pytest.raises(CliLeaderProviderError) as raised:
         provider.plan(LeaderPlanRequest(task="拒绝角色错配 CLI plan", config=config))
