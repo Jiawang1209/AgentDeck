@@ -1225,30 +1225,44 @@ def test_leader_plan_passes_model_to_codex_cli_backend_without_dispatching(
     root = prepare_project(tmp_path, monkeypatch)
     seen: dict[str, object] = {}
 
-    def fake_run(command, **_kwargs):
+    def fake_run(command, **kwargs):
         seen["command"] = command
-        return subprocess.CompletedProcess(
-            command,
-            0,
-            stdout=json.dumps(
+        seen["kwargs"] = kwargs
+        schema_path = Path(command[command.index("--output-schema") + 1])
+        result_path = Path(command[command.index("--output-last-message") + 1])
+        seen["schema"] = json.loads(schema_path.read_text(encoding="utf-8"))
+        result_path.write_text(
+            json.dumps(
                 {
                     "goal": "Codex CLI Leader",
                     "summary": "plan from codex cli",
                     "steps": [
                         {
-                            "step": 1,
-                            "agent_id": "planner",
-                            "role": "planning",
-                            "task": "Plan via local Codex CLI",
+                            "step": step,
+                            "agent_id": agent_id,
+                            "role": role,
+                            "task": f"Plan via local Codex CLI as {agent_id}",
                             "risk": "requires human review before dispatch",
                             "requires_approval": True,
                         }
+                        for step, (agent_id, role) in enumerate(
+                            [
+                                ("planner", "planning"),
+                                ("coder", "implementation"),
+                                ("reviewer", "review"),
+                            ],
+                            start=1,
+                        )
                     ],
-                    "approval_required": True,
-                    "dispatch_ready": False,
                 }
             ),
-            stderr="",
+            encoding="utf-8",
+        )
+        return subprocess.CompletedProcess(
+            command,
+            0,
+            stdout="ignored native stdout",
+            stderr="ignored native stderr",
         )
 
     monkeypatch.setattr("agentdeck.providers.cli_subprocess.subprocess.run", fake_run)
@@ -1268,15 +1282,22 @@ def test_leader_plan_passes_model_to_codex_cli_backend_without_dispatching(
 
     assert exit_code == 0
     payload = json.loads(capsys.readouterr().out)
-    assert seen["command"] == [
+    command = seen["command"]
+    assert isinstance(command, list)
+    assert command[:6] == [
         "codex",
         "--model",
         "gpt-5-codex",
         "exec",
         "--sandbox",
         "read-only",
-        "-",
     ]
+    assert command[-1] == "-"
+    assert command.index("--output-schema") == 6
+    assert command.index("--output-last-message") == 8
+    assert seen["kwargs"]["stdout"] is subprocess.DEVNULL
+    assert seen["kwargs"]["stderr"] is subprocess.DEVNULL
+    assert seen["schema"]["required"] == ["goal", "summary", "steps"]
     assert payload["provider"] == "codex-cli"
     assert payload["provider_backend"] == "cli"
     assert payload["provider_transport"] == "subprocess"

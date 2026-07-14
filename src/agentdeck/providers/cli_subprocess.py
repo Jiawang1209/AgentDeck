@@ -140,6 +140,36 @@ class CliLeaderProviderError(RuntimeError):
         super().__init__(f"CLI Leader planning failed at stage: {stage}")
 
 
+def _create_private_workspace(prefix: str) -> str | None:
+    path: str | None = None
+    try:
+        path = tempfile.mkdtemp(prefix=prefix)
+    except OSError:
+        return None
+    directory_stat: os.stat_result | None = None
+    try:
+        directory_stat = os.stat(path, follow_symlinks=False)
+    except OSError:
+        pass
+    if (
+        directory_stat is None
+        or not stat.S_ISDIR(directory_stat.st_mode)
+        or directory_stat.st_uid != os.geteuid()
+        or stat.S_IMODE(directory_stat.st_mode) != 0o700
+    ):
+        _cleanup_private_workspace(path)
+        return None
+    return path
+
+
+def _cleanup_private_workspace(path: str) -> bool:
+    try:
+        shutil.rmtree(path)
+    except OSError:
+        return False
+    return True
+
+
 class CliLeaderProvider:
     name = "cli"
     constraint_mode = "prompt_only"
@@ -287,21 +317,14 @@ class CodexCliProvider(CliLeaderProvider):
     def plan_result(self, request: LeaderPlanRequest) -> LeaderPlanResult:
         schema = build_leader_plan_schema(request)
         prompt = self._prompt(request)
-        with tempfile.TemporaryDirectory(prefix="agentdeck-leader-") as temp_dir:
-            temp_stat: os.stat_result | None = None
-            temp_stat_failed = False
-            try:
-                temp_stat = os.stat(temp_dir, follow_symlinks=False)
-            except OSError:
-                temp_stat_failed = True
-            if (
-                temp_stat_failed
-                or temp_stat is None
-                or not stat.S_ISDIR(temp_stat.st_mode)
-                or temp_stat.st_uid != os.geteuid()
-                or stat.S_IMODE(temp_stat.st_mode) != 0o700
-            ):
-                raise CliLeaderProviderError("json_parse", "invalid_output_envelope")
+        temp_dir = _create_private_workspace("agentdeck-leader-")
+        if temp_dir is None:
+            raise CliLeaderProviderError(
+                "json_parse", "invalid_output_envelope"
+            ) from None
+        pending_error: CliLeaderProviderError | None = None
+        plan: dict[str, object] | None = None
+        try:
             schema_path = os.path.join(temp_dir, "schema.json")
             result_path = os.path.join(temp_dir, "result.json")
             self._write_schema(schema_path, schema)
@@ -345,6 +368,18 @@ class CodexCliProvider(CliLeaderProvider):
             if returncode != 0:
                 raise CliLeaderProviderError("nonzero")
             plan = self._read_native_plan(result_path, request)
+        except CliLeaderProviderError as error:
+            pending_error = error
+        finally:
+            cleanup_succeeded = _cleanup_private_workspace(temp_dir)
+        if not cleanup_succeeded and pending_error is None:
+            pending_error = CliLeaderProviderError(
+                "json_parse", "invalid_output_envelope"
+            )
+        if pending_error is not None:
+            raise pending_error
+        if plan is None:
+            raise CliLeaderProviderError("schema")
         return LeaderPlanResult(
             plan=plan,
             leader_generation=build_leader_generation_provenance(
@@ -593,8 +628,14 @@ class ClaudeCliProvider(CliLeaderProvider):
             separators=(",", ":"),
         )
         prompt = self._prompt(request)
-        with tempfile.TemporaryDirectory(prefix="agentdeck-leader-") as temp_dir:
-            self._require_private_temp_directory(temp_dir)
+        temp_dir = _create_private_workspace("agentdeck-leader-")
+        if temp_dir is None:
+            raise CliLeaderProviderError(
+                "json_parse", "invalid_output_envelope"
+            ) from None
+        pending_error: CliLeaderProviderError | None = None
+        plan: dict[str, object] | None = None
+        try:
             output_path = os.path.join(temp_dir, "claude-output.json")
             output = self._create_private_output(output_path)
             process_error: CliLeaderProviderError | None = None
@@ -651,6 +692,18 @@ class ClaudeCliProvider(CliLeaderProvider):
             if completed is None:
                 raise CliLeaderProviderError("nonzero")
             plan = self._decode_envelope(payload, request)
+        except CliLeaderProviderError as error:
+            pending_error = error
+        finally:
+            cleanup_succeeded = _cleanup_private_workspace(temp_dir)
+        if not cleanup_succeeded and pending_error is None:
+            pending_error = CliLeaderProviderError(
+                "json_parse", "invalid_output_envelope"
+            )
+        if pending_error is not None:
+            raise pending_error
+        if plan is None:
+            raise CliLeaderProviderError("schema")
         return LeaderPlanResult(
             plan=plan,
             leader_generation=build_leader_generation_provenance(
@@ -661,21 +714,6 @@ class ClaudeCliProvider(CliLeaderProvider):
                 attempt_count=1,
             ),
         )
-
-    @staticmethod
-    def _require_private_temp_directory(path: str) -> None:
-        directory_stat: os.stat_result | None = None
-        try:
-            directory_stat = os.stat(path, follow_symlinks=False)
-        except OSError:
-            pass
-        if (
-            directory_stat is None
-            or not stat.S_ISDIR(directory_stat.st_mode)
-            or directory_stat.st_uid != os.geteuid()
-            or stat.S_IMODE(directory_stat.st_mode) != 0o700
-        ):
-            raise CliLeaderProviderError("json_parse", "invalid_output_envelope")
 
     @staticmethod
     def _private_sink_identity(file_stat: os.stat_result) -> tuple[object, ...]:
@@ -827,56 +865,71 @@ def cli_native_schema_ready(provider: str) -> tuple[bool, str | None]:
     if probe is None:
         return False, _CLI_NATIVE_SCHEMA_UNSUPPORTED
     command, required_flags = probe
-    with tempfile.TemporaryDirectory(prefix="agentdeck-leader-probe-") as temp_dir:
+    temp_dir = _create_private_workspace("agentdeck-leader-probe-")
+    if temp_dir is None:
+        return False, _CLI_NATIVE_SCHEMA_UNAVAILABLE
+    result: tuple[bool, str | None] | None = None
+    try:
         try:
-            ClaudeCliProvider._require_private_temp_directory(temp_dir)
             output_path = os.path.join(temp_dir, "help-output.txt")
             output = ClaudeCliProvider._create_private_output(output_path)
         except CliLeaderProviderError:
-            return False, _CLI_NATIVE_SCHEMA_UNAVAILABLE
+            result = (False, _CLI_NATIVE_SCHEMA_UNAVAILABLE)
+            output = None
         process_failed = False
         executable_missing = False
         completed: subprocess.CompletedProcess[bytes] | None = None
         payload = b""
-        try:
+        if output is not None:
             try:
-                completed = subprocess.run(
-                    list(command),
-                    stdout=output,
-                    stderr=output,
-                    timeout=5,
-                    check=False,
-                )
-            except FileNotFoundError:
-                executable_missing = True
-            except (subprocess.TimeoutExpired, OSError):
-                process_failed = True
-            if not executable_missing and not process_failed:
                 try:
-                    if completed is not None and completed.returncode == 0:
-                        payload = ClaudeCliProvider._capture_private_output(output)
-                except CliLeaderProviderError:
+                    completed = subprocess.run(
+                        list(command),
+                        stdout=output,
+                        stderr=output,
+                        timeout=5,
+                        check=False,
+                    )
+                except FileNotFoundError:
+                    executable_missing = True
+                except (subprocess.TimeoutExpired, OSError):
                     process_failed = True
-        finally:
-            try:
-                output.close()
-            except OSError:
-                process_failed = True
-        if executable_missing:
-            return False, _CLI_EXECUTABLE_UNAVAILABLE
-        if process_failed or completed is None or completed.returncode != 0:
-            return False, _CLI_NATIVE_SCHEMA_UNAVAILABLE
-        try:
-            help_text = payload.decode("utf-8", errors="strict")
-        except (CliLeaderProviderError, UnicodeDecodeError):
-            return False, _CLI_NATIVE_SCHEMA_UNAVAILABLE
-        option_names = set(
-            re.findall(
-                r"(?<![A-Za-z0-9_-])--[A-Za-z0-9][A-Za-z0-9-]*"
-                r"(?![A-Za-z0-9_-])",
-                help_text,
-            )
-        )
-        if not all(flag in option_names for flag in required_flags):
-            return False, _CLI_NATIVE_SCHEMA_UNAVAILABLE
-    return True, None
+                if not executable_missing and not process_failed:
+                    try:
+                        if completed is not None and completed.returncode == 0:
+                            payload = ClaudeCliProvider._capture_private_output(output)
+                    except CliLeaderProviderError:
+                        process_failed = True
+            finally:
+                try:
+                    output.close()
+                except OSError:
+                    process_failed = True
+            if executable_missing:
+                result = (False, _CLI_EXECUTABLE_UNAVAILABLE)
+            elif process_failed or completed is None or completed.returncode != 0:
+                result = (False, _CLI_NATIVE_SCHEMA_UNAVAILABLE)
+            else:
+                try:
+                    help_text = payload.decode("utf-8", errors="strict")
+                except UnicodeDecodeError:
+                    result = (False, _CLI_NATIVE_SCHEMA_UNAVAILABLE)
+                else:
+                    option_names = set(
+                        re.findall(
+                            r"(?<![A-Za-z0-9_-])--[A-Za-z0-9][A-Za-z0-9-]*"
+                            r"(?![A-Za-z0-9_-])",
+                            help_text,
+                        )
+                    )
+                    if all(flag in option_names for flag in required_flags):
+                        result = (True, None)
+                    else:
+                        result = (False, _CLI_NATIVE_SCHEMA_UNAVAILABLE)
+    finally:
+        cleanup_succeeded = _cleanup_private_workspace(temp_dir)
+    if not cleanup_succeeded and (result is None or result[0]):
+        return False, _CLI_NATIVE_SCHEMA_UNAVAILABLE
+    if result is None:
+        return False, _CLI_NATIVE_SCHEMA_UNAVAILABLE
+    return result

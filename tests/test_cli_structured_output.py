@@ -844,6 +844,186 @@ def _assert_exception_graph_redacted(error: BaseException, secrets: tuple[str, .
     assert not any(secret in rendered for secret in secrets)
 
 
+@pytest.mark.parametrize("provider_class", [CodexCliProvider, ClaudeCliProvider])
+def test_native_workspace_creation_failure_is_fixed_and_redacted(
+    tmp_path: Path, monkeypatch, provider_class
+) -> None:
+    request = _request(tmp_path)
+    secret = f"SECRET_WORKSPACE_CREATE_{tmp_path}"
+    prefixes: list[str | None] = []
+
+    def failing_mkdtemp(*_args, **kwargs):
+        prefixes.append(kwargs.get("prefix"))
+        raise OSError(secret)
+
+    monkeypatch.setattr("agentdeck.providers.cli_subprocess.tempfile.mkdtemp", failing_mkdtemp)
+
+    with pytest.raises(CliLeaderProviderError) as raised:
+        provider_class().plan_result(request)
+
+    assert raised.value.stage == "json_parse"
+    assert raised.value.diagnostic_code == "invalid_output_envelope"
+    assert prefixes == ["agentdeck-leader-"]
+    _assert_exception_graph_redacted(raised.value, (secret, str(tmp_path)))
+
+
+def test_native_probe_and_gateway_block_on_workspace_creation_failure(
+    tmp_path: Path, monkeypatch
+) -> None:
+    request = _request(tmp_path)
+    secret = f"SECRET_PROBE_WORKSPACE_CREATE_{tmp_path}"
+    prefixes: list[str | None] = []
+
+    def failing_mkdtemp(*_args, **kwargs):
+        prefixes.append(kwargs.get("prefix"))
+        raise OSError(secret)
+
+    monkeypatch.setattr("agentdeck.providers.cli_subprocess.tempfile.mkdtemp", failing_mkdtemp)
+
+    assert cli_native_schema_ready("claude-cli") == (
+        False,
+        "Leader CLI native JSON schema capability is unavailable",
+    )
+    status = LeaderGateway(which=lambda _name: "/safe/claude").describe(
+        replace(request.config.leader, provider="claude-cli", model="claude-test")
+    )
+    assert status.readiness == "blocked"
+    assert status.blockers == (
+        "Leader CLI native JSON schema capability is unavailable",
+    )
+    assert prefixes == ["agentdeck-leader-probe-", "agentdeck-leader-probe-"]
+
+
+@pytest.mark.parametrize("provider_class", [CodexCliProvider, ClaudeCliProvider])
+def test_native_workspace_cleanup_failure_after_success_is_fixed_and_redacted(
+    tmp_path: Path, monkeypatch, provider_class
+) -> None:
+    request = _request(tmp_path)
+    secret = f"SECRET_WORKSPACE_CLEANUP_{tmp_path}"
+    cleanup_calls = 0
+
+    def fake_run(command, **kwargs):
+        if "--output-last-message" in command:
+            _schema_path, result_path = _output_paths(command)
+            result_path.write_text(json.dumps(_valid_plan()), encoding="utf-8")
+        else:
+            os.write(
+                kwargs["stdout"].fileno(),
+                json.dumps(_claude_envelope()).encode("utf-8"),
+            )
+        return subprocess.CompletedProcess(command, 0)
+
+    def failing_rmtree(*_args, **_kwargs):
+        nonlocal cleanup_calls
+        cleanup_calls += 1
+        raise OSError(secret)
+
+    monkeypatch.setattr("agentdeck.providers.cli_subprocess.subprocess.run", fake_run)
+    monkeypatch.setattr("agentdeck.providers.cli_subprocess.shutil.rmtree", failing_rmtree)
+
+    with pytest.raises(CliLeaderProviderError) as raised:
+        provider_class().plan_result(request)
+
+    assert raised.value.stage == "json_parse"
+    assert raised.value.diagnostic_code == "invalid_output_envelope"
+    assert cleanup_calls == 1
+    _assert_exception_graph_redacted(raised.value, (secret, str(tmp_path)))
+
+
+def test_native_probe_cleanup_failure_after_success_is_fixed(
+    monkeypatch,
+) -> None:
+    cleanup_calls = 0
+
+    def fake_run(command, **kwargs):
+        os.write(
+            kwargs["stdout"].fileno(),
+            b"--json-schema --output-format --no-session-persistence",
+        )
+        return subprocess.CompletedProcess(command, 0)
+
+    def failing_rmtree(*_args, **_kwargs):
+        nonlocal cleanup_calls
+        cleanup_calls += 1
+        raise OSError("SECRET_PROBE_CLEANUP")
+
+    monkeypatch.setattr("agentdeck.providers.cli_subprocess.subprocess.run", fake_run)
+    monkeypatch.setattr("agentdeck.providers.cli_subprocess.shutil.rmtree", failing_rmtree)
+
+    assert cli_native_schema_ready("claude-cli") == (
+        False,
+        "Leader CLI native JSON schema capability is unavailable",
+    )
+    assert cleanup_calls == 1
+
+
+def test_native_probe_cleanup_cannot_mask_missing_executable(monkeypatch) -> None:
+    cleanup_calls = 0
+
+    def fake_run(command, **_kwargs):
+        raise FileNotFoundError(command[0])
+
+    def failing_rmtree(*_args, **_kwargs):
+        nonlocal cleanup_calls
+        cleanup_calls += 1
+        raise OSError("SECRET_PROBE_CLEANUP")
+
+    monkeypatch.setattr("agentdeck.providers.cli_subprocess.subprocess.run", fake_run)
+    monkeypatch.setattr("agentdeck.providers.cli_subprocess.shutil.rmtree", failing_rmtree)
+
+    assert cli_native_schema_ready("claude-cli") == (
+        False,
+        "Leader CLI executable is not available",
+    )
+    assert cleanup_calls == 1
+
+
+@pytest.mark.parametrize("provider_class", [CodexCliProvider, ClaudeCliProvider])
+@pytest.mark.parametrize(
+    ("scenario", "expected_stage"),
+    [("timeout", "timeout"), ("nonzero", "nonzero"), ("schema", "schema")],
+)
+def test_native_workspace_cleanup_cannot_mask_prior_failure(
+    tmp_path: Path, monkeypatch, provider_class, scenario: str, expected_stage: str
+) -> None:
+    request = _request(tmp_path)
+    secret = f"SECRET_TIMEOUT_CLEANUP_{tmp_path}"
+    cleanup_calls = 0
+
+    def fake_run(command, **kwargs):
+        if scenario == "timeout":
+            raise subprocess.TimeoutExpired(
+                command, 180, output=secret, stderr=secret
+            )
+        if scenario == "nonzero":
+            return subprocess.CompletedProcess(command, 9)
+        plan = _valid_plan()
+        plan["steps"][0]["role"] = "wrong-role"
+        if "--output-last-message" in command:
+            _schema_path, result_path = _output_paths(command)
+            result_path.write_text(json.dumps(plan), encoding="utf-8")
+        else:
+            envelope = _claude_envelope()
+            envelope["structured_output"] = plan
+            os.write(kwargs["stdout"].fileno(), json.dumps(envelope).encode("utf-8"))
+        return subprocess.CompletedProcess(command, 0)
+
+    def failing_rmtree(*_args, **_kwargs):
+        nonlocal cleanup_calls
+        cleanup_calls += 1
+        raise OSError(secret)
+
+    monkeypatch.setattr("agentdeck.providers.cli_subprocess.subprocess.run", fake_run)
+    monkeypatch.setattr("agentdeck.providers.cli_subprocess.shutil.rmtree", failing_rmtree)
+
+    with pytest.raises(CliLeaderProviderError) as raised:
+        provider_class().plan_result(request)
+
+    assert raised.value.stage == expected_stage
+    assert cleanup_calls == 1
+    _assert_exception_graph_redacted(raised.value, (secret, str(tmp_path)))
+
+
 @pytest.mark.parametrize("boundary", ["provider", "gateway"])
 @pytest.mark.parametrize(
     "scenario",
