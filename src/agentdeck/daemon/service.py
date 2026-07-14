@@ -13,9 +13,11 @@ from datetime import datetime
 import hashlib
 import inspect
 import math
+import os
 from pathlib import Path
 import re
 import shutil
+import stat
 import subprocess
 from typing import Any, Protocol
 
@@ -548,29 +550,145 @@ def _worker_ownership_state(state: Mapping[str, object], agent_id: str) -> str:
 
 def _bounded_worktree_snapshot(root: Path) -> dict[str, object]:
     """Hash the human-editable tree without reading daemon-owned state."""
+    max_items = 4096
+    max_bytes = 32 * 1024 * 1024
+    excluded_roots = {".agentdeck", ".git"}
     manifest: dict[str, str] = {}
     total_bytes = 0
-    for path in sorted(root.rglob("*")):
-        relative = path.relative_to(root)
-        if relative.parts and relative.parts[0] in {".agentdeck", ".git"}:
-            continue
-        if path.is_symlink():
-            resolved = path.resolve(strict=False)
-            try:
-                resolved.relative_to(root.resolve())
-            except ValueError:
-                raise ServiceError("Worker reconciliation found an escaping symlink") from None
-            manifest[str(relative)] = f"symlink:{path.readlink()}"
-            continue
-        if path.is_dir():
-            continue
-        if not path.is_file() or len(manifest) >= 4096:
+    visited_items = 0
+    root = root.resolve()
+
+    def same_identity(first: os.stat_result, second: os.stat_result) -> bool:
+        return (
+            first.st_dev,
+            first.st_ino,
+            stat.S_IFMT(first.st_mode),
+            first.st_size,
+            first.st_mtime_ns,
+        ) == (
+            second.st_dev,
+            second.st_ino,
+            stat.S_IFMT(second.st_mode),
+            second.st_size,
+            second.st_mtime_ns,
+        )
+
+    def stable_path_stat(
+        directory_fd: int, name: str, expected: os.stat_result
+    ) -> None:
+        current = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+        if not same_identity(expected, current):
             raise ServiceError("Worker reconciliation worktree is unsupported")
-        data = path.read_bytes()
-        total_bytes += len(data)
-        if total_bytes > 32 * 1024 * 1024:
-            raise ServiceError("Worker reconciliation worktree exceeds bounded limits")
-        manifest[str(relative)] = hashlib.sha256(data).hexdigest()
+
+    def hash_regular_file(
+        directory_fd: int, name: str, initial: os.stat_result
+    ) -> tuple[str, int]:
+        remaining = max_bytes - total_bytes
+        if initial.st_size > remaining:
+            raise ServiceError(
+                "Worker reconciliation worktree exceeds bounded limits"
+            )
+        flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(
+            os, "O_NOFOLLOW", 0
+        )
+        file_fd = os.open(name, flags, dir_fd=directory_fd)
+        try:
+            opened = os.fstat(file_fd)
+            if not stat.S_ISREG(opened.st_mode) or not same_identity(initial, opened):
+                raise ServiceError("Worker reconciliation worktree is unsupported")
+            if opened.st_size > remaining:
+                raise ServiceError(
+                    "Worker reconciliation worktree exceeds bounded limits"
+                )
+            digest = hashlib.sha256()
+            bytes_read = 0
+            while True:
+                chunk = os.read(file_fd, min(1024 * 1024, remaining - bytes_read + 1))
+                if not chunk:
+                    break
+                bytes_read += len(chunk)
+                if bytes_read > remaining:
+                    raise ServiceError(
+                        "Worker reconciliation worktree exceeds bounded limits"
+                    )
+                digest.update(chunk)
+            final = os.fstat(file_fd)
+            if bytes_read != opened.st_size or not same_identity(opened, final):
+                raise ServiceError("Worker reconciliation worktree is unsupported")
+            stable_path_stat(directory_fd, name, final)
+            return digest.hexdigest(), bytes_read
+        finally:
+            os.close(file_fd)
+
+    def walk(directory_fd: int, relative: Path) -> None:
+        nonlocal total_bytes, visited_items
+        names: list[str] = []
+        with os.scandir(directory_fd) as entries:
+            for entry in entries:
+                if not relative.parts and entry.name in excluded_roots:
+                    continue
+                visited_items += 1
+                if visited_items > max_items:
+                    raise ServiceError(
+                        "Worker reconciliation worktree is unsupported"
+                    )
+                names.append(entry.name)
+        for name in sorted(names):
+            entry_relative = relative / name
+            initial = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+            if stat.S_ISLNK(initial.st_mode):
+                target = os.readlink(name, dir_fd=directory_fd)
+                stable_path_stat(directory_fd, name, initial)
+                resolved = (root / entry_relative.parent / target).resolve(
+                    strict=False
+                )
+                try:
+                    resolved.relative_to(root)
+                except ValueError:
+                    raise ServiceError(
+                        "Worker reconciliation found an escaping symlink"
+                    ) from None
+                manifest[str(entry_relative)] = f"symlink:{target}"
+                continue
+            if stat.S_ISDIR(initial.st_mode):
+                flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(
+                    os, "O_DIRECTORY", 0
+                ) | getattr(os, "O_NOFOLLOW", 0)
+                child_fd = os.open(name, flags, dir_fd=directory_fd)
+                try:
+                    opened = os.fstat(child_fd)
+                    if not stat.S_ISDIR(opened.st_mode) or not same_identity(
+                        initial, opened
+                    ):
+                        raise ServiceError(
+                            "Worker reconciliation worktree is unsupported"
+                        )
+                    walk(child_fd, entry_relative)
+                    stable_path_stat(directory_fd, name, opened)
+                finally:
+                    os.close(child_fd)
+                continue
+            if not stat.S_ISREG(initial.st_mode):
+                raise ServiceError("Worker reconciliation worktree is unsupported")
+            content_hash, byte_count = hash_regular_file(
+                directory_fd, name, initial
+            )
+            total_bytes += byte_count
+            manifest[str(entry_relative)] = content_hash
+
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(
+        os, "O_DIRECTORY", 0
+    ) | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        root_fd = os.open(root, flags)
+        try:
+            walk(root_fd, Path())
+        finally:
+            os.close(root_fd)
+    except ServiceError:
+        raise
+    except OSError:
+        raise ServiceError("Worker reconciliation worktree is unsupported") from None
     digest = hashlib.sha256(
         repr(sorted(manifest.items())).encode("utf-8")
     ).hexdigest()
