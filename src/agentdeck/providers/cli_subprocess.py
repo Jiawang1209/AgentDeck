@@ -47,6 +47,30 @@ class _NativeOutputError(RuntimeError):
         super().__init__("native CLI output is invalid")
 
 
+class _PrivateOutputSink:
+    def __init__(
+        self,
+        path: str,
+        output: BinaryIO,
+        creation_identity: tuple[object, ...],
+    ) -> None:
+        self.path = path
+        self.output = output
+        self.creation_identity = creation_identity
+
+    def fileno(self) -> int:
+        return self.output.fileno()
+
+    def flush(self) -> None:
+        self.output.flush()
+
+    def write(self, payload: bytes) -> int:
+        return self.output.write(payload)
+
+    def close(self) -> None:
+        self.output.close()
+
+
 def _strict_json_decode(payload: bytes) -> object:
     def reject_duplicates(pairs: list[tuple[str, object]]) -> dict[str, object]:
         result: dict[str, object] = {}
@@ -536,9 +560,21 @@ class ClaudeCliProvider(CliLeaderProvider):
     name = "claude-cli"
     constraint_mode = "native_json_schema"
     command_name = "claude"
-    command = ["claude", "--print", "--output-format", "json", "--permission-mode", "plan"]
+    command = [
+        "claude",
+        "--print",
+        "--output-format",
+        "json",
+        "--permission-mode",
+        "plan",
+        "--no-session-persistence",
+    ]
     native_help_command = ("claude", "--help")
-    native_required_flags = ("--json-schema", "--output-format")
+    native_required_flags = (
+        "--json-schema",
+        "--output-format",
+        "--no-session-persistence",
+    )
 
     def _prompt(self, request: LeaderPlanRequest) -> str:
         return super()._prompt(request).replace(
@@ -563,6 +599,7 @@ class ClaudeCliProvider(CliLeaderProvider):
             output = self._create_private_output(output_path)
             process_error: CliLeaderProviderError | None = None
             completed: subprocess.CompletedProcess[str] | None = None
+            payload = b""
             try:
                 command = [
                     *self._command_for_request(request),
@@ -596,12 +633,9 @@ class ClaudeCliProvider(CliLeaderProvider):
                     process_error = CliLeaderProviderError("nonzero")
                 if process_error is None:
                     try:
-                        output.flush()
-                        os.fsync(output.fileno())
-                    except OSError:
-                        process_error = CliLeaderProviderError(
-                            "json_parse", "invalid_output_envelope"
-                        )
+                        payload = self._capture_private_output(output)
+                    except CliLeaderProviderError as error:
+                        process_error = error
             finally:
                 close_failed = False
                 try:
@@ -616,9 +650,6 @@ class ClaudeCliProvider(CliLeaderProvider):
                 raise process_error
             if completed is None:
                 raise CliLeaderProviderError("nonzero")
-            payload = CodexCliProvider()._read_secure_payload(
-                output_path, normalize_mode=False
-            )
             plan = self._decode_envelope(payload, request)
         return LeaderPlanResult(
             plan=plan,
@@ -647,7 +678,18 @@ class ClaudeCliProvider(CliLeaderProvider):
             raise CliLeaderProviderError("json_parse", "invalid_output_envelope")
 
     @staticmethod
-    def _create_private_output(path: str) -> BinaryIO:
+    def _private_sink_identity(file_stat: os.stat_result) -> tuple[object, ...]:
+        return (
+            file_stat.st_dev,
+            file_stat.st_ino,
+            file_stat.st_uid,
+            file_stat.st_gid,
+            file_stat.st_nlink,
+            stat.S_IMODE(file_stat.st_mode),
+        )
+
+    @staticmethod
+    def _create_private_output(path: str) -> _PrivateOutputSink:
         nofollow = getattr(os, "O_NOFOLLOW", None)
         if nofollow is None:
             raise CliLeaderProviderError("json_parse", "invalid_output_envelope")
@@ -655,7 +697,7 @@ class ClaudeCliProvider(CliLeaderProvider):
         try:
             descriptor = os.open(
                 path,
-                os.O_WRONLY | os.O_CREAT | os.O_EXCL | nofollow,
+                os.O_RDWR | os.O_CREAT | os.O_EXCL | nofollow,
                 0o600,
             )
             file_stat = os.fstat(descriptor)
@@ -669,7 +711,12 @@ class ClaudeCliProvider(CliLeaderProvider):
                 or named_stat.st_ino != file_stat.st_ino
             ):
                 raise OSError
-            return os.fdopen(descriptor, "wb")
+            output = os.fdopen(descriptor, "w+b", buffering=0)
+            return _PrivateOutputSink(
+                path,
+                output,
+                ClaudeCliProvider._private_sink_identity(file_stat),
+            )
         except OSError:
             if descriptor is not None:
                 try:
@@ -679,6 +726,61 @@ class ClaudeCliProvider(CliLeaderProvider):
             raise CliLeaderProviderError(
                 "json_parse", "invalid_output_envelope"
             ) from None
+
+    @staticmethod
+    def _capture_private_output(sink: _PrivateOutputSink) -> bytes:
+        payload = b""
+        try:
+            sink.flush()
+            os.fsync(sink.fileno())
+            baseline_stat = os.fstat(sink.fileno())
+            named_stat = os.lstat(sink.path)
+            if (
+                not stat.S_ISREG(baseline_stat.st_mode)
+                or ClaudeCliProvider._private_sink_identity(baseline_stat)
+                != sink.creation_identity
+                or named_stat.st_dev != baseline_stat.st_dev
+                or named_stat.st_ino != baseline_stat.st_ino
+            ):
+                raise _NativeOutputError(
+                    "json_parse", "invalid_output_envelope"
+                )
+            if baseline_stat.st_size > MAX_CLI_LEADER_OUTPUT_BYTES:
+                raise _NativeOutputError("oversize")
+            baseline_metadata = CodexCliProvider._stable_file_metadata(baseline_stat)
+            os.lseek(sink.fileno(), 0, os.SEEK_SET)
+            chunks: list[bytes] = []
+            remaining = MAX_CLI_LEADER_OUTPUT_BYTES + 1
+            while remaining:
+                chunk = os.read(sink.fileno(), min(64 * 1024, remaining))
+                if not chunk:
+                    break
+                chunks.append(chunk)
+                remaining -= len(chunk)
+            payload = b"".join(chunks)
+            if len(payload) > MAX_CLI_LEADER_OUTPUT_BYTES:
+                raise _NativeOutputError("oversize")
+            final_stat = os.fstat(sink.fileno())
+            final_named_stat = os.lstat(sink.path)
+            if (
+                ClaudeCliProvider._private_sink_identity(final_stat)
+                != sink.creation_identity
+                or CodexCliProvider._stable_file_metadata(final_stat)
+                != baseline_metadata
+                or final_stat.st_size != len(payload)
+                or final_named_stat.st_dev != final_stat.st_dev
+                or final_named_stat.st_ino != final_stat.st_ino
+            ):
+                raise _NativeOutputError(
+                    "json_parse", "invalid_output_envelope"
+                )
+        except _NativeOutputError as error:
+            raise CliLeaderProviderError(error.stage, error.diagnostic_code) from None
+        except OSError:
+            raise CliLeaderProviderError(
+                "json_parse", "invalid_output_envelope"
+            ) from None
+        return payload
 
     @staticmethod
     def _decode_envelope(
@@ -735,6 +837,7 @@ def cli_native_schema_ready(provider: str) -> tuple[bool, str | None]:
         process_failed = False
         executable_missing = False
         completed: subprocess.CompletedProcess[bytes] | None = None
+        payload = b""
         try:
             try:
                 completed = subprocess.run(
@@ -750,9 +853,9 @@ def cli_native_schema_ready(provider: str) -> tuple[bool, str | None]:
                 process_failed = True
             if not executable_missing and not process_failed:
                 try:
-                    output.flush()
-                    os.fsync(output.fileno())
-                except OSError:
+                    if completed is not None and completed.returncode == 0:
+                        payload = ClaudeCliProvider._capture_private_output(output)
+                except CliLeaderProviderError:
                     process_failed = True
         finally:
             try:
@@ -764,9 +867,6 @@ def cli_native_schema_ready(provider: str) -> tuple[bool, str | None]:
         if process_failed or completed is None or completed.returncode != 0:
             return False, _CLI_NATIVE_SCHEMA_UNAVAILABLE
         try:
-            payload = CodexCliProvider()._read_secure_payload(
-                output_path, normalize_mode=False
-            )
             help_text = payload.decode("utf-8", errors="strict")
         except (CliLeaderProviderError, UnicodeDecodeError):
             return False, _CLI_NATIVE_SCHEMA_UNAVAILABLE
