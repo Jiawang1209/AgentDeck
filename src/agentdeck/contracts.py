@@ -534,12 +534,25 @@ PROJECT_VIEW_PLAN_ITEM_FIELDS = (
     "provider_backend",
     "provider_transport",
     "leader_backend",
+    "leader_generation",
     "model",
     "status",
     "dispatch_ready",
     "skill_context",
     "step_count",
     "created_at",
+)
+
+PROJECT_VIEW_LEADER_GENERATION_FIELDS = (
+    "provider",
+    "model",
+    "constraint_mode",
+    "schema_version",
+    "schema_hash",
+    "attempt_count",
+    "regeneration_used",
+    "selected_agent_ids",
+    "step_count",
 )
 
 PROJECT_VIEW_MISSIONS_FIELDS = (
@@ -3120,6 +3133,7 @@ def project_view_contract_payload(contract_path: Path) -> dict[str, object]:
         "missions_fields": list(PROJECT_VIEW_MISSIONS_FIELDS),
         "mission_item_fields": list(PROJECT_VIEW_MISSION_ITEM_FIELDS),
         "plan_item_fields": list(PROJECT_VIEW_PLAN_ITEM_FIELDS),
+        "leader_generation_fields": list(PROJECT_VIEW_LEADER_GENERATION_FIELDS),
         "recovery_fields": list(PROJECT_VIEW_RECOVERY_FIELDS),
         "recovery_pending_fields": list(PROJECT_VIEW_RECOVERY_PENDING_FIELDS),
         "recommended_action_fields": list(PROJECT_VIEW_RECOMMENDED_ACTION_FIELDS),
@@ -3164,6 +3178,9 @@ def project_view_contract_response(contract_path: Path, include_example: bool = 
         payload["example_missions_fields"] = list(example["missions"])
         payload["example_mission_item_fields"] = list(example["missions"]["items"][0])
         payload["example_plan_item_fields"] = list(example["plans"]["items"][0])
+        payload["example_leader_generation_fields"] = list(
+            example["plans"]["items"][0]["leader_generation"]
+        )
         payload["example_recovery_fields"] = list(example["recovery"])
         payload["example_recovery_pending_fields"] = list(example["recovery"]["pending"])
         payload["example_recommended_action_fields"] = list(example["recovery"]["recommended_action"])
@@ -7056,6 +7073,7 @@ def leader_status_contract_payload(contract_path: Path) -> dict[str, object]:
         "coordination_role_fields": list(PROJECT_VIEW_COORDINATION_ROLE_FIELDS),
         "provider_health_fields": list(WORKBENCH_PROVIDER_HEALTH_FIELDS),
         "latest_plan_fields": list(PROJECT_VIEW_PLAN_ITEM_FIELDS),
+        "leader_generation_fields": list(PROJECT_VIEW_LEADER_GENERATION_FIELDS),
         "queue_fields": list(LEADER_STATUS_QUEUE_FIELDS),
         "recovery_fields": list(PROJECT_VIEW_RECOVERY_FIELDS),
         "control_fields": list(WORKBENCH_CONTROL_MODE_CONTROL_FIELDS),
@@ -7088,6 +7106,7 @@ def trace_contract_payload(contract_path: Path) -> dict[str, object]:
         "top_level_fields": list(TRACE_TOP_LEVEL_FIELDS),
         "message_fields": list(TRACE_MESSAGE_FIELDS),
         "plan_fields": list(PROJECT_VIEW_PLAN_ITEM_FIELDS),
+        "leader_generation_fields": list(PROJECT_VIEW_LEADER_GENERATION_FIELDS),
         "attempt_fields": list(TRACE_ATTEMPT_FIELDS),
         "job_fields": list(TRACE_JOB_FIELDS),
         "reply_fields": list(TRACE_REPLY_FIELDS),
@@ -8171,6 +8190,112 @@ def _validate_project_view_memory_items(errors: list[str], payload: dict[str, ob
                     errors.append(f"missing memory item field at index {index}: {field}")
 
 
+def _validate_plan_leader_generation(
+    errors: list[str],
+    *,
+    prefix: str,
+    item: dict[str, object],
+    selected_agent_facts: set[str] | None = None,
+) -> None:
+    generation = item.get("leader_generation")
+    if type(generation) is not dict:
+        errors.append(f"{prefix}.leader_generation must be an object")
+        return
+    if set(generation) != set(PROJECT_VIEW_LEADER_GENERATION_FIELDS):
+        errors.append(f"{prefix}.leader_generation fields are invalid")
+        return
+
+    forbidden_parts = {
+        "prompt", "argv", "path", "credential", "credentials", "secret",
+        "token", "password", "authorization",
+    }
+
+    def has_forbidden_key(value: object) -> bool:
+        if isinstance(value, dict):
+            for raw_key, nested in value.items():
+                normalized = re.sub(r"(?<!^)(?=[A-Z])", "_", str(raw_key)).lower().replace("-", "_")
+                parts = {part for part in normalized.split("_") if part}
+                if normalized == "api_key" or parts.intersection(forbidden_parts):
+                    return True
+                if has_forbidden_key(nested):
+                    return True
+        elif isinstance(value, list):
+            return any(has_forbidden_key(nested) for nested in value)
+        return False
+
+    if has_forbidden_key(generation):
+        errors.append(f"{prefix}.leader_generation contains forbidden semantic keys")
+        return
+
+    provider = generation.get("provider")
+    model = generation.get("model")
+    mode = generation.get("constraint_mode")
+    schema_version = generation.get("schema_version")
+    schema_hash = generation.get("schema_hash")
+    attempt_count = generation.get("attempt_count")
+    regeneration_used = generation.get("regeneration_used")
+    selected_agent_ids = generation.get("selected_agent_ids")
+    step_count = generation.get("step_count")
+
+    if type(provider) is not str or provider != item.get("provider"):
+        errors.append(f"{prefix}.leader_generation.provider must match plan provider")
+    if type(model) is not str or model != item.get("model"):
+        errors.append(f"{prefix}.leader_generation.model must match plan model")
+    if type(mode) is not str or mode not in {
+        "local", "json_object", "prompt_only", "native_json_schema"
+    }:
+        errors.append(f"{prefix}.leader_generation.constraint_mode is invalid")
+    if mode == "native_json_schema":
+        if schema_version != "leader-plan/v1":
+            errors.append(f"{prefix}.leader_generation.schema_version is invalid")
+        if type(schema_hash) is not str or re.fullmatch(r"sha256:[0-9a-f]{64}", schema_hash) is None:
+            errors.append(f"{prefix}.leader_generation.schema_hash is invalid")
+    elif schema_version is not None or schema_hash is not None:
+        errors.append(f"{prefix}.leader_generation non-native schema fields must be null")
+    if type(attempt_count) is not int or attempt_count < 1 or attempt_count > 2:
+        errors.append(f"{prefix}.leader_generation.attempt_count is invalid")
+    if type(regeneration_used) is not bool or regeneration_used is not (attempt_count == 2):
+        errors.append(f"{prefix}.leader_generation.regeneration_used is invalid")
+    selected_valid = (
+        type(selected_agent_ids) is list
+        and all(type(agent_id) is str and bool(agent_id) for agent_id in selected_agent_ids)
+        and len(selected_agent_ids) == len(set(selected_agent_ids))
+    )
+    if not selected_valid:
+        errors.append(f"{prefix}.leader_generation.selected_agent_ids is invalid")
+    legacy = (
+        selected_valid
+        and selected_agent_ids == []
+        and mode != "native_json_schema"
+        and schema_version is None
+        and schema_hash is None
+        and attempt_count == 1
+        and regeneration_used is False
+    )
+    if legacy:
+        expected_legacy_mode = (
+            "json_object"
+            if provider in {"deepseek", "openai-compatible"}
+            else "prompt_only"
+            if provider in {"codex-cli", "claude-cli"}
+            else "local"
+        )
+        if mode != expected_legacy_mode:
+            errors.append(f"{prefix}.leader_generation legacy constraint_mode is invalid")
+    if selected_valid and not selected_agent_ids and not legacy:
+        errors.append(f"{prefix}.leader_generation empty selection requires legacy projection")
+    if (
+        type(step_count) is not int
+        or step_count < (1 if legacy else 2)
+        or step_count > 64
+        or step_count != item.get("step_count")
+    ):
+        errors.append(f"{prefix}.leader_generation.step_count is invalid")
+    if selected_valid and selected_agent_ids and selected_agent_facts is not None:
+        if set(selected_agent_ids) != selected_agent_facts:
+            errors.append(f"{prefix}.leader_generation.selected_agent_ids do not match plan facts")
+
+
 def _validate_project_view_plan_items(errors: list[str], payload: dict[str, object]) -> None:
     plans = payload.get("plans")
     if not isinstance(plans, dict):
@@ -8188,14 +8313,41 @@ def _validate_project_view_plan_items(errors: list[str], payload: dict[str, obje
         if not isinstance(item, dict):
             errors.append(f"plans.items[{index}] must be an object")
             continue
+        prefix = f"project_view.plans.items[{index}]"
         for field in PROJECT_VIEW_PLAN_ITEM_FIELDS:
             if field not in item:
                 errors.append(f"missing plan item field at index {index}: {field}")
+        if set(item) != set(PROJECT_VIEW_PLAN_ITEM_FIELDS):
+            errors.append(f"{prefix} fields are invalid")
         leader_backend = item.get("leader_backend")
         if isinstance(leader_backend, dict):
-            _validate_leader_backend(errors, f"project_view.plans.items[{index}]", leader_backend)
+            _validate_leader_backend(errors, prefix, leader_backend)
         else:
-            errors.append(f"project_view.plans.items[{index}].leader_backend must be an object")
+            errors.append(f"{prefix}.leader_backend must be an object")
+        selected_agent_facts = None
+        missions = payload.get("missions")
+        if isinstance(missions, dict) and isinstance(missions.get("items"), list):
+            matching = next(
+                (
+                    mission
+                    for mission in missions["items"]
+                    if isinstance(mission, dict)
+                    and mission.get("plan_id") == item.get("plan_id")
+                ),
+                None,
+            )
+            if isinstance(matching, dict) and isinstance(matching.get("selected_agents"), list):
+                selected_agent_facts = {
+                    selected.get("agent_id")
+                    for selected in matching["selected_agents"]
+                    if isinstance(selected, dict) and isinstance(selected.get("agent_id"), str)
+                }
+        _validate_plan_leader_generation(
+            errors,
+            prefix=prefix,
+            item=item,
+            selected_agent_facts=selected_agent_facts,
+        )
 
 
 def _validate_project_view_summary_items(
@@ -8811,6 +8963,11 @@ def validate_trace_contract(payload: dict[str, object]) -> dict[str, object]:
             _validate_leader_backend(errors, "trace.plan", leader_backend)
         else:
             errors.append("trace.plan.leader_backend must be an object")
+        _validate_plan_leader_generation(
+            errors,
+            prefix="trace.plan",
+            item=plan,
+        )
     elif "plan" in payload and plan is not None:
         errors.append("plan must be an object or null")
     _validate_trace_items(errors, payload, "attempts", TRACE_ATTEMPT_FIELDS, "attempt")
@@ -12716,6 +12873,17 @@ def project_view_example() -> dict[str, object]:
                         "approval_required": True,
                         "dispatch_ready": False,
                     },
+                    "leader_generation": {
+                        "provider": "fake",
+                        "model": "fake-plan",
+                        "constraint_mode": "native_json_schema",
+                        "schema_version": "leader-plan/v1",
+                        "schema_hash": "sha256:" + "a" * 64,
+                        "attempt_count": 1,
+                        "regeneration_used": False,
+                        "selected_agent_ids": ["planner", "reviewer"],
+                        "step_count": 2,
+                    },
                     "model": "fake-plan",
                     "status": "planned",
                     "dispatch_ready": False,
@@ -12744,7 +12912,7 @@ def project_view_example() -> dict[str, object]:
                             }
                         ],
                     },
-                    "step_count": 1,
+                    "step_count": 2,
                     "created_at": "2026-07-04T00:00:00+00:00",
                 }
             ],
@@ -16984,6 +17152,17 @@ def trace_example() -> dict[str, object]:
                 "approval_required": True,
                 "dispatch_ready": False,
             },
+            "leader_generation": {
+                "provider": "fake",
+                "model": "fake-plan",
+                "constraint_mode": "native_json_schema",
+                "schema_version": "leader-plan/v1",
+                "schema_hash": "sha256:" + "a" * 64,
+                "attempt_count": 1,
+                "regeneration_used": False,
+                "selected_agent_ids": ["planner", "reviewer"],
+                "step_count": 2,
+            },
             "model": "fake-plan",
             "status": "planned",
             "dispatch_ready": False,
@@ -17011,7 +17190,7 @@ def trace_example() -> dict[str, object]:
                     }
                 ],
             },
-            "step_count": 1,
+            "step_count": 2,
             "created_at": "2026-07-04T00:00:00+00:00",
         },
         "attempts": [

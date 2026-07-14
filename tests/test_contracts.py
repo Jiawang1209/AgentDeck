@@ -1715,6 +1715,17 @@ def test_project_view_contract_response_includes_example_without_drift(tmp_path:
     assert payload["example_plan_item_fields"] == payload["plan_item_fields"]
     assert set(payload["example_plan_item_fields"]) == set(example["plans"]["items"][0])
     assert payload["plan_item_fields"] == list(PROJECT_VIEW_PLAN_ITEM_FIELDS)
+    assert payload["leader_generation_fields"] == [
+        "provider",
+        "model",
+        "constraint_mode",
+        "schema_version",
+        "schema_hash",
+        "attempt_count",
+        "regeneration_used",
+        "selected_agent_ids",
+        "step_count",
+    ]
     assert payload["example_recovery_fields"] == payload["recovery_fields"]
     assert set(payload["example_recovery_fields"]) == set(example["recovery"])
     assert payload["example_recovery_pending_fields"] == payload["recovery_pending_fields"]
@@ -1737,6 +1748,63 @@ def test_project_view_contract_response_includes_example_without_drift(tmp_path:
     assert set(payload["example_missions_fields"]) == set(example["missions"])
     assert payload["example_mission_item_fields"] == payload["mission_item_fields"]
     assert set(payload["example_mission_item_fields"]) == set(example["missions"]["items"][0])
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        lambda value: {**value, "constraint_mode": "unknown"},
+        lambda value: {**value, "schema_version": "leader-plan/v0"},
+        lambda value: {**value, "schema_hash": "sha256:" + "A" * 64},
+        lambda value: {**value, "schema_hash": "sha256:short"},
+        lambda value: {**value, "attempt_count": True},
+        lambda value: {**value, "attempt_count": 0},
+        lambda value: {**value, "attempt_count": 3},
+        lambda value: {**value, "regeneration_used": True},
+        lambda value: {**value, "attempt_count": 2, "regeneration_used": False},
+        lambda value: {**value, "selected_agent_ids": ["planner", "planner"]},
+        lambda value: {**value, "selected_agent_ids": ["unknown"]},
+        lambda value: {**value, "step_count": 3},
+        lambda value: {**value, "provider": "spoofed"},
+        lambda value: {**value, "model": "spoofed"},
+        lambda value: {**value, "extra": "value"},
+        lambda value: {key: item for key, item in value.items() if key != "model"},
+        lambda value: {**value, "selected_agent_ids": [{"secret": "raw"}]},
+        lambda value: {**value, "selected_agent_ids": [{"prompt": "raw"}]},
+        lambda value: {**value, "selected_agent_ids": [{"argv": ["raw"]}]},
+        lambda value: {**value, "selected_agent_ids": [{"path": "/raw"}]},
+        lambda value: {**value, "selected_agent_ids": [{"credential": "raw"}]},
+        lambda value: {**value, "selected_agent_ids": [{"api_key": "raw"}]},
+        lambda value: {**value, "selected_agent_ids": [{"authorization": "raw"}]},
+    ],
+)
+def test_project_view_contract_rejects_invalid_leader_generation(mutation) -> None:
+    payload = project_view_example()
+    item = payload["plans"]["items"][0]
+    item["leader_generation"] = mutation(deepcopy(item["leader_generation"]))
+
+    assert validate_project_view_contract(payload)["ok"] is False
+
+
+def test_project_view_contract_allows_only_exact_legacy_one_step_generation() -> None:
+    payload = project_view_example()
+    item = payload["plans"]["items"][0]
+    item["step_count"] = 1
+    item["leader_generation"] = {
+        "provider": "fake",
+        "model": "fake-plan",
+        "constraint_mode": "local",
+        "schema_version": None,
+        "schema_hash": None,
+        "attempt_count": 1,
+        "regeneration_used": False,
+        "selected_agent_ids": [],
+        "step_count": 1,
+    }
+    assert validate_project_view_contract(payload)["ok"] is True
+
+    item["leader_generation"]["selected_agent_ids"] = ["planner"]
+    assert validate_project_view_contract(payload)["ok"] is False
 
 
 @pytest.mark.parametrize(

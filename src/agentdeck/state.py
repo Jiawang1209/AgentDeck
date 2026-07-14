@@ -95,6 +95,35 @@ _DAEMON_ADMISSION_FIELDS = frozenset(
 )
 _INVALID_DAEMON_ADMISSION_BLOCKER = "invalid daemon admission state"
 
+_PLAN_LEADER_GENERATION_FIELDS = (
+    "provider",
+    "model",
+    "constraint_mode",
+    "schema_version",
+    "schema_hash",
+    "attempt_count",
+    "regeneration_used",
+    "selected_agent_ids",
+    "step_count",
+)
+_PLAN_LEADER_GENERATION_MODES = frozenset(
+    {"local", "json_object", "prompt_only", "native_json_schema"}
+)
+_PLAN_LEADER_SCHEMA_VERSION = "leader-plan/v1"
+_PLAN_LEADER_FORBIDDEN_KEY_PARTS = frozenset(
+    {
+        "prompt",
+        "argv",
+        "path",
+        "credential",
+        "credentials",
+        "secret",
+        "token",
+        "password",
+        "authorization",
+    }
+)
+
 _MIGRATION_ADDITIVE_COLLECTIONS = (
     "mission_attempts",
     "mission_recovery_evidence",
@@ -8206,6 +8235,7 @@ class StateStore:
         model: str,
         plan: dict[str, Any],
         skill_context: dict[str, Any] | None = None,
+        leader_generation: dict[str, object] | None = None,
     ) -> dict[str, Any]:
         state = self.load()
         record = {
@@ -8222,6 +8252,15 @@ class StateStore:
             "plan": plan,
             "created_at": utc_now(),
         }
+        if leader_generation is not None:
+            steps = plan.get("steps")
+            record["leader_generation"] = self._plan_leader_generation(
+                leader_generation,
+                provider=provider,
+                model=model,
+                step_count=len(steps) if isinstance(steps, list) else 0,
+                plan=plan,
+            )
         state.setdefault("plans", []).append(record)
         self.save(state)
         return record
@@ -8252,8 +8291,134 @@ class StateStore:
             "created_at": utc_now(),
         }
         if leader_generation is not None:
-            record["leader_generation"] = copy.deepcopy(leader_generation)
+            steps = plan.get("steps")
+            record["leader_generation"] = self._plan_leader_generation(
+                leader_generation,
+                provider=provider,
+                model=model,
+                step_count=len(steps) if isinstance(steps, list) else 0,
+                plan=plan,
+            )
         return record
+
+    @staticmethod
+    def _plan_leader_generation(
+        value: object,
+        *,
+        provider: object,
+        model: object,
+        step_count: object,
+        plan: object = None,
+    ) -> dict[str, object]:
+        """Return compact validated provenance, or a deterministic legacy projection."""
+
+        def fail() -> None:
+            raise ValueError("plan leader generation invalid")
+
+        def contains_forbidden_key(candidate: object) -> bool:
+            if type(candidate) is dict:
+                for raw_key, nested in candidate.items():
+                    if type(raw_key) is not str:
+                        return True
+                    normalized = re.sub(r"(?<!^)(?=[A-Z])", "_", raw_key).lower().replace("-", "_")
+                    parts = frozenset(part for part in normalized.split("_") if part)
+                    if (
+                        normalized == "api_key"
+                        or parts.intersection(_PLAN_LEADER_FORBIDDEN_KEY_PARTS)
+                        or contains_forbidden_key(nested)
+                    ):
+                        return True
+            elif type(candidate) is list:
+                return any(contains_forbidden_key(item) for item in candidate)
+            return False
+
+        if contains_forbidden_key(value):
+            fail()
+        if type(provider) is not str or not provider or type(model) is not str or not model:
+            fail()
+        if type(step_count) is not int or step_count < 1 or step_count > 64:
+            fail()
+
+        if value is None:
+            backend = leader_provider_backend(provider)
+            legacy_mode = {
+                "api": "json_object",
+                "cli": "prompt_only",
+                "local": "local",
+            }.get(backend, "local")
+            return {
+                "provider": provider,
+                "model": model,
+                "constraint_mode": legacy_mode,
+                "schema_version": None,
+                "schema_hash": None,
+                "attempt_count": 1,
+                "regeneration_used": False,
+                "selected_agent_ids": [],
+                "step_count": step_count,
+            }
+
+        if step_count < 2:
+            fail()
+
+        if type(value) is not dict or set(value) != set(_PLAN_LEADER_GENERATION_FIELDS):
+            fail()
+        candidate = value
+        mode = candidate.get("constraint_mode")
+        schema_version = candidate.get("schema_version")
+        schema_hash = candidate.get("schema_hash")
+        attempt_count = candidate.get("attempt_count")
+        regeneration_used = candidate.get("regeneration_used")
+        selected_agent_ids = candidate.get("selected_agent_ids")
+        if candidate.get("provider") != provider or type(candidate.get("provider")) is not str:
+            fail()
+        if candidate.get("model") != model or type(candidate.get("model")) is not str:
+            fail()
+        if type(mode) is not str or mode not in _PLAN_LEADER_GENERATION_MODES:
+            fail()
+        if mode == "native_json_schema":
+            if (
+                schema_version != _PLAN_LEADER_SCHEMA_VERSION
+                or type(schema_version) is not str
+                or type(schema_hash) is not str
+                or re.fullmatch(r"sha256:[0-9a-f]{64}", schema_hash) is None
+            ):
+                fail()
+        elif schema_version is not None or schema_hash is not None:
+            fail()
+        if type(attempt_count) is not int or attempt_count < 1 or attempt_count > 2:
+            fail()
+        if type(regeneration_used) is not bool or regeneration_used is not (attempt_count == 2):
+            fail()
+        if (
+            type(selected_agent_ids) is not list
+            or not selected_agent_ids
+            or any(type(item) is not str or not item for item in selected_agent_ids)
+            or len(set(selected_agent_ids)) != len(selected_agent_ids)
+        ):
+            fail()
+        if type(candidate.get("step_count")) is not int or candidate.get("step_count") != step_count:
+            fail()
+        body_steps = plan.get("steps") if type(plan) is dict else None
+        if type(body_steps) is not list or len(body_steps) != step_count:
+            fail()
+        if any(
+            type(item) is not dict
+            or type(item.get("agent_id")) is not str
+            or not item.get("agent_id")
+            for item in body_steps
+        ):
+            fail()
+        known_agent_ids = {
+            item.get("agent_id")
+            for item in body_steps
+        }
+        if set(selected_agent_ids) != known_agent_ids:
+            fail()
+        return {
+            field: copy.deepcopy(candidate[field])
+            for field in _PLAN_LEADER_GENERATION_FIELDS
+        }
 
     def list_plans(self) -> list[dict[str, Any]]:
         return list(self.load().get("plans", []))
@@ -8991,6 +9156,13 @@ class StateStore:
                 str(plan.get("model") or ""),
                 bool(plan.get("dispatch_ready", False)),
             ),
+            "leader_generation": StateStore._plan_leader_generation(
+                plan.get("leader_generation"),
+                provider=plan.get("provider"),
+                model=plan.get("model"),
+                step_count=len(steps) if isinstance(steps, list) else 0,
+                plan=body,
+            ),
             "model": plan.get("model"),
             "dispatch_ready": plan.get("dispatch_ready"),
             "skill_context": StateStore._plan_skill_context(plan.get("skill_context")),
@@ -9284,6 +9456,13 @@ class StateStore:
                         str(plan.get("provider") or ""),
                         str(plan.get("model") or ""),
                         bool(plan.get("dispatch_ready", False)),
+                    ),
+                    "leader_generation": StateStore._plan_leader_generation(
+                        plan.get("leader_generation"),
+                        provider=plan.get("provider"),
+                        model=plan.get("model"),
+                        step_count=len(steps) if isinstance(steps, list) else 0,
+                        plan=body,
                     ),
                     "model": plan.get("model"),
                     "dispatch_ready": plan.get("dispatch_ready"),

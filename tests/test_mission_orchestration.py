@@ -1089,6 +1089,149 @@ def test_direct_preview_persists_orchestrator_generation_provenance(
     )
 
 
+def test_native_preview_projects_exact_generation_provenance_without_changing_plan_hash(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _root, config, store, _path = project(tmp_path)
+    monkeypatch.setattr(
+        "agentdeck.mission_orchestration.shutil.which",
+        lambda command: f"/bin/{command}",
+    )
+    generation = _candidate_generation(
+        config, mode="native_json_schema", attempt_count=2
+    )
+    preview = create_mission_preview_from_candidate(
+        config=config,
+        store=store,
+        candidate=LeaderMissionCandidate(
+            provider="fake",
+            model=config.leader.model,
+            user_message=MESSAGE,
+            plan=eight_step_plan(),
+            timeout_seconds=180,
+            selected_agent_ids=("planner", "reviewer"),
+            step_count=8,
+            leader_generation=generation,
+        ),
+    )
+
+    stored = store.plan_by_id(preview["plan_id"])
+    projected = store.project_view(config).plans["items"][-1]
+    assert list(projected).index("leader_generation") == list(projected).index(
+        "leader_backend"
+    ) + 1
+    assert projected["leader_generation"] == stored["leader_generation"] == generation
+    without_generation = dict(stored)
+    without_generation.pop("leader_generation")
+    assert canonical_workflow_plan_hash(stored) == canonical_workflow_plan_hash(
+        without_generation
+    )
+
+
+def test_plan_generation_normalizer_rejects_malformed_input_without_echo(
+    tmp_path: Path,
+) -> None:
+    _root, config, store, _path = project(tmp_path)
+    generation = _candidate_generation(config)
+    generation["nested"] = {"api_key": "DO-NOT-ECHO"}
+
+    with pytest.raises(ValueError, match="^plan leader generation invalid$") as error:
+        store.build_plan_record(
+            MESSAGE,
+            "fake",
+            config.leader.model,
+            eight_step_plan(),
+            leader_generation=generation,
+        )
+
+    assert "DO-NOT-ECHO" not in str(error.value)
+
+
+def test_legacy_plan_generation_projection_is_deterministic_and_read_only(
+    tmp_path: Path,
+) -> None:
+    _root, config, store, _path = project(tmp_path)
+    record = store.build_plan_record(
+        MESSAGE, "fake", config.leader.model, eight_step_plan()
+    )
+    state = store.load()
+    state["plans"] = [record]
+    store.save(state)
+    before = store.state_path.read_bytes()
+
+    first = store.project_view(config).plans["items"][0]["leader_generation"]
+    second = store.project_view(config).plans["items"][0]["leader_generation"]
+
+    assert first == second == {
+        "provider": "fake",
+        "model": config.leader.model,
+        "constraint_mode": "local",
+        "schema_version": None,
+        "schema_hash": None,
+        "attempt_count": 1,
+        "regeneration_used": False,
+        "selected_agent_ids": [],
+        "step_count": 8,
+    }
+    assert store.state_path.read_bytes() == before
+
+
+def test_legacy_one_step_plan_projects_compatibility_provenance(tmp_path: Path) -> None:
+    _root, config, store, _path = project(tmp_path)
+    plan = eight_step_plan()
+    plan["steps"] = plan["steps"][:1]
+    record = store.build_plan_record(MESSAGE, "fake", config.leader.model, plan)
+    state = store.load()
+    state["plans"] = [record]
+    store.save(state)
+
+    generation = store.project_view(config).plans["items"][0]["leader_generation"]
+
+    assert generation["selected_agent_ids"] == []
+    assert generation["step_count"] == 1
+
+
+def test_invalid_stored_plan_generation_aborts_project_view(tmp_path: Path) -> None:
+    _root, config, store, _path = project(tmp_path)
+    record = store.build_plan_record(
+        MESSAGE,
+        "fake",
+        config.leader.model,
+        eight_step_plan(),
+        leader_generation=_candidate_generation(config),
+    )
+    record["leader_generation"]["prompt"] = "raw secret prompt"
+    state = store.load()
+    state["plans"] = [record]
+    store.save(state)
+
+    with pytest.raises(ValueError, match="^plan leader generation invalid$"):
+        store.project_view(config)
+
+
+def test_record_plan_and_trace_use_the_same_generation_normalizer(tmp_path: Path) -> None:
+    _root, config, store, _path = project(tmp_path)
+    generation = _candidate_generation(config)
+    record = store.record_plan(
+        MESSAGE,
+        "fake",
+        config.leader.model,
+        eight_step_plan(),
+        leader_generation=generation,
+    )
+    generation["selected_agent_ids"] = ["spoofed"]
+    state = store.load()
+    state["approvals"] = [
+        {"message_id": "msg_trace", "plan_id": record["plan_id"]}
+    ]
+
+    traced = StateStore._trace_plan_for_message(state, "msg_trace")
+
+    assert traced is not None
+    assert traced["leader_generation"] == record["leader_generation"]
+    assert traced["leader_generation"] is not record["leader_generation"]
+
+
 def test_create_preview_preserves_compact_loaded_leader_skill_context(tmp_path, monkeypatch) -> None:
     _root, config, store, _config_path = project(tmp_path)
     state = store.load()
