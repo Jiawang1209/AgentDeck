@@ -1349,6 +1349,18 @@ def scheduler_facts_from_store(
                 item for item in snapshot.get("workers", [])
                 if isinstance(item, dict) and item.get("agent_id") == agent.agent_id
             )
+            if (
+                worker.get("configured_transport") != agent.transport
+                or any(
+                    worker.get(field) != getattr(agent, field)
+                    for field in ("provider", "role", "workspace_mode")
+                )
+                or worker_runtime_identity_hash(agent, config.runtime)
+                != worker.get("runtime_identity_hash")
+            ):
+                worker_ready = False
+                runtime_blocker = "Worker execution authority drift"
+                raise StopIteration
             effective_transport = effective_transport_for_step(
                 state,
                 mission_id=mission["mission_id"],
@@ -1421,6 +1433,8 @@ def scheduler_facts_from_store(
                     )
         except (AttributeError, KeyError, OSError, StopIteration, TypeError, ValueError):
             worker_ready = False
+            if runtime_blocker is None:
+                runtime_blocker = "Worker execution authority drift"
     return SchedulerFacts(
         mission_id=mission["mission_id"],
         mission_state=mission["status"],
@@ -1730,17 +1744,10 @@ class DaemonTmuxWorkerStarter:
                 session_name=config.runtime.session_name, cwd=config.root,
                 blocker="Worker startup runtime identity drift",
             )
-        try:
-            self.backend.create_session(config.runtime)
-            pane_id = self.backend.spawn_agent(config.runtime, agent, config.root)
-            if type(pane_id) is not str or not pane_id:
-                raise RuntimeError("invalid pane")
-        except Exception:
-            return self.store.finish_mission_worker_start(
-                start_id=claim["start_id"], pane_id="",
-                session_name=config.runtime.session_name, cwd=config.root,
-                blocker="tmux Worker startup failed",
-            )
+        self.backend.create_session(config.runtime)
+        pane_id = self.backend.spawn_agent(config.runtime, agent, config.root)
+        if type(pane_id) is not str or not pane_id:
+            raise RuntimeError("tmux Worker startup outcome is ambiguous")
         return self.store.finish_mission_worker_start(
             start_id=claim["start_id"], pane_id=pane_id,
             session_name=config.runtime.session_name, cwd=config.root,

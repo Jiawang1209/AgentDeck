@@ -5147,7 +5147,7 @@ class StateStore:
                 raise ValueError("Worker startup Mission authority is invalid")
             steps = snapshot["mission"]["steps"]
             cursor = mission.get("current_step")
-            if type(cursor) is not int or cursor >= len(steps):
+            if type(cursor) is not int or cursor < 0 or cursor >= len(steps):
                 raise ValueError("Worker startup step authority is invalid")
             step = steps[cursor]
             workers = [

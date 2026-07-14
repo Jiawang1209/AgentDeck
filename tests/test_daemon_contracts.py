@@ -116,3 +116,18 @@ def test_daemon_stop_control_uses_internal_temporary_controller_flow() -> None:
         "enabled": True,
         "blocker": None,
     }
+
+
+def test_mission_scheduler_example_discovers_active_background_execution() -> None:
+    payload = mission_scheduler_example()
+    assert payload["state"] == "running"
+    assert payload["active_mission_id"] == "mis_0123456789ab"
+    assert payload["active_step"] == "step_2"
+    assert payload["next_transition"] == "start_worker"
+    assert payload["blockers"] == []
+
+
+def test_mission_scheduler_rejects_unknown_transition() -> None:
+    payload = mission_scheduler_example()
+    payload["next_transition"] = "unbounded_background_magic"
+    assert validate_mission_scheduler_contract(payload)["ok"] is False

@@ -6753,6 +6753,121 @@ def daemon_logs_command(args: argparse.Namespace) -> int:
     return 0
 
 
+def _daemon_worker_transport_for(
+    *, store: StateStore, service: ProjectDaemonService, root: Path,
+    attempt: dict[str, object],
+):
+    """Build one Worker transport from freshly reloaded frozen authority."""
+    current_config = load_config(root)
+    mission = store.mission_by_id(str(attempt["mission_id"]))
+    snapshot = mission.get("execution_snapshot")
+    if not isinstance(snapshot, dict):
+        raise ServiceError("Worker execution snapshot is missing")
+    mission_snapshot = snapshot.get("mission")
+    if not isinstance(mission_snapshot, dict):
+        raise ServiceError("Worker execution snapshot is invalid")
+    step = next(
+        (
+            item
+            for item in mission_snapshot.get("steps", [])
+            if isinstance(item, dict)
+            and item.get("step_id") == attempt.get("step_id")
+        ),
+        None,
+    )
+    agent = next(
+        (
+            item for item in current_config.agents
+            if item.agent_id == attempt.get("agent_id")
+        ),
+        None,
+    )
+    if step is None or agent is None:
+        raise ServiceError("Worker execution authority is invalid")
+    plan = store.plan_by_id(str(mission_snapshot.get("plan_id") or ""))
+    raw_plan = plan.get("plan")
+    raw_steps = raw_plan.get("steps", []) if isinstance(raw_plan, dict) else []
+    raw_step = next(
+        (
+            item
+            for item in raw_steps
+            if isinstance(item, dict)
+            and item.get("step") == step.get("position")
+            and item.get("agent_id") == step.get("agent_id")
+        ),
+        None,
+    )
+    if raw_step is None or not isinstance(raw_step.get("task"), str):
+        raise ServiceError("Worker task authority is invalid")
+    worker = next(
+        (
+            item for item in snapshot.get("workers", [])
+            if isinstance(item, dict) and item.get("agent_id") == agent.agent_id
+        ),
+        None,
+    )
+    if (
+        canonical_snapshot_hash({"task": raw_step["task"]})
+        != step.get("task_hash")
+        or not isinstance(worker, dict)
+        or worker.get("configured_transport") != agent.transport
+        or any(
+            worker.get(field) != getattr(agent, field)
+            for field in ("provider", "role", "workspace_mode")
+        )
+        or worker_runtime_identity_hash(agent, current_config.runtime)
+        != worker.get("runtime_identity_hash")
+    ):
+        raise ServiceError("Worker execution authority drift")
+    previous_handoff = resolve_previous_handoff(store.load(), attempt)
+    effective_agent = replace(
+        agent, transport=str(attempt["configured_transport"])
+    )
+    prompt = build_worker_prompt(
+        attempt,
+        effective_agent,
+        task=raw_step["task"],
+        previous_handoff=previous_handoff,
+    )
+    if attempt["configured_transport"] == "acp":
+        sink = _DaemonAcpWorkerSink(
+            service=service,
+            store=store,
+            attempt=attempt,
+            agent=effective_agent,
+            workspace=root,
+        )
+        return AcpWorkerTransport(
+            argv=effective_agent.transport_command,
+            workspace=root,
+            prompt=prompt,
+            request_timeout=float(mission.get("timeout_seconds") or 180),
+            sink=sink,
+            decide=sink.decide,
+        )
+    project_view = store.project_view(current_config)
+    pane_id = next(
+        (
+            item.get("runtime", {}).get("pane_id")
+            for item in project_view.agents
+            if isinstance(item, dict)
+            and item.get("agent_id") == effective_agent.agent_id
+            and isinstance(item.get("runtime"), dict)
+        ),
+        None,
+    )
+    if not isinstance(pane_id, str):
+        raise ServiceError("tmux Worker pane is not ready")
+    timeout_seconds = int(mission.get("timeout_seconds") or 180)
+    return TmuxWorkerTransport(
+        config=current_config.runtime,
+        pane_id=pane_id,
+        prompt=prompt,
+        max_polls=max(1, timeout_seconds),
+        poll_interval_seconds=1,
+    )
+
+
 async def _serve_daemon(root: Path, config: ProjectConfig, store: StateStore) -> int:
     ownership = acquire_daemon_ownership(
         root, start_nonce=secrets.token_hex(32), health_probe=lambda _metadata: None,
@@ -7117,106 +7232,11 @@ async def _serve_daemon(root: Path, config: ProjectConfig, store: StateStore) ->
             apply_transition=lambda decision: effects.apply(decision),
         )
         def transport_for(attempt: dict[str, object]):
-            mission = store.mission_by_id(str(attempt["mission_id"]))
-            snapshot = mission.get("execution_snapshot")
-            if not isinstance(snapshot, dict):
-                raise ServiceError("Worker execution snapshot is missing")
-            mission_snapshot = snapshot.get("mission")
-            if not isinstance(mission_snapshot, dict):
-                raise ServiceError("Worker execution snapshot is invalid")
-            step = next(
-                (
-                    item
-                    for item in mission_snapshot.get("steps", [])
-                    if isinstance(item, dict)
-                    and item.get("step_id") == attempt.get("step_id")
-                ),
-                None,
-            )
-            agent = next(
-                (item for item in config.agents if item.agent_id == attempt.get("agent_id")),
-                None,
-            )
-            if step is None or agent is None:
-                raise ServiceError("Worker execution authority is invalid")
-            plan = store.plan_by_id(str(mission_snapshot.get("plan_id") or ""))
-            raw_plan = plan.get("plan")
-            raw_steps = raw_plan.get("steps", []) if isinstance(raw_plan, dict) else []
-            raw_step = next(
-                (
-                    item
-                    for item in raw_steps
-                    if isinstance(item, dict)
-                    and item.get("step") == step.get("position")
-                    and item.get("agent_id") == step.get("agent_id")
-                ),
-                None,
-            )
-            if raw_step is None or not isinstance(raw_step.get("task"), str):
-                raise ServiceError("Worker task authority is invalid")
-            worker = next(
-                (
-                    item for item in snapshot.get("workers", [])
-                    if isinstance(item, dict)
-                    and item.get("agent_id") == agent.agent_id
-                ),
-                None,
-            )
-            if (
-                canonical_snapshot_hash({"task": raw_step["task"]})
-                != step.get("task_hash")
-                or not isinstance(worker, dict)
-                or worker.get("configured_transport") != agent.transport
-                or worker_runtime_identity_hash(agent, config.runtime)
-                != worker.get("runtime_identity_hash")
-            ):
-                raise ServiceError("Worker execution authority drift")
-            previous_handoff = resolve_previous_handoff(store.load(), attempt)
-            effective_agent = replace(
-                agent, transport=str(attempt["configured_transport"])
-            )
-            prompt = build_worker_prompt(
-                attempt,
-                effective_agent,
-                task=raw_step["task"],
-                previous_handoff=previous_handoff,
-            )
-            if attempt["configured_transport"] == "acp":
-                sink = _DaemonAcpWorkerSink(
-                    service=service,
-                    store=store,
-                    attempt=attempt,
-                    agent=effective_agent,
-                    workspace=root,
-                )
-                return AcpWorkerTransport(
-                    argv=effective_agent.transport_command,
-                    workspace=root,
-                    prompt=prompt,
-                    request_timeout=float(mission.get("timeout_seconds") or 180),
-                    sink=sink,
-                    decide=sink.decide,
-                )
-            project_view = store.project_view(config)
-            pane_id = next(
-                (
-                    item.get("runtime", {}).get("pane_id")
-                    for item in project_view.agents
-                    if isinstance(item, dict)
-                    and item.get("agent_id") == effective_agent.agent_id
-                    and isinstance(item.get("runtime"), dict)
-                ),
-                None,
-            )
-            if not isinstance(pane_id, str):
-                raise ServiceError("tmux Worker pane is not ready")
-            timeout_seconds = int(mission.get("timeout_seconds") or 180)
-            return TmuxWorkerTransport(
-                config=config.runtime,
-                pane_id=pane_id,
-                prompt=prompt,
-                max_polls=max(1, timeout_seconds),
-                poll_interval_seconds=1,
+            return _daemon_worker_transport_for(
+                store=store,
+                service=service,
+                root=root,
+                attempt=attempt,
             )
 
         coordinator = DaemonWorkerCoordinator(

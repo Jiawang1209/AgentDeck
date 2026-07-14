@@ -4,7 +4,9 @@ from copy import deepcopy
 from dataclasses import replace
 import hashlib
 import json
+import subprocess
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -23,7 +25,11 @@ from agentdeck.mission_orchestration import (
 )
 from agentdeck.providers import LeaderPlanRequest
 from agentdeck.daemon.scheduler import SchedulerDecision
-from agentdeck.daemon.service import DaemonTmuxWorkerStarter
+from agentdeck.daemon.service import (
+    DaemonTmuxWorkerStarter,
+    ServiceError,
+    scheduler_facts_from_store,
+)
 from agentdeck.state import MissionStateError, StateStore, worker_runtime_identity_hash
 
 
@@ -203,8 +209,12 @@ def test_confirmation_rejects_worker_runtime_drift_after_preview(
     assert _tree_bytes(root) == before
 
 
-def test_claimed_tmux_start_is_ambiguous_and_never_spawned_twice(
-    tmp_path, monkeypatch
+@pytest.mark.parametrize(
+    "effect_error",
+    [RuntimeError("pane id parse failed"), subprocess.TimeoutExpired("tmux", 1)],
+)
+def test_claimed_tmux_start_is_ambiguous_and_never_spawned_twice_on_exception(
+    tmp_path, monkeypatch, effect_error: Exception
 ) -> None:
     root, config, store, preview = _seed(tmp_path, monkeypatch)
     result = confirm_mission_for_daemon(
@@ -218,22 +228,19 @@ def test_claimed_tmux_start_is_ambiguous_and_never_spawned_twice(
     store.save(state)
     calls: list[str] = []
 
-    class CrashAfterEffect(BaseException):
-        pass
-
     class Backend:
         def create_session(self, _config):
             calls.append("session")
 
         def spawn_agent(self, _config, _agent, _cwd):
             calls.append("spawn")
-            raise CrashAfterEffect
+            raise effect_error
 
     starter = DaemonTmuxWorkerStarter(store, Backend())
     decision = SchedulerDecision(
         "start_worker", preview["mission_id"], "step_2", None, None
     )
-    with pytest.raises(CrashAfterEffect):
+    with pytest.raises(type(effect_error)):
         starter(decision)
     persisted = store.load()["mission_worker_starts"]
     assert len(persisted) == 1
@@ -241,6 +248,145 @@ def test_claimed_tmux_start_is_ambiguous_and_never_spawned_twice(
     with pytest.raises(ValueError, match="already recorded"):
         starter(decision)
     assert calls == ["session", "spawn"]
+
+
+def test_tmux_start_claim_rejects_negative_cursor_with_full_tree_zero_write(
+    tmp_path, monkeypatch
+) -> None:
+    root, config, store, preview = _seed(tmp_path, monkeypatch)
+    result = confirm_mission_for_daemon(
+        config=config, store=store, mission_id=preview["mission_id"]
+    )
+    store.admit_mission_execution(
+        preview["mission_id"], snapshot_hash=result["snapshot_hash"]
+    )
+    state = store.load()
+    state["missions"][0]["current_step"] = -1
+    store.save(state)
+    before = _tree_bytes(root)
+
+    with pytest.raises(ValueError, match="step authority is invalid"):
+        store.claim_mission_worker_start(
+            mission_id=preview["mission_id"],
+            step_id="step_2",
+            agent_id="reviewer",
+        )
+
+    assert _tree_bytes(root) == before
+
+
+@pytest.mark.parametrize(
+    ("agent_id", "step_id", "cursor", "old", "new"),
+    [
+        ("planner", "step_1", 0, 'command = "codex"', 'command = "changed"'),
+        (
+            "planner", "step_1", 0,
+            'transport_command = ["adapter", "--token", "SECRET"]',
+            'transport_command = ["adapter", "--changed"]',
+        ),
+        (
+            "planner", "step_1", 0,
+            'role_prompt = "你是 AgentDeck 的规划 Agent，负责需求澄清、任务拆解、架构方案和风险识别。"',
+            'role_prompt = "changed prompt"',
+        ),
+        (
+            "reviewer", "step_2", 1,
+            'session_name = "agentdeck"',
+            'session_name = "changed-session"',
+        ),
+    ],
+)
+def test_post_confirmation_worker_runtime_drift_blocks_scheduler_and_transport(
+    tmp_path, monkeypatch, agent_id: str, step_id: str, cursor: int,
+    old: str, new: str,
+) -> None:
+    root, config, store, preview = _seed(tmp_path, monkeypatch)
+    result = confirm_mission_for_daemon(
+        config=config, store=store, mission_id=preview["mission_id"]
+    )
+    store.admit_mission_execution(
+        preview["mission_id"], snapshot_hash=result["snapshot_hash"]
+    )
+    state = store.load()
+    state["missions"][0].update({"current_step": cursor, "status": "running"})
+    store.save(state)
+    config_path = root / ".agentdeck" / "config.toml"
+    config_path.write_text(
+        config_path.read_text(encoding="utf-8").replace(old, new, 1),
+        encoding="utf-8",
+    )
+    runtime_calls: list[str] = []
+    backend = SimpleNamespace(
+        pane_exists=lambda *_args: runtime_calls.append("probe") or True,
+        capture_output=lambda *_args, **_kwargs: "ready",
+    )
+
+    facts = scheduler_facts_from_store(store, tmux_backend=backend)
+    assert facts is not None
+    assert facts.worker_ready is False
+    assert facts.blocker == "Worker execution authority drift"
+    assert runtime_calls == []
+
+    monkeypatch.setattr(
+        cli, "AcpWorkerTransport",
+        lambda **_kwargs: runtime_calls.append("acp-transport"),
+    )
+    monkeypatch.setattr(
+        cli, "TmuxWorkerTransport",
+        lambda **_kwargs: runtime_calls.append("tmux-transport"),
+    )
+    attempt = {
+        "mission_id": preview["mission_id"],
+        "step_id": step_id,
+        "agent_id": agent_id,
+        "configured_transport": "acp" if agent_id == "planner" else "tmux",
+        "dispatch_key": "dsp_" + "d" * 32,
+    }
+    with pytest.raises(ServiceError, match="execution authority drift"):
+        cli._daemon_worker_transport_for(
+            store=store,
+            service=SimpleNamespace(),
+            root=root,
+            attempt=attempt,
+        )
+    assert runtime_calls == []
+
+
+def test_post_confirmation_task_drift_constructs_no_worker_transport(
+    tmp_path, monkeypatch
+) -> None:
+    root, config, store, preview = _seed(tmp_path, monkeypatch)
+    result = confirm_mission_for_daemon(
+        config=config, store=store, mission_id=preview["mission_id"]
+    )
+    store.admit_mission_execution(
+        preview["mission_id"], snapshot_hash=result["snapshot_hash"]
+    )
+    state = store.load()
+    state["plans"][0]["plan"]["steps"][0]["task"] = "changed after confirmation"
+    store.save(state)
+    calls: list[str] = []
+    monkeypatch.setattr(
+        cli, "AcpWorkerTransport", lambda **_kwargs: calls.append("acp")
+    )
+    monkeypatch.setattr(
+        cli, "TmuxWorkerTransport", lambda **_kwargs: calls.append("tmux")
+    )
+
+    with pytest.raises(ServiceError, match="execution authority drift"):
+        cli._daemon_worker_transport_for(
+            store=store,
+            service=SimpleNamespace(),
+            root=root,
+            attempt={
+                "mission_id": preview["mission_id"],
+                "step_id": "step_1",
+                "agent_id": "planner",
+                "configured_transport": "acp",
+                "dispatch_key": "dsp_" + "d" * 32,
+            },
+        )
+    assert calls == []
 
 
 @pytest.mark.parametrize("drift", ["task", "order", "add", "remove"])

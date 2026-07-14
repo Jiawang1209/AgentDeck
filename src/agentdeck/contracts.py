@@ -22,6 +22,7 @@ from .mission import (
     validate_mission_plan,
 )
 from .models import MIGRATION_SCHEMA_VERSION, PROJECT_VIEW_SCHEMA_VERSION
+from .daemon.scheduler import DECISION_KINDS
 from .state import leader_backend_identity
 from .runtime.protocol import PROTOCOL_TRANSITION_EDGES, TRANSPORT_KINDS, TransportCapabilities
 
@@ -351,6 +352,7 @@ MISSION_SCHEDULER_RESPONSE_FIELDS = (
     "schema_version", "mode", "state", "active_mission_id",
     "active_step", "next_transition", "blockers", "controls",
 )
+MISSION_SCHEDULER_TRANSITIONS = tuple(sorted(DECISION_KINDS))
 CLIENT_SESSION_CONTRACT_VERSION = "client-session/v1"
 CLIENT_SESSION_RESPONSE_FIELDS = (
     "schema_version", "mode", "client_id", "role", "lease_generation",
@@ -12493,7 +12495,7 @@ def project_view_example() -> dict[str, object]:
         "scheduler": {
             "state": "inactive", "active_mission_id": None, "active_step": None,
             "next_transition": None,
-            "blockers": ["background Mission scheduling is not implemented in M2a"],
+            "blockers": [],
         },
         "mission_recovery": {
             "mode": "mission_recovery",
@@ -17484,11 +17486,11 @@ def mission_scheduler_example() -> dict[str, object]:
     return {
         "schema_version": MISSION_SCHEDULER_CONTRACT_VERSION,
         "mode": "mission_scheduler",
-        "state": "inactive",
-        "active_mission_id": None,
-        "active_step": None,
-        "next_transition": None,
-        "blockers": ["background Mission scheduling is not implemented in M2a"],
+        "state": "running",
+        "active_mission_id": "mis_0123456789ab",
+        "active_step": "step_2",
+        "next_transition": "start_worker",
+        "blockers": [],
         "controls": [
             _daemon_control("inspect", "Inspect status", "agentdeck status", "inspect"),
         ],
@@ -17596,6 +17598,9 @@ def validate_mission_scheduler_contract(payload: object) -> dict[str, object]:
         for name in ("active_mission_id", "active_step", "next_transition"):
             if payload.get(name) is not None and type(payload.get(name)) is not str:
                 errors.append(f"{name} must be a string or null")
+        transition = payload.get("next_transition")
+        if transition is not None and transition not in MISSION_SCHEDULER_TRANSITIONS:
+            errors.append("next_transition is invalid")
         result["ok"] = not errors
     return result
 
