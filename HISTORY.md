@@ -4,6 +4,11 @@
 
 ## 2026-07-14
 
+### Design the Phase 3 M2c acceptance closure
+
+- **North-star-first closure design**: approved and recorded `docs/superpowers/specs/2026-07-14-agentdeck-m2c-closure-design.md`. The design treats native CLI JSON Schema as only the first reliability boundary, keeps AgentDeck's frozen Mission validation and governance authoritative, and requires the complete real implementation → review → revision → acceptance path before M2c may become PASS.
+- **Planned evidence boundary**: the future implementation must use one authority-aware canonical plan schema, native Codex/Claude structured output, compact allowlisted diagnostics, at most one same-provider regeneration with no fallback, and a deterministic plus real Claude-ACP/Codex-tmux four-stage acceptance proving disconnect/reconnect, permission preview/confirm, tmux visibility, takeover/return-control, three compact handoffs, contract agreement, and complete cleanup. M3 remains blocked until that real gate passes.
+
 ### Complete Phase 3 M2 background Missions
 
 - **Final full M2c boundary**: deterministic and daemon validation pass, and the earlier real two-step Codex Leader → Claude ACP → Codex tmux transport rehearsal remains valid. The stronger approved implementation-review-revision-acceptance rehearsal does not pass: on frozen commit `be4dee08`, two independent fresh bare-client projects both ended durably at the sanitized `leader_schema` stage before preview creation. Each retained zero plans, Missions, attempts, permissions and Worker effects. The sole allowed fresh retry matched the first result; all disposable daemon/tmux/project resources were removed. Product docs now distinguish the two-step transport PASS from the full M2c BLOCKED result.
