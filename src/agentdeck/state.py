@@ -331,8 +331,13 @@ class _StateSourceToken(dict[str, object]):
     __hash__ = object.__hash__
 
     def __deepcopy__(self, memo: dict[int, object]) -> _StateSourceToken:
-        del memo
-        return self
+        clone = _StateSourceToken()
+        memo[id(self)] = clone
+        with _LOADED_STATE_SOURCES_LOCK:
+            facts = _STATE_SOURCE_FACTS.get(self)
+            if facts is not None:
+                _STATE_SOURCE_FACTS[clone] = facts
+        return clone
 
 
 def _persistent_state(state: Mapping[str, object]) -> dict[str, object]:
@@ -2061,10 +2066,14 @@ class StateStore:
         self.events_path = self.deck_dir / "state" / "events.jsonl"
 
     def _remember_loaded_state(
-        self, state: dict[str, Any], source_hash: str | None
+        self,
+        state: dict[str, Any],
+        source_hash: str | None,
+        *,
+        replace_token: bool = False,
     ) -> dict[str, Any]:
         token = state.get(_STATE_SOURCE_TOKEN_KEY)
-        if not isinstance(token, _StateSourceToken):
+        if replace_token or not isinstance(token, _StateSourceToken):
             token = _StateSourceToken()
             state[_STATE_SOURCE_TOKEN_KEY] = token
         with _LOADED_STATE_SOURCES_LOCK:
@@ -3458,7 +3467,9 @@ class StateStore:
         installed = _read_state_bytes_at(state_fd)
         assert installed is not None
         self._remember_loaded_state(
-            state, "sha256:" + hashlib.sha256(installed).hexdigest()
+            state,
+            "sha256:" + hashlib.sha256(installed).hexdigest(),
+            replace_token=True,
         )
 
     @staticmethod

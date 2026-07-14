@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from copy import deepcopy
+from copy import copy, deepcopy
 from pathlib import Path
 import ast
 from datetime import datetime, timedelta, timezone
@@ -339,7 +339,7 @@ def test_state_source_provenance_is_gc_reclaimed_and_deepcopy_stable(
     token = state[state_module._STATE_SOURCE_TOKEN_KEY]
     token_ref = weakref.ref(token)
     clone = deepcopy(state)
-    assert clone[state_module._STATE_SOURCE_TOKEN_KEY] is token
+    assert clone[state_module._STATE_SOURCE_TOKEN_KEY] is not token
     clone["plans"] = [{"plan_id": "pln_deepcopy"}]
     store.save(clone)
     assert state_module._STATE_SOURCE_TOKEN_KEY not in store.state_path.read_text(
@@ -355,6 +355,32 @@ def test_state_source_provenance_is_gc_reclaimed_and_deepcopy_stable(
     gc.collect()
 
     assert token_ref() is None
+
+
+@pytest.mark.parametrize("copier", [copy, deepcopy], ids=["shallow", "deep"])
+def test_copied_state_branch_cannot_refresh_stale_original_provenance(
+    tmp_path: Path,
+    copier,
+) -> None:
+    store = StateStore(tmp_path)
+    original = store.load()
+    branch = copier(original)
+    branch["plans"] = [{"plan_id": "pln_copy_branch"}]
+    original["plans"] = [{"plan_id": "pln_stale_original"}]
+
+    store.save(branch)
+
+    assert (
+        branch[state_module._STATE_SOURCE_TOKEN_KEY]
+        is not original[state_module._STATE_SOURCE_TOKEN_KEY]
+    )
+    with pytest.raises(ValueError, match="state source facts drifted"):
+        store.save(original)
+    persisted = store.load()
+    assert persisted["plans"] == [{"plan_id": "pln_copy_branch"}]
+    assert state_module._STATE_SOURCE_TOKEN_KEY not in store.state_path.read_text(
+        encoding="utf-8"
+    )
 
 
 def test_state_directory_replace_race_fails_before_backup_or_external_write(
