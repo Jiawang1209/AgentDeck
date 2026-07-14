@@ -210,6 +210,15 @@ class CliLeaderProviderError(RuntimeError):
             retryable=self.retryable,
         )
 
+    def without_retry(self) -> CliLeaderProviderError:
+        return CliLeaderProviderError(
+            self.stage,
+            self.diagnostic_code,
+            attempt_count=self.attempt_count,
+            constraint_mode=self.constraint_mode,
+            retryable=False,
+        )
+
 
 def _create_private_workspace(prefix: str) -> str | None:
     path: str | None = None
@@ -548,10 +557,13 @@ class CodexCliProvider(CliLeaderProvider):
             pending_error = error
         finally:
             cleanup_succeeded = _cleanup_private_workspace(temp_dir)
-        if not cleanup_succeeded and pending_error is None:
-            pending_error = CliLeaderProviderError(
-                "json_parse", "invalid_output_envelope"
-            )
+        if not cleanup_succeeded:
+            if pending_error is None:
+                pending_error = CliLeaderProviderError(
+                    "json_parse", "invalid_output_envelope"
+                )
+            else:
+                pending_error = pending_error.without_retry()
         if pending_error is not None:
             raise pending_error
         if plan is None:
@@ -883,10 +895,13 @@ class ClaudeCliProvider(CliLeaderProvider):
             pending_error = error
         finally:
             cleanup_succeeded = _cleanup_private_workspace(temp_dir)
-        if not cleanup_succeeded and pending_error is None:
-            pending_error = CliLeaderProviderError(
-                "json_parse", "invalid_output_envelope"
-            )
+        if not cleanup_succeeded:
+            if pending_error is None:
+                pending_error = CliLeaderProviderError(
+                    "json_parse", "invalid_output_envelope"
+                )
+            else:
+                pending_error = pending_error.without_retry()
         if pending_error is not None:
             raise pending_error
         if plan is None:

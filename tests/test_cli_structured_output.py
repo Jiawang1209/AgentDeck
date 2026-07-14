@@ -944,6 +944,7 @@ def test_native_workspace_cleanup_failure_after_success_is_fixed_and_redacted(
     assert raised.value.diagnostic_code == "invalid_output_envelope"
     assert cleanup_calls == 1
     assert raised.value.attempt_count == 1
+    assert raised.value.retryable is False
     _assert_exception_graph_redacted(raised.value, (secret, str(tmp_path)))
 
 
@@ -997,31 +998,52 @@ def test_native_probe_cleanup_cannot_mask_missing_executable(monkeypatch) -> Non
 
 @pytest.mark.parametrize("provider_class", [CodexCliProvider, ClaudeCliProvider])
 @pytest.mark.parametrize(
-    ("scenario", "expected_stage"),
-    [("timeout", "timeout"), ("nonzero", "nonzero"), ("schema", "schema")],
+    ("scenario", "expected_stage", "expected_code"),
+    [
+        ("timeout", "timeout", None),
+        ("nonzero", "nonzero", None),
+        ("json_parse", "json_parse", "invalid_output_envelope"),
+        ("schema", "schema", "role_mismatch"),
+    ],
 )
 def test_native_workspace_cleanup_cannot_mask_prior_failure(
-    tmp_path: Path, monkeypatch, provider_class, scenario: str, expected_stage: str
+    tmp_path: Path,
+    monkeypatch,
+    provider_class,
+    scenario: str,
+    expected_stage: str,
+    expected_code: str | None,
 ) -> None:
     request = _request(tmp_path)
     secret = f"SECRET_TIMEOUT_CLEANUP_{tmp_path}"
     cleanup_calls = 0
+    subprocess_calls = 0
 
     def fake_run(command, **kwargs):
+        nonlocal subprocess_calls
+        subprocess_calls += 1
         if scenario == "timeout":
             raise subprocess.TimeoutExpired(
                 command, 180, output=secret, stderr=secret
             )
         if scenario == "nonzero":
             return subprocess.CompletedProcess(command, 9)
-        plan = _valid_plan()
-        plan["steps"][0]["role"] = "wrong-role"
         if "--output-last-message" in command:
             _schema_path, result_path = _output_paths(command)
-            result_path.write_text(json.dumps(plan), encoding="utf-8")
+            if scenario == "json_parse":
+                result_path.write_text("not-json", encoding="utf-8")
+            else:
+                plan = _valid_plan()
+                plan["steps"][0]["role"] = "wrong-role"
+                result_path.write_text(json.dumps(plan), encoding="utf-8")
         else:
-            envelope = _claude_envelope()
-            envelope["structured_output"] = plan
+            if scenario == "json_parse":
+                envelope = {"type": "invalid"}
+            else:
+                plan = _valid_plan()
+                plan["steps"][0]["role"] = "wrong-role"
+                envelope = _claude_envelope()
+                envelope["structured_output"] = plan
             os.write(kwargs["stdout"].fileno(), json.dumps(envelope).encode("utf-8"))
         return subprocess.CompletedProcess(command, 0)
 
@@ -1037,8 +1059,11 @@ def test_native_workspace_cleanup_cannot_mask_prior_failure(
         provider_class().plan_result(request)
 
     assert raised.value.stage == expected_stage
-    assert cleanup_calls == (2 if scenario == "schema" else 1)
-    assert raised.value.attempt_count == (2 if scenario == "schema" else 1)
+    assert raised.value.diagnostic_code == expected_code
+    assert subprocess_calls == 1
+    assert cleanup_calls == 1
+    assert raised.value.attempt_count == 1
+    assert raised.value.retryable is False
     _assert_exception_graph_redacted(raised.value, (secret, str(tmp_path)))
 
 
@@ -1965,6 +1990,26 @@ def test_cli_error_with_attempt_count_is_new_frozen_and_redacted() -> None:
     with pytest.raises(AttributeError):
         regenerated.stage = "SECRET_RAW_STAGE"
     _assert_exception_graph_redacted(regenerated, ("SECRET_RAW_STAGE",))
+
+
+def test_cli_error_without_retry_is_new_sanitized_and_preserves_diagnostic() -> None:
+    original = CliLeaderProviderError(
+        "schema",
+        "invalid_step_count",
+        attempt_count=1,
+        constraint_mode="native_json_schema",
+        retryable=True,
+    )
+    terminal = original.without_retry()
+    assert terminal is not original
+    assert terminal.stage == original.stage == "schema"
+    assert terminal.diagnostic_code == original.diagnostic_code == "invalid_step_count"
+    assert terminal.attempt_count == original.attempt_count == 1
+    assert terminal.constraint_mode == original.constraint_mode == "native_json_schema"
+    assert original.retryable is True
+    assert terminal.retryable is False
+    assert terminal.__cause__ is None
+    assert terminal.__context__ is None
 
 
 @pytest.mark.parametrize("code", ["native_schema_unavailable", "authority_invalid"])
