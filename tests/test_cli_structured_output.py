@@ -625,8 +625,8 @@ def test_claude_rejects_private_sink_mutation_during_same_fd_read(
 
     assert raised.value.stage == "json_parse"
     assert raised.value.diagnostic_code == "invalid_output_envelope"
-    assert mutated_attempts == {1, 2}
-    assert raised.value.attempt_count == 2
+    assert mutated_attempts == {1}
+    assert raised.value.attempt_count == 1
 
 
 @pytest.mark.parametrize(
@@ -878,8 +878,8 @@ def test_native_workspace_creation_failure_is_fixed_and_redacted(
 
     assert raised.value.stage == "json_parse"
     assert raised.value.diagnostic_code == "invalid_output_envelope"
-    assert prefixes == ["agentdeck-leader-", "agentdeck-leader-"]
-    assert raised.value.attempt_count == 2
+    assert prefixes == ["agentdeck-leader-"]
+    assert raised.value.attempt_count == 1
     _assert_exception_graph_redacted(raised.value, (secret, str(tmp_path)))
 
 
@@ -942,8 +942,8 @@ def test_native_workspace_cleanup_failure_after_success_is_fixed_and_redacted(
 
     assert raised.value.stage == "json_parse"
     assert raised.value.diagnostic_code == "invalid_output_envelope"
-    assert cleanup_calls == 2
-    assert raised.value.attempt_count == 2
+    assert cleanup_calls == 1
+    assert raised.value.attempt_count == 1
     _assert_exception_graph_redacted(raised.value, (secret, str(tmp_path)))
 
 
@@ -1487,7 +1487,7 @@ def test_codex_rejects_unstable_or_unowned_result_files(
 
     assert raised.value.stage == "json_parse"
     assert raised.value.diagnostic_code == "invalid_output_envelope"
-    assert raised.value.attempt_count == 2
+    assert raised.value.attempt_count == 1
 
 
 def test_codex_normalizes_owned_single_link_result_mode_to_0600(
@@ -1599,7 +1599,7 @@ def test_codex_rejects_missing_or_unsafe_result_files_without_stdout_fallback(
 
     assert raised.value.stage == "json_parse"
     assert raised.value.diagnostic_code == "invalid_output_envelope"
-    assert raised.value.attempt_count == 2
+    assert raised.value.attempt_count == 1
     assert "SECRET" not in repr(raised.value) + repr(vars(raised.value))
     assert not seen["schema"].parent.exists()
 
@@ -1985,3 +1985,115 @@ def test_native_local_schema_capability_errors_are_not_regenerated(
     assert calls == 1
     assert raised.value.diagnostic_code == code
     assert raised.value.attempt_count == 1
+
+
+@pytest.mark.parametrize(
+    ("stage", "code"),
+    [
+        ("json_parse", None),
+        ("schema", None),
+        ("schema", "authority_invalid"),
+        ("schema", "native_schema_unavailable"),
+        ("timeout", None),
+        ("nonzero", None),
+        ("oversize", None),
+        ("cancelled", None),
+    ],
+)
+def test_cli_error_rejects_retryable_local_or_nonsemantic_combinations(
+    stage: str, code: str | None
+) -> None:
+    with pytest.raises(ValueError) as raised:
+        CliLeaderProviderError(stage, code, retryable=True)
+    assert str(raised.value) == "invalid CLI Leader retryable combination"
+
+
+@pytest.mark.parametrize(
+    ("stage", "code"),
+    [
+        ("json_parse", "invalid_output_envelope"),
+        ("schema", "missing_required_field"),
+        ("schema", "invalid_top_level_type"),
+        ("schema", "invalid_string_field"),
+        ("schema", "invalid_step_type"),
+        ("schema", "invalid_step_count"),
+        ("schema", "invalid_step_numbering"),
+        ("schema", "unknown_agent"),
+        ("schema", "role_mismatch"),
+        ("schema", "approval_not_required"),
+    ],
+)
+def test_cli_error_accepts_only_provider_output_retryable_combinations(
+    stage: str, code: str
+) -> None:
+    error = CliLeaderProviderError(stage, code, retryable=True)
+    copied = error.with_attempt_count(2)
+    assert error.retryable is True
+    assert copied.retryable is True
+    assert copied.attempt_count == 2
+
+
+@pytest.mark.parametrize("retryable", [0, 1, None, "true", [], object()])
+def test_cli_error_retryable_requires_exact_bool(retryable: object) -> None:
+    with pytest.raises(ValueError) as raised:
+        CliLeaderProviderError(
+            "json_parse",
+            "invalid_output_envelope",
+            retryable=retryable,
+        )
+    assert str(raised.value) == "invalid CLI Leader retryable flag"
+
+
+@pytest.mark.parametrize(
+    ("selected_agent_ids", "step_count"),
+    [
+        (("planner", "reviewer"), None),
+        (None, 4),
+        (("planner", "unknown"), 4),
+        (("planner", "reviewer"), True),
+        (("planner", "reviewer"), 1),
+        (("planner", "reviewer"), 65),
+    ],
+)
+def test_native_schema_authority_failures_are_safe_before_any_attempt(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    selected_agent_ids: tuple[str, ...] | None,
+    step_count: int | None,
+) -> None:
+    request = replace(
+        _request(tmp_path),
+        selected_agent_ids=selected_agent_ids,
+        step_count=step_count,
+    )
+    monkeypatch.setattr(
+        "agentdeck.providers.cli_subprocess.subprocess.run",
+        lambda *_args, **_kwargs: pytest.fail("invalid authority must not start subprocess"),
+    )
+    with pytest.raises(CliLeaderProviderError) as raised:
+        CodexCliProvider().plan_result(request)
+    error = raised.value
+    assert error.stage == "schema"
+    assert error.diagnostic_code == "authority_invalid"
+    assert error.attempt_count == 0
+    assert error.constraint_mode == "native_json_schema"
+    assert error.retryable is False
+    _assert_exception_graph_redacted(error, ("unknown", str(tmp_path)))
+
+
+def test_native_deadline_addition_must_remain_finite(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    request = replace(_request(tmp_path), timeout_seconds=1e308)
+    provider = CodexCliProvider()
+    provider.timeout = 1e308
+    monkeypatch.setattr(
+        "agentdeck.providers.cli_subprocess.time.monotonic", lambda: 1e308
+    )
+    monkeypatch.setattr(
+        "agentdeck.providers.cli_subprocess.subprocess.run",
+        lambda *_args, **_kwargs: pytest.fail("infinite deadline must not start subprocess"),
+    )
+    with pytest.raises(ValueError) as raised:
+        provider.plan_result(request)
+    assert str(raised.value) == "CLI Leader planning timeout must be a positive number"

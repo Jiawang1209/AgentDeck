@@ -131,7 +131,13 @@ class CliLeaderProviderError(RuntimeError):
     """A credential-free, machine-readable CLI Leader failure."""
 
     _FROZEN_FIELDS = frozenset(
-        {"stage", "diagnostic_code", "attempt_count", "constraint_mode"}
+        {
+            "stage",
+            "diagnostic_code",
+            "attempt_count",
+            "constraint_mode",
+            "retryable",
+        }
     )
 
     def __init__(
@@ -141,6 +147,7 @@ class CliLeaderProviderError(RuntimeError):
         *,
         attempt_count: int = 0,
         constraint_mode: str | None = None,
+        retryable: bool = False,
     ) -> None:
         if type(stage) is not str or stage not in CLI_LEADER_FAILURE_STAGES:
             raise ValueError("invalid CLI Leader failure stage")
@@ -163,6 +170,16 @@ class CliLeaderProviderError(RuntimeError):
             raise ValueError("invalid CLI Leader stage and diagnostic combination")
         if type(attempt_count) is not int or attempt_count < 0 or attempt_count > 2:
             raise ValueError("invalid CLI Leader attempt count")
+        if type(retryable) is not bool:
+            raise ValueError("invalid CLI Leader retryable flag")
+        if retryable and not (
+            (stage == "json_parse" and diagnostic_code == "invalid_output_envelope")
+            or (
+                stage == "schema"
+                and diagnostic_code in _REGENERABLE_SCHEMA_CODES
+            )
+        ):
+            raise ValueError("invalid CLI Leader retryable combination")
         if (
             constraint_mode is not None
             and (
@@ -175,6 +192,7 @@ class CliLeaderProviderError(RuntimeError):
         object.__setattr__(self, "diagnostic_code", diagnostic_code)
         object.__setattr__(self, "attempt_count", attempt_count)
         object.__setattr__(self, "constraint_mode", constraint_mode)
+        object.__setattr__(self, "retryable", retryable)
         super().__init__(f"CLI Leader planning failed at stage: {stage}")
         object.__setattr__(self, "_metadata_frozen", True)
 
@@ -189,6 +207,7 @@ class CliLeaderProviderError(RuntimeError):
             self.diagnostic_code,
             attempt_count=attempt_count,
             constraint_mode=self.constraint_mode,
+            retryable=self.retryable,
         )
 
 
@@ -294,8 +313,23 @@ class CliLeaderProvider:
             else request.timeout_seconds
         )
         budget = min(requested_timeout, provider_timeout)
-        deadline = time.monotonic() + budget
-        schema = build_leader_plan_schema(request)
+        now = time.monotonic()
+        deadline = now + budget
+        if not math.isfinite(now) or not math.isfinite(deadline):
+            raise ValueError("CLI Leader planning timeout must be a positive number")
+        schema_failed = False
+        schema: dict[str, object] | None = None
+        try:
+            schema = build_leader_plan_schema(request)
+        except ProviderPlanValidationError:
+            schema_failed = True
+        if schema_failed or schema is None:
+            raise CliLeaderProviderError(
+                "schema",
+                "authority_invalid",
+                attempt_count=0,
+                constraint_mode=self.constraint_mode,
+            ) from None
         original_prompt = self._prompt(request)
         prompt = original_prompt
         attempted = 0
@@ -320,6 +354,7 @@ class CliLeaderProvider:
                     error.stage,
                     error.diagnostic_code,
                     constraint_mode=self.constraint_mode,
+                    retryable=error.retryable,
                 ).with_attempt_count(attempt)
             else:
                 return LeaderPlanResult(
@@ -332,14 +367,7 @@ class CliLeaderProvider:
                         attempt_count=attempt,
                     ),
                 )
-            regenerable = safe_error.stage == "json_parse" or (
-                safe_error.stage == "schema"
-                and (
-                    safe_error.diagnostic_code is None
-                    or safe_error.diagnostic_code in _REGENERABLE_SCHEMA_CODES
-                )
-            )
-            if attempt == 2 or not regenerable:
+            if attempt == 2 or safe_error.retryable is not True:
                 raise safe_error from None
             diagnostic = safe_error.diagnostic_code or safe_error.stage
             prompt = (
@@ -605,7 +633,11 @@ class CodexCliProvider(CliLeaderProvider):
         except _StrictJsonError:
             decode_failed = True
         if decode_failed or not isinstance(plan, dict):
-            raise CliLeaderProviderError("json_parse", "invalid_output_envelope")
+            raise CliLeaderProviderError(
+                "json_parse",
+                "invalid_output_envelope",
+                retryable=True,
+            )
         return self._validate_native_plan(plan, request)
 
     def _read_secure_payload(self, path: str, *, normalize_mode: bool) -> bytes:
@@ -704,13 +736,21 @@ class CodexCliProvider(CliLeaderProvider):
         plan: dict[str, object], request: LeaderPlanRequest
     ) -> dict[str, object]:
         if set(plan) != _NATIVE_PLAN_FIELDS:
-            raise CliLeaderProviderError("json_parse", "invalid_output_envelope")
+            raise CliLeaderProviderError(
+                "json_parse",
+                "invalid_output_envelope",
+                retryable=True,
+            )
         steps = plan.get("steps")
         if isinstance(steps, list) and any(
             isinstance(step, dict) and set(step) != _NATIVE_STEP_FIELDS
             for step in steps
         ):
-            raise CliLeaderProviderError("json_parse", "invalid_output_envelope")
+            raise CliLeaderProviderError(
+                "json_parse",
+                "invalid_output_envelope",
+                retryable=True,
+            )
         selected_agent_ids, step_count = leader_plan_authority(request)
         validation_code: str | None = None
         validated_plan: dict[str, object] | None = None
@@ -724,7 +764,11 @@ class CodexCliProvider(CliLeaderProvider):
         except ProviderPlanValidationError as error:
             validation_code = error.code
         if validation_code is not None:
-            raise CliLeaderProviderError("schema", validation_code)
+            raise CliLeaderProviderError(
+                "schema",
+                validation_code,
+                retryable=validation_code in _REGENERABLE_SCHEMA_CODES,
+            )
         if validated_plan is None:
             raise CliLeaderProviderError("schema")
         return validated_plan
@@ -972,7 +1016,11 @@ class ClaudeCliProvider(CliLeaderProvider):
             or envelope.get("is_error") is not False
             or not isinstance(envelope.get("structured_output"), dict)
         ):
-            raise CliLeaderProviderError("json_parse", "invalid_output_envelope")
+            raise CliLeaderProviderError(
+                "json_parse",
+                "invalid_output_envelope",
+                retryable=True,
+            )
         plan = envelope["structured_output"]
         assert isinstance(plan, dict)
         return CodexCliProvider._validate_native_plan(plan, request)
