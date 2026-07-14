@@ -4,6 +4,12 @@
 
 ## 2026-07-15
 
+### Add deterministic four-stage M2c Mission
+
+- **Four-stage ACP/tmux acceptance**: added a fresh-project daemon acceptance that freezes the exact implementation, review, revision, and acceptance tasks across `claude-worker` ACP steps 1/3 and `codex-worker` tmux steps 2/4. The deterministic fixtures require `allow_once` before both ACP artifact writes, make review require `accepted-v2`, and permit terminal acceptance only for exact `accepted-v2\n` bytes while supporting safe reuse of the same fake tmux pane.
+- **Compact evidence and ordering**: fixture logs retain only dispatch-safe method/phase labels, dispatch tokens, prompt/artifact hashes, recorded handoff ids, and ordering markers. The test proves four succeeded attempts, four canonical recorded handoff evidence rows, exactly three predecessor-to-next-prompt links, one submitted receipt per attempt, two explicit edit decisions, no unselected Worker, and no durable full prompt, private reasoning, transcript, secret, or raw tmux capture.
+- **Plan correction and TDD evidence**: corrected Task 8's handoff count from three to four canonical evidence rows; the three count applies only to inter-stage transitions. The first focused run failed at the missing M2c fixture, and the reuse regression then exposed stale fake tmux reply replay before the one-shot prompt-buffer behavior made the four-stage test pass without production changes.
+
 ### Clarify Leader authority validation boundaries
 
 - **ProjectView registry membership**: when a plan has no matching Mission authority snapshot, the ProjectView validator now requires every nonlegacy `leader_generation.selected_agent_ids` entry to belong to the configured top-level `agents[]` registry. When a matching Mission exists, its selected Worker set remains the stronger exact-equality fact. The stable example now includes both planner and reviewer Agent rows, matching its generation and Mission authority.

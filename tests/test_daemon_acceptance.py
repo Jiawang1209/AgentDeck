@@ -8,6 +8,7 @@ import json
 import os
 from pathlib import Path
 import pty
+import re
 import select
 import signal
 import shutil
@@ -27,17 +28,68 @@ from agentdeck.contracts import (
     validate_workbench_contract,
 )
 from agentdeck.daemon.client import DaemonClient
+from agentdeck.daemon.client import admit_confirmed_mission, connect_or_start
 from agentdeck.daemon.lifecycle import (
     daemon_endpoint,
     project_root_hash,
     reconcile_endpoint,
 )
 from agentdeck.conversation.leader_gateway import LEADER_FAILURE_STAGES
+from agentdeck.mission_orchestration import confirm_mission_for_daemon, create_mission_preview
+from agentdeck.providers import LeaderPlanRequest
 from agentdeck.state import StateStore
 
 
 FAKE_AGENT = Path(__file__).parent / "fixtures" / "fake_acp_agent.py"
 CONVERSATION_WRAPPER = Path(__file__).parent / "fixtures" / "conversation_cli_wrapper.py"
+
+
+class _FourStageProvider:
+    name = "fake"
+
+    def plan(self, request: LeaderPlanRequest) -> dict[str, object]:
+        assert request.selected_agent_ids == ("claude-worker", "codex-worker")
+        assert request.step_count == 4
+        return {
+            "goal": "complete deterministic four-stage Mission",
+            "summary": "implementation, review, revision, acceptance",
+            "steps": [
+                {
+                    "step": 1,
+                    "agent_id": "claude-worker",
+                    "role": "implementation",
+                    "task": "implementation: create artifact.txt containing draft-v1",
+                    "risk": "edit requires approval",
+                    "requires_approval": True,
+                },
+                {
+                    "step": 2,
+                    "agent_id": "codex-worker",
+                    "role": "review",
+                    "task": "review: require artifact.txt to contain accepted-v2",
+                    "risk": "review only",
+                    "requires_approval": True,
+                },
+                {
+                    "step": 3,
+                    "agent_id": "claude-worker",
+                    "role": "implementation",
+                    "task": "revision: replace draft-v1 with accepted-v2",
+                    "risk": "edit requires approval",
+                    "requires_approval": True,
+                },
+                {
+                    "step": 4,
+                    "agent_id": "codex-worker",
+                    "role": "review",
+                    "task": "acceptance: verify artifact.txt equals accepted-v2",
+                    "risk": "verification only",
+                    "requires_approval": True,
+                },
+            ],
+            "approval_required": True,
+            "dispatch_ready": False,
+        }
 
 
 def _cleanup_pty(process: subprocess.Popen[bytes], master: int) -> None:
@@ -327,6 +379,54 @@ def _write_fake_tmux(bin_dir: Path, prompt_path: Path, order_path: Path) -> None
     executable.chmod(0o755)
 
 
+def _write_m2c_fake_tmux(
+    bin_dir: Path, prompt_path: Path, log_path: Path
+) -> None:
+    executable = bin_dir / "tmux"
+    executable.write_text(
+        "#!/usr/bin/env python3\n"
+        "import hashlib, json, os, re, sys\n"
+        "from pathlib import Path\n"
+        "args=sys.argv[1:]\n"
+        "prompt=Path(os.environ['AGENTDECK_ACCEPTANCE_TMUX_PROMPT'])\n"
+        "log=Path(os.environ['AGENTDECK_ACCEPTANCE_ORDER'])\n"
+        "artifact=Path(os.environ['AGENTDECK_ACCEPTANCE_ARTIFACT'])\n"
+        "if 'split-window' in args:\n"
+        " print('%m2c-codex')\n"
+        "if 'load-buffer' in args:\n"
+        " prompt.write_text(sys.stdin.read(), encoding='utf-8')\n"
+        "elif 'capture-pane' in args:\n"
+        " if not prompt.exists(): print('OpenAI Codex\\nmodel: test\\n› Ask Codex')\n"
+        " else:\n"
+        "  text=prompt.read_text(encoding='utf-8')\n"
+        "  tokens=re.findall(r'dsp_[0-9a-f]{32}', text)\n"
+        "  if not tokens: raise RuntimeError('missing Mission dispatch token')\n"
+        "  token=tokens[-1]\n"
+        "  if 'acceptance: verify artifact.txt equals accepted-v2' in text: phase='acceptance'\n"
+        "  elif 'review: require artifact.txt to contain accepted-v2' in text: phase='review'\n"
+        "  else: raise RuntimeError('unsupported M2c tmux phase')\n"
+        "  content=artifact.read_bytes() if artifact.exists() else b''\n"
+        "  state=json.loads((Path.cwd()/'.agentdeck'/'state'/'state.json').read_text(encoding='utf-8'))\n"
+        "  recorded=[item.get('attempt_id') for item in state.get('mission_handoffs', []) if item.get('state') == 'recorded']\n"
+        "  existing=[]\n"
+        "  if log.exists(): existing=[json.loads(line) for line in log.read_text(encoding='utf-8').splitlines()]\n"
+        "  if not any(item.get('dispatch_token') == token for item in existing):\n"
+        "   record={'phase':phase,'dispatch_token':token,'prompt_sha256':hashlib.sha256(text.encode('utf-8')).hexdigest(),'artifact_sha256':hashlib.sha256(content).hexdigest(),'ordering_marker':recorded[-1] if recorded else None}\n"
+        "   with log.open('a', encoding='utf-8') as stream: stream.write(json.dumps(record, sort_keys=True)+'\\n')\n"
+        "  if phase == 'review':\n"
+        "   summary='review requires required_content=accepted-v2'; verification='artifact draft reviewed'; next_steps='revision'\n"
+        "  elif content == b'accepted-v2\\n':\n"
+        "   summary='acceptance artifact exact bytes verified'; verification='artifact equals accepted-v2'; next_steps='done'\n"
+        "  else: raise RuntimeError('M2c acceptance artifact mismatch')\n"
+        "  prompt.unlink()\n"
+        "  print('\\n'.join([f'handoff_token: {token}','status: completed',f'summary: {summary}',f'verification: {verification}','risks: none',f'next_steps: {next_steps}']))\n"
+        "elif 'display-message' in args:\n"
+        " print(args[args.index('-t') + 1])\n",
+        encoding="utf-8",
+    )
+    executable.chmod(0o755)
+
+
 def _render_recovery_through_bare_pty(root: Path, mission_id: str) -> bytes:
     master, slave = pty.openpty()
     process = subprocess.Popen(
@@ -439,6 +539,259 @@ def _create_and_confirm_through_bare_pty(
         return mission_id, bytes(output), run_cards[0]
     finally:
         _cleanup_pty(process, master)
+
+
+def test_daemon_acceptance_runs_four_stage_acp_tmux_mission(monkeypatch) -> None:
+    parent = Path(tempfile.mkdtemp(prefix="agentdeck-m2c-four-stage-", dir="/tmp"))
+    root = (parent / "repo").resolve()
+    root.mkdir()
+    (root / ".git").mkdir()
+    write_default_config(root)
+    artifact = root / "artifact.txt"
+    acp_log = root / "m2c-acp.jsonl"
+    tmux_log = root / "m2c-tmux.jsonl"
+    tmux_prompt = root / "m2c-tmux-prompt.txt"
+    config_path = root / ".agentdeck" / "config.toml"
+    text = config_path.read_text(encoding="utf-8")
+    text = text.replace('provider = "deepseek"', 'provider = "fake"', 1)
+    text = text.replace('model = "deepseek-chat"', 'model = "fake-plan"', 1)
+    text = text.replace(
+        'agent_id = "planner"\nrole = "planning"\nprovider = "codex"\ncommand = "codex"',
+        'agent_id = "claude-worker"\nrole = "planning"\nprovider = "claude"\ncommand = "claude"',
+        1,
+    )
+    text = text.replace(
+        'agent_id = "reviewer"\nrole = "review"\nprovider = "claude"\ncommand = "claude"',
+        'agent_id = "codex-worker"\nrole = "review"\nprovider = "codex"\ncommand = "codex"',
+        1,
+    )
+    acp_command = repr(
+        [
+            sys.executable,
+            str(FAKE_AGENT),
+            "m2c_worker",
+            str(acp_log),
+            "claude-worker",
+        ]
+    )
+    text = text.replace(
+        'role = "planning"',
+        'role = "implementation"\ntransport = "acp"\ntransport_command = '
+        + acp_command,
+        1,
+    )
+    text = text.replace(
+        'role = "review"', 'role = "review"\ntransport = "tmux"', 1
+    )
+    config_path.write_text(text, encoding="utf-8")
+
+    fake_bin = parent / "bin"
+    fake_bin.mkdir()
+    (fake_bin / "claude").symlink_to(sys.executable)
+    (fake_bin / "codex").symlink_to(sys.executable)
+    _write_m2c_fake_tmux(fake_bin, tmux_prompt, tmux_log)
+    monkeypatch.setenv("PATH", f"{fake_bin}{os.pathsep}{os.environ['PATH']}")
+    monkeypatch.setenv("AGENTDECK_ACCEPTANCE_TMUX_PROMPT", str(tmux_prompt))
+    monkeypatch.setenv("AGENTDECK_ACCEPTANCE_ORDER", str(tmux_log))
+    monkeypatch.setenv("AGENTDECK_ACCEPTANCE_ARTIFACT", str(artifact))
+
+    config = load_config(root)
+    store = StateStore(root)
+    with _acceptance_resource_guard(root=root, parent=parent) as resources:
+        preview = create_mission_preview(
+            config=config,
+            store=store,
+            provider=_FourStageProvider(),
+            user_message=(
+                "让 claude-worker 和 codex-worker 严格串行完成四阶段，共4轮"
+            ),
+            timeout_seconds=30,
+        )
+        plan = store.plan_by_id(str(preview["plan_id"]))["plan"]
+        assert [item["task"] for item in plan["steps"]] == [
+            "implementation: create artifact.txt containing draft-v1",
+            "review: require artifact.txt to contain accepted-v2",
+            "revision: replace draft-v1 with accepted-v2",
+            "acceptance: verify artifact.txt equals accepted-v2",
+        ]
+        confirmed = confirm_mission_for_daemon(
+            config=config, store=store, mission_id=str(preview["mission_id"])
+        )
+
+        async def admit() -> dict[str, object]:
+            client = await connect_or_start(root, config)
+            await client.close()
+            return await admit_confirmed_mission(
+                root, config, confirmed, state_store=store
+            )
+
+        admitted = asyncio.run(admit())
+        assert admitted["accepted"] is True
+        resources.daemon_pid = int(
+            json.loads(
+                daemon_endpoint(root).metadata_path.read_text(encoding="utf-8")
+            )["pid"]
+        )
+
+        decided_permissions: set[str] = set()
+        deadline = time.monotonic() + 15
+        completed: dict[str, object] | None = None
+        while time.monotonic() < deadline:
+            state = store.load()
+            mission = next(
+                item
+                for item in state["missions"]
+                if item["mission_id"] == preview["mission_id"]
+            )
+            for permission in state.get("permission_requests", []):
+                permission_id = str(permission["permission_id"])
+                if permission_id not in decided_permissions:
+                    asyncio.run(_decide_pending_permission(root, permission_id))
+                    decided_permissions.add(permission_id)
+            if mission["status"] == "completed":
+                completed = state
+                break
+            if mission["status"] in {"failed", "stopped", "interrupted"}:
+                completed = state
+                break
+            time.sleep(0.05)
+        assert completed is not None, repr(
+            {
+                key: state.get(key)
+                for key in (
+                    "missions",
+                    "mission_attempts",
+                    "mission_handoffs",
+                    "permission_requests",
+                    "protocol_turns",
+                    "daemon_runtime",
+                )
+            }
+        )
+
+        mission = next(
+            item
+            for item in completed["missions"]
+            if item["mission_id"] == preview["mission_id"]
+        )
+        attempts = completed["mission_attempts"]
+        assert [item["agent_id"] for item in attempts] == [
+            "claude-worker",
+            "codex-worker",
+            "claude-worker",
+            "codex-worker",
+        ]
+        assert [item["state"] for item in attempts] == ["succeeded"] * 4
+        assert len(decided_permissions) == 2
+        handoffs = completed["mission_handoffs"]
+        assert len(handoffs) == 4
+        assert [item["state"] for item in handoffs] == ["recorded"] * 4
+        assert [item["attempt_id"] for item in handoffs] == [
+            item["attempt_id"] for item in attempts
+        ]
+        assert "required_content=accepted-v2" in handoffs[1]["canonical_handoff"][
+            "summary"
+        ]
+        assert artifact.read_bytes() == b"accepted-v2\n"
+        assert mission["status"] == "completed"
+        assert mission["current_step"] == mission["step_count"] == 4
+
+        events = store.all_events()
+        submitted = [
+            item for item in events if item["event_type"] == "mission_attempt_submitted"
+        ]
+        assert [item["payload"]["attempt_id"] for item in submitted] == [
+            item["attempt_id"] for item in attempts
+        ]
+        assert {item["agent_id"] for item in attempts} == {
+            "claude-worker",
+            "codex-worker",
+        }
+        assert set(completed["agents"]) == {"codex-worker"}
+
+        acp_records = [
+            json.loads(line)
+            for line in acp_log.read_text(encoding="utf-8").splitlines()
+        ]
+        acp_prompts = [item for item in acp_records if item["method"] == "prompt"]
+        tmux_prompts = [
+            json.loads(line)
+            for line in tmux_log.read_text(encoding="utf-8").splitlines()
+        ]
+        assert len(acp_prompts) == len(tmux_prompts) == 2
+        assert [item["phase"] for item in tmux_prompts] == ["review", "acceptance"]
+        assert [item["artifact_sha256"] for item in tmux_prompts] == [
+            hashlib.sha256(b"draft-v1\n").hexdigest(),
+            hashlib.sha256(b"accepted-v2\n").hexdigest(),
+        ]
+        prompt_by_token = {
+            item["dispatch_token"]: item for item in (*acp_prompts, *tmux_prompts)
+        }
+        inter_stage_links = 0
+        for index, attempt in enumerate(attempts):
+            prompt_record = prompt_by_token[attempt["dispatch_key"]]
+            assert re.fullmatch(r"[0-9a-f]{64}", prompt_record["prompt_sha256"])
+            if index == 0:
+                continue
+            predecessor_id = attempts[index - 1]["attempt_id"]
+            if "recorded_handoff_ids" in prompt_record:
+                assert predecessor_id in prompt_record["recorded_handoff_ids"]
+            else:
+                assert prompt_record["ordering_marker"] == predecessor_id
+            inter_stage_links += 1
+        assert inter_stage_links == 3
+
+        assert all(
+            set(item)
+            <= {
+                "method",
+                "label",
+                "dispatch_token",
+                "prompt_sha256",
+                "recorded_handoff_ids",
+            }
+            for item in acp_records
+        )
+        assert all(
+            set(item)
+            == {
+                "phase",
+                "dispatch_token",
+                "prompt_sha256",
+                "artifact_sha256",
+                "ordering_marker",
+            }
+            for item in tmux_prompts
+        )
+
+        def persisted_keys(value: object) -> set[str]:
+            if isinstance(value, dict):
+                return set(value) | {
+                    key
+                    for nested in value.values()
+                    for key in persisted_keys(nested)
+                }
+            if isinstance(value, list):
+                return {
+                    key for nested in value for key in persisted_keys(nested)
+                }
+            return set()
+
+        assert not persisted_keys(completed).intersection(
+            {
+                "prompt",
+                "full_prompt",
+                "private_reasoning",
+                "transcript",
+                "full_transcript",
+                "secret",
+                "raw_capture",
+                "raw_tmux_capture",
+            }
+        )
+        serialized_state = json.dumps(completed, ensure_ascii=False, sort_keys=True)
+        assert "You are executing one explicitly authorized AgentDeck" not in serialized_state
+        assert "Return exactly one structured block:" not in serialized_state
 
 
 def test_background_mission_acceptance_orders_workers_and_recovers_controller(

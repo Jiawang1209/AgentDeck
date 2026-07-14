@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -21,6 +22,22 @@ class FakeAgent:
         self.cancelled = asyncio.Event()
 
     def log_request(self, method: str, **facts: object) -> None:
+        if self.scenario == "m2c_worker":
+            if not self.args:
+                return
+            allowed = {
+                "dispatch_token",
+                "prompt_sha256",
+                "recorded_handoff_ids",
+            }
+            record = {
+                "method": method,
+                "label": self.args[1] if len(self.args) > 1 else "worker",
+                **{key: value for key, value in facts.items() if key in allowed},
+            }
+            with Path(self.args[0]).open("a", encoding="utf-8") as stream:
+                stream.write(json.dumps(record, sort_keys=True) + "\n")
+            return
         if self.scenario not in {
             "full_reconnect_log",
             "mission_worker",
@@ -104,12 +121,26 @@ class FakeAgent:
     async def prompt(self, session_id: str, prompt: list[object], **kwargs):
         text = prompt[0].text
         dispatch_tokens = re.findall(r"dsp_[0-9a-f]{32}", text)
-        self.log_request(
-            "prompt",
-            session_id=session_id,
-            block_count=len(prompt),
-            dispatch_token=dispatch_tokens[-1] if dispatch_tokens else None,
-        )
+        if self.scenario == "m2c_worker":
+            state_path = Path.cwd() / ".agentdeck" / "state" / "state.json"
+            durable = json.loads(state_path.read_text(encoding="utf-8"))
+            self.log_request(
+                "prompt",
+                dispatch_token=dispatch_tokens[-1] if dispatch_tokens else None,
+                prompt_sha256=hashlib.sha256(text.encode("utf-8")).hexdigest(),
+                recorded_handoff_ids=[
+                    item.get("attempt_id")
+                    for item in durable.get("mission_handoffs", [])
+                    if item.get("state") == "recorded"
+                ],
+            )
+        else:
+            self.log_request(
+                "prompt",
+                session_id=session_id,
+                block_count=len(prompt),
+                dispatch_token=dispatch_tokens[-1] if dispatch_tokens else None,
+            )
         if self.scenario == "timeout":
             await self.cancelled.wait()
             return schema.PromptResponse(stopReason="cancelled")
@@ -126,6 +157,52 @@ class FakeAgent:
                     schema.PermissionOption(optionId="always", name="Always", kind="allow_always"),
                     schema.PermissionOption(optionId="reject", name="Reject once", kind="reject_once"),
                 ],
+            )
+        if self.scenario == "m2c_worker":
+            if not dispatch_tokens:
+                raise RuntimeError("missing Mission dispatch token")
+            if "revision: replace draft-v1 with accepted-v2" in text:
+                phase = "revision"
+                content = b"accepted-v2\n"
+            elif "implementation: create artifact.txt containing draft-v1" in text:
+                phase = "implementation"
+                content = b"draft-v1\n"
+            else:
+                raise RuntimeError("unsupported M2c ACP phase")
+            permission = await self.client.request_permission(
+                session_id,
+                schema.ToolCallUpdate(
+                    toolCallId=f"m2c-{phase}",
+                    title=f"Edit artifact.txt for {phase}",
+                    kind="edit",
+                ),
+                [
+                    schema.PermissionOption(
+                        optionId="allow", name="Allow once", kind="allow_once"
+                    ),
+                    schema.PermissionOption(
+                        optionId="reject", name="Reject once", kind="reject_once"
+                    ),
+                ],
+            )
+            if (
+                permission.outcome.outcome != "selected"
+                or permission.outcome.option_id != "allow"
+            ):
+                raise RuntimeError("M2c edit permission denied")
+            artifact = Path.cwd() / "artifact.txt"
+            artifact.write_bytes(content)
+            token = dispatch_tokens[-1]
+            digest = hashlib.sha256(content).hexdigest()
+            text = "\n".join(
+                (
+                    f"handoff_token: {token}",
+                    "status: completed",
+                    f"summary: {phase} artifact update complete",
+                    f"verification: artifact_sha256={digest}",
+                    "risks: none",
+                    "next_steps: continue",
+                )
             )
         if self.scenario in {"mission_worker", "mission_worker_permission"}:
             label = self.args[1] if len(self.args) > 1 else "worker"

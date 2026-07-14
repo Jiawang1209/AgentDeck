@@ -1140,6 +1140,7 @@ git commit -m "Expose Leader generation provenance"
 **Files:**
 - Modify: `tests/fixtures/fake_acp_agent.py`
 - Modify: `tests/test_daemon_acceptance.py`
+- Modify: `docs/superpowers/plans/2026-07-14-agentdeck-m2c-closure.md`
 - Modify: `HISTORY.md`
 
 - [ ] **Step 1: Write the failing four-stage acceptance skeleton**
@@ -1162,9 +1163,10 @@ revision: replace draft-v1 with accepted-v2
 acceptance: verify artifact.txt equals accepted-v2
 ```
 
-The initial test must assert four succeeded attempts and three recorded
-handoffs; it will fail until the fixture can complete both invocations per
-Worker.
+The initial test must assert four succeeded attempts, four recorded canonical
+handoff evidence rows (one per succeeded attempt), and exactly three
+inter-stage predecessor-to-next-prompt links; it will fail until the fixture
+can complete both invocations per Worker.
 
 - [ ] **Step 2: Run the test and verify RED**
 
@@ -1206,9 +1208,11 @@ The test must assert:
 assert [a["agent_id"] for a in attempts] == [
     "claude-worker", "codex-worker", "claude-worker", "codex-worker",
 ]
-assert [a["status"] for a in attempts] == ["succeeded"] * 4
-assert len(state["mission_handoffs"]) == 3
+assert [a["state"] for a in attempts] == ["succeeded"] * 4
+assert len(state["mission_handoffs"]) == 4
 assert all(item["state"] == "recorded" for item in state["mission_handoffs"])
+# The first three handoffs link predecessor evidence into the next stage prompt;
+# the fourth is the terminal attempt's canonical evidence, not another transition.
 assert artifact.read_bytes() == b"accepted-v2\n"
 assert mission["status"] == "completed"
 assert mission["current_step"] == mission["step_count"] == 4
@@ -1235,7 +1239,8 @@ Expected: PASS.
 
 ```bash
 git add tests/fixtures/fake_acp_agent.py \
-  tests/test_daemon_acceptance.py HISTORY.md
+  tests/test_daemon_acceptance.py \
+  docs/superpowers/plans/2026-07-14-agentdeck-m2c-closure.md HISTORY.md
 git commit -m "Add deterministic four-stage M2c Mission"
 ```
 
