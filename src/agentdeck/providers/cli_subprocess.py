@@ -9,6 +9,22 @@ from json import JSONDecodeError
 from .base import LeaderPlanRequest, leader_skill_context_prompt_lines, validate_provider_plan_schema
 
 
+CLI_LEADER_FAILURE_STAGES = frozenset(
+    {"timeout", "nonzero", "json_parse", "schema", "cancelled", "oversize"}
+)
+MAX_CLI_LEADER_OUTPUT_BYTES = 2 * 1024 * 1024
+
+
+class CliLeaderProviderError(RuntimeError):
+    """A credential-free, machine-readable CLI Leader failure."""
+
+    def __init__(self, stage: str) -> None:
+        if stage not in CLI_LEADER_FAILURE_STAGES:
+            raise ValueError("invalid CLI Leader failure stage")
+        self.stage = stage
+        super().__init__(f"CLI Leader planning failed at stage: {stage}")
+
+
 class CliLeaderProvider:
     name = "cli"
     command_name = ""
@@ -22,18 +38,22 @@ class CliLeaderProvider:
 
     def plan(self, request: LeaderPlanRequest) -> dict[str, object]:
         prompt = self._prompt(request)
-        result = subprocess.run(
-            self._command_for_request(request),
-            input=prompt,
-            text=True,
-            capture_output=True,
-            cwd=request.config.root,
-            timeout=self.timeout,
-            check=False,
-        )
+        try:
+            result = subprocess.run(
+                self._command_for_request(request),
+                input=prompt,
+                text=True,
+                capture_output=True,
+                cwd=request.config.root,
+                timeout=self.timeout,
+                check=False,
+            )
+        except subprocess.TimeoutExpired:
+            raise CliLeaderProviderError("timeout") from None
         if result.returncode != 0:
-            detail = result.stderr.strip() or result.stdout.strip() or f"exit code {result.returncode}"
-            raise RuntimeError(f"{self.name} failed: {detail}")
+            raise CliLeaderProviderError("nonzero")
+        if len(result.stdout.encode("utf-8")) > MAX_CLI_LEADER_OUTPUT_BYTES:
+            raise CliLeaderProviderError("oversize")
         return self._parse_plan(result.stdout, request)
 
     def _command_for_request(self, request: LeaderPlanRequest) -> list[str]:
@@ -74,8 +94,14 @@ class CliLeaderProvider:
 
     def _parse_plan(self, stdout: str, request: LeaderPlanRequest) -> dict[str, object]:
         text = stdout.strip()
-        plan = self._load_json_plan(text)
-        self._validate_plan(plan, request)
+        try:
+            plan = self._load_json_plan(text)
+        except (RuntimeError, JSONDecodeError):
+            raise CliLeaderProviderError("json_parse") from None
+        try:
+            self._validate_plan(plan, request)
+        except (RuntimeError, TypeError, ValueError):
+            raise CliLeaderProviderError("schema") from None
         return plan
 
     def _load_json_plan(self, text: str) -> object:

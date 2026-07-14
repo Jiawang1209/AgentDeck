@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 import subprocess
 
+import pytest
+
 from agentdeck.config import write_default_config, load_config
 from agentdeck.providers import (
     ClaudeCliProvider,
@@ -12,6 +14,7 @@ from agentdeck.providers import (
     OpenAICompatibleProvider,
     leader_provider,
 )
+from agentdeck.providers.cli_subprocess import CliLeaderProviderError
 
 
 class FakeResponse:
@@ -594,12 +597,9 @@ def test_cli_provider_rejects_multiple_fenced_json_plans(tmp_path, monkeypatch) 
 
     provider = CodexCliProvider()
 
-    try:
+    with pytest.raises(CliLeaderProviderError) as raised:
         provider.plan(LeaderPlanRequest(task="多个 JSON plan", config=config))
-    except RuntimeError as exc:
-        assert str(exc) == "provider plan content contains multiple JSON plans"
-    else:
-        raise AssertionError("provider should reject ambiguous fenced JSON plans")
+    assert raised.value.stage == "json_parse"
 
 
 def test_cli_provider_normalizes_missing_plan_control_flags(tmp_path, monkeypatch) -> None:
@@ -653,12 +653,9 @@ def test_cli_provider_rejects_plan_steps_missing_required_schema_fields(tmp_path
 
     provider = CodexCliProvider()
 
-    try:
+    with pytest.raises(CliLeaderProviderError) as raised:
         provider.plan(LeaderPlanRequest(task="拒绝缺字段 CLI plan", config=config))
-    except RuntimeError as exc:
-        assert str(exc) == "provider plan step 1 missing required field: agent_id"
-    else:
-        raise AssertionError("provider should reject plan steps missing required schema fields")
+    assert raised.value.stage == "schema"
 
 
 def test_cli_provider_rejects_plan_missing_required_top_level_fields(tmp_path, monkeypatch) -> None:
@@ -674,12 +671,9 @@ def test_cli_provider_rejects_plan_missing_required_top_level_fields(tmp_path, m
 
     provider = CodexCliProvider()
 
-    try:
+    with pytest.raises(CliLeaderProviderError) as raised:
         provider.plan(LeaderPlanRequest(task="拒绝缺顶层字段 CLI plan", config=config))
-    except RuntimeError as exc:
-        assert str(exc) == "provider plan missing required field: goal"
-    else:
-        raise AssertionError("provider should reject plans missing required top-level schema fields")
+    assert raised.value.stage == "schema"
 
 
 def test_cli_provider_rejects_blank_top_level_display_fields(tmp_path, monkeypatch) -> None:
@@ -695,12 +689,9 @@ def test_cli_provider_rejects_blank_top_level_display_fields(tmp_path, monkeypat
 
     provider = CodexCliProvider()
 
-    try:
+    with pytest.raises(CliLeaderProviderError) as raised:
         provider.plan(LeaderPlanRequest(task="拒绝空 goal CLI plan", config=config))
-    except RuntimeError as exc:
-        assert str(exc) == "provider plan field goal must be a non-empty string"
-    else:
-        raise AssertionError("provider should reject blank top-level display fields")
+    assert raised.value.stage == "schema"
 
 
 def test_cli_provider_rejects_steps_for_unconfigured_agents(tmp_path, monkeypatch) -> None:
@@ -716,12 +707,9 @@ def test_cli_provider_rejects_steps_for_unconfigured_agents(tmp_path, monkeypatc
 
     provider = CodexCliProvider()
 
-    try:
+    with pytest.raises(CliLeaderProviderError) as raised:
         provider.plan(LeaderPlanRequest(task="拒绝未知 agent CLI plan", config=config))
-    except RuntimeError as exc:
-        assert str(exc) == "provider plan step 1 agent_id is not configured: ghost"
-    else:
-        raise AssertionError("provider should reject steps for unconfigured agents")
+    assert raised.value.stage == "schema"
 
 
 def test_cli_provider_rejects_non_positive_step_numbers(tmp_path, monkeypatch) -> None:
@@ -737,12 +725,9 @@ def test_cli_provider_rejects_non_positive_step_numbers(tmp_path, monkeypatch) -
 
     provider = CodexCliProvider()
 
-    try:
+    with pytest.raises(CliLeaderProviderError) as raised:
         provider.plan(LeaderPlanRequest(task="拒绝不可排序 CLI plan", config=config))
-    except RuntimeError as exc:
-        assert str(exc) == "provider plan step 1 field step must be a positive integer"
-    else:
-        raise AssertionError("provider should reject non-positive step numbers")
+    assert raised.value.stage == "schema"
 
 
 def test_cli_provider_rejects_duplicate_step_numbers(tmp_path, monkeypatch) -> None:
@@ -758,12 +743,9 @@ def test_cli_provider_rejects_duplicate_step_numbers(tmp_path, monkeypatch) -> N
 
     provider = CodexCliProvider()
 
-    try:
+    with pytest.raises(CliLeaderProviderError) as raised:
         provider.plan(LeaderPlanRequest(task="拒绝重复 step CLI plan", config=config))
-    except RuntimeError as exc:
-        assert str(exc) == "provider plan step 2 duplicates step number: 1"
-    else:
-        raise AssertionError("provider should reject duplicate step numbers")
+    assert raised.value.stage == "schema"
 
 
 def test_cli_provider_rejects_non_contiguous_step_numbers(tmp_path, monkeypatch) -> None:
@@ -784,12 +766,9 @@ def test_cli_provider_rejects_non_contiguous_step_numbers(tmp_path, monkeypatch)
 
     provider = CodexCliProvider()
 
-    try:
+    with pytest.raises(CliLeaderProviderError) as raised:
         provider.plan(LeaderPlanRequest(task="拒绝跳号 CLI plan", config=config))
-    except RuntimeError as exc:
-        assert str(exc) == "provider plan steps must be numbered 1..2 without gaps"
-    else:
-        raise AssertionError("provider should reject non-contiguous step numbers")
+    assert raised.value.stage == "schema"
 
 
 def test_cli_provider_rejects_role_that_does_not_match_agent(tmp_path, monkeypatch) -> None:
@@ -805,15 +784,9 @@ def test_cli_provider_rejects_role_that_does_not_match_agent(tmp_path, monkeypat
 
     provider = CodexCliProvider()
 
-    try:
+    with pytest.raises(CliLeaderProviderError) as raised:
         provider.plan(LeaderPlanRequest(task="拒绝角色错配 CLI plan", config=config))
-    except RuntimeError as exc:
-        assert (
-            str(exc)
-            == "provider plan step 1 role does not match configured agent role for planner: expected planning, got implementation"
-        )
-    else:
-        raise AssertionError("provider should reject roles that do not match configured agents")
+    assert raised.value.stage == "schema"
 
 
 def test_cli_provider_reports_subprocess_failure(tmp_path, monkeypatch) -> None:
@@ -829,12 +802,10 @@ def test_cli_provider_reports_subprocess_failure(tmp_path, monkeypatch) -> None:
 
     provider = CodexCliProvider()
 
-    try:
+    with pytest.raises(CliLeaderProviderError) as raised:
         provider.plan(LeaderPlanRequest(task="失败", config=config))
-    except RuntimeError as exc:
-        assert str(exc) == "codex-cli failed: not logged in"
-    else:
-        raise AssertionError("provider should reject failed CLI command")
+    assert raised.value.stage == "nonzero"
+    assert "not logged in" not in str(raised.value)
 
 
 def test_openai_compatible_provider_posts_chat_completion_and_parses_json_plan(tmp_path, monkeypatch) -> None:

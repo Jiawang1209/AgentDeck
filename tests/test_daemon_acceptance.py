@@ -16,6 +16,8 @@ import sys
 import tempfile
 import time
 
+import pytest
+
 from agentdeck.config import load_config, write_default_config
 from agentdeck import cli as cli_module
 from agentdeck.contracts import (
@@ -30,6 +32,7 @@ from agentdeck.daemon.lifecycle import (
     project_root_hash,
     reconcile_endpoint,
 )
+from agentdeck.conversation.leader_gateway import LEADER_FAILURE_STAGES
 from agentdeck.state import StateStore
 
 
@@ -149,12 +152,52 @@ def _acceptance_resource_guard(*, root: Path, parent: Path):
                 raise ExceptionGroup("acceptance cleanup failed", cleanup_errors)
 
 
+def _durable_conversation_terminal(
+    state: dict[str, object],
+) -> dict[str, str] | None:
+    turns = state.get("conversation_turns")
+    transitions = state.get("conversation_state_transitions")
+    if not isinstance(turns, list) or not turns or not isinstance(transitions, list):
+        return None
+    latest = turns[-1]
+    turn_id = latest.get("turn_id") if isinstance(latest, dict) else None
+    if not isinstance(turn_id, str):
+        return None
+    transition = next(
+        (
+            item
+            for item in reversed(transitions)
+            if isinstance(item, dict)
+            and item.get("entity_type") == "turn"
+            and item.get("entity_id") == turn_id
+        ),
+        None,
+    )
+    if not isinstance(transition, dict):
+        return None
+    terminal_state = transition.get("to_state")
+    reason = transition.get("reason")
+    if terminal_state not in {"failed", "cancelled"} or not isinstance(reason, str):
+        return None
+    prefix = "leader_"
+    stage = reason[len(prefix) :] if reason.startswith(prefix) else ""
+    if stage not in LEADER_FAILURE_STAGES:
+        return None
+    return {"state": terminal_state, "stage": stage}
+
+
 def _wait(store: StateStore, predicate, timeout: float = 12) -> dict[str, object]:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         state = store.load()
         if predicate(state):
             return state
+        terminal = _durable_conversation_terminal(state)
+        if terminal is not None:
+            raise AssertionError(
+                "durable conversation terminated before Mission became available: "
+                f"state={terminal['state']} stage={terminal['stage']}"
+            )
         time.sleep(0.05)
     state = store.load()
     runtime = store.root / ".agentdeck" / "runtime"
@@ -169,6 +212,54 @@ def _wait(store: StateStore, predicate, timeout: float = 12) -> dict[str, object
             "agent_sessions", "protocol_turns", "recovery_decisions", "daemon_runtime",
         )}) + " runtime=" + repr(diagnostics)
     )
+
+
+@pytest.mark.parametrize(
+    ("terminal_state", "reason", "expected"),
+    [
+        ("failed", "leader_timeout", {"state": "failed", "stage": "timeout"}),
+        (
+            "cancelled",
+            "leader_cancelled",
+            {"state": "cancelled", "stage": "cancelled"},
+        ),
+    ],
+)
+def test_acceptance_wait_reads_durable_conversation_terminal_without_waiting_for_mission(
+    terminal_state: str,
+    reason: str,
+    expected: dict[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    state = {
+        "conversation_turns": [
+            {"turn_id": "cvt_terminal", "conversation_id": "cvs_terminal"}
+        ],
+        "conversation_state_transitions": [
+            {
+                "entity_type": "turn",
+                "entity_id": "cvt_terminal",
+                "to_state": terminal_state,
+                "reason": reason,
+            }
+        ],
+    }
+
+    class Store:
+        def load(self):
+            return state
+
+    monkeypatch.setattr(
+        time,
+        "sleep",
+        lambda _seconds: pytest.fail("durable terminal must stop acceptance wait"),
+    )
+
+    with pytest.raises(
+        AssertionError,
+        match=f"state={expected['state']} stage={expected['stage']}",
+    ):
+        _wait(Store(), lambda _state: False)  # type: ignore[arg-type]
 
 
 async def _decide_pending_permission(root: Path, permission_id: str) -> None:

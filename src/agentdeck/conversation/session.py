@@ -14,6 +14,7 @@ from ..mission_orchestration import (
     create_mission_preview_from_candidate,
     mission_planning_task,
 )
+from ..mission import mission_intent, select_mission_agents
 from ..models import EventRecord, ProjectConfig, new_id, utc_now
 from ..state import StateStore, migration_preview
 from .bindings import execution_digest
@@ -406,16 +407,40 @@ class ConversationSession:
                 events=(EventRecord.create("conversation_turn_started", {"conversation_id": self.conversation_id, "turn_id": turn_id}),),
             )
         )
-        selected = tuple(agent.agent_id for agent in self.config.agents)
-        planning_task = mission_planning_task(
-            text,
-            selected_agent_ids=selected,
-            step_count=max(2, len(_requested_steps(text))),
-        )
         try:
+            intent = mission_intent(text, self.config)
+            requested_agent_ids = (
+                tuple(str(item) for item in intent["requested_agent_ids"])
+                if intent is not None
+                else ()
+            )
+            requested_providers = (
+                tuple(str(item) for item in intent["requested_providers"])
+                if intent is not None
+                else ()
+            )
+            state = self.store.load()
+            bindings = state.get("agents") if isinstance(state, dict) else None
+            if not isinstance(bindings, dict):
+                raise LeaderGatewayError("schema")
+            selection = select_mission_agents(
+                self.config,
+                requested_agent_ids=requested_agent_ids,
+                requested_providers=requested_providers,
+                bindings=bindings,
+            )
+            if selection.blockers or len(selection.agents) < 2:
+                raise LeaderGatewayError("schema")
+            selected = tuple(agent.agent_id for agent in selection.agents)
+            planning_config = replace(self.config, agents=selection.agents)
+            planning_task = mission_planning_task(
+                text,
+                selected_agent_ids=selected,
+                step_count=max(2, len(_requested_steps(text))),
+            )
             candidate = self.leader_gateway.generate_mission(
                 LeaderRequest(
-                    self.config,
+                    planning_config,
                     text,
                     planning_task,
                     180,
@@ -483,19 +508,31 @@ class ConversationSession:
             }
             return ConversationResponse("mission_preview", payload)
         except LeaderGatewayError as error:
-            state = "cancelled" if "cancelled" in str(error).lower() else "failed"
+            state = "cancelled" if error.stage == "cancelled" else "failed"
             self.store.commit_conversation_mutation(
                 ConversationMutation(
                     append_records={
                         "conversation_state_transitions": (
-                            self._transition("turn", turn_id, "waiting_leader", state, state),
+                            self._transition(
+                                "turn",
+                                turn_id,
+                                "waiting_leader",
+                                state,
+                                f"leader_{error.stage}",
+                            ),
                             self._transition("conversation", self.conversation_id, "busy", "ready", "leader_turn_terminal"),
                         )
                     },
-                    events=(EventRecord.create("conversation_turn_terminal", {"conversation_id": self.conversation_id, "turn_id": turn_id, "state": state}),),
+                    events=(EventRecord.create("conversation_turn_terminal", {"conversation_id": self.conversation_id, "turn_id": turn_id, "state": state, "stage": error.stage}),),
                 )
             )
-            return ConversationResponse(state, {"blocker": str(error)})
+            return ConversationResponse(
+                state,
+                {
+                    "blocker": f"Leader planning failed at stage: {error.stage}",
+                    "stage": error.stage,
+                },
+            )
 
 
 def _requested_steps(text: str) -> range:

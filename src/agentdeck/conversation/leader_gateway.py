@@ -10,6 +10,7 @@ from ..mission_orchestration import LeaderMissionCandidate
 from ..models import LeaderConfig, ProjectConfig
 from ..orchestration.leader import LeaderOrchestrator
 from ..providers import LeaderProvider, leader_provider
+from ..providers.cli_subprocess import CliLeaderProviderError
 from ..runtime.acp import AcpTransport
 from ..runtime.acp_client import AgentDeckAcpClient, PermissionDecision
 from ..runtime.acp_mapping import ensure_turn_within_bounds
@@ -19,8 +20,46 @@ MAX_LEADER_OUTPUT_BYTES = 2 * 1024 * 1024
 MAX_LEADER_FRAGMENTS = 256
 
 
+LEADER_FAILURE_STAGES = frozenset(
+    {
+        "cancelled",
+        "backend_blocked",
+        "backend_failure",
+        "timeout",
+        "nonzero",
+        "json_parse",
+        "schema",
+        "oversize",
+        "acp_incomplete",
+        "acp_permission",
+        "acp_empty",
+        "acp_failure",
+    }
+)
+
+
 class LeaderGatewayError(RuntimeError):
-    pass
+    """A fixed-stage Leader failure safe for durable diagnostics."""
+
+    def __init__(self, stage: str) -> None:
+        legacy = {
+            "Leader request cancelled": "cancelled",
+            "Leader backend failed": "backend_failure",
+            "ACP Leader backend failed": "acp_failure",
+        }
+        normalized = legacy.get(stage, stage)
+        if normalized not in LEADER_FAILURE_STAGES:
+            normalized = "backend_failure"
+        self.stage = normalized
+        messages = {
+            "cancelled": "Leader request cancelled",
+            "backend_blocked": "Leader backend blocked",
+            "backend_failure": "Leader backend failed",
+            "acp_failure": "ACP Leader backend failed",
+        }
+        super().__init__(
+            messages.get(normalized, f"Leader planning failed at stage: {normalized}")
+        )
 
 
 class CancellationToken:
@@ -129,18 +168,18 @@ class LeaderGateway:
                 session.native_session_id, request.planning_task
             )
             if result.stop_reason != "end_turn" or result.outcome != "completed":
-                raise LeaderGatewayError("ACP Leader did not complete the turn")
+                raise LeaderGatewayError("acp_incomplete")
             if sink.permission_seen:
-                raise LeaderGatewayError("ACP Leader requested a forbidden permission")
+                raise LeaderGatewayError("acp_permission")
             if not sink.fragments:
-                raise LeaderGatewayError("ACP Leader returned no structured output")
+                raise LeaderGatewayError("acp_empty")
             text = "".join(sink.fragments)
             try:
                 plan = json.loads(text)
             except json.JSONDecodeError:
-                raise LeaderGatewayError("ACP Leader returned invalid structured output") from None
+                raise LeaderGatewayError("json_parse") from None
             if not isinstance(plan, dict):
-                raise LeaderGatewayError("ACP Leader returned invalid structured output")
+                raise LeaderGatewayError("schema")
             return plan
         finally:
             await transport.close()
@@ -187,17 +226,17 @@ class LeaderGateway:
         self, request: LeaderRequest, cancel: CancellationToken
     ) -> LeaderMissionCandidate:
         if cancel.cancelled:
-            raise LeaderGatewayError("Leader request cancelled")
+            raise LeaderGatewayError("cancelled")
         status = self.describe(request.config.leader)
         if status.readiness != "ready":
-            raise LeaderGatewayError(f"Leader backend blocked: {status.blockers[0]}")
+            raise LeaderGatewayError("backend_blocked")
         if status.transport == "acp":
             try:
                 plan = asyncio.run(self._generate_acp_plan(request))
             except LeaderGatewayError:
                 raise
             except Exception:
-                raise LeaderGatewayError("ACP Leader backend failed") from None
+                raise LeaderGatewayError("acp_failure") from None
         else:
             try:
                 provider = self._provider_factory(status.provider)
@@ -206,16 +245,18 @@ class LeaderGateway:
                     request.config.leader.model,
                     skill_context=request.skill_context,
                 )
+            except CliLeaderProviderError as error:
+                raise LeaderGatewayError(error.stage) from None
             except Exception:
-                raise LeaderGatewayError("Leader backend failed") from None
+                raise LeaderGatewayError("backend_failure") from None
         if cancel.cancelled:
-            raise LeaderGatewayError("Leader request cancelled")
+            raise LeaderGatewayError("cancelled")
         try:
             encoded = json.dumps(plan, ensure_ascii=False, allow_nan=False).encode("utf-8")
         except (TypeError, ValueError):
-            raise LeaderGatewayError("Leader backend returned invalid structured output") from None
+            raise LeaderGatewayError("schema") from None
         if len(encoded) > MAX_LEADER_OUTPUT_BYTES:
-            raise LeaderGatewayError("Leader backend output exceeded limit")
+            raise LeaderGatewayError("oversize")
         return LeaderMissionCandidate(
             provider=status.provider,
             model=status.model,
