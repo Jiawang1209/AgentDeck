@@ -240,6 +240,7 @@ class LeaderGateway:
             except Exception:
                 raise LeaderGatewayError("acp_failure") from None
         else:
+            gateway_failure: str | None = None
             try:
                 provider = self._provider_factory(status.provider)
                 result = LeaderOrchestrator(request.config, provider).plan_result(
@@ -252,9 +253,11 @@ class LeaderGateway:
                 )
                 plan = result.plan
             except CliLeaderProviderError as error:
-                raise LeaderGatewayError(error.stage) from None
+                gateway_failure = error.stage
             except Exception:
-                raise LeaderGatewayError("backend_failure") from None
+                gateway_failure = "backend_failure"
+            if gateway_failure is not None:
+                raise LeaderGatewayError(gateway_failure)
         if cancel.cancelled:
             raise LeaderGatewayError("cancelled")
         try:

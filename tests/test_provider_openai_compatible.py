@@ -121,6 +121,8 @@ def cli_plan_stdout() -> str:
 
 def codex_plan_stdout() -> str:
     plan = json.loads(cli_plan_stdout())
+    plan.pop("approval_required")
+    plan.pop("dispatch_ready")
     plan["steps"] = [
         plan["steps"][0],
         {
@@ -482,11 +484,12 @@ def test_codex_cli_provider_runs_non_interactive_command_and_parses_json_plan(
     config = load_config(root)
     seen: dict[str, object] = {}
 
-    def fake_run(command, input, text, capture_output, cwd, timeout, check):
+    def fake_run(command, input, text, stdout, stderr, cwd, timeout, check):
         seen["command"] = command
         seen["input"] = input
         seen["text"] = text
-        seen["capture_output"] = capture_output
+        seen["stdout"] = stdout
+        seen["stderr"] = stderr
         seen["cwd"] = cwd
         seen["timeout"] = timeout
         seen["check"] = check
@@ -514,6 +517,8 @@ def test_codex_cli_provider_runs_non_interactive_command_and_parses_json_plan(
     assert "负责需求澄清、任务拆解、架构方案和风险识别" in str(seen["input"])
     assert "让 Codex 做 Leader" in str(seen["input"])
     assert seen["cwd"] == str(root)
+    assert seen["stdout"] is subprocess.DEVNULL
+    assert seen["stderr"] is subprocess.DEVNULL
     assert plan["goal"] == "CLI Leader"
     assert plan["steps"][0]["requires_approval"] is True
 
