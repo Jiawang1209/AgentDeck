@@ -1,7 +1,9 @@
 from __future__ import annotations
 
-from dataclasses import replace
 from copy import deepcopy
+from dataclasses import replace
+import hashlib
+import json
 import re
 
 import pytest
@@ -71,10 +73,18 @@ def test_schema_hash_is_deterministic_and_project_path_free() -> None:
     schema = build_leader_plan_schema(request)
     other_schema = build_leader_plan_schema(other_path_request)
     digest = canonical_leader_plan_schema_hash(schema)
+    encoded = json.dumps(
+        schema,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    expected = f"sha256:{hashlib.sha256(encoded).hexdigest()}"
 
     assert schema == other_schema
     assert "/private/project-a" not in repr(schema)
     assert "/secret/other-project" not in repr(schema)
+    assert digest == expected
     assert digest == canonical_leader_plan_schema_hash(other_schema)
     assert re.fullmatch(r"sha256:[0-9a-f]{64}", digest)
 
