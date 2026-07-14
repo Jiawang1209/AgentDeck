@@ -880,6 +880,7 @@ def test_native_workspace_creation_failure_is_fixed_and_redacted(
     assert raised.value.diagnostic_code == "invalid_output_envelope"
     assert prefixes == ["agentdeck-leader-"]
     assert raised.value.attempt_count == 1
+    assert raised.value.retryable is False
     _assert_exception_graph_redacted(raised.value, (secret, str(tmp_path)))
 
 
@@ -1884,7 +1885,7 @@ def test_native_regeneration_uses_one_total_deadline_and_remaining_timeout(
 ) -> None:
     request = replace(_request(tmp_path), timeout_seconds=10)
     timeouts: list[float] = []
-    monotonic_values = iter((100.0, 100.0, 104.0))
+    monotonic_values = iter((100.0, 100.0, 100.0, 104.0, 104.0, 104.0))
     monkeypatch.setattr(
         "agentdeck.providers.cli_subprocess.time.monotonic",
         lambda: next(monotonic_values),
@@ -1915,7 +1916,7 @@ def test_native_regeneration_skips_second_attempt_when_deadline_is_exhausted(
 ) -> None:
     request = replace(_request(tmp_path), timeout_seconds=5)
     calls = 0
-    monotonic_values = iter((10.0, 10.0, 15.0))
+    monotonic_values = iter((10.0, 10.0, 10.0, 15.0))
     monkeypatch.setattr(
         "agentdeck.providers.cli_subprocess.time.monotonic",
         lambda: next(monotonic_values),
@@ -2142,3 +2143,190 @@ def test_native_deadline_addition_must_remain_finite(
     with pytest.raises(ValueError) as raised:
         provider.plan_result(request)
     assert str(raised.value) == "CLI Leader planning timeout must be a positive number"
+
+
+def _write_native_success(provider_class, command, kwargs) -> None:
+    if provider_class is CodexCliProvider:
+        _schema_path, result_path = _output_paths(command)
+        result_path.write_text(json.dumps(_valid_plan()), encoding="utf-8")
+    else:
+        kwargs["stdout"].write(json.dumps(_claude_envelope()).encode("utf-8"))
+
+
+@pytest.mark.parametrize("provider_class", [CodexCliProvider, ClaudeCliProvider])
+def test_native_setup_time_is_removed_from_subprocess_timeout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, provider_class
+) -> None:
+    request = replace(_request(tmp_path), timeout_seconds=10)
+    monotonic_values = iter((100.0, 100.0, 103.0, 104.0))
+    observed_timeouts: list[float] = []
+    monkeypatch.setattr(
+        "agentdeck.providers.cli_subprocess.time.monotonic",
+        lambda: next(monotonic_values),
+    )
+
+    def fake_run(command, **kwargs):
+        observed_timeouts.append(kwargs["timeout"])
+        _write_native_success(provider_class, command, kwargs)
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    monkeypatch.setattr("agentdeck.providers.cli_subprocess.subprocess.run", fake_run)
+    result = provider_class().plan_result(request)
+    assert result.leader_generation["attempt_count"] == 1
+    assert observed_timeouts == [7.0]
+
+
+@pytest.mark.parametrize("provider_class", [CodexCliProvider, ClaudeCliProvider])
+def test_native_setup_deadline_exhaustion_stops_before_subprocess(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, provider_class
+) -> None:
+    request = replace(_request(tmp_path), timeout_seconds=10)
+    monotonic_values = iter((100.0, 100.0, 110.0))
+    monkeypatch.setattr(
+        "agentdeck.providers.cli_subprocess.time.monotonic",
+        lambda: next(monotonic_values),
+    )
+    subprocess_calls = 0
+
+    def fake_run(*_args, **_kwargs):
+        nonlocal subprocess_calls
+        subprocess_calls += 1
+        pytest.fail("expired setup must not launch subprocess")
+
+    monkeypatch.setattr("agentdeck.providers.cli_subprocess.subprocess.run", fake_run)
+    with pytest.raises(CliLeaderProviderError) as raised:
+        provider_class().plan_result(request)
+    assert subprocess_calls == 0
+    assert raised.value.stage == "timeout"
+    assert raised.value.attempt_count == 1
+    assert raised.value.retryable is False
+
+
+@pytest.mark.parametrize("provider_class", [CodexCliProvider, ClaudeCliProvider])
+def test_native_late_success_is_rejected_after_cleanup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, provider_class
+) -> None:
+    request = replace(_request(tmp_path), timeout_seconds=10)
+    monotonic_values = iter((100.0, 100.0, 100.0, 110.0))
+    subprocess_calls = 0
+    monkeypatch.setattr(
+        "agentdeck.providers.cli_subprocess.time.monotonic",
+        lambda: next(monotonic_values),
+    )
+
+    def fake_run(command, **kwargs):
+        nonlocal subprocess_calls
+        subprocess_calls += 1
+        _write_native_success(provider_class, command, kwargs)
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    monkeypatch.setattr("agentdeck.providers.cli_subprocess.subprocess.run", fake_run)
+    with pytest.raises(CliLeaderProviderError) as raised:
+        provider_class().plan_result(request)
+    assert subprocess_calls == 1
+    assert raised.value.stage == "timeout"
+    assert raised.value.attempt_count == 1
+    assert raised.value.retryable is False
+
+
+@pytest.mark.parametrize("provider_class", [CodexCliProvider, ClaudeCliProvider])
+def test_native_retry_deadline_exhaustion_stops_before_second_subprocess(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, provider_class
+) -> None:
+    request = replace(_request(tmp_path), timeout_seconds=10)
+    monotonic_values = iter((100.0, 100.0, 100.0, 110.0))
+    subprocess_calls = 0
+    monkeypatch.setattr(
+        "agentdeck.providers.cli_subprocess.time.monotonic",
+        lambda: next(monotonic_values),
+    )
+
+    def fake_run(command, **kwargs):
+        nonlocal subprocess_calls
+        subprocess_calls += 1
+        if provider_class is CodexCliProvider:
+            _schema_path, result_path = _output_paths(command)
+            result_path.write_text("not-json", encoding="utf-8")
+        else:
+            kwargs["stdout"].write(b"not-json")
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    monkeypatch.setattr("agentdeck.providers.cli_subprocess.subprocess.run", fake_run)
+    with pytest.raises(CliLeaderProviderError) as raised:
+        provider_class().plan_result(request)
+    assert subprocess_calls == 1
+    assert raised.value.stage == "timeout"
+    assert raised.value.attempt_count == 1
+    assert raised.value.retryable is False
+
+
+@pytest.mark.parametrize(
+    ("outcomes", "expected_calls", "expected_stage"),
+    [
+        (("json_parse", "success"), 2, None),
+        (("schema", "success"), 2, None),
+        (("json_parse", "json_parse"), 2, "json_parse"),
+        (("schema", "schema"), 2, "schema"),
+        (("nonzero",), 1, "nonzero"),
+    ],
+)
+def test_claude_regeneration_matrix_preserves_exact_native_identity(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    outcomes: tuple[str, ...],
+    expected_calls: int,
+    expected_stage: str | None,
+) -> None:
+    request = _request(tmp_path)
+    raw_secret = "SECRET_FIRST_CLAUDE_ENVELOPE"
+    calls: list[tuple[list[str], str, str]] = []
+
+    def fake_run(command, **kwargs):
+        outcome = outcomes[len(calls)]
+        calls.append((list(command), kwargs["input"], kwargs["stdout"].path))
+        if outcome == "nonzero":
+            return subprocess.CompletedProcess(command, 9, stdout=raw_secret, stderr=raw_secret)
+        if outcome == "json_parse":
+            kwargs["stdout"].write(raw_secret.encode("utf-8"))
+        elif outcome == "schema":
+            invalid = _valid_plan()
+            invalid["steps"] = invalid["steps"][:-1]
+            kwargs["stdout"].write(
+                json.dumps(_claude_envelope(invalid)).encode("utf-8")
+            )
+        else:
+            kwargs["stdout"].write(json.dumps(_claude_envelope()).encode("utf-8"))
+        return subprocess.CompletedProcess(command, 0, stdout=raw_secret, stderr=raw_secret)
+
+    monkeypatch.setattr("agentdeck.providers.cli_subprocess.subprocess.run", fake_run)
+    if expected_stage is None:
+        result = ClaudeCliProvider().plan_result(request)
+        assert result.leader_generation["attempt_count"] == 2
+        assert result.leader_generation["regeneration_used"] is True
+    else:
+        with pytest.raises(CliLeaderProviderError) as raised:
+            ClaudeCliProvider().plan_result(request)
+        assert raised.value.stage == expected_stage
+        assert raised.value.attempt_count == expected_calls
+        _assert_exception_graph_redacted(raised.value, (raw_secret, str(tmp_path)))
+
+    assert len(calls) == expected_calls
+    assert len(calls) <= 2
+    schema_argument = json.dumps(
+        build_leader_plan_schema(request),
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    for command, _prompt, sink_path in calls:
+        assert command[0] == "claude"
+        assert command[command.index("--model") + 1] == request.model
+        assert "--no-session-persistence" in command
+        assert command[command.index("--json-schema") + 1] == schema_argument
+        assert not Path(sink_path).parent.exists()
+    if len(calls) == 2:
+        assert calls[0][0] == calls[1][0]
+        assert calls[0][2] != calls[1][2]
+        assert request.task in calls[1][1]
+        assert "Regenerate the complete plan" in calls[1][1]
+        assert raw_secret not in calls[1][1]

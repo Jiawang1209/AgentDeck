@@ -343,8 +343,13 @@ class CliLeaderProvider:
         prompt = original_prompt
         attempted = 0
         for attempt in (1, 2):
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
+            attempt_now = time.monotonic()
+            remaining = deadline - attempt_now
+            if (
+                not math.isfinite(attempt_now)
+                or not math.isfinite(remaining)
+                or remaining <= 0
+            ):
                 raise CliLeaderProviderError(
                     "timeout",
                     attempt_count=attempted,
@@ -356,7 +361,7 @@ class CliLeaderProvider:
                     request=request,
                     schema=schema,
                     prompt=prompt,
-                    timeout=remaining,
+                    deadline=deadline,
                 )
             except CliLeaderProviderError as error:
                 safe_error = CliLeaderProviderError(
@@ -366,6 +371,13 @@ class CliLeaderProvider:
                     retryable=error.retryable,
                 ).with_attempt_count(attempt)
             else:
+                completed_at = time.monotonic()
+                if not math.isfinite(completed_at) or completed_at >= deadline:
+                    raise CliLeaderProviderError(
+                        "timeout",
+                        attempt_count=attempt,
+                        constraint_mode=self.constraint_mode,
+                    ) from None
                 return LeaderPlanResult(
                     plan=plan,
                     leader_generation=build_leader_generation_provenance(
@@ -391,13 +403,21 @@ class CliLeaderProvider:
             constraint_mode=self.constraint_mode,
         ) from None
 
+    @staticmethod
+    def _remaining_subprocess_timeout(deadline: float) -> float:
+        now = time.monotonic()
+        remaining = deadline - now
+        if not math.isfinite(now) or not math.isfinite(remaining) or remaining <= 0:
+            raise CliLeaderProviderError("timeout")
+        return remaining
+
     def _native_attempt(
         self,
         *,
         request: LeaderPlanRequest,
         schema: dict[str, object],
         prompt: str,
-        timeout: float,
+        deadline: float,
     ) -> dict[str, object]:
         raise NotImplementedError
 
@@ -504,7 +524,7 @@ class CodexCliProvider(CliLeaderProvider):
         request: LeaderPlanRequest,
         schema: dict[str, object],
         prompt: str,
-        timeout: float,
+        deadline: float,
     ) -> dict[str, object]:
         temp_dir = _create_private_workspace("agentdeck-leader-")
         if temp_dir is None:
@@ -537,7 +557,7 @@ class CodexCliProvider(CliLeaderProvider):
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
                     cwd=request.config.root,
-                    timeout=timeout,
+                    timeout=self._remaining_subprocess_timeout(deadline),
                     check=False,
                 )
             except subprocess.TimeoutExpired:
@@ -823,7 +843,7 @@ class ClaudeCliProvider(CliLeaderProvider):
         request: LeaderPlanRequest,
         schema: dict[str, object],
         prompt: str,
-        timeout: float,
+        deadline: float,
     ) -> dict[str, object]:
         schema_argument = json.dumps(
             schema,
@@ -858,7 +878,7 @@ class ClaudeCliProvider(CliLeaderProvider):
                         stdout=output,
                         stderr=subprocess.DEVNULL,
                         cwd=request.config.root,
-                        timeout=timeout,
+                        timeout=self._remaining_subprocess_timeout(deadline),
                         check=False,
                     )
                 except subprocess.TimeoutExpired:
