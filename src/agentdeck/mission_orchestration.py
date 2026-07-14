@@ -201,11 +201,75 @@ class LeaderMissionCandidate:
     step_count: int | None = None
 
 
-def _requested_step_count(user_message: str) -> int:
-    match = re.search(r"共\s*(\d+)\s*轮", user_message)
-    if match is None:
-        match = re.search(r"\b(\d+)\s*(?:rounds?|steps?)\b", user_message, re.IGNORECASE)
-    return int(match.group(1)) if match else 8
+_CHINESE_COUNT_DIGITS = {
+    "零": 0,
+    "一": 1,
+    "二": 2,
+    "三": 3,
+    "四": 4,
+    "五": 5,
+    "六": 6,
+    "七": 7,
+    "八": 8,
+    "九": 9,
+}
+_ENGLISH_COUNT_WORDS = {
+    "one": 1,
+    "two": 2,
+    "three": 3,
+    "four": 4,
+    "five": 5,
+    "six": 6,
+    "seven": 7,
+    "eight": 8,
+    "nine": 9,
+    "ten": 10,
+}
+_COUNT_TOKEN = r"(?:[0-9]+|[零一二三四五六七八九十]+)"
+
+
+def _parse_mission_count_token(token: str) -> int | None:
+    if token.isascii() and token.isdigit():
+        return int(token)
+    if token in _CHINESE_COUNT_DIGITS:
+        return _CHINESE_COUNT_DIGITS[token]
+    if token == "十":
+        return 10
+    if token.count("十") == 1:
+        left, right = token.split("十")
+        if (not left or left in _CHINESE_COUNT_DIGITS) and (
+            not right or right in _CHINESE_COUNT_DIGITS
+        ):
+            tens = 1 if not left else _CHINESE_COUNT_DIGITS[left]
+            ones = 0 if not right else _CHINESE_COUNT_DIGITS[right]
+            return tens * 10 + ones
+    return None
+
+
+def requested_mission_step_count(user_message: str, *, default: int) -> int:
+    """Parse only explicit, unambiguous Mission step-count phrases."""
+    patterns = (
+        rf"共\s*(?P<count>{_COUNT_TOKEN})\s*轮",
+        rf"(?<![A-Za-z0-9_第零一二三四五六七八九十])"
+        rf"(?P<count>{_COUNT_TOKEN})\s*(?:个\s*)?(?:串行\s*)?步(?:骤)?",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, user_message)
+        if match is not None:
+            parsed = _parse_mission_count_token(match.group("count"))
+            if parsed is not None:
+                return parsed
+    english = re.search(
+        r"(?<![A-Za-z0-9_])(?:exactly\s+)?"
+        r"(?P<count>[0-9]+|one|two|three|four|five|six|seven|eight|nine|ten)"
+        r"\s+steps(?![A-Za-z0-9_])",
+        user_message,
+        re.IGNORECASE,
+    )
+    if english is not None:
+        token = english.group("count").lower()
+        return int(token) if token.isdigit() else _ENGLISH_COUNT_WORDS[token]
+    return default
 
 
 def mission_planning_task(
@@ -466,7 +530,7 @@ def create_mission_preview_from_candidate(
     step_count = (
         candidate.step_count
         if candidate.step_count is not None
-        else _requested_step_count(candidate.user_message)
+        else requested_mission_step_count(candidate.user_message, default=8)
     )
     try:
         raw_plan = deepcopy(candidate.plan)
@@ -584,7 +648,7 @@ def create_mission_preview_from_candidate(
             for key, records in conversation_mutation.append_records.items()
         }
         conversation_events = conversation_mutation.events
-    result = store.commit_conversation_mutation(
+    store.commit_conversation_mutation(
         ConversationMutation(
             append_records={
                 **conversation_records,
@@ -594,8 +658,6 @@ def create_mission_preview_from_candidate(
             events=(*conversation_events, event),
         )
     )
-    if result["outbox_blocked"]:
-        raise MissionPreviewError("mission preview audit blocked")
     return payload
 
 
@@ -677,7 +739,7 @@ def create_mission_preview(
         agents=tuple(item.agent for item in effective),
     )
     selected_agent_ids = tuple(item.agent.agent_id for item in effective)
-    step_count = _requested_step_count(user_message)
+    step_count = requested_mission_step_count(user_message, default=8)
     try:
         skill_context = _explicit_leader_skill_context(store, config)
     except Exception:

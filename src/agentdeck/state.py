@@ -10050,10 +10050,8 @@ class StateStore:
         latest_turn_id = (
             latest_turn.get("turn_id") if isinstance(latest_turn, dict) else None
         )
-        pending_preview_id = (
-            projection["pending_preview_by_conversation"].get(latest_conversation_id)
-            if latest_conversation_id is not None
-            else None
+        pending_preview_ids = set(
+            projection["pending_preview_by_conversation"].values()
         )
         pending_preview = next(
             (
@@ -10062,8 +10060,9 @@ class StateStore:
                     "preview_kind": item.get("preview_kind"),
                     "expires_at": item.get("expires_at"),
                 }
-                for item in previews
-                if isinstance(item, dict) and item.get("preview_id") == pending_preview_id
+                for item in reversed(previews)
+                if isinstance(item, dict)
+                and item.get("preview_id") in pending_preview_ids
             ),
             None,
         )

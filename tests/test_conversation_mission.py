@@ -16,6 +16,7 @@ from agentdeck.mission_orchestration import (
     MissionPreviewError,
     create_mission_preview,
     create_mission_preview_from_candidate,
+    requested_mission_step_count,
 )
 from agentdeck.models import AgentSpec
 from agentdeck.providers import LeaderPlanRequest
@@ -137,6 +138,42 @@ def test_candidate_frozen_authority_survives_redacted_message_and_excludes_third
         "reviewer",
     ]
     assert len(payload["plan"]["steps"]) == 8
+
+
+@pytest.mark.parametrize(
+    ("message", "expected"),
+    [
+        ("共1轮", 1),
+        ("共十轮", 10),
+        ("严格四步骤", 4),
+        ("恰好四个串行步骤", 4),
+        ("按3步完成", 3),
+        ("按三步骤完成", 3),
+        ("use exactly four steps", 4),
+        ("use 4 steps", 4),
+        ("use ten steps", 10),
+    ],
+)
+def test_requested_mission_step_count_supports_bounded_explicit_phrases(
+    message: str, expected: int
+) -> None:
+    assert requested_mission_step_count(message, default=8) == expected
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "version v4 steps are documented",
+        "four agents review one step",
+        "第四步骤的标题",
+        "step4 is a label",
+        "there are four possible plans",
+    ],
+)
+def test_requested_mission_step_count_avoids_ambiguous_false_positives(
+    message: str,
+) -> None:
+    assert requested_mission_step_count(message, default=8) == 8
 
 
 def test_invalid_candidate_is_full_tree_zero_write(

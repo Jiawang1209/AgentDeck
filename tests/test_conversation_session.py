@@ -218,6 +218,97 @@ def test_candidate_landing_failure_terminalizes_turn_instead_of_leaving_waiting(
     assert "unsafe detail" not in repr(store.load())
 
 
+def test_postcommit_preview_audit_failure_returns_durable_preview_without_duplicates(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config, store = _project(tmp_path)
+    real_append = store.append_event
+
+    def fail_preview_audit(event):
+        if event.event_type == "mission_preview_created":
+            raise OSError("audit unavailable")
+        real_append(event)
+
+    monkeypatch.setattr(store, "append_event", fail_preview_audit)
+    monkeypatch.setattr(
+        "agentdeck.mission_orchestration.shutil.which", lambda command: f"/bin/{command}"
+    )
+    response = ConversationSession(
+        root=tmp_path,
+        config=config,
+        store=store,
+        leader_gateway=_Gateway(),
+    ).handle(MESSAGE)
+
+    assert response.kind == "mission_preview"
+    state = store.load()
+    assert len(state["missions"]) == 1
+    assert len(state["plans"]) == 1
+    assert len(state["conversation_preview_bindings"]) == 1
+    assert state["conversation_event_outbox"]
+    assert store.project_view(config).conversation["latest_turn_state"] == "completed"
+
+    retried = ConversationSession(
+        root=tmp_path,
+        config=config,
+        store=store,
+        leader_gateway=_Gateway(),
+    ).handle(MESSAGE)
+
+    assert retried.kind == "blocked"
+    after = store.load()
+    assert len(after["missions"]) == 1
+    assert len(after["plans"]) == 1
+    assert len(after["conversation_preview_bindings"]) == 1
+
+
+@pytest.mark.parametrize(
+    "message",
+    ["请严格四步骤完成开放任务", "请恰好四个串行步骤完成开放任务"],
+)
+def test_session_freezes_shared_parser_count_for_chinese_step_phrases(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, message: str
+) -> None:
+    config, store = _project(tmp_path)
+
+    class FourStepGateway:
+        def generate_mission(self, request, _cancel):
+            plan = _plan()
+            plan["steps"] = [
+                {
+                    "step": step,
+                    "agent_id": "planner" if step % 2 else "reviewer",
+                    "role": "planning" if step % 2 else "review",
+                    "task": f"step {step}",
+                    "risk": "review",
+                    "requires_approval": True,
+                }
+                for step in range(1, 5)
+            ]
+            return LeaderMissionCandidate(
+                provider=request.config.leader.provider,
+                model=request.config.leader.model,
+                user_message=request.user_message,
+                plan=plan,
+                timeout_seconds=request.timeout_seconds,
+                selected_agent_ids=request.selected_agent_ids,
+                step_count=request.step_count,
+            )
+
+    monkeypatch.setattr(
+        "agentdeck.mission_orchestration.shutil.which", lambda command: f"/bin/{command}"
+    )
+    response = ConversationSession(
+        root=tmp_path,
+        config=config,
+        store=store,
+        leader_gateway=FourStepGateway(),
+    ).handle(message)
+
+    assert response.kind == "mission_preview"
+    assert len(response.payload["plan"]["steps"]) == 4
+
+
 def test_session_context_is_bounded_and_never_persisted(tmp_path: Path) -> None:
     config, store = _project(tmp_path)
     session = ConversationSession(root=tmp_path, config=config, store=store)

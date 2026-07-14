@@ -13,6 +13,7 @@ from ..config import load_config, write_default_config
 from ..mission_orchestration import (
     create_mission_preview_from_candidate,
     mission_planning_task,
+    requested_mission_step_count,
 )
 from ..mission import mission_intent, select_mission_agents
 from ..models import EventRecord, ProjectConfig, new_id, utc_now
@@ -433,7 +434,9 @@ class ConversationSession:
                 raise LeaderGatewayError("schema")
             selected = tuple(agent.agent_id for agent in selection.agents)
             planning_config = replace(self.config, agents=selection.agents)
-            step_count = max(2, len(_requested_steps(text)))
+            step_count = max(
+                2, requested_mission_step_count(text, default=2)
+            )
             planning_task = mission_planning_task(
                 text,
                 selected_agent_ids=selected,
@@ -552,15 +555,6 @@ class ConversationSession:
                     "stage": error.stage,
                 },
             )
-
-
-def _requested_steps(text: str) -> range:
-    import re
-
-    match = re.search(r"共\s*(\d+)\s*轮", text)
-    count = int(match.group(1)) if match else 2
-    return range(count)
-
 
 _PERSISTED_SECRET_ASSIGNMENT = re.compile(
     r"(?i)\b(secret|token|password|api[_-]?key|authorization)"
