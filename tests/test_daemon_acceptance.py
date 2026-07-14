@@ -27,7 +27,7 @@ from agentdeck.contracts import (
     validate_mission_scheduler_contract,
     validate_workbench_contract,
 )
-from agentdeck.daemon.client import DaemonClient
+from agentdeck.daemon.client import DaemonClient, DaemonClientError
 from agentdeck.daemon.client import admit_confirmed_mission, connect_or_start
 from agentdeck.daemon.lifecycle import (
     daemon_endpoint,
@@ -314,7 +314,9 @@ def test_acceptance_wait_reads_durable_conversation_terminal_without_waiting_for
         _wait(Store(), lambda _state: False)  # type: ignore[arg-type]
 
 
-async def _decide_pending_permission(root: Path, permission_id: str) -> None:
+async def _decide_pending_permission(
+    root: Path, permission_id: str, *, verify_replay: bool = False
+) -> dict[str, object]:
     client = await DaemonClient.connect_verified(root)
     try:
         lease = await client.request("controller.acquire", {"client_id": "acceptance-reconnect"})
@@ -324,15 +326,99 @@ async def _decide_pending_permission(root: Path, permission_id: str) -> None:
         }
         params = {"permission_id": permission_id, "decision": "approved"}
         preview = await client.request("permission.decide", params, **authority)
+        assert set(preview) == {
+            "preview_id",
+            "action",
+            "generation",
+            "execution_digest",
+            "previewed_at",
+            "expires_at",
+            "state",
+        }
+        assert preview["action"] == "permission_decision"
+        assert preview["state"] == "pending"
         result = await client.request(
             "permission.decide", {**params, "preview_id": preview["preview_id"]}, **authority
         )
         assert result["state"] == "approved"
+        if verify_replay:
+            with pytest.raises(
+                DaemonClientError,
+                match="terminal|confirmation|live permission waiter authority",
+            ):
+                await client.request(
+                    "permission.decide",
+                    {**params, "preview_id": preview["preview_id"]},
+                    **authority,
+                )
         await client.request(
             "controller.release",
             {"lease_id": lease["lease_id"], "generation": lease["generation"]},
             **authority,
         )
+        return {"preview": preview, "result": result}
+    finally:
+        await client.close()
+
+
+async def _govern_worker_ownership(
+    root: Path,
+    *,
+    method: str,
+    agent_id: str,
+    reported_changes: dict[str, object] | None = None,
+    verify_replay: bool = False,
+) -> dict[str, object]:
+    client = await DaemonClient.connect_verified(root)
+    try:
+        lease = await client.request(
+            "controller.acquire", {"client_id": f"acceptance-{method}"}
+        )
+        authority = {
+            "lease_id": lease["lease_id"],
+            "lease_generation": lease["generation"],
+        }
+        params: dict[str, object] = {"agent_id": agent_id}
+        if reported_changes is not None:
+            params["reported_changes"] = reported_changes
+        preview = await client.request(method, params, **authority)
+        assert set(preview) == {
+            "preview_id",
+            "action",
+            "generation",
+            "execution_digest",
+            "previewed_at",
+            "expires_at",
+            "state",
+        }
+        assert preview["state"] == "pending"
+        result = await client.request(
+            method, {**params, "preview_id": preview["preview_id"]}, **authority
+        )
+        if verify_replay:
+            before_replay = StateStore(root).load()
+            with pytest.raises(
+                DaemonClientError,
+                match="Worker|blocked|confirmation",
+            ):
+                await client.request(
+                    method,
+                    {**params, "preview_id": preview["preview_id"]},
+                    **authority,
+                )
+            after_replay = StateStore(root).load()
+            assert after_replay.get("worker_ownership") == before_replay.get(
+                "worker_ownership"
+            )
+            assert after_replay.get("governance_previews") == before_replay.get(
+                "governance_previews"
+            )
+        await client.request(
+            "controller.release",
+            {"lease_id": lease["lease_id"], "generation": lease["generation"]},
+            **authority,
+        )
+        return {"preview": preview, "result": result}
     finally:
         await client.close()
 
@@ -441,7 +527,7 @@ def _render_recovery_through_bare_pty(root: Path, mission_id: str) -> bytes:
     output = bytearray()
     deadline = time.monotonic() + 8
     try:
-        while time.monotonic() < deadline and mission_id.encode() not in output:
+        while time.monotonic() < deadline and b"agentdeck> " not in output:
             readable, _, _ = select.select([master], [], [], 0.1)
             if readable:
                 try:
@@ -450,7 +536,12 @@ def _render_recovery_through_bare_pty(root: Path, mission_id: str) -> bytes:
                     break
             if process.poll() is not None:
                 break
-        return bytes(output)
+        rendered = bytes(output)
+        if mission_id.encode() not in rendered or b"agentdeck> " not in rendered:
+            raise AssertionError(
+                f"bare recovery UI did not finish rendering: {rendered!r}"
+            )
+        return rendered
     finally:
         _cleanup_pty(process, master)
 
@@ -618,55 +709,192 @@ def test_daemon_acceptance_runs_four_stage_acp_tmux_mission(monkeypatch) -> None
             config=config, store=store, mission_id=str(preview["mission_id"])
         )
 
-        async def admit() -> dict[str, object]:
-            client = await connect_or_start(root, config)
-            await client.close()
-            return await admit_confirmed_mission(
-                root, config, confirmed, state_store=store
-            )
+        admission_clients: list[DaemonClient] = []
 
-        admitted = asyncio.run(admit())
+        async def tracked_connect(*args, **kwargs) -> DaemonClient:
+            client = await connect_or_start(*args, **kwargs)
+            admission_clients.append(client)
+            return client
+
+        admitted = asyncio.run(
+            admit_confirmed_mission(
+                root,
+                config,
+                confirmed,
+                state_store=store,
+                connect_factory=tracked_connect,
+            )
+        )
         assert admitted["accepted"] is True
+        assert len(admission_clients) == 1
+        assert admission_clients[0]._closed is True
         resources.daemon_pid = int(
             json.loads(
                 daemon_endpoint(root).metadata_path.read_text(encoding="utf-8")
             )["pid"]
         )
 
-        decided_permissions: set[str] = set()
-        deadline = time.monotonic() + 15
-        completed: dict[str, object] | None = None
-        while time.monotonic() < deadline:
-            state = store.load()
-            mission = next(
-                item
-                for item in state["missions"]
-                if item["mission_id"] == preview["mission_id"]
-            )
-            for permission in state.get("permission_requests", []):
-                permission_id = str(permission["permission_id"])
-                if permission_id not in decided_permissions:
-                    asyncio.run(_decide_pending_permission(root, permission_id))
-                    decided_permissions.add(permission_id)
-            if mission["status"] == "completed":
-                completed = state
-                break
-            if mission["status"] in {"failed", "stopped", "interrupted"}:
-                completed = state
-                break
-            time.sleep(0.05)
-        assert completed is not None, repr(
+        first_pending = _wait(
+            store,
+            lambda state: len(state.get("permission_requests", [])) == 1
+            and any(
+                item.get("classification") == "waiting_human"
+                and item.get("reason") == "Worker permission is pending"
+                for item in state.get("recovery_decisions", [])
+            ),
+        )
+        first_mission = next(
+            item
+            for item in first_pending["missions"]
+            if item["mission_id"] == preview["mission_id"]
+        )
+        first_attempt = first_pending["mission_attempts"][0]
+        first_permission_id = first_pending["permission_requests"][0]["permission_id"]
+        assert first_mission["current_step"] == 0
+        assert first_attempt["step_id"] == "step_1"
+        assert not artifact.exists()
+        assert not tmux_log.exists()
+        assert "codex-worker" not in first_pending["agents"]
+        assert not first_pending["mission_worker_starts"]
+
+        recovery_render = _render_recovery_through_bare_pty(
+            root, str(preview["mission_id"])
+        )
+        assert str(preview["mission_id"]).encode() in recovery_render
+        assert b'"kind": "permission_preview"' in recovery_render, recovery_render
+        assert first_pending["mission_permission_bindings"] == [
             {
-                key: state.get(key)
-                for key in (
-                    "missions",
-                    "mission_attempts",
-                    "mission_handoffs",
-                    "permission_requests",
-                    "protocol_turns",
-                    "daemon_runtime",
-                )
+                "mission_id": preview["mission_id"],
+                "attempt_id": first_attempt["attempt_id"],
+                "permission_id": first_permission_id,
             }
+        ]
+        recovery_card = asdict(store.project_view(config))["mission_recovery"]
+        assert recovery_card["active_step"]["position"] == 1
+        assert recovery_card["decision"]["attempt_id"] == first_attempt["attempt_id"]
+        assert recovery_card["decision"]["controls"] == [
+            {
+                "kind": "permission_preview",
+                "label": "Preview pending permission",
+                "command": (
+                    "agentdeck daemon permission-preview --mission-id "
+                    f"{preview['mission_id']} --attempt-id {first_attempt['attempt_id']}"
+                ),
+                "safety": "inspect",
+                "enabled": True,
+                "blocker": None,
+            }
+        ]
+
+        asyncio.run(
+            _decide_pending_permission(
+                root, str(first_permission_id), verify_replay=True
+            )
+        )
+        after_first = _wait(
+            store,
+            lambda state: len(state.get("mission_handoffs", [])) >= 1
+            and len(state.get("mission_attempts", [])) >= 2,
+        )
+        assert after_first["mission_handoffs"][0]["attempt_id"] == first_attempt[
+            "attempt_id"
+        ]
+        second_attempt_id = after_first["mission_attempts"][1]["attempt_id"]
+        _wait(
+            store,
+            lambda state: any(
+                item.get("attempt_id") == second_attempt_id
+                and item.get("state") in {"submitted", "running", "succeeded"}
+                for item in state.get("mission_attempts", [])
+            )
+            and not any(
+                item.get("event_type") == "mission_attempt_submitted"
+                and item.get("payload", {}).get("attempt_id") == second_attempt_id
+                for item in state.get("protocol_event_outbox", [])
+            ),
+        )
+        ordered_events = store.all_events()
+        first_handoff_event = next(
+            index
+            for index, item in enumerate(ordered_events)
+            if item["event_type"] == "mission_handoff_evidence_recorded"
+            and item["payload"]["attempt_id"] == first_attempt["attempt_id"]
+        )
+        second_submit_event = next(
+            index
+            for index, item in enumerate(ordered_events)
+            if item["event_type"] == "mission_attempt_submitted"
+            and item["payload"]["attempt_id"] == second_attempt_id
+        )
+        assert first_handoff_event < second_submit_event
+
+        safe_window = _wait(
+            store,
+            lambda state: len(state.get("permission_requests", [])) == 2
+            and len(state.get("mission_attempts", [])) == 3
+            and state["mission_attempts"][1].get("state") == "succeeded",
+        )
+        second_permission_id = safe_window["permission_requests"][1]["permission_id"]
+        assert safe_window["mission_attempts"][2]["step_id"] == "step_3"
+        assert safe_window["mission_attempts"][2]["state"] in {
+            "submitted",
+            "running",
+        }
+        assert all(item["step_id"] != "step_4" for item in safe_window["mission_attempts"])
+        assert [json.loads(line)["phase"] for line in tmux_log.read_text().splitlines()] == [
+            "review"
+        ]
+
+        takeover = asyncio.run(
+            _govern_worker_ownership(
+                root,
+                method="worker.takeover",
+                agent_id="codex-worker",
+                verify_replay=True,
+            )
+        )
+        assert takeover["result"]["ownership"] == "human_owned"
+        taken = store.load()
+        assert taken["worker_takeover_baselines"][-1]["state"] == "active"
+        tmux_before_human_window = tmux_log.read_bytes()
+        time.sleep(0.25)
+        while_owned = store.load()
+        assert tmux_log.read_bytes() == tmux_before_human_window
+        assert all(
+            item["step_id"] != "step_4"
+            for item in while_owned["mission_attempts"]
+        )
+
+        returned = asyncio.run(
+            _govern_worker_ownership(
+                root,
+                method="worker.return-control",
+                agent_id="codex-worker",
+                reported_changes={"summary": "no human changes", "paths": []},
+                verify_replay=True,
+            )
+        )
+        assert returned["result"]["ownership"] == "agentdeck_owned"
+        returned_state = store.load()
+        assert returned_state["worker_takeover_baselines"][-1]["state"] == "reconciled"
+        assert returned_state["worker_takeover_baselines"][-1]["reported_changes"] == {
+            "summary": "no human changes",
+            "paths": [],
+        }
+
+        asyncio.run(
+            _decide_pending_permission(
+                root, str(second_permission_id), verify_replay=True
+            )
+        )
+        completed = _wait(
+            store,
+            lambda state: any(
+                item.get("mission_id") == preview["mission_id"]
+                and item.get("status") == "completed"
+                for item in state.get("missions", [])
+            ),
+            timeout=15,
         )
 
         mission = next(
@@ -682,7 +910,7 @@ def test_daemon_acceptance_runs_four_stage_acp_tmux_mission(monkeypatch) -> None
             "codex-worker",
         ]
         assert [item["state"] for item in attempts] == ["succeeded"] * 4
-        assert len(decided_permissions) == 2
+        assert len(completed["permission_requests"]) == 2
         handoffs = completed["mission_handoffs"]
         assert len(handoffs) == 4
         assert [item["state"] for item in handoffs] == ["recorded"] * 4

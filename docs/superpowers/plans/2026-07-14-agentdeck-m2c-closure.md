@@ -1249,8 +1249,15 @@ git commit -m "Add deterministic four-stage M2c Mission"
 **Files:**
 - Modify: `tests/test_daemon_acceptance.py`
 - Modify: `tests/test_daemon_governance.py`
-- Modify: production daemon/governance files only if a new failing regression
-  proves a defect inside the approved M2c boundary
+- Modify: `tests/test_daemon_recovery.py` only to pass an explicitly registered
+  live waiter authority through its existing direct domain-handler rehearsal
+- Modify: `src/agentdeck/daemon/service.py` only for exact live-waiter permission
+  authority and protocol-frozen return-report normalization proven by RED tests
+- Modify: `src/agentdeck/state.py` only for the daemon-instance-bound live
+  permission recovery projection and authoritative writer registration
+- Modify: `src/agentdeck/cli.py` only to wire current-process waiter publication,
+  exact permission authority, and commit-then-notify behavior
+- Modify: this Task 9 plan section to record the approved RED-driven file scope
 - Modify: `HISTORY.md`
 
 - [ ] **Step 1: Extend the four-stage test to disconnect at permission**
@@ -1334,9 +1341,13 @@ stage only the exact production file named by that regression after inspecting
 its diff:
 
 ```bash
-git add tests/test_daemon_acceptance.py tests/test_daemon_governance.py HISTORY.md
-git diff -- src/agentdeck/daemon/governance.py \
-  src/agentdeck/daemon/service.py src/agentdeck/state.py
+git add tests/test_daemon_acceptance.py tests/test_daemon_governance.py \
+  tests/test_daemon_recovery.py HISTORY.md \
+  docs/superpowers/plans/2026-07-14-agentdeck-m2c-closure.md
+git diff -- src/agentdeck/cli.py src/agentdeck/daemon/service.py \
+  src/agentdeck/state.py
+git add src/agentdeck/cli.py src/agentdeck/daemon/service.py \
+  src/agentdeck/state.py
 git commit -m "Prove M2c recovery and human takeover"
 ```
 

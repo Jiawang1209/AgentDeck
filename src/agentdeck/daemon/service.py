@@ -19,8 +19,10 @@ import re
 import shutil
 import stat
 import subprocess
+from types import MappingProxyType
 from typing import Any, Protocol
 
+from .protocol import _FrozenJsonList
 from .scheduler import (
     SchedulerDecision,
     SchedulerFacts,
@@ -348,6 +350,7 @@ def apply_permission_decision_request(
     *,
     generation: int,
     now: datetime,
+    live_waiter_authority: object = None,
 ) -> dict[str, object]:
     """Production RPC domain handler for one exact human permission decision."""
     if type(params) is not dict or set(params) not in (
@@ -364,6 +367,26 @@ def apply_permission_decision_request(
         or not callable(getattr(store, "validated_protocol_state", None))
     ):
         raise ServiceError("permission decision request is invalid")
+    if (
+        type(live_waiter_authority) is not dict
+        or set(live_waiter_authority) != {
+            "permission_id",
+            "attempt_id",
+            "session_id",
+            "generation",
+        }
+        or live_waiter_authority.get("permission_id") != permission_id
+        or type(live_waiter_authority.get("attempt_id")) is not str
+        or re.fullmatch(
+            r"mat_[0-9a-f]{12}", str(live_waiter_authority["attempt_id"])
+        )
+        is None
+        or type(live_waiter_authority.get("session_id")) is not str
+        or not live_waiter_authority["session_id"]
+        or type(live_waiter_authority.get("generation")) is not int
+        or live_waiter_authority["generation"] < 1
+    ):
+        raise ServiceError("live permission waiter authority is required")
     try:
         state = store.validated_protocol_state()
         permissions = [
@@ -376,8 +399,38 @@ def apply_permission_decision_request(
         current = store._derived_protocol_state(
             state, "permission", permission_id, permission
         )
+        bindings = [
+            item
+            for item in state.get("mission_permission_bindings", [])
+            if type(item) is dict
+            and item.get("permission_id") == permission_id
+            and item.get("attempt_id") == live_waiter_authority["attempt_id"]
+        ]
+        attempts = [
+            item
+            for item in state.get("mission_attempts", [])
+            if type(item) is dict
+            and item.get("attempt_id") == live_waiter_authority["attempt_id"]
+        ]
+        sessions = [
+            item
+            for item in state.get("agent_sessions", [])
+            if type(item) is dict
+            and item.get("session_id") == live_waiter_authority["session_id"]
+        ]
+        if (
+            permission.get("session_id") != live_waiter_authority["session_id"]
+            or len(bindings) != 1
+            or len(attempts) != 1
+            or attempts[0].get("configured_transport") != "acp"
+            or attempts[0].get("state") not in {"submitted", "running"}
+            or bindings[0].get("mission_id") != attempts[0].get("mission_id")
+            or len(sessions) != 1
+            or sessions[0].get("agent_id") != attempts[0].get("agent_id")
+        ):
+            raise ValueError
     except (AttributeError, KeyError, TypeError, ValueError):
-        raise ServiceError("permission decision target is invalid") from None
+        raise ServiceError("live permission waiter authority is invalid") from None
     if current != "pending":
         raise ServiceError("permission decision target is terminal")
     facts = {
@@ -1004,8 +1057,30 @@ def apply_worker_ownership_request(
     reported_changes = params.get("reported_changes")
     if action == "takeover" and reported_changes is not None:
         raise ServiceError("Worker ownership request is invalid")
-    if reported_changes is not None and type(reported_changes) is not dict:
-        raise ServiceError("Worker ownership request is invalid")
+    if reported_changes is not None:
+        if (
+            type(reported_changes) not in {dict, MappingProxyType}
+            or set(reported_changes) != {"summary", "paths"}
+        ):
+            raise ServiceError("Worker ownership request is invalid")
+        summary = reported_changes.get("summary")
+        paths = reported_changes.get("paths")
+        if (
+            type(summary) is not str
+            or type(paths) not in {list, _FrozenJsonList}
+            or len(paths) > 256
+            or any(type(item) is not str or not item for item in paths)
+            or len(paths) != len(set(paths))
+        ):
+            raise ServiceError("Worker ownership request is invalid")
+        try:
+            summary_bytes = len(summary.encode("utf-8"))
+            path_bytes = sum(len(item.encode("utf-8")) for item in paths)
+        except UnicodeEncodeError:
+            raise ServiceError("Worker ownership request is invalid") from None
+        if summary_bytes > 4096 or path_bytes > 65536:
+            raise ServiceError("Worker ownership request is invalid")
+        reported_changes = {"summary": summary, "paths": list(paths)}
     def persist_ambiguity(blocker: str, evidence: dict[str, object]) -> None:
         try:
             store.record_worker_reconciliation_ambiguity(
@@ -1980,6 +2055,9 @@ class ProjectDaemonService:
             [], SchedulerFacts | None | Awaitable[SchedulerFacts | None]
         ],
         apply_transition: TransitionCallback,
+        permission_waiter_changed: Callable[
+            [dict[str, object], bool], object | Awaitable[object]
+        ] = lambda _authority, _active: None,
         shutdown_grace_seconds: float = 5.0,
     ) -> None:
         if not all(
@@ -1989,6 +2067,7 @@ class ProjectDaemonService:
                 flush_safe_outboxes,
                 load_scheduler_facts,
                 apply_transition,
+                permission_waiter_changed,
             )
         ):
             raise TypeError("daemon service callbacks must be callable")
@@ -2007,6 +2086,7 @@ class ProjectDaemonService:
         self._flush_safe_outboxes = flush_safe_outboxes
         self._load_scheduler_facts = load_scheduler_facts
         self._apply_transition = apply_transition
+        self._permission_waiter_changed = permission_waiter_changed
         self._queue: asyncio.Queue[
             tuple[str, Callback, asyncio.Future[object] | None]
         ] = asyncio.Queue()
@@ -2173,7 +2253,16 @@ class ProjectDaemonService:
             raise ServiceError("permission waiter is already pending")
         future: asyncio.Future[str] = asyncio.get_running_loop().create_future()
         self._permission_waiters[permission_id] = (exact, future)
+        published = False
         try:
+            try:
+                await _call(self._permission_waiter_changed, dict(exact), True)
+                published = True
+            except Exception:
+                self._permission_waiters.pop(permission_id, None)
+                if not future.done():
+                    future.cancel()
+                raise ServiceError("live permission waiter publication failed") from None
             # Close the read/register race against a decision queued just before
             # this coroutine resumed after durable permission creation.
             current = read_decision()
@@ -2186,6 +2275,29 @@ class ProjectDaemonService:
             registered = self._permission_waiters.get(permission_id)
             if registered is not None and registered[1] is future:
                 self._permission_waiters.pop(permission_id, None)
+            if published:
+                try:
+                    await _call(
+                        self._permission_waiter_changed, dict(exact), False
+                    )
+                except Exception:
+                    raise ServiceError(
+                        "live permission waiter withdrawal failed"
+                    ) from None
+
+    def live_permission_waiter_authority(
+        self, permission_id: str
+    ) -> dict[str, object] | None:
+        """Return a detached exact authority only for one currently live waiter."""
+        if (
+            type(permission_id) is not str
+            or re.fullmatch(r"prm_[a-z0-9]+", permission_id) is None
+        ):
+            raise ServiceError("permission waiter identity is invalid")
+        registered = self._permission_waiters.get(permission_id)
+        if registered is None or registered[1].done():
+            return None
+        return dict(registered[0])
 
     def resolve_permission_waiter(self, authority: object, decision: str) -> None:
         exact = self._permission_wait_authority(authority)

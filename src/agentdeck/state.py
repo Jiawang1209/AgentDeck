@@ -6592,6 +6592,146 @@ class StateStore:
             token = self._validated_recovery_snapshot_locked(state)
             return copy.deepcopy(state), token
 
+    def record_live_permission_recovery(
+        self,
+        *,
+        authority: Mapping[str, object],
+        daemon_instance_id: str,
+    ) -> dict[str, object]:
+        """Project one live in-process waiter without weakening startup recovery."""
+        from .daemon.recovery import (
+            RecoveryDecision,
+            reconcile_gate,
+            recovery_facts_from_persisted_state,
+            validate_mission_permission_binding,
+            validate_recovery_record,
+        )
+
+        if (
+            type(authority) is not dict
+            or set(authority) != {
+                "permission_id",
+                "attempt_id",
+                "session_id",
+                "generation",
+            }
+            or type(authority.get("permission_id")) is not str
+            or re.fullmatch(r"prm_[a-z0-9]+", str(authority["permission_id"]))
+            is None
+            or type(authority.get("attempt_id")) is not str
+            or re.fullmatch(r"mat_[0-9a-f]{12}", str(authority["attempt_id"]))
+            is None
+            or type(authority.get("session_id")) is not str
+            or not authority["session_id"]
+            or authority.get("generation") != 1
+            or type(daemon_instance_id) is not str
+            or not daemon_instance_id
+        ):
+            raise ValueError("live permission recovery authority is invalid")
+        with self._protocol_mutation_lock():
+            state = self.load()
+            runtime = state.get("daemon_runtime")
+            if (
+                type(runtime) is not dict
+                or runtime.get("instance_id") != daemon_instance_id
+            ):
+                raise ValueError("live permission recovery daemon authority drift")
+            permission_id = str(authority["permission_id"])
+            attempt_id = str(authority["attempt_id"])
+            session_id = str(authority["session_id"])
+            permissions = [
+                item
+                for item in state.get("permission_requests", [])
+                if type(item) is dict and item.get("permission_id") == permission_id
+            ]
+            bindings = [
+                validate_mission_permission_binding(item)
+                for item in state.get("mission_permission_bindings", [])
+                if type(item) is dict
+                and item.get("permission_id") == permission_id
+                and item.get("attempt_id") == attempt_id
+            ]
+            attempts = [
+                _validate_mission_attempt_record(item)
+                for item in state.get("mission_attempts", [])
+                if type(item) is dict and item.get("attempt_id") == attempt_id
+            ]
+            sessions = [
+                _validate_agent_session_record(item)
+                for item in state.get("agent_sessions", [])
+                if type(item) is dict and item.get("session_id") == session_id
+            ]
+            if len(permissions) != 1 or len(bindings) != 1 or len(attempts) != 1:
+                raise ValueError("live permission recovery lineage is invalid")
+            permission = _validate_permission_record(permissions[0])
+            attempt = attempts[0]
+            if (
+                permission["session_id"] != session_id
+                or bindings[0]["mission_id"] != attempt["mission_id"]
+                or attempt["configured_transport"] != "acp"
+                or attempt["state"] not in {"submitted", "running"}
+                or len(sessions) != 1
+                or sessions[0]["agent_id"] != attempt["agent_id"]
+            ):
+                raise ValueError("live permission recovery lineage is invalid")
+            protocol_states = self._validate_protocol_transition_history(state)
+            if (
+                protocol_states.get(
+                    ("permission", permission_id), permission["status"]
+                )
+                != "pending"
+            ):
+                raise ValueError("live permission recovery is not pending")
+            facts = recovery_facts_from_persisted_state(
+                state, str(attempt["mission_id"])
+            )
+            persisted_only = reconcile_gate(facts)
+            if (
+                facts.attempt_id != attempt_id
+                or facts.permission_state != "pending"
+                or persisted_only.classification != "ambiguous"
+                or persisted_only.reason
+                != "ACP Worker connection was lost across daemon restart"
+            ):
+                raise ValueError("live permission recovery state is invalid")
+            live = RecoveryDecision(
+                classification="waiting_human",
+                reason="Worker permission is pending",
+                mission_id=str(attempt["mission_id"]),
+                attempt_id=attempt_id,
+                next_transition=None,
+            )
+            now = utc_now()
+            record = validate_recovery_record(
+                {
+                    "classification": live.classification,
+                    "reason": live.reason,
+                    "mission_id": live.mission_id,
+                    "attempt_id": live.attempt_id,
+                    "next_transition": live.next_transition,
+                    "classified_at": now,
+                }
+            )
+            decisions = state.setdefault("recovery_decisions", [])
+            if type(decisions) is not list:
+                raise ValueError("live permission recovery decisions are invalid")
+            validated = [validate_recovery_record(item) for item in decisions]
+            state["recovery_decisions"] = [
+                item for item in validated if item["mission_id"] != live.mission_id
+            ] + [record]
+            self._append_recovery_audit_locked(
+                state,
+                "live_permission_recovery_projected",
+                {
+                    "mission_id": live.mission_id,
+                    "attempt_id": attempt_id,
+                    "permission_id": permission_id,
+                    "daemon_instance_id": daemon_instance_id,
+                },
+            )
+            self._atomic_save(state)
+            return copy.deepcopy(record)
+
     def commit_recovery_decisions(
         self,
         decisions: list[object] | tuple[object, ...],
@@ -10688,6 +10828,7 @@ AUTHORITATIVE_STATE_MUTATION_METHODS = (
     "record_daemon_state",
     "record_governance_preview",
     "record_leader_error",
+    "record_live_permission_recovery",
     "record_memory_suggestion",
     "record_mission_acp_permission_pending",
     "record_mission_attempt_result",

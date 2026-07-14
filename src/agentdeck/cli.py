@@ -6912,8 +6912,32 @@ async def _serve_daemon(root: Path, config: ProjectConfig, store: StateStore) ->
         def lease_validator(lease_id: str, generation: int) -> None:
             _validate_daemon_controller_lease(store, lease_id, generation)
 
+        live_permission_authorities: dict[str, dict[str, object]] = {}
+
         def refresh_recovery_authority() -> None:
             reconcile_startup(store, enable_scheduler=lambda: None)
+            for authority in tuple(live_permission_authorities.values()):
+                store.record_live_permission_recovery(
+                    authority=dict(authority),
+                    daemon_instance_id=ownership.instance_id,
+                )
+
+        def publish_live_permission_waiter(
+            authority: dict[str, object], active: bool
+        ) -> None:
+            if active:
+                store.record_live_permission_recovery(
+                    authority=authority,
+                    daemon_instance_id=ownership.instance_id,
+                )
+                live_permission_authorities[str(authority["permission_id"])] = dict(
+                    authority
+                )
+            else:
+                live_permission_authorities.pop(
+                    str(authority["permission_id"]), None
+                )
+                refresh_recovery_authority()
 
         def admit_and_reconcile(params: dict[str, object]) -> dict[str, object]:
             result = validate_confirmed_mission_admission(store, params)
@@ -7028,18 +7052,29 @@ async def _serve_daemon(root: Path, config: ProjectConfig, store: StateStore) ->
                         ) from None
                 if method == "permission.decide":
                     try:
+                        permission_id = params.get("permission_id")
+                        live_waiter = (
+                            service.live_permission_waiter_authority(permission_id)
+                            if service is not None and isinstance(permission_id, str)
+                            else None
+                        )
                         result = apply_permission_decision_request(
                             store,
                             params,
                             generation=generation,
                             now=now,
+                            live_waiter_authority=live_waiter,
                         )
                         if result.get("state") in {"approved", "denied"}:
                             if service is None:
                                 raise ServiceError("daemon service is unavailable")
-                            service.notify_permission_decision(
+                            notified = service.notify_permission_decision(
                                 str(result["permission_id"]), str(result["state"])
                             )
+                            if notified is not True:
+                                raise ServiceError(
+                                    "live permission waiter notification failed"
+                                )
                         return result
                     except ServiceError as exc:
                         raise DaemonClientRequestError(
@@ -7230,6 +7265,7 @@ async def _serve_daemon(root: Path, config: ProjectConfig, store: StateStore) ->
                 store, tmux_backend=daemon_tmux_backend
             ),
             apply_transition=lambda decision: effects.apply(decision),
+            permission_waiter_changed=publish_live_permission_waiter,
         )
         def transport_for(attempt: dict[str, object]):
             return _daemon_worker_transport_for(

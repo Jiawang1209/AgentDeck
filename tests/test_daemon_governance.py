@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 import asyncio
 import subprocess
+from types import MappingProxyType
 
 import pytest
 
@@ -18,7 +19,8 @@ from agentdeck.daemon.governance import (
     effective_transport_for_step,
 )
 from agentdeck.daemon.lease import expire_controller, grant_controller, release_controller
-from agentdeck.daemon.scheduler import SchedulerFacts
+from agentdeck.daemon.protocol import RpcRequest
+from agentdeck.daemon.scheduler import SchedulerFacts, schedule_gate
 from agentdeck.daemon.service import (
     apply_force_stop_request,
     apply_permission_decision_request,
@@ -109,6 +111,37 @@ def _seed_acp_worker_runtime(
     store.record_protocol_transition(
         "session", session["session_id"], "created", "ready", "ready", {}
     )
+
+
+def _seed_ready_worker_conversation(store: StateStore) -> None:
+    state = store.load()
+    state["conversation_sessions"] = [{
+        "conversation_id": "cvs_session1",
+        "created_at": NOW.isoformat(),
+    }]
+    state["conversation_state_transitions"] = [
+        {
+            "transition_id": "cst_created",
+            "conversation_id": "cvs_session1",
+            "entity_type": "conversation",
+            "entity_id": "cvs_session1",
+            "from_state": None,
+            "to_state": "created",
+            "reason": "session_started",
+            "created_at": NOW.isoformat(),
+        },
+        {
+            "transition_id": "cst_ready",
+            "conversation_id": "cvs_session1",
+            "entity_type": "conversation",
+            "entity_id": "cvs_session1",
+            "from_state": "created",
+            "to_state": "ready",
+            "reason": "session_ready",
+            "created_at": NOW.isoformat(),
+        },
+    ]
+    store.save(state)
 
 
 def _effect(**updates: object) -> dict[str, object]:
@@ -670,8 +703,7 @@ def test_production_mission_pause_rejects_active_attempt_without_writes(tmp_path
     assert store.load() == before_confirm
 
 
-def test_production_permission_decision_rpc_is_preview_bound(tmp_path) -> None:
-    store = StateStore(tmp_path)
+def _seed_pending_permission(store: StateStore, tmp_path) -> None:
     state = store.load()
     state["permission_requests"] = [{
         "permission_id": "prm_000000000001",
@@ -714,10 +746,57 @@ def test_production_permission_decision_rpc_is_preview_bound(tmp_path) -> None:
         "created_at": NOW.isoformat(),
         "updated_at": NOW.isoformat(),
     }]
+    state["mission_attempts"] = [{
+        "attempt_id": "mat_000000000001",
+        "mission_id": "mis_0123456789ab",
+        "step_id": "step_1",
+        "agent_id": "worker-a",
+        "configured_transport": "acp",
+        "state": "submitted",
+    }]
+    state["mission_permission_bindings"] = [{
+        "mission_id": "mis_0123456789ab",
+        "attempt_id": "mat_000000000001",
+        "permission_id": "prm_000000000001",
+    }]
     store.save(state)
+
+
+def _live_permission_authority() -> dict[str, object]:
+    return {
+        "permission_id": "prm_000000000001",
+        "attempt_id": "mat_000000000001",
+        "session_id": "ags_session1",
+        "generation": 1,
+    }
+
+
+def test_persisted_pending_permission_without_live_waiter_is_zero_write(
+    tmp_path,
+) -> None:
+    store = StateStore(tmp_path)
+    _seed_pending_permission(store, tmp_path)
+    before = store.load()
+    with pytest.raises(ServiceError, match="live permission waiter"):
+        apply_permission_decision_request(
+            store,
+            {"permission_id": "prm_000000000001", "decision": "approved"},
+            generation=5,
+            now=NOW,
+        )
+    assert store.load() == before
+
+
+def test_production_permission_decision_rpc_is_preview_bound(tmp_path) -> None:
+    store = StateStore(tmp_path)
+    _seed_pending_permission(store, tmp_path)
     params = {"permission_id": "prm_000000000001", "decision": "approved"}
     preview = apply_permission_decision_request(
-        store, params, generation=5, now=NOW
+        store,
+        params,
+        generation=5,
+        now=NOW,
+        live_waiter_authority=_live_permission_authority(),
     )
     assert preview["state"] == "pending"
     assert store._derived_protocol_state(
@@ -730,6 +809,7 @@ def test_production_permission_decision_rpc_is_preview_bound(tmp_path) -> None:
         {**params, "preview_id": preview["preview_id"]},
         generation=5,
         now=NOW,
+        live_waiter_authority=_live_permission_authority(),
     )
     assert result["state"] == "approved"
     persisted = store.load()
@@ -744,6 +824,7 @@ def test_production_permission_decision_rpc_is_preview_bound(tmp_path) -> None:
             {**params, "preview_id": preview["preview_id"]},
             generation=5,
             now=NOW,
+            live_waiter_authority=_live_permission_authority(),
         )
     assert store.load() == before
 
@@ -772,6 +853,68 @@ def _attempt(
         "blocker": None,
         "terminal_reason": None,
     }
+
+
+def test_takeover_during_target_active_attempt_is_zero_write(tmp_path) -> None:
+    store = StateStore(tmp_path)
+    _seed_acp_worker_runtime(store, tmp_path)
+    _seed_ready_worker_conversation(store)
+    state = store.load()
+    state["mission_attempts"] = [
+        _attempt(
+            "mat_000000000001",
+            "submitted",
+            claim="mac_000000000001",
+            receipt="accepted",
+        )
+    ]
+    store.save(state)
+    before = store.load()
+    with pytest.raises(ServiceError, match="safe boundary"):
+        apply_worker_ownership_request(
+            store,
+            action="takeover",
+            params={"agent_id": "worker-a"},
+            generation=8,
+            now=NOW,
+        )
+    assert store.load() == before
+
+
+def test_frozen_future_step_dispatch_requires_agentdeck_ownership() -> None:
+    future_step = SchedulerFacts(
+        mission_id="mis_0123456789ab",
+        mission_state="running",
+        step_id="step_4",
+        step_state="pending",
+        attempt_id=None,
+        attempt_state="none",
+        reply_state="none",
+        handoff_state="none",
+        permission_state="none",
+        worker_ready=True,
+        next_step_eligible=False,
+        all_steps_completed=False,
+        snapshot_state="valid",
+        lineage_state="valid",
+        ownership_state="conflict",
+        active_attempt_count=0,
+        blocker=None,
+    )
+    blocked = schedule_gate(future_step)
+    assert blocked.kind == "blocked"
+    assert blocked.blocker == "Worker ownership conflict"
+    returned = schedule_gate(
+        SchedulerFacts(
+            **{
+                **future_step.summary(),
+                "ownership_state": "owned",
+            }
+        )
+    )
+    assert returned.kind == "prepare_dispatch"
+    assert returned.mission_id == "mis_0123456789ab"
+    assert returned.step_id == "step_4"
 
 
 def test_production_force_stop_preserves_unknown_effects(tmp_path) -> None:
@@ -1025,6 +1168,42 @@ def test_mission_resume_confirm_rejects_intervening_controller_or_restart(
     assert store.load() == before
 
 
+def test_return_control_accepts_only_protocol_frozen_report_shape(tmp_path) -> None:
+    store = StateStore(tmp_path)
+    _seed_acp_worker_runtime(store, tmp_path)
+    _seed_ready_worker_conversation(store)
+    target = {"agent_id": "worker-a"}
+    preview = apply_worker_ownership_request(
+        store, action="takeover", params=target, generation=8, now=NOW
+    )
+    apply_worker_ownership_request(
+        store,
+        action="takeover",
+        params={**target, "preview_id": preview["preview_id"]},
+        generation=8,
+        now=NOW,
+    )
+    request = RpcRequest(
+        "req_return",
+        "worker.return-control",
+        {
+            "agent_id": "worker-a",
+            "reported_changes": {"summary": "no human changes", "paths": []},
+        },
+    )
+    params = dict(request.params)
+    assert type(params["reported_changes"]) is MappingProxyType
+    assert type(params["reported_changes"]["paths"]).__name__ == "_FrozenJsonList"
+    result = apply_worker_ownership_request(
+        store,
+        action="return_control",
+        params=params,
+        generation=8,
+        now=NOW,
+    )
+    assert result["state"] == "pending"
+
+
 def test_production_takeover_and_return_control_are_preview_bound(tmp_path) -> None:
     store = StateStore(tmp_path)
     _seed_acp_worker_runtime(store, tmp_path)
@@ -1060,13 +1239,23 @@ def test_production_takeover_and_return_control_are_preview_bound(tmp_path) -> N
     preview = apply_worker_ownership_request(
         store, action="takeover", params=target, generation=8, now=NOW
     )
-    apply_worker_ownership_request(
+    takeover_result = apply_worker_ownership_request(
         store,
         action="takeover",
         params={**target, "preview_id": preview["preview_id"]},
         generation=8,
         now=NOW,
     )
+    after_takeover = store.load()
+    with pytest.raises(ServiceError, match="not AgentDeck-owned|confirmation"):
+        apply_worker_ownership_request(
+            store,
+            action="takeover",
+            params={**target, "preview_id": preview["preview_id"]},
+            generation=8,
+            now=NOW,
+        )
+    assert store.load() == after_takeover
     from agentdeck.conversation.lifecycle import validate_conversation_history
 
     persisted = store.load()
@@ -1090,13 +1279,23 @@ def test_production_takeover_and_return_control_are_preview_bound(tmp_path) -> N
     preview = apply_worker_ownership_request(
         store, action="return_control", params=return_target, generation=8, now=NOW
     )
-    apply_worker_ownership_request(
+    return_result = apply_worker_ownership_request(
         store,
         action="return_control",
         params={**return_target, "preview_id": preview["preview_id"]},
         generation=8,
         now=NOW,
     )
+    after_return = store.load()
+    with pytest.raises(ServiceError, match="not human-owned|confirmation"):
+        apply_worker_ownership_request(
+            store,
+            action="return_control",
+            params={**return_target, "preview_id": preview["preview_id"]},
+            generation=8,
+            now=NOW,
+        )
+    assert store.load() == after_return
     persisted = store.load()
     projection = validate_conversation_history(
         {
@@ -1110,6 +1309,14 @@ def test_production_takeover_and_return_control_are_preview_bound(tmp_path) -> N
         persisted["conversation_state_transitions"],
     )
     assert projection["ownership_states"]["worker-a"] == "agentdeck_owned"
+    serialized_responses = repr(
+        (takeover_result, return_result)
+    ).lower()
+    assert str(tmp_path).lower() not in serialized_responses
+    assert not any(
+        token in serialized_responses
+        for token in ("prompt", "pane capture", "command", "credential")
+    )
 
 
 def test_return_control_requires_exact_human_change_report_and_execution_rescan(

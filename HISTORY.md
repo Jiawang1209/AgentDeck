@@ -4,6 +4,14 @@
 
 ## 2026-07-15
 
+### Prove M2c recovery and human takeover
+
+- **Live permission recovery authority**: the daemon now projects `waiting_human` only while the current process owns the exact ACP permission waiter, bound to daemon instance, Mission attempt, session, generation, and pending permission. Fresh startup remains persisted-only and therefore classifies the same orphaned ACP facts as ambiguous; preview/confirm without a live waiter fails closed with zero writes, and confirm commits before synchronously waking exactly that waiter.
+- **Disconnect and bare-PTY acceptance**: the deterministic four-stage Mission closes its admission client at step 1, renders the complete recovery card through a fresh bare PTY, proves the exact permission-preview control, consumes both `allow_once` previews exactly once, and verifies each durable handoff precedes the next external admission.
+- **Target-specific human window**: while Claude step 3 is waiting for edit permission and Codex step 4 is still frozen, the test takes over only `codex-worker`, proves no tmux input or step-4 attempt occurs while human-owned, returns control with an exact no-change report, records reconciliation, then permits only the already-frozen step 4 after the second permission decision.
+- **Fail-closed governance regressions**: direct coverage blocks target takeover during an active attempt without writes, blocks frozen future dispatch under ownership conflict, preserves human ownership across runtime/worktree reconciliation drift, rejects takeover/return replay, and verifies compact governance responses omit prompt, capture, command, path, and credential text. RPC-frozen return reports accept only exact protocol container types and exact bounded summary/path fields before normalization.
+- **Verification**: the Task 9 acceptance/governance/reconnection/recovery group passes `178` tests. The earlier two-stage background Mission remains green, the four-stage recovery/takeover acceptance passes independently, and the final full suite passes `3300` tests with one skip.
+
 ### Add deterministic four-stage M2c Mission
 
 - **Four-stage ACP/tmux acceptance**: added a fresh-project daemon acceptance that freezes the exact implementation, review, revision, and acceptance tasks across `claude-worker` ACP steps 1/3 and `codex-worker` tmux steps 2/4. The deterministic fixtures require `allow_once` before both ACP artifact writes, make review require `accepted-v2`, and permit terminal acceptance only for exact `accepted-v2\n` bytes while supporting safe reuse of the same fake tmux pane.

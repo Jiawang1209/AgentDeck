@@ -1508,6 +1508,10 @@ def test_daemon_acp_permission_waits_durably_for_exact_human_decision(
             ]
             decision_task = asyncio.create_task(sink.decide(pending, options))
             await asyncio.sleep(0)
+            live_waiter = service.live_permission_waiter_authority(
+                str(pending["permission_id"])
+            )
+            assert live_waiter is not None
             now = datetime(2026, 7, 14, tzinfo=timezone.utc)
             preview = await service.submit_mutation(
                 lambda: apply_permission_decision_request(
@@ -1518,6 +1522,7 @@ def test_daemon_acp_permission_waits_durably_for_exact_human_decision(
                     },
                     generation=5,
                     now=now,
+                    live_waiter_authority=live_waiter,
                 )
             )
             confirmed = await service.submit_mutation(
@@ -1530,6 +1535,7 @@ def test_daemon_acp_permission_waits_durably_for_exact_human_decision(
                     },
                     generation=5,
                     now=now,
+                    live_waiter_authority=live_waiter,
                 )
             )
             assert confirmed["state"] == "approved"
