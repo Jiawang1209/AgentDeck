@@ -4,6 +4,13 @@
 
 ## 2026-07-15
 
+### Plan Leader semantic authority implementation
+
+- Added `docs/superpowers/plans/2026-07-15-leader-semantic-authority.md`, the human-requested 逐文件、逐测试、逐 commit TDD plan for the approved semantic-authority design.
+- Split implementation into 14 ordered commits covering the pure authority domain, conservative extraction, semantic candidate/compiler, native and non-native Leader providers, ConversationShell clarification, preview confirmation binding, dual-shape snapshot compatibility, ProjectView contracts, ACP/tmux dispatch parity, recovery/handoff drift, deterministic acceptance, frozen preflight, and a separately authorized single-live gate.
+- Fixed the core implementation boundary: Leader output is a structured proposal, AgentDeck compiles compatibility Worker tasks, legacy records remain exact-compatible, full semantic effects do not enter ProjectView/events, and runtime permission remains separate from Mission confirmation.
+- This documentation-only planning commit does not implement behavior, run tests/preflight/live, or authorize another live attempt. M2c remains **BLOCKED** and M3 remains locked.
+
 ### Approve the Leader semantic authority design
 
 - Added the human-approved `docs/superpowers/specs/2026-07-15-leader-semantic-authority-design.md`, grounded in the product north star and frozen single-live evidence at `1a22618ba083a76f4a21ffc7ebc7a3e513e4aae6`.
