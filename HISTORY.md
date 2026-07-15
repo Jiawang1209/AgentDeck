@@ -4,6 +4,12 @@
 
 ## 2026-07-15
 
+### Recognize fused sensitive key qualifiers
+
+- Added a deterministic whole-key fused grammar for separator-free password/passwd/secret/token/credential markers followed only by bounded hash/value/id/key/digest/ref/reference qualifiers, including arbitrary alphanumeric prefixes such as `DBPASSWORDHASH`.
+- Kept benign `secretary`, `tokenizer`, and `monkey_value` keys ordinary, and verified that fused-key secret values are redacted before source hashing and requirement/ID construction.
+- Added RED/GREEN fused-key and secret-only hash coverage. This remains Task 2 extraction only and does not claim final approval, M2c PASS, live execution, or Task 3 progress.
+
 ### Require semantic state for future alignment
 
 - Expanded the shared sensitive-key classifier to detect exact secret components anywhere in canonical tokenized keys and approved API/access/private/signing/encryption/SSH/client key-family composites even when followed by metadata suffixes, while leaving generic strings such as `monkey` ordinary.

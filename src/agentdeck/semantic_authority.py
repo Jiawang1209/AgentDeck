@@ -210,6 +210,10 @@ _SENSITIVE_KEY_COMPONENTS = frozenset(
 _SENSITIVE_KEY_PREFIXES = frozenset(
     {"api", "access", "private", "signing", "encryption", "ssh", "client", "secret"}
 )
+_FUSED_SENSITIVE_KEY_RE = re.compile(
+    r"[a-z0-9]*(?:password|passwd|secret|token|credentials?)"
+    r"(?:(?:hash|value|id|key|digest|ref|reference))*\Z"
+)
 _TARGET_SEGMENT_PATTERNS = (
     re.compile(rf"{_CHINESE_ACTION_PREFIX}创建\s+(?P<target>.+?)\s+且内容"),
     re.compile(rf"{_CHINESE_ACTION_PREFIX}将\s+(?P<target>.+?)\s+精确改为"),
@@ -741,6 +745,8 @@ def _is_sensitive_assignment_key(key: str) -> bool:
     if any(component in _SENSITIVE_KEY_COMPONENTS for component in components):
         return True
     if any(collapsed.endswith(suffix) for suffix in _SENSITIVE_KEY_COMPONENTS):
+        return True
+    if _FUSED_SENSITIVE_KEY_RE.fullmatch(collapsed) is not None:
         return True
     return any(
         f"{family}key" in collapsed for family in _SENSITIVE_KEY_PREFIXES

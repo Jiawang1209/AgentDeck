@@ -383,7 +383,12 @@ components plus collapsed lowercase. Any exact password, passwd, secret,
 token, credential, or credentials component is sensitive wherever it occurs;
 approved api/access/private/signing/encryption/ssh/client/secret plus key
 composites are sensitive wherever they occur, including separator-free forms.
-Generic `key` substrings alone never imply sensitivity.
+For a separator-free fused key, a strong password/passwd/secret/token/
+credential(s) marker may have an alphanumeric prefix and must either end the
+key or be followed entirely by the bounded qualifiers hash/value/id/key/
+digest/ref/reference, including qualifier combinations. This is a whole-key
+grammar, not a generic substring search: `secretary`, `tokenizer`, and generic
+`key` substrings such as `monkey` remain ordinary.
 
 Generate ids from the canonical requirement body without `requirement_id`,
 using the first 12 lowercase SHA-256 hex characters. Never use timestamps,

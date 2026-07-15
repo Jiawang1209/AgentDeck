@@ -548,6 +548,10 @@ def test_extract_rejects_chinese_clause_tail_without_whitespace() -> None:
         "client_key_id:SECRET",
         "APIKEYVALUE:SECRET",
         "PRIVATEKEYID:SECRET",
+        "PASSWORDHASH:SECRET",
+        "TOKENVALUE:SECRET",
+        "SECRETVALUE:SECRET",
+        "DBPASSWORDHASH:SECRET",
     ],
 )
 def test_extract_uses_canonical_sensitive_key_family_classifier(
@@ -560,8 +564,9 @@ def test_extract_uses_canonical_sensitive_key_family_classifier(
         step_count=1,
         phases=("implementation",),
     )
+    other_assignment = f"{assignment.removesuffix('SECRET')}OTHER_SECRET"
     second = extract_semantic_authority(
-        message.replace("SECRET", "OTHER_SECRET"),
+        f"第一轮 claude-worker 创建 artifact.txt 且内容为 {other_assignment}。",
         selected_agent_ids=("claude-worker",),
         step_count=1,
         phases=("implementation",),
@@ -583,6 +588,17 @@ def test_extract_does_not_treat_generic_key_substring_as_sensitive() -> None:
     )
     assert authority["unresolved"] == []
     assert authority["requirements"][0]["literal"] == "monkey_value:PUBLIC"
+
+
+def test_extract_does_not_treat_tokenizer_as_sensitive() -> None:
+    authority = extract_semantic_authority(
+        "第一轮 claude-worker 创建 artifact.txt 且内容为 tokenizer:PUBLIC。",
+        selected_agent_ids=("claude-worker",),
+        step_count=1,
+        phases=("implementation",),
+    )
+    assert authority["unresolved"] == []
+    assert authority["requirements"][0]["literal"] == "tokenizer:PUBLIC"
 
 
 def test_extract_read_requires_complete_clause_consumption() -> None:
