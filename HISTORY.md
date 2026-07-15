@@ -4,6 +4,12 @@
 
 ## 2026-07-15
 
+### Design transcript-free closure for the first live permission blocker
+
+- **Verified boundary**: frozen commit `ced9a50e` passed the real-tool read-only preflight with `ready=true` and `blockers=[]`, then its single real four-stage run stopped at `first_permission_timeout` with one Mission/plan/attempt/reply/handoff and zero permission requests. M2c remains blocked; M3 stays closed.
+- **Approved micro-design**: the M2c spec now requires admission-time preservation of the exact `artifact.txt` / `draft-v1` / `accepted-v2` task authority plus a closed, transcript-free ledger classifier that can distinguish lost Leader task semantics, a completed Worker handoff without a governed effect, failed/active attempts, and permission-state inconsistency.
+- **Safety**: diagnostics expose only allowlisted states, booleans, counts, error stages/codes, and hashes. They may not retain model text, prompts, ACP updates, credentials, opaque tokens, or full paths, and classification never grants permission or advances scheduling.
+
 ### Complete bare TTY test project isolation
 
 - **Worktree RED**: the first daemon-start isolation fix still depended on whether pytest's checkout already contained `.agentdeck/config.toml`; merged `main` called the fake daemon, while a clean feature worktree skipped it and failed the same call-order assertion.

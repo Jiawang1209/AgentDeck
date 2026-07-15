@@ -1,7 +1,7 @@
 # AgentDeck Phase 3 M2c Closure Design
 
 **Date:** 2026-07-14
-**Status:** Human-approved design; implementation requires a separately reviewed TDD plan
+**Status:** Human-approved design, including the 2026-07-15 live-blocker addendum; implementation requires a separately reviewed TDD plan
 **Milestone:** Phase 3 M2c closure
 **Depends on:** Phase 3 M2 project daemon at `aec06188`
 **North star:** `docs/roadmap/product-north-star.md`
@@ -703,3 +703,113 @@ promoted to product completion.
 
 Only after this gate passes may the project begin a new M3
 brainstorming → written spec → human review → TDD plan → `/goal` cycle.
+
+## 15. 2026-07-15 live-blocker addendum: permission evidence authority
+
+### 15.1 New verified baseline
+
+Commit `ced9a50e` removed the final read-only preflight blocker. Its complete
+non-live regression passed `3350` tests with `2` explicit skips. The frozen
+real-tool preflight then returned `ready=true` and `blockers=[]` for Codex CLI
+`0.131.0`, Claude Code `2.1.208`, Claude Agent ACP `0.58.1`, and tmux `3.6a`.
+
+The one permitted real four-stage run on that frozen commit did not pass. It
+timed out after 180 seconds waiting for the first durable ACP permission
+request. At failure time the compact ledger contained one Mission, one plan,
+one attempt, one Worker reply, one handoff, and zero permission requests. The
+run also reported `tmux_cleanup_incomplete`; subsequent bounded cleanup left no
+M2c daemon, tmux session, live process, disposable project, or staged tool
+mirror. This is a new live blocker. It does not reopen `probe_wrote_files`, and
+M2c remains blocked.
+
+### 15.2 Problem boundary
+
+The existing diagnostic reports collection cardinalities but cannot safely
+distinguish these materially different causes:
+
+1. the Leader plan retained phase names but lost the exact artifact mutation;
+2. the Claude ACP Worker returned a handoff without requesting the governed
+   file effect;
+3. the Worker attempt failed or remained active before permission creation;
+4. permission was durably created but the live wait predicate observed
+   inconsistent state.
+
+No fix may infer approval from Worker prose, fabricate a permission request,
+relax the permission gate, inject a test-only authorization path, or retain raw
+Leader/Worker output. The next run must remain a real product-path acceptance.
+
+### 15.3 Admission-time task authority
+
+Before Mission confirmation and daemon admission, the live harness must verify
+that the native-schema Leader preview preserves the complete fixed task
+authority, not merely the four phase labels and Worker order:
+
+- phases are exactly `implementation`, `review`, `revision`, `acceptance`;
+- Workers are exactly Claude, Codex, Claude, Codex in that order;
+- every step references `artifact.txt`;
+- implementation retains `draft-v1`;
+- review, revision, and acceptance retain `accepted-v2`;
+- revision retains both `draft-v1` and `accepted-v2`, proving that the requested
+  transformation survived planning.
+
+The checks are deterministic token-presence assertions over the fixed
+disposable acceptance task. They do not attempt general natural-language
+understanding and do not alter production Mission semantics. Failure stops
+before confirmation with `native_schema_task_authority_invalid`; it creates no
+Worker attempt, permission, tmux input, or artifact effect.
+
+### 15.4 Transcript-free failure classification
+
+`_live_failure()` may add one compact ledger diagnostic derived from durable
+state. Its output is closed to these categories:
+
+- Mission, step, attempt, reply, handoff, and permission states;
+- stage position, configured Worker id, and configured transport;
+- canonical handoff `status` only;
+- allowlisted blocker, transport stage, and error code;
+- task semantic-check booleans;
+- counts and SHA-256 identities where correlation is required.
+
+It must never include task text, plan goal/summary, handoff summary,
+verification, risks, next steps, prompt text, PTY text, ACP update content,
+provider output, credentials, opaque tokens, user home paths, or full absolute
+paths. Model-provided strings may influence only allowlisted enums, booleans,
+counts, and hashes.
+
+The deterministic classifier must distinguish at least:
+
+```text
+leader_task_authority_missing
+worker_effect_not_requested
+worker_attempt_failed
+worker_attempt_active
+permission_state_inconsistent
+```
+
+`worker_effect_not_requested` is valid only when the first attempt is
+successful, its correlated reply and handoff are durably complete, and no
+permission request exists. The presence of any permission record, an active or
+failed attempt, or incomplete reply/handoff evidence must select another
+classification. Classification is diagnostic evidence only; it cannot advance
+the scheduler or authorize an effect.
+
+### 15.5 Deterministic tests and rerun gate
+
+The implementation must first prove RED then GREEN for:
+
+1. each missing `artifact.txt` / `draft-v1` / `accepted-v2` authority token;
+2. admission stopping before daemon/Worker effects on semantic failure;
+3. every permitted compact diagnostic field;
+4. exclusion of model text, prompts, tokens, credentials, and absolute paths;
+5. `worker_effect_not_requested` for succeeded reply/handoff with zero
+   permissions;
+6. non-misclassification when permission, active-attempt, or failed-attempt
+   facts exist;
+7. unchanged cleanup collection after primary failure.
+
+After focused and complete regression, compileall, contract checks, and
+`git diff --check`, freeze a new commit. Run the read-only real-tool preflight
+again. Another real four-stage run is allowed only when the new frozen commit
+returns `ready=true` and `blockers=[]`. There is no automatic retry. A failed
+run records its new compact classification and keeps M2c blocked; only a full
+PASS unlocks M3 brainstorming.
