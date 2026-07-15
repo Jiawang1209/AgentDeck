@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 import json
 import math
 import os
@@ -11,6 +12,10 @@ import tempfile
 import time
 from typing import BinaryIO
 from json import JSONDecodeError
+
+from agentdeck.models import AgentSpec
+from agentdeck.semantic_authority import validate_semantic_authority
+from agentdeck.semantic_planning import SemanticPlanningError, compile_semantic_plan
 
 from .base import (
     LeaderPlanRequest,
@@ -26,6 +31,11 @@ from .plan_schema import (
     build_leader_plan_schema,
     leader_plan_authority,
 )
+from .semantic_plan_schema import (
+    SemanticPlanSchemaAuthorityError,
+    resolve_semantic_leader_plan_context,
+    semantic_authority_identity,
+)
 
 
 CLI_LEADER_FAILURE_STAGES = frozenset(
@@ -35,6 +45,19 @@ MAX_CLI_LEADER_OUTPUT_BYTES = 2 * 1024 * 1024
 _NATIVE_PLAN_FIELDS = frozenset({"goal", "summary", "steps"})
 _NATIVE_STEP_FIELDS = frozenset(
     {"step", "agent_id", "role", "task", "risk", "requires_approval"}
+)
+_NATIVE_SEMANTIC_STEP_FIELDS = frozenset(
+    {
+        "step",
+        "agent_id",
+        "role",
+        "phase",
+        "authority_refs",
+        "proposed_effects",
+        "verification",
+        "risk",
+        "requires_approval",
+    }
 )
 _REGENERABLE_SCHEMA_CODES = frozenset(
     {
@@ -47,6 +70,16 @@ _REGENERABLE_SCHEMA_CODES = frozenset(
         "unknown_agent",
         "role_mismatch",
         "approval_not_required",
+    }
+)
+_REGENERABLE_SEMANTIC_CODES = frozenset(
+    {
+        "semantic_candidate_missing_requirement",
+        "semantic_candidate_duplicate_requirement",
+        "semantic_candidate_wrong_phase",
+        "semantic_candidate_wrong_worker",
+        "semantic_transition_incomplete",
+        "semantic_effect_conflict",
     }
 )
 
@@ -176,7 +209,8 @@ class CliLeaderProviderError(RuntimeError):
             (stage == "json_parse" and diagnostic_code == "invalid_output_envelope")
             or (
                 stage == "schema"
-                and diagnostic_code in _REGENERABLE_SCHEMA_CODES
+                and diagnostic_code
+                in (_REGENERABLE_SCHEMA_CODES | _REGENERABLE_SEMANTIC_CODES)
             )
         ):
             raise ValueError("invalid CLI Leader retryable combination")
@@ -341,7 +375,9 @@ class CliLeaderProvider:
             ) from None
         original_prompt = self._prompt(request)
         prompt = original_prompt
+        attempt_request = request
         attempted = 0
+        semantic_diagnostics: list[dict[str, object]] = []
         for attempt in (1, 2):
             attempt_now = time.monotonic()
             remaining = deadline - attempt_now
@@ -358,7 +394,7 @@ class CliLeaderProvider:
             attempted = attempt
             try:
                 plan = self._native_attempt(
-                    request=request,
+                    request=attempt_request,
                     schema=schema,
                     prompt=prompt,
                     deadline=deadline,
@@ -387,16 +423,32 @@ class CliLeaderProvider:
                         schema=schema,
                         attempt_count=attempt,
                     ),
+                    semantic_diagnostics=tuple(semantic_diagnostics),
                 )
             if attempt == 2 or safe_error.retryable is not True:
                 raise safe_error from None
             diagnostic = safe_error.diagnostic_code or safe_error.stage
-            prompt = (
-                f"{original_prompt}\n"
-                "Regenerate the complete plan.\n"
-                f"Previous attempt diagnostic: {diagnostic}.\n"
-                "Return a complete replacement; do not discuss the previous output."
-            )
+            if request.semantic_authority is not None:
+                if diagnostic not in _REGENERABLE_SEMANTIC_CODES:
+                    raise safe_error.without_retry() from None
+                semantic_diagnostics.append(
+                    {
+                        "code": diagnostic,
+                        "attempt_count": attempt,
+                        "regeneration_used": attempt > 1,
+                    }
+                )
+                attempt_request = replace(
+                    request, regeneration_diagnostic=diagnostic
+                )
+                prompt = self._prompt(attempt_request)
+            else:
+                prompt = (
+                    f"{original_prompt}\n"
+                    "Regenerate the complete plan.\n"
+                    f"Previous attempt diagnostic: {diagnostic}.\n"
+                    "Return a complete replacement; do not discuss the previous output."
+                )
         raise CliLeaderProviderError(
             "timeout",
             attempt_count=attempted,
@@ -430,6 +482,8 @@ class CliLeaderProvider:
         return [*self.command[:1], "--model", model, *self.command[1:]]
 
     def _prompt(self, request: LeaderPlanRequest) -> str:
+        if request.semantic_authority is not None:
+            return self._semantic_prompt(request)
         workers = [
             {
                 "agent_id": agent.agent_id,
@@ -455,6 +509,73 @@ class CliLeaderProvider:
         ]
         lines.extend(leader_skill_context_prompt_lines(request.skill_context))
         lines.append(f"Goal: {request.task}")
+        return "\n".join(lines)
+
+    @staticmethod
+    def _semantic_config_context(request: LeaderPlanRequest) -> tuple[AgentSpec, ...]:
+        return tuple(
+            item for item in request.config.agents if type(item) is AgentSpec
+        )
+
+    @staticmethod
+    def _semantic_prompt(request: LeaderPlanRequest) -> str:
+        try:
+            schema_version, authority_hash = semantic_authority_identity(
+                request.semantic_authority
+            )
+            agents, roles, step_count = resolve_semantic_leader_plan_context(
+                selected_agent_ids=request.selected_agent_ids,
+                step_count=request.step_count,
+                configured_context=CliLeaderProvider._semantic_config_context(request),
+            )
+            authority = validate_semantic_authority(request.semantic_authority)
+        except (SemanticPlanSchemaAuthorityError, TypeError, ValueError):
+            raise CliLeaderProviderError(
+                "schema", "authority_invalid", attempt_count=0
+            ) from None
+        requirements = [
+            {
+                "requirement_id": item["requirement_id"],
+                "kind": item["kind"],
+                "target": item["target"],
+                "operation": item["operation"],
+                "phase": item["phase"],
+                "agent_id": item["agent_id"],
+                "sensitivity": item["sensitivity"],
+            }
+            for item in authority["requirements"]
+        ]
+        compact_authority = {
+            "schema_version": schema_version,
+            "authority_hash": authority_hash,
+            "requirement_count": len(requirements),
+            "requirements": requirements,
+        }
+        worker_context = [
+            {"agent_id": agent_id, "role": roles[agent_id]}
+            for agent_id in agents
+        ]
+        lines = [
+            "You are the AgentDeck Leader Agent.",
+            "Return only one semantic JSON candidate; do not dispatch or execute work.",
+            "Required top-level fields: goal, summary, steps.",
+            "Never output an executable task field.",
+            "Every step must include step, agent_id, role, phase, authority_refs, proposed_effects, verification, risk, requires_approval.",
+            "Use every required authority reference exactly once and preserve atomic transitions.",
+            "Only project-local ordinary proposed effects are reviewable; they are not authority until confirmation.",
+            "Every step risk must be low and requires_approval must be true.",
+            f"Exact step count: {step_count}",
+            f"Selected workers: {json.dumps(worker_context, ensure_ascii=False, sort_keys=True, separators=(',', ':'))}",
+            f"Compact semantic authority: {json.dumps(compact_authority, ensure_ascii=False, sort_keys=True, separators=(',', ':'))}",
+        ]
+        if request.regeneration_diagnostic is not None:
+            lines.extend(
+                [
+                    "Regenerate the complete semantic candidate.",
+                    f"Previous attempt diagnostic: {request.regeneration_diagnostic}.",
+                    "Return a complete replacement; do not discuss or reproduce the previous output.",
+                ]
+            )
         return "\n".join(lines)
 
     def _parse_plan(self, stdout: str, request: LeaderPlanRequest) -> dict[str, object]:
@@ -767,6 +888,8 @@ class CodexCliProvider(CliLeaderProvider):
     def _validate_native_plan(
         plan: dict[str, object], request: LeaderPlanRequest
     ) -> dict[str, object]:
+        if request.semantic_authority is not None:
+            return CodexCliProvider._validate_native_semantic_plan(plan, request)
         if set(plan) != _NATIVE_PLAN_FIELDS:
             raise CliLeaderProviderError(
                 "json_parse",
@@ -804,6 +927,47 @@ class CodexCliProvider(CliLeaderProvider):
         if validated_plan is None:
             raise CliLeaderProviderError("schema")
         return validated_plan
+
+    @staticmethod
+    def _validate_native_semantic_plan(
+        plan: dict[str, object], request: LeaderPlanRequest
+    ) -> dict[str, object]:
+        if set(plan) != _NATIVE_PLAN_FIELDS:
+            raise CliLeaderProviderError(
+                "schema", "semantic_candidate_schema_invalid"
+            )
+        steps = plan.get("steps")
+        if isinstance(steps, list) and any(
+            not isinstance(step, dict) or set(step) != _NATIVE_SEMANTIC_STEP_FIELDS
+            for step in steps
+        ):
+            raise CliLeaderProviderError(
+                "schema", "semantic_candidate_schema_invalid"
+            )
+        try:
+            selected_agent_ids, roles, step_count = (
+                resolve_semantic_leader_plan_context(
+                    selected_agent_ids=request.selected_agent_ids,
+                    step_count=request.step_count,
+                    configured_context=CliLeaderProvider._semantic_config_context(request),
+                )
+            )
+        except (SemanticPlanSchemaAuthorityError, TypeError, ValueError):
+            raise CliLeaderProviderError("schema", "authority_invalid") from None
+        try:
+            return compile_semantic_plan(
+                request.semantic_authority,
+                plan,
+                selected_agent_ids=selected_agent_ids,
+                roles=roles,
+                step_count=step_count,
+            )
+        except SemanticPlanningError as error:
+            raise CliLeaderProviderError(
+                "schema",
+                error.code,
+                retryable=error.code in _REGENERABLE_SEMANTIC_CODES,
+            ) from None
 
 
 class ClaudeCliProvider(CliLeaderProvider):

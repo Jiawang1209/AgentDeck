@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 import json
 from pathlib import Path
 import subprocess
@@ -11,10 +12,15 @@ from agentdeck import cli
 from agentdeck.config import write_default_config
 from agentdeck.contracts import validate_leader_chat_contract
 from agentdeck.providers import LeaderPlanRequest
-from agentdeck.providers.cli_subprocess import CodexCliProvider
+from agentdeck.providers.cli_subprocess import (
+    ClaudeCliProvider,
+    CliLeaderProviderError,
+    CodexCliProvider,
+)
 from agentdeck.providers.fake import FakeLeaderProvider
 from agentdeck.providers.openai_compatible import OpenAICompatibleProvider
 from agentdeck.state import StateStore
+from agentdeck.semantic_authority import semantic_authority_hash
 
 
 EXPECTED_CONTROL_REGISTRY_ITEM_COUNT = 129
@@ -76,6 +82,101 @@ def bind_agent(root: Path, agent_id: str, pane_id: str = "%42") -> None:
         "status": "running",
     }
     store.save(state)
+
+
+def semantic_cli_authority() -> dict[str, object]:
+    return {
+        "schema_version": "mission-semantic-authority/v1",
+        "source_message_hash": "sha256:" + "a" * 64,
+        "requirements": [
+            {
+                "requirement_id": "req_111111111111",
+                "kind": "create",
+                "target": "artifact.txt",
+                "operation": "create",
+                "literal": "draft-v1\n",
+                "phase": "implementation",
+                "agent_id": "planner",
+                "sensitivity": "ordinary",
+            },
+            {
+                "requirement_id": "req_222222222222",
+                "kind": "review",
+                "target": "artifact.txt",
+                "operation": "review",
+                "literal": "accepted-v2\n",
+                "phase": "review",
+                "agent_id": "reviewer",
+                "sensitivity": "ordinary",
+            },
+            {
+                "requirement_id": "req_333333333333",
+                "kind": "state_transition",
+                "target": "artifact.txt",
+                "operation": "update",
+                "before": {"content_equals": "draft-v1\n"},
+                "after": {"content_equals": "accepted-v2\n"},
+                "phase": "revision",
+                "agent_id": "planner",
+                "sensitivity": "ordinary",
+            },
+            {
+                "requirement_id": "req_444444444444",
+                "kind": "verify",
+                "target": "artifact.txt",
+                "operation": "verify",
+                "literal": "accepted-v2\n",
+                "phase": "acceptance",
+                "agent_id": "reviewer",
+                "sensitivity": "ordinary",
+            },
+        ],
+        "proposed_effects": [],
+        "unresolved": [],
+    }
+
+
+def semantic_cli_candidate(*, omit_requirement: bool = False) -> dict[str, object]:
+    phases = ("implementation", "review", "revision", "acceptance")
+    refs = (
+        "req_111111111111",
+        "req_222222222222",
+        "req_333333333333",
+        "req_444444444444",
+    )
+    candidate = {
+        "goal": "Produce and verify the bounded artifact",
+        "summary": "FIRST_RAW_CANDIDATE_MARKER" if omit_requirement else "Four exact effects",
+        "steps": [
+            {
+                "step": index + 1,
+                "agent_id": "planner" if index % 2 == 0 else "reviewer",
+                "role": "planning" if index % 2 == 0 else "review",
+                "phase": phase,
+                "authority_refs": [refs[index]],
+                "proposed_effects": [],
+                "verification": "Check the exact authoritative effect",
+                "risk": "low",
+                "requires_approval": True,
+            }
+            for index, phase in enumerate(phases)
+        ],
+    }
+    if omit_requirement:
+        candidate["steps"][1]["authority_refs"] = []
+    return candidate
+
+
+def semantic_cli_request(config) -> LeaderPlanRequest:
+    return LeaderPlanRequest(
+        task="password=RAW_TASK_SECRET must never enter a semantic prompt",
+        config=config,
+        model="semantic-test-model",
+        selected_agent_ids=("planner", "reviewer"),
+        step_count=4,
+        timeout_seconds=30,
+        semantic_authority=semantic_cli_authority(),
+    )
 
 
 class FakeMissionProvider:
@@ -1217,6 +1318,236 @@ def test_planning_guidance_enters_provider_prompt_only_for_leader_loads(
         assert '"planning_guidance": ["leader rule"]' in prompt
         assert "worker rule" not in prompt
         assert "content_snapshot" not in prompt
+
+
+@pytest.mark.parametrize("provider_class", [CodexCliProvider, ClaudeCliProvider])
+def test_native_cli_semantic_generation_uses_safe_schema_prompt_and_one_regeneration(
+    tmp_path, monkeypatch, provider_class
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    config = cli.load_config(root)
+    request = semantic_cli_request(config)
+    calls: list[dict[str, object]] = []
+    monotonic_values = iter((100.0, 100.0, 101.0, 110.0, 111.0, 112.0))
+    monkeypatch.setattr(
+        "agentdeck.providers.cli_subprocess.time.monotonic",
+        lambda: next(monotonic_values),
+    )
+
+    def fake_run(command, **kwargs):
+        call_index = len(calls)
+        if "--output-schema" in command:
+            schema = json.loads(
+                Path(command[command.index("--output-schema") + 1]).read_text(
+                    encoding="utf-8"
+                )
+            )
+        else:
+            schema = json.loads(command[command.index("--json-schema") + 1])
+        calls.append(
+            {
+                "command": list(command),
+                "prompt": kwargs["input"],
+                "timeout": kwargs["timeout"],
+                "schema": schema,
+            }
+        )
+        candidate = semantic_cli_candidate(omit_requirement=call_index == 0)
+        if "--output-last-message" in command:
+            result_path = Path(command[command.index("--output-last-message") + 1])
+            result_path.write_text(json.dumps(candidate), encoding="utf-8")
+        else:
+            envelope = {
+                "type": "result",
+                "subtype": "success",
+                "is_error": False,
+                "structured_output": candidate,
+            }
+            kwargs["stdout"].write(json.dumps(envelope).encode("utf-8"))
+        return subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr("agentdeck.providers.cli_subprocess.subprocess.run", fake_run)
+
+    result = provider_class().plan_result(request)
+
+    assert len(calls) == 2
+    assert [call["schema"]["$id"] for call in calls] == [
+        "leader-semantic-plan/v1",
+        "leader-semantic-plan/v1",
+    ]
+    assert all('"task"' not in json.dumps(call["schema"]) for call in calls)
+    assert all("semantic-test-model" in call["command"] for call in calls)
+    assert calls[0]["schema"] == calls[1]["schema"]
+    normalized_commands = []
+    for call in calls:
+        command = list(call["command"])
+        for flag in ("--output-schema", "--output-last-message", "--json-schema"):
+            if flag in command:
+                command[command.index(flag) + 1] = f"<{flag}>"
+        normalized_commands.append(command)
+    assert normalized_commands[0] == normalized_commands[1]
+    authority_hash = semantic_authority_hash(semantic_cli_authority())
+    first_prompt = calls[0]["prompt"]
+    second_prompt = calls[1]["prompt"]
+    assert authority_hash in first_prompt
+    assert "req_111111111111" in first_prompt
+    assert "artifact.txt" in first_prompt
+    assert "draft-v1" not in first_prompt
+    assert "accepted-v2" not in first_prompt
+    assert "RAW_TASK_SECRET" not in first_prompt
+    assert "semantic_candidate_missing_requirement" not in first_prompt
+    assert "semantic_candidate_missing_requirement" in second_prompt
+    assert "FIRST_RAW_CANDIDATE_MARKER" not in second_prompt
+    assert authority_hash in second_prompt
+    assert [call["timeout"] for call in calls] == [29.0, 19.0]
+    assert result.leader_generation["attempt_count"] == 2
+    assert result.leader_generation["regeneration_used"] is True
+    assert result.leader_generation["semantic_authority_hash"] == authority_hash
+    assert result.semantic_diagnostics == (
+        {
+            "code": "semantic_candidate_missing_requirement",
+            "attempt_count": 1,
+            "regeneration_used": False,
+        },
+    )
+    assert "semantic_authority" in result.plan
+    assert "semantic_steps" in result.plan
+    assert all("task" in step for step in result.plan["steps"])
+
+
+def test_native_cli_semantic_double_failure_is_sanitized_and_bounded(
+    tmp_path, monkeypatch
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    config = cli.load_config(root)
+    request = semantic_cli_request(config)
+    calls = 0
+
+    def fake_run(command, **_kwargs):
+        nonlocal calls
+        calls += 1
+        result_path = Path(command[command.index("--output-last-message") + 1])
+        result_path.write_text(
+            json.dumps(semantic_cli_candidate(omit_requirement=True)),
+            encoding="utf-8",
+        )
+        return subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr("agentdeck.providers.cli_subprocess.subprocess.run", fake_run)
+
+    with pytest.raises(CliLeaderProviderError) as raised:
+        CodexCliProvider().plan_result(request)
+
+    assert calls == 2
+    assert raised.value.stage == "schema"
+    assert raised.value.diagnostic_code == "semantic_candidate_missing_requirement"
+    assert raised.value.attempt_count == 2
+    assert raised.value.retryable is True
+    rendered = repr(raised.value) + repr(vars(raised.value)) + str(raised.value)
+    assert "FIRST_RAW_CANDIDATE_MARKER" not in rendered
+    assert "RAW_TASK_SECRET" not in rendered
+
+
+@pytest.mark.parametrize("authority_kind", ["unresolved", "sensitive"])
+def test_native_cli_semantic_invalid_authority_never_starts_a_process(
+    tmp_path, monkeypatch, authority_kind
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    config = cli.load_config(root)
+    authority = semantic_cli_authority()
+    if authority_kind == "unresolved":
+        authority["unresolved"] = [
+            {
+                "unresolved_id": "unr_111111111111",
+                "kind": "ambiguous_target",
+                "phase": "implementation",
+                "agent_id": "planner",
+            }
+        ]
+    else:
+        requirement = authority["requirements"][0]
+        requirement["sensitivity"] = "secret_ref"
+        requirement["literal"] = {"reference": "secret:artifact-content"}
+    request = replace(semantic_cli_request(config), semantic_authority=authority)
+    calls = 0
+
+    def forbidden_run(*_args, **_kwargs):
+        nonlocal calls
+        calls += 1
+        raise AssertionError("invalid semantic authority must not start a process")
+
+    monkeypatch.setattr("agentdeck.providers.cli_subprocess.subprocess.run", forbidden_run)
+
+    with pytest.raises(CliLeaderProviderError) as raised:
+        CodexCliProvider().plan_result(request)
+
+    assert calls == 0
+    assert raised.value.stage == "schema"
+    assert raised.value.diagnostic_code == "authority_invalid"
+    assert raised.value.attempt_count == 0
+    assert raised.value.retryable is False
+
+
+def test_native_cli_semantic_nonretryable_candidate_failure_stops_after_one_process(
+    tmp_path, monkeypatch
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    config = cli.load_config(root)
+    request = semantic_cli_request(config)
+    calls = 0
+
+    def fake_run(command, **_kwargs):
+        nonlocal calls
+        calls += 1
+        candidate = semantic_cli_candidate()
+        candidate["steps"][0]["proposed_effects"] = [
+            {
+                "target": "../outside.txt",
+                "operation": "create",
+                "sensitivity": "ordinary",
+            }
+        ]
+        result_path = Path(command[command.index("--output-last-message") + 1])
+        result_path.write_text(json.dumps(candidate), encoding="utf-8")
+        return subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr("agentdeck.providers.cli_subprocess.subprocess.run", fake_run)
+
+    with pytest.raises(CliLeaderProviderError) as raised:
+        CodexCliProvider().plan_result(request)
+
+    assert calls == 1
+    assert raised.value.stage == "schema"
+    assert raised.value.diagnostic_code == "semantic_scope_addition_blocked"
+    assert raised.value.attempt_count == 1
+    assert raised.value.retryable is False
+
+
+def test_native_cli_semantic_rejects_selected_tuple_impersonation_before_process(
+    tmp_path, monkeypatch
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    config = cli.load_config(root)
+    reviewer = next(agent for agent in config.agents if agent.agent_id == "reviewer")
+    config = replace(config, agents=(("planner", "planning"), reviewer))
+    request = semantic_cli_request(config)
+    calls = 0
+
+    def forbidden_run(*_args, **_kwargs):
+        nonlocal calls
+        calls += 1
+        raise AssertionError("tuple impersonation must fail before process start")
+
+    monkeypatch.setattr("agentdeck.providers.cli_subprocess.subprocess.run", forbidden_run)
+
+    with pytest.raises(CliLeaderProviderError) as raised:
+        CodexCliProvider().plan_result(request)
+
+    assert calls == 0
+    assert raised.value.stage == "schema"
+    assert raised.value.diagnostic_code == "authority_invalid"
+    assert raised.value.attempt_count == 0
+    assert str(tmp_path) not in repr(raised.value) + repr(vars(raised.value))
 
 
 def test_leader_plan_passes_model_to_codex_cli_backend_without_dispatching(

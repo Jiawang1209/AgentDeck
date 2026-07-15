@@ -251,6 +251,47 @@ def test_session_persists_exact_safe_cli_diagnostics_without_retryable(
     assert "retryable" not in json.dumps(store.load(), ensure_ascii=False)
 
 
+def test_gateway_preserves_closed_semantic_cli_diagnostic_without_candidate_data(
+    tmp_path: Path,
+) -> None:
+    config, _store = _project(tmp_path)
+    config = replace(
+        config,
+        leader=replace(config.leader, provider="codex-cli", model="gpt-test"),
+    )
+
+    class FailedProvider:
+        name = "codex-cli"
+
+        def plan(self, _request):
+            raise CliLeaderProviderError(
+                "schema",
+                "semantic_candidate_missing_requirement",
+                attempt_count=2,
+                constraint_mode="native_json_schema",
+                retryable=True,
+            )
+
+    with pytest.raises(LeaderGatewayError) as raised:
+        LeaderGateway(
+            provider_factory=lambda _name: FailedProvider(),
+            which=lambda _name: "/safe/executable",
+            leader_cli_probe=lambda _name: (True, None),
+        ).generate_mission(
+            LeaderRequest(config, "mission", "task", 180, None),
+            CancellationToken(),
+        )
+
+    assert leader_gateway_diagnostics(raised.value) == {
+        "stage": "schema",
+        "diagnostic_code": "semantic_candidate_missing_requirement",
+        "attempt_count": 2,
+        "constraint_mode": "native_json_schema",
+    }
+    rendered = repr(raised.value) + repr(vars(raised.value))
+    assert "FIRST_RAW_CANDIDATE_MARKER" not in rendered
+
+
 def test_session_rejects_invalid_authority_before_gateway_call(tmp_path: Path) -> None:
     config, store = _project(tmp_path)
     calls = 0

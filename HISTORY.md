@@ -4,6 +4,13 @@
 
 ## 2026-07-15
 
+### Generate semantic plans with CLI Leaders
+
+- Routed Codex `--output-schema` and Claude `--json-schema` native results through the same closed semantic candidate validator and deterministic compiler, so provider output contains no executable `task` authority while compatibility Worker tasks are produced locally with frozen semantic authority and step hashes.
+- Added a compact semantic-only Leader prompt carrying the exact authority schema/hash, safe requirement summaries, selected Worker roles, and no user task or raw effect values. Selected config entries are exact-`AgentSpec` projected before prompt or candidate validation, preserving the Task 4 anti-impersonation boundary.
+- Added exactly one total-deadline-bounded regeneration for the closed omission/conflict diagnostic set. The replacement request preserves provider/model/schema/authority identity, includes only the allowlisted diagnostic about the rejected attempt, records one compact attempt-1 diagnostic on success, and never retains the first raw candidate; unresolved, sensitive, invalid-authority, scope-addition, and other nonretryable failures stop before or after one process as appropriate.
+- Added RED/GREEN Codex and Claude command/schema/prompt/envelope tests, shared-deadline and command-identity checks, double-failure/no-third-call coverage, nonretryable authority and candidate gates, tuple-impersonation rejection, and conversation diagnostic propagation. This is Task 5 only: no conversation/state/runtime/tmux/ACP/live execution behavior, Task 6 provider parity, or M2c PASS claim was added.
+
 ### Require real AgentSpec semantic authority
 
 - Closed the public semantic request boundary so only exact `AgentSpec` entries from `ProjectConfig.agents` can supply a selected Worker role; a well-formed two-tuple can no longer impersonate a missing configured Worker.

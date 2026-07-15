@@ -787,8 +787,11 @@ Capture Codex `--output-schema` and Claude `--json-schema` inputs. Assert the
 semantic schema id, no executable `task` field, compact authority hash and safe
 requirement summaries in prompt, and absence of raw secret values.
 
-Make attempt one return a structurally valid candidate missing the revision
-requirement and attempt two return the complete candidate. Assert:
+Make attempt one return a structurally valid candidate missing one ordinary
+non-transition requirement and attempt two return the complete candidate. This
+must produce `semantic_candidate_missing_requirement`; omission or fragmentation
+of the atomic revision transition remains the distinct Task 3 code
+`semantic_transition_incomplete`. Assert:
 
 - same command/provider/model;
 - same authority hash and deadline;
