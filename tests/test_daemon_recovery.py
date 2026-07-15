@@ -163,7 +163,10 @@ def compact_handoff(token: str) -> dict[str, object]:
 
 
 def frozen_snapshot(
-    mission_id: str = MISSION_ID, *, project_root: Path | None = None
+    mission_id: str = MISSION_ID,
+    *,
+    project_root: Path | None = None,
+    semantic: bool = False,
 ) -> dict[str, object]:
     digest = "sha256:" + "a" * 64
     mission = {
@@ -200,6 +203,15 @@ def frozen_snapshot(
         "declared_tests_hash": None,
         "acceptance_criteria_hash": None,
     }
+    if semantic:
+        mission.update(
+            {
+                "semantic_authority_schema_version": "mission-semantic-authority/v1",
+                "semantic_authority_hash": "sha256:" + "b" * 64,
+            }
+        )
+        for index, step in enumerate(mission["steps"], start=1):
+            step["semantic_step_hash"] = "sha256:" + str(index) * 64
     workers = [
         {
             "agent_id": "worker",
@@ -250,6 +262,26 @@ def frozen_snapshot(
     }
     snapshot["execution_hash"] = canonical_snapshot_hash(snapshot)
     return snapshot
+
+
+def test_legacy_frozen_snapshot_hash_contract_is_byte_stable() -> None:
+    snapshot = frozen_snapshot()
+
+    assert set(snapshot["mission"]) == {
+        "mission_id", "schema_version", "plan_id", "plan_hash", "goal_hash",
+        "summary_hash", "steps", "project_scope_hash", "action_classes",
+        "skill_provenance", "memory_provenance", "declared_tests_hash",
+        "acceptance_criteria_hash",
+    }
+    assert set(snapshot["mission"]["steps"][0]) == {
+        "step_id", "position", "agent_id", "role", "task_hash",
+    }
+    assert snapshot["mission_hash"] == (
+        "sha256:ec860c7b8e1723ad1c8bf143668dcc4888dc3b2caf110ae2c8440a2648cf8eb4"
+    )
+    assert snapshot["execution_hash"] == (
+        "sha256:12011c644584219ad508830aa7fbc60cd0480c9687dde85213cd9b3000a16251"
+    )
 
 
 def facts(**overrides: object) -> RecoveryFacts:
@@ -530,9 +562,9 @@ class RecordingStore(StateStore):
         )
 
 
-def _seed_missions(store: StateStore) -> None:
+def _seed_missions(store: StateStore, *, semantic: bool = False) -> None:
     state = store.load()
-    snapshot = frozen_snapshot(project_root=store.root)
+    snapshot = frozen_snapshot(project_root=store.root, semantic=semantic)
     state["missions"] = [
         {
             "mission_id": MISSION_ID,
@@ -595,6 +627,21 @@ def _seed_missions(store: StateStore) -> None:
         }
     ]
     store.save(state)
+
+
+def test_recovery_accepts_exact_semantic_snapshot_without_full_authority(
+    tmp_path: Path,
+) -> None:
+    store = StateStore(tmp_path)
+    _seed_missions(store, semantic=True)
+
+    snapshot, _token = store.load_recovery_snapshot()
+    facts = recovery_facts_from_persisted_state(snapshot, MISSION_ID)
+
+    assert facts.snapshot_state == "valid"
+    assert "requirements" not in json.dumps(
+        snapshot["missions"][0]["execution_snapshot"], sort_keys=True
+    )
 
 
 def test_startup_flushes_outboxes_then_atomically_persists_before_enable(

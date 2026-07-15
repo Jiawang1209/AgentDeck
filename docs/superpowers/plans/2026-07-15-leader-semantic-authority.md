@@ -1130,7 +1130,7 @@ git commit -m "Freeze semantic Mission confirmation authority"
 - Modify: `tests/test_daemon_crash_matrix.py`
 - Modify: `HISTORY.md`
 
-- [ ] **Step 1: Add RED exact-shape snapshot tests**
+- [x] **Step 1: Add RED exact-shape snapshot tests**
 
 Legacy snapshots must retain their existing exact mission/step field sets and
 hashes. Semantic snapshots add exactly:
@@ -1143,13 +1143,13 @@ Reject mixed shapes: semantic Mission with legacy steps, legacy Mission with
 semantic steps, missing/extra fields, task/compiler mismatch, authority hash
 drift, reordered hashes, and recovery after plan mutation.
 
-- [ ] **Step 2: Run RED snapshot targets**
+- [x] **Step 2: Run RED snapshot targets**
 
 ```bash
 conda run -n agentdeck pytest tests/test_daemon_mission_snapshot.py tests/test_daemon_recovery.py -k semantic -q
 ```
 
-- [ ] **Step 3: Implement exact dual-shape snapshot validation**
+- [x] **Step 3: Implement exact dual-shape snapshot validation**
 
 In `validate_execution_snapshot()`, select one exact field set based solely on
 presence of `semantic_authority_schema_version`; do not accept arbitrary
@@ -1161,13 +1161,13 @@ and emit compact hashes only.
 Mission, plan, policy, memory provenance, and semantic compiler. Any mismatch
 raises existing bounded frozen-drift errors before attempt creation.
 
-- [ ] **Step 4: Run snapshot, recovery, and crash GREEN**
+- [x] **Step 4: Run snapshot, recovery, and crash GREEN**
 
 ```bash
 conda run -n agentdeck pytest tests/test_daemon_mission_snapshot.py tests/test_daemon_recovery.py tests/test_daemon_crash_matrix.py -q
 ```
 
-- [ ] **Step 5: Commit snapshot authority**
+- [x] **Step 5: Commit snapshot authority**
 
 ```bash
 git add src/agentdeck/state.py tests/test_daemon_mission_snapshot.py tests/test_daemon_recovery.py tests/test_daemon_crash_matrix.py HISTORY.md

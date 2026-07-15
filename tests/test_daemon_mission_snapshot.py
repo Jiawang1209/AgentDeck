@@ -15,25 +15,86 @@ from agentdeck import state as state_module
 from agentdeck.config import load_config, write_default_config
 from agentdeck.daemon.recovery import RecoveryError, reconcile_startup
 from agentdeck.mission_orchestration import (
+    LeaderMissionCandidate,
     MissionRunError,
     attempt_dispatch_key,
     build_execution_snapshot,
     canonical_hash,
     confirm_mission_for_daemon,
     create_mission_preview,
+    create_mission_preview_from_candidate,
     prepare_attempt,
 )
-from agentdeck.providers import LeaderPlanRequest
+from agentdeck.orchestration.leader import LeaderOrchestrator
+from agentdeck.providers import FakeLeaderProvider, LeaderPlanRequest
+from agentdeck.mission_authority import canonical_workflow_plan_hash
 from agentdeck.daemon.scheduler import SchedulerDecision
 from agentdeck.daemon.service import (
     DaemonTmuxWorkerStarter,
     ServiceError,
     scheduler_facts_from_store,
 )
-from agentdeck.state import MissionStateError, StateStore, worker_runtime_identity_hash
+from agentdeck.state import (
+    MissionStateError,
+    StateStore,
+    validate_execution_snapshot,
+    worker_runtime_identity_hash,
+)
 
 
 MESSAGE = "让 Codex 和 Claude 严格串行完成两步审阅，共2轮"
+
+
+def _semantic_authority() -> dict[str, object]:
+    return {
+        "schema_version": "mission-semantic-authority/v1",
+        "source_message_hash": "sha256:" + "a" * 64,
+        "requirements": [
+            {
+                "requirement_id": "req_111111111111",
+                "kind": "create",
+                "target": "artifact.txt",
+                "operation": "create",
+                "literal": "draft-v1\n",
+                "phase": "implementation",
+                "agent_id": "planner",
+                "sensitivity": "ordinary",
+            },
+            {
+                "requirement_id": "req_222222222222",
+                "kind": "review",
+                "target": "artifact.txt",
+                "operation": "review",
+                "literal": "accepted-v2\n",
+                "phase": "review",
+                "agent_id": "reviewer",
+                "sensitivity": "ordinary",
+            },
+            {
+                "requirement_id": "req_333333333333",
+                "kind": "state_transition",
+                "target": "artifact.txt",
+                "operation": "update",
+                "before": {"content_equals": "draft-v1\n"},
+                "after": {"content_equals": "accepted-v2\n"},
+                "phase": "revision",
+                "agent_id": "planner",
+                "sensitivity": "ordinary",
+            },
+            {
+                "requirement_id": "req_444444444444",
+                "kind": "verify",
+                "target": "artifact.txt",
+                "operation": "verify",
+                "literal": "accepted-v2\n",
+                "phase": "acceptance",
+                "agent_id": "reviewer",
+                "sensitivity": "ordinary",
+            },
+        ],
+        "proposed_effects": [],
+        "unresolved": [],
+    }
 
 
 class TwoStepProvider:
@@ -111,6 +172,39 @@ def _seed(
     return root, config, store, preview
 
 
+def _semantic_seed(tmp_path: Path, monkeypatch):
+    root, config, store, _preview = _seed(tmp_path, monkeypatch)
+    state = store.load()
+    state["plans"] = []
+    state["missions"] = []
+    state["protocol_event_outbox"] = []
+    store.save(state)
+    authority = _semantic_authority()
+    result = LeaderOrchestrator(config, FakeLeaderProvider()).plan_result(
+        "semantic task context",
+        config.leader.model,
+        selected_agent_ids=("planner", "reviewer"),
+        step_count=4,
+        semantic_authority=authority,
+    )
+    preview = create_mission_preview_from_candidate(
+        config=config,
+        store=store,
+        candidate=LeaderMissionCandidate(
+            provider="fake",
+            model=config.leader.model,
+            user_message=MESSAGE,
+            plan=result.plan,
+            timeout_seconds=180,
+            selected_agent_ids=("planner", "reviewer"),
+            step_count=4,
+            leader_generation=result.leader_generation,
+            semantic_authority=authority,
+        ),
+    )
+    return root, config, store, preview
+
+
 def _state_bytes(store: StateStore) -> bytes:
     return store.state_path.read_bytes()
 
@@ -121,6 +215,42 @@ def _tree_bytes(root: Path) -> dict[str, bytes]:
         for path in sorted(root.rglob("*"))
         if path.is_file()
     }
+
+
+def _rehash_snapshot(snapshot: dict[str, object]) -> dict[str, object]:
+    snapshot["mission_hash"] = canonical_hash(snapshot["mission"])
+    body = {
+        key: snapshot[key]
+        for key in (
+            "mission",
+            "workers",
+            "policy",
+            "limits",
+            "mission_hash",
+            "policy_hash",
+        )
+    }
+    snapshot["execution_hash"] = canonical_hash(body)
+    return snapshot
+
+
+def _desired_semantic_snapshot(
+    snapshot: dict[str, object],
+    mission: dict[str, object],
+    plan: dict[str, object],
+) -> dict[str, object]:
+    changed = deepcopy(snapshot)
+    changed["mission"]["semantic_authority_schema_version"] = mission[
+        "semantic_authority_schema_version"
+    ]
+    changed["mission"]["semantic_authority_hash"] = mission[
+        "semantic_authority_hash"
+    ]
+    for compact, semantic in zip(
+        changed["mission"]["steps"], plan["plan"]["semantic_steps"]
+    ):
+        compact["semantic_step_hash"] = semantic["semantic_step_hash"]
+    return _rehash_snapshot(changed)
 
 
 def _set_attempt_post_admission(
@@ -606,6 +736,167 @@ def test_confirmed_mission_freezes_compact_execution_authority(tmp_path, monkeyp
     assert persisted["execution_snapshot"] == snapshot
     snapshot["mission"]["steps"][0]["role"] = "tampered"
     assert store.mission_by_id(preview["mission_id"])["execution_snapshot"] != snapshot
+
+
+def test_legacy_execution_snapshot_shape_remains_exact(tmp_path, monkeypatch) -> None:
+    _root, config, store, preview = _seed(tmp_path, monkeypatch)
+    mission = store.mission_by_id(preview["mission_id"])
+
+    snapshot = build_execution_snapshot(
+        config,
+        mission,
+        store.plan_by_id(preview["plan_id"]),
+        state_module.execution_policy_snapshot(config),
+    )
+
+    assert set(snapshot["mission"]) == {
+        "mission_id", "schema_version", "plan_id", "plan_hash", "goal_hash",
+        "summary_hash", "steps", "project_scope_hash", "action_classes",
+        "skill_provenance", "memory_provenance", "declared_tests_hash",
+        "acceptance_criteria_hash",
+    }
+    assert all(
+        set(step) == {"step_id", "position", "agent_id", "role", "task_hash"}
+        for step in snapshot["mission"]["steps"]
+    )
+
+
+def test_semantic_execution_snapshot_adds_only_compact_semantic_hashes(
+    tmp_path, monkeypatch
+) -> None:
+    _root, config, store, preview = _semantic_seed(tmp_path, monkeypatch)
+    mission = store.mission_by_id(preview["mission_id"])
+    plan = store.plan_by_id(preview["plan_id"])
+
+    snapshot = build_execution_snapshot(
+        config,
+        mission,
+        plan,
+        state_module.execution_policy_snapshot(config),
+    )
+
+    assert set(snapshot["mission"]) == {
+        "mission_id", "schema_version", "plan_id", "plan_hash", "goal_hash",
+        "summary_hash", "steps", "project_scope_hash", "action_classes",
+        "skill_provenance", "memory_provenance", "declared_tests_hash",
+        "acceptance_criteria_hash", "semantic_authority_schema_version",
+        "semantic_authority_hash",
+    }
+    assert all(
+        set(step)
+        == {"step_id", "position", "agent_id", "role", "task_hash", "semantic_step_hash"}
+        for step in snapshot["mission"]["steps"]
+    )
+    assert [step["semantic_step_hash"] for step in snapshot["mission"]["steps"]] == [
+        step["semantic_step_hash"] for step in plan["plan"]["semantic_steps"]
+    ]
+    serialized = json.dumps(snapshot, ensure_ascii=False, sort_keys=True)
+    for forbidden in (
+        '"requirements"', '"proposed_effects"', "draft-v1",
+        "accepted-v2", "artifact.txt",
+    ):
+        assert forbidden not in serialized
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "semantic_mission_legacy_steps",
+        "legacy_mission_semantic_steps",
+        "missing_semantic_hash",
+        "extra_semantic_field",
+        "invalid_semantic_hash",
+    ],
+)
+def test_execution_snapshot_validator_rejects_mixed_or_drifted_semantic_shapes(
+    tmp_path, monkeypatch, mutation: str
+) -> None:
+    _root, config, store, preview = _semantic_seed(tmp_path, monkeypatch)
+    mission = store.mission_by_id(preview["mission_id"])
+    plan = store.plan_by_id(preview["plan_id"])
+    semantic = _desired_semantic_snapshot(build_execution_snapshot(
+        config,
+        mission,
+        plan,
+        state_module.execution_policy_snapshot(config),
+    ), mission, plan)
+    changed = deepcopy(semantic)
+    if mutation == "semantic_mission_legacy_steps":
+        for step in changed["mission"]["steps"]:
+            del step["semantic_step_hash"]
+    elif mutation == "legacy_mission_semantic_steps":
+        del changed["mission"]["semantic_authority_schema_version"]
+        del changed["mission"]["semantic_authority_hash"]
+    elif mutation == "missing_semantic_hash":
+        del changed["mission"]["semantic_authority_hash"]
+    elif mutation == "extra_semantic_field":
+        changed["mission"]["semantic_authority_literal"] = "DO_NOT_ACCEPT"
+    else:
+        changed["mission"]["steps"][0]["semantic_step_hash"] = "not-a-hash"
+    _rehash_snapshot(changed)
+
+    with pytest.raises(ValueError, match="execution snapshot mission is invalid"):
+        validate_execution_snapshot(changed)
+
+
+@pytest.mark.parametrize("mutation", ["compiled_task", "authority_hash"])
+def test_semantic_snapshot_builder_revalidates_plan_and_mission_provenance(
+    tmp_path, monkeypatch, mutation: str
+) -> None:
+    _root, config, store, preview = _semantic_seed(tmp_path, monkeypatch)
+    mission = store.mission_by_id(preview["mission_id"])
+    plan = store.plan_by_id(preview["plan_id"])
+    if mutation == "compiled_task":
+        plan["plan"]["steps"][0]["task"] = "compiler drift"
+        mission["plan_hash"] = canonical_workflow_plan_hash(plan)
+    else:
+        mission["semantic_authority_hash"] = "sha256:" + "f" * 64
+
+    with pytest.raises((MissionRunError, MissionStateError)):
+        build_execution_snapshot(
+            config,
+            mission,
+            plan,
+            state_module.execution_policy_snapshot(config),
+        )
+
+
+@pytest.mark.parametrize("mutation", ["snapshot_hash_reorder", "plan_mutation"])
+def test_semantic_attempt_rebuild_rejects_recovery_drift_before_attempt_creation(
+    tmp_path, monkeypatch, mutation: str
+) -> None:
+    _root, config, store, preview = _semantic_seed(tmp_path, monkeypatch)
+    confirm_mission_for_daemon(
+        config=config, store=store, mission_id=preview["mission_id"]
+    )
+    state = store.load()
+    mission = state["missions"][0]
+    if mutation == "snapshot_hash_reorder":
+        snapshot = mission["execution_snapshot"]
+        first, second = snapshot["mission"]["steps"][:2]
+        first["semantic_step_hash"], second["semantic_step_hash"] = (
+            second["semantic_step_hash"], first["semantic_step_hash"]
+        )
+        _rehash_snapshot(snapshot)
+        mission["snapshot_hash"] = snapshot["execution_hash"]
+        mission["execution_authority_hash"] = snapshot["execution_hash"]
+    else:
+        state["plans"][0]["plan"]["summary"] = "mutated after freeze"
+    store.save(state)
+    before = store.state_path.read_bytes()
+
+    with pytest.raises(MissionRunError, match="^frozen execution drift$"):
+        prepare_attempt(
+            config=config,
+            store=store,
+            mission_id=preview["mission_id"],
+            step_id="step_1",
+            agent_id="planner",
+            configured_transport="acp",
+        )
+
+    assert store.state_path.read_bytes() == before
+    assert store.load()["mission_attempts"] == []
 
 
 def test_confirmed_mission_recovers_before_first_attempt(tmp_path, monkeypatch) -> None:

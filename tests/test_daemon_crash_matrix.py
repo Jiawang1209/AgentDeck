@@ -352,6 +352,7 @@ def test_real_daemon_crash_boundaries_never_duplicate_external_admission(
     root = (parent / "r").resolve(); marker = parent / "marker.json"; admissions = parent / "admissions.jsonl"
     fake_bin = parent / "bin"; fake_bin.mkdir(); _write_fake_tmux(fake_bin)
     config, store, confirmed = _seed(root, permission=crash_point == "permission_pending")
+    frozen_snapshot_hash = confirmed["snapshot_hash"]
     env = dict(os.environ, PATH=f"{fake_bin}{os.pathsep}{os.environ['PATH']}", AGENTDECK_CRASH_ADMISSIONS=str(admissions))
     with _resource_guard(root=root, parent=parent) as resources:
         process = _start(root, crash_point, marker, env)
@@ -374,6 +375,12 @@ def test_real_daemon_crash_boundaries_never_duplicate_external_admission(
         assert len(cycle["startup_recovery_decisions"]) == 1
         decision = cycle["startup_recovery_decisions"][0]
         assert decision["mission_id"] == confirmed["mission_id"]
+        recovered_mission = store.mission_by_id(str(confirmed["mission_id"]))
+        assert recovered_mission["snapshot_hash"] == frozen_snapshot_hash
+        assert (
+            recovered_mission["execution_snapshot"]["execution_hash"]
+            == frozen_snapshot_hash
+        )
         if crash_point == "after_dispatch_before_receipt":
             assert decision["classification"] == "ambiguous"
         elif crash_point == "permission_pending":

@@ -4,6 +4,14 @@
 
 ## 2026-07-15
 
+### Bind daemon snapshots to semantic hashes
+
+- Added an exact dual-shape execution snapshot contract. Legacy Mission and step field sets, canonical bytes, and frozen hash fixtures remain unchanged; semantic snapshots add only the authority schema/hash at Mission scope and one `semantic_step_hash` beside each existing `task_hash`.
+- Selected the validator shape solely from presence of `semantic_authority_schema_version`, then rejected partial, mixed, extra-field, malformed-hash, or opposite step shapes. Execution roots never carry the full authority, targets, literals, before/after content, or proposed effects.
+- Reused the Task 8 semantic provenance detector and exact compiled-plan validator when building a snapshot. The builder revalidates the full stored authority, recompiles compatibility tasks, checks Mission schema/hash/task provenance, and emits only compact hashes.
+- Kept attempt preparation recovery-safe by rebuilding from current config, Mission, plan, policy, memory provenance, and compiler output before creating an attempt. Plan mutation or reordered frozen semantic step hashes now closes through the existing bounded frozen-drift path with byte-identical state and zero attempts.
+- Added RED/GREEN exact-shape, legacy byte/hash, compiler/task drift, authority drift, hash reorder, recovery plan mutation, compact leakage-negative, semantic recovery, and fake crash-restart hash-stability coverage. No Task 10 projection, real provider, network, user tmux, real ACP adapter, or M2c live attempt was performed.
+
 ### Freeze semantic Mission confirmation authority
 
 - Persisted only exact validated compiled semantic plans: the authoritative plan body retains full non-sensitive `semantic_authority` and `semantic_steps`, while Mission records retain only schema/hash, compiled task hashes, and preview generation. Legacy plan records and their frozen canonical hash bytes remain unchanged.

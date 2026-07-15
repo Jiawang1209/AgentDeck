@@ -81,7 +81,10 @@ from .runtime.acp_mapping import (
     MAX_ACP_UPDATES_PER_TURN,
     MAX_ACP_TERMINAL_UPDATE_BYTES,
 )
-from .semantic_authority import semantic_authority_hash
+from .semantic_authority import (
+    SEMANTIC_AUTHORITY_SCHEMA_VERSION,
+    semantic_authority_hash,
+)
 
 
 _EXECUTION_SNAPSHOT_FIELDS = frozenset(
@@ -2070,7 +2073,7 @@ def validate_execution_snapshot(value: object) -> dict[str, Any]:
     if type(snapshot["workers"]) is not list or len(snapshot["workers"]) < 2:
         raise ValueError("execution snapshot workers are invalid")
     mission = snapshot["mission"]
-    mission_fields = {
+    legacy_mission_fields = {
         "mission_id",
         "schema_version",
         "plan_id",
@@ -2085,6 +2088,12 @@ def validate_execution_snapshot(value: object) -> dict[str, Any]:
         "declared_tests_hash",
         "acceptance_criteria_hash",
     }
+    semantic_snapshot = "semantic_authority_schema_version" in mission
+    mission_fields = legacy_mission_fields | (
+        {"semantic_authority_schema_version", "semantic_authority_hash"}
+        if semantic_snapshot
+        else set()
+    )
     if (
         set(mission) != mission_fields
         or not is_canonical_mission_id(mission.get("mission_id"))
@@ -2105,6 +2114,16 @@ def validate_execution_snapshot(value: object) -> dict[str, Any]:
         for field in hash_fields
     ):
         raise ValueError("execution snapshot mission is invalid")
+    if semantic_snapshot and (
+        mission.get("semantic_authority_schema_version")
+        != SEMANTIC_AUTHORITY_SCHEMA_VERSION
+        or type(mission.get("semantic_authority_hash")) is not str
+        or re.fullmatch(
+            r"sha256:[0-9a-f]{64}", mission["semantic_authority_hash"]
+        )
+        is None
+    ):
+        raise ValueError("execution snapshot mission is invalid")
     for optional_hash in ("declared_tests_hash", "acceptance_criteria_hash"):
         value = mission.get(optional_hash)
         if value is not None and (
@@ -2121,10 +2140,13 @@ def validate_execution_snapshot(value: object) -> dict[str, Any]:
     if type(steps) is not list or not steps:
         raise ValueError("execution snapshot mission is invalid")
     step_agents: list[str] = []
+    step_fields = {"step_id", "position", "agent_id", "role", "task_hash"} | (
+        {"semantic_step_hash"} if semantic_snapshot else set()
+    )
     for position, step in enumerate(steps, start=1):
         if (
             type(step) is not dict
-            or set(step) != {"step_id", "position", "agent_id", "role", "task_hash"}
+            or set(step) != step_fields
             or step.get("step_id") != f"step_{position}"
             or type(step.get("position")) is not int
             or step["position"] != position
@@ -2134,6 +2156,16 @@ def validate_execution_snapshot(value: object) -> dict[str, Any]:
             or not step["role"]
             or type(step.get("task_hash")) is not str
             or re.fullmatch(r"sha256:[0-9a-f]{64}", step["task_hash"]) is None
+            or (
+                semantic_snapshot
+                and (
+                    type(step.get("semantic_step_hash")) is not str
+                    or re.fullmatch(
+                        r"sha256:[0-9a-f]{64}", step["semantic_step_hash"]
+                    )
+                    is None
+                )
+            )
         ):
             raise ValueError("execution snapshot mission is invalid")
         step_agents.append(step["agent_id"])
@@ -2411,6 +2443,33 @@ def build_execution_snapshot_authority(
     raw_plan = plan.get("plan")
     if type(raw_plan) is not dict:
         raise ValueError("execution snapshot invalid")
+    semantic_active, plan_is_semantic, present_semantic = (
+        semantic_mission_provenance_shape(raw_plan, mission)
+    )
+    semantic_plan: dict[str, Any] | None = None
+    if semantic_active:
+        if (
+            not plan_is_semantic
+            or present_semantic != SEMANTIC_MISSION_COMPACT_FIELDS
+        ):
+            raise ValueError("execution snapshot invalid")
+        semantic_plan = validated_compiled_semantic_plan(raw_plan)
+        expected_authority_hash = semantic_authority_hash(
+            semantic_plan["semantic_authority"]
+        )
+        expected_task_hashes = [
+            f"sha256:{hashlib.sha256(step['task'].encode('utf-8')).hexdigest()}"
+            for step in semantic_plan["steps"]
+        ]
+        if (
+            mission.get("semantic_authority_schema_version")
+            != semantic_plan["semantic_authority"]["schema_version"]
+            or mission.get("semantic_authority_hash") != expected_authority_hash
+            or mission.get("compiled_task_hashes") != expected_task_hashes
+            or mission.get("preview_generation") != 1
+        ):
+            raise ValueError("execution snapshot invalid")
+        raw_plan = semantic_plan
     raw_steps = raw_plan.get("steps")
     selected = mission.get("selected_agents")
     if type(raw_steps) is not list or not raw_steps or type(selected) is not list:
@@ -2459,6 +2518,7 @@ def build_execution_snapshot_authority(
             }
         )
     compact_steps: list[dict[str, object]] = []
+    semantic_steps = semantic_plan["semantic_steps"] if semantic_plan else None
     for position, raw_step in enumerate(raw_steps, start=1):
         if type(raw_step) is not dict:
             raise ValueError("execution snapshot invalid")
@@ -2477,15 +2537,18 @@ def build_execution_snapshot_authority(
             or not task
         ):
             raise ValueError("execution snapshot invalid")
-        compact_steps.append(
-            {
-                "step_id": f"step_{position}",
-                "position": position,
-                "agent_id": agent_id,
-                "role": role,
-                "task_hash": canonical_snapshot_hash({"task": task}),
-            }
-        )
+        compact_step = {
+            "step_id": f"step_{position}",
+            "position": position,
+            "agent_id": agent_id,
+            "role": role,
+            "task_hash": canonical_snapshot_hash({"task": task}),
+        }
+        if semantic_steps is not None:
+            compact_step["semantic_step_hash"] = semantic_steps[position - 1][
+                "semantic_step_hash"
+            ]
+        compact_steps.append(compact_step)
     if len(compact_steps) != mission.get("step_count"):
         raise ValueError("execution snapshot invalid")
     root = Path(config.root)
@@ -2517,6 +2580,17 @@ def build_execution_snapshot_authority(
             raw_plan, "acceptance_criteria"
         ),
     }
+    if semantic_plan is not None:
+        mission_body.update(
+            {
+                "semantic_authority_schema_version": semantic_plan[
+                    "semantic_authority"
+                ]["schema_version"],
+                "semantic_authority_hash": semantic_authority_hash(
+                    semantic_plan["semantic_authority"]
+                ),
+            }
+        )
     limits: dict[str, object] = {
         "step_count": mission.get("step_count"),
         "timeout_seconds": mission.get("timeout_seconds"),
