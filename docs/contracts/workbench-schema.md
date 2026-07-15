@@ -616,6 +616,14 @@ The card fuses runtime and ledger facts without creating a second state source. 
         "safety": "inspect",
         "enabled": true,
         "blocker": null
+      },
+      {
+        "kind": "inbox",
+        "label": "Inspect code reviewer inbox",
+        "command": "agentdeck inbox --agent reviewer",
+        "safety": "inspect",
+        "enabled": true,
+        "blocker": null
       }
     ]
   },
@@ -628,7 +636,24 @@ The card fuses runtime and ledger facts without creating a second state source. 
     "trace_command": null,
     "inbox_command": null,
     "blocker": "round_reviewer is not configured",
-    "controls": []
+    "controls": [
+      {
+        "kind": "trace",
+        "label": "Trace round review",
+        "command": null,
+        "safety": "inspect",
+        "enabled": false,
+        "blocker": "round_reviewer is not configured"
+      },
+      {
+        "kind": "inbox",
+        "label": "Inspect round reviewer inbox",
+        "command": null,
+        "safety": "inspect",
+        "enabled": false,
+        "blocker": "round_reviewer is not configured"
+      }
+    ]
   },
   "controls": [
     {

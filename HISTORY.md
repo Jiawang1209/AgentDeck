@@ -9,6 +9,7 @@
 - Made review-gate stage controls identify `code_review` and `round_review` in their labels. When neither reviewer role is configured, their disabled trace/inbox controls now retain distinct deterministic `control_id` values instead of colliding on the same null command and global agent slot.
 - Added a focused regression for the exact missing-reviewer state exposed by the completed semantic four-stage Mission, and synchronized the workbench discovery fixture and contract example. The validator remains strict; no controls are silently dropped or renumbered.
 - Synchronized the two legacy exact-status fixtures with the additive `semantic_authority: null` ProjectView projection, preserving the explicit non-semantic shape while restoring the full Agent CLI regression.
+- Completed the written workbench Review Gate example with the same stage-specific trace and inbox controls exposed by contract discovery, including disabled round-review controls and their blocker.
 
 ### Enforce semantic authority during Worker dispatch
 
