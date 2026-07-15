@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import asyncio
+import copy
 import ctypes
 import ctypes.util
 from contextlib import contextmanager
@@ -749,14 +750,16 @@ def _live_task_authority_checks(steps: object) -> dict[str, bool]:
     if exact_shape:
         assert type(steps) is list
         tasks = tuple(
-            step.get("task", "").lower()
+            step.get("task", "")
             if type(step.get("task")) is str
             else ""
             for step in steps
         )
+        phase_tasks = tuple(task.lower() for task in tasks)
         agents = tuple(step.get("agent_id") for step in steps)
     else:
         tasks = ("", "", "", "")
+        phase_tasks = tasks
         agents = ()
     return {
         "phase_order": exact_shape
@@ -764,7 +767,7 @@ def _live_task_authority_checks(steps: object) -> dict[str, bool]:
             phase in task
             for phase, task in zip(
                 ("implementation", "review", "revision", "acceptance"),
-                tasks,
+                phase_tasks,
                 strict=True,
             )
         ),
@@ -2815,7 +2818,6 @@ def test_live_task_authority_accepts_only_exact_fixed_scenario() -> None:
 @pytest.mark.parametrize(
     ("step_index", "old", "new", "failed_check"),
     [
-        (0, "artifact.txt", "artifact.bin", "artifact_all_steps"),
         (0, "draft-v1", "initial-draft", "implementation_draft"),
         (1, "accepted-v2", "reviewed-v2", "review_target"),
         (2, "draft-v1", "initial-draft", "revision_transition"),
@@ -2837,9 +2839,34 @@ def test_live_task_authority_rejects_missing_fixed_token(
     )
 
 
-def test_live_task_authority_rejects_phase_drift() -> None:
+@pytest.mark.parametrize("step_index", range(4))
+def test_live_task_authority_rejects_missing_artifact_at_each_step(
+    step_index,
+) -> None:
     steps = _exact_live_steps()
-    steps[2]["task"] = steps[2]["task"].replace("revision", "rewrite")
+    steps[step_index]["task"] = steps[step_index]["task"].replace(
+        "artifact.txt", "artifact.bin"
+    )
+
+    checks = _live_task_authority_checks(steps)
+
+    assert checks["artifact_all_steps"] is False
+    assert all(
+        value is True
+        for name, value in checks.items()
+        if name != "artifact_all_steps"
+    )
+
+
+@pytest.mark.parametrize(
+    ("step_index", "phase"),
+    tuple(enumerate(("implementation", "review", "revision", "acceptance"))),
+)
+def test_live_task_authority_rejects_phase_drift_at_each_step(
+    step_index, phase,
+) -> None:
+    steps = _exact_live_steps()
+    steps[step_index]["task"] = steps[step_index]["task"].replace(phase, "drift")
 
     checks = _live_task_authority_checks(steps)
 
@@ -2847,14 +2874,43 @@ def test_live_task_authority_rejects_phase_drift() -> None:
     assert all(value is True for name, value in checks.items() if name != "phase_order")
 
 
-def test_live_task_authority_rejects_worker_order_drift() -> None:
+@pytest.mark.parametrize("step_index", range(4))
+def test_live_task_authority_rejects_worker_drift_at_each_step(step_index) -> None:
     steps = _exact_live_steps()
-    steps[1]["agent_id"] = "claude-worker"
+    steps[step_index]["agent_id"] = (
+        "codex-worker"
+        if steps[step_index]["agent_id"] == "claude-worker"
+        else "claude-worker"
+    )
 
     checks = _live_task_authority_checks(steps)
 
     assert checks["worker_order"] is False
     assert all(value is True for name, value in checks.items() if name != "worker_order")
+
+
+@pytest.mark.parametrize(
+    ("step_index", "token", "failed_check"),
+    [
+        (0, "artifact.txt", "artifact_all_steps"),
+        (0, "draft-v1", "implementation_draft"),
+        (3, "accepted-v2", "acceptance_target"),
+    ],
+)
+def test_live_task_authority_rejects_uppercase_fixed_token(
+    step_index, token, failed_check,
+) -> None:
+    steps = _exact_live_steps()
+    steps[step_index]["task"] = steps[step_index]["task"].replace(
+        token, token.upper()
+    )
+
+    checks = _live_task_authority_checks(steps)
+
+    assert checks[failed_check] is False
+    assert all(
+        value is True for name, value in checks.items() if name != failed_check
+    )
 
 
 def test_require_live_task_authority_is_preconfirmation_zero_write(tmp_path) -> None:
@@ -2874,6 +2930,81 @@ def test_require_live_task_authority_is_preconfirmation_zero_write(tmp_path) -> 
     state = store.load()
     assert state["mission_attempts"] == []
     assert state["permission_requests"] == []
+
+
+def test_live_mission_task_authority_blocks_real_confirmation_path(
+    tmp_path, monkeypatch,
+) -> None:
+    store = StateStore(tmp_path)
+    steps = _exact_live_steps()
+    steps[2]["task"] = steps[2]["task"].replace("accepted-v2", "ACCEPTED-V2")
+    previewed = {
+        "missions": [{"mission_id": "msn_task_authority"}],
+        "plans": [
+            {
+                "plan": {"steps": steps},
+                "leader_generation": {"constraint_mode": "native_json_schema"},
+            }
+        ],
+        "conversation_preview_bindings": [{"mission_id": "msn_task_authority"}],
+        "mission_attempts": [],
+        "permission_requests": [],
+    }
+    before = copy.deepcopy(previewed)
+    prompt_numbers: list[int] = []
+    writes: list[bytes] = []
+
+    class FakeProcess:
+        pid = 987654
+
+    def fake_wait_for_state(_store, predicate, **_kwargs):
+        assert predicate(previewed)
+        return previewed
+
+    def fake_wait_for_prompt(_process, _master, _capture, prompt_number):
+        prompt_numbers.append(prompt_number)
+
+    def fake_write(_descriptor, payload):
+        writes.append(payload)
+        return len(payload)
+
+    def fake_stop_pty(_process, master, _scope):
+        os.close(master)
+        return []
+
+    read_fd, write_fd = os.pipe()
+    module = sys.modules[__name__]
+    monkeypatch.setattr(module, "_wait_for_state", fake_wait_for_state)
+    monkeypatch.setattr(module, "_wait_for_pty_prompt", fake_wait_for_prompt)
+    monkeypatch.setattr(module, "_stop_pty", fake_stop_pty)
+    monkeypatch.setattr(os, "write", fake_write)
+
+    with pytest.raises(_LiveHarnessFailure) as error:
+        _create_and_confirm_live_mission(
+            tmp_path,
+            store,
+            env={},
+            openpty_factory=lambda: (read_fd, write_fd),
+            popen_factory=lambda *_args, **_kwargs: FakeProcess(),
+            scope_sealer=lambda _pid: _ProcessGroupScope(
+                pgid=987654,
+                leader=_ProcessIdentity(
+                    pid=987654,
+                    pgid=987654,
+                    birth_fingerprint="fixed-birth",
+                ),
+            ),
+        )
+
+    diagnostic = json.loads(str(error.value))
+    assert diagnostic["code"] == "native_schema_task_authority_invalid"
+    assert prompt_numbers == [1]
+    assert len(writes) == 1
+    assert writes[0].endswith("共4轮。\n".encode("utf-8"))
+    assert "确认执行当前预览".encode("utf-8") not in writes[0]
+    assert previewed == before
+    assert previewed["mission_attempts"] == []
+    assert previewed["permission_requests"] == []
 
 
 def test_live_failure_rejects_nonclosed_task_authority_without_stringifying() -> None:
