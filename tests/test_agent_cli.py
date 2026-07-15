@@ -11384,6 +11384,7 @@ def test_status_projects_compact_mission_summary_without_mutating_state(
         "provider": "fake",
         "model": "fake-plan",
         "leader_backend": mission["leader_backend"],
+        "semantic_authority": None,
         "plan_id": "pln_demo",
         "plan_hash": "sha256:plan",
         "workflow_run_id": None,
@@ -12011,6 +12012,7 @@ def test_status_includes_project_state_summaries(tmp_path, monkeypatch, capsys) 
         "model": "local-plan",
         "dispatch_ready": False,
         "skill_context": {"count": 0, "by_agent": {}, "by_source": {}, "items": []},
+        "semantic_authority": None,
         "step_count": 2,
         "created_at": "2026-07-04T00:00:00+00:00",
     }
