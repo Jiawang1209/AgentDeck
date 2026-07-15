@@ -4,6 +4,13 @@
 
 ## 2026-07-15
 
+### Gate M2c live confirmation on fixed task authority
+
+- **Strict RED**: added the exact four-step Claude/Codex implementation, review, revision, and acceptance scenario plus missing-token, phase-order, Worker-order, closed-diagnostic, and zero-write rejection coverage. `conda run --no-capture-output -n agentdeck pytest tests/test_m2c_live_acceptance.py -k task_authority -q` first failed `12` tests (`42` deselected) only because the locked authority constant and three requested helpers did not yet exist.
+- **Fixed task checks**: the live harness now admits only four ordered steps assigned Claude/Codex/Claude/Codex, with `artifact.txt` present in every task and the exact `draft-v1` / `accepted-v2` implementation, review, revision-transition, and acceptance tokens. The check performs no synonym matching, intent inference, or task repair.
+- **Pre-confirmation zero-write gate**: after the existing phase and Worker checks, and before the second PTY prompt and confirmation write, invalid task authority raises fixed `native_schema_task_authority_invalid`. Diagnostics include the authority projection only when its keys, order, and boolean values are closed; rejection leaves the project tree unchanged with zero Mission attempts and permission requests, and existing cardinality, PTY, and output diagnostics retain their prior behavior.
+- **GREEN verification**: the focused task-authority command passes `12` tests (`42` deselected); `conda run --no-capture-output -n agentdeck pytest tests/test_m2c_live_acceptance.py -k 'task_authority or live_preflight or sanitized_version' -q` passes `14` tests (`40` deselected); the complete non-live harness passes `53` tests with `1` explicit live skip.
+
 ### Plan first live permission blocker closure
 
 - **Reviewed TDD plan**: add a fixed-scenario, pre-confirmation task-authority gate for phase/Worker order plus `artifact.txt` / `draft-v1` / `accepted-v2`, followed by a same-snapshot closed ledger projector for `leader_task_authority_missing`, `worker_effect_not_requested`, failed/active attempts, and permission-state inconsistency.

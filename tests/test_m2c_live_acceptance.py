@@ -67,6 +67,36 @@ BLOCKER_CODES = frozenset(
         "executable_identity_drift",
     }
 )
+_LIVE_TASK_AUTHORITY_FIELDS = (
+    "phase_order",
+    "worker_order",
+    "artifact_all_steps",
+    "implementation_draft",
+    "review_target",
+    "revision_transition",
+    "acceptance_target",
+)
+
+
+def _exact_live_steps() -> list[dict[str, str]]:
+    return [
+        {
+            "agent_id": "claude-worker",
+            "task": "implementation: create artifact.txt with draft-v1",
+        },
+        {
+            "agent_id": "codex-worker",
+            "task": "review: require artifact.txt to contain accepted-v2",
+        },
+        {
+            "agent_id": "claude-worker",
+            "task": "revision: change artifact.txt from draft-v1 to accepted-v2",
+        },
+        {
+            "agent_id": "codex-worker",
+            "task": "acceptance: verify artifact.txt contains accepted-v2",
+        },
+    ]
 
 
 @dataclass(frozen=True)
@@ -710,12 +740,65 @@ def _state_cardinalities(store: StateStore) -> dict[str, int]:
     }
 
 
+def _live_task_authority_checks(steps: object) -> dict[str, bool]:
+    exact_shape = (
+        type(steps) is list
+        and len(steps) == 4
+        and all(type(step) is dict for step in steps)
+    )
+    if exact_shape:
+        assert type(steps) is list
+        tasks = tuple(
+            step.get("task", "").lower()
+            if type(step.get("task")) is str
+            else ""
+            for step in steps
+        )
+        agents = tuple(step.get("agent_id") for step in steps)
+    else:
+        tasks = ("", "", "", "")
+        agents = ()
+    return {
+        "phase_order": exact_shape
+        and all(
+            phase in task
+            for phase, task in zip(
+                ("implementation", "review", "revision", "acceptance"),
+                tasks,
+                strict=True,
+            )
+        ),
+        "worker_order": exact_shape
+        and agents
+        == ("claude-worker", "codex-worker", "claude-worker", "codex-worker"),
+        "artifact_all_steps": exact_shape
+        and all("artifact.txt" in task for task in tasks),
+        "implementation_draft": exact_shape and "draft-v1" in tasks[0],
+        "review_target": exact_shape and "accepted-v2" in tasks[1],
+        "revision_transition": exact_shape
+        and "draft-v1" in tasks[2]
+        and "accepted-v2" in tasks[2],
+        "acceptance_target": exact_shape and "accepted-v2" in tasks[3],
+    }
+
+
+def _closed_task_authority(value: object) -> dict[str, bool] | None:
+    if (
+        type(value) is not dict
+        or tuple(value) != _LIVE_TASK_AUTHORITY_FIELDS
+        or not all(type(item) is bool for item in value.values())
+    ):
+        return None
+    return {field: value[field] for field in _LIVE_TASK_AUTHORITY_FIELDS}
+
+
 def _live_failure(
     code: str,
     *,
     store: StateStore | None = None,
     capture: _PtyTail | None = None,
     output: bytes | None = None,
+    task_authority: object = None,
 ) -> _LiveHarnessFailure:
     diagnostic: dict[str, object] = {"stage": "live_acceptance", "code": code}
     if store is not None:
@@ -728,6 +811,9 @@ def _live_failure(
             "truncated": False,
             "sha256": hashlib.sha256(output).hexdigest(),
         }
+    closed_task_authority = _closed_task_authority(task_authority)
+    if closed_task_authority is not None:
+        diagnostic["task_authority"] = closed_task_authority
     return _LiveHarnessFailure(json.dumps(diagnostic, sort_keys=True))
 
 
@@ -740,6 +826,22 @@ def _require_live(
 ) -> None:
     if not condition:
         raise _live_failure(code, store=store, capture=capture)
+
+
+def _require_live_task_authority(
+    steps: object,
+    *,
+    store: StateStore,
+    capture: _PtyTail,
+) -> None:
+    checks = _live_task_authority_checks(steps)
+    if not all(checks.values()):
+        raise _live_failure(
+            "native_schema_task_authority_invalid",
+            store=store,
+            capture=capture,
+            task_authority=checks,
+        )
 
 
 def _bounded_project_command(
@@ -2036,6 +2138,7 @@ def _create_and_confirm_live_mission(
             store=store,
             capture=capture,
         )
+        _require_live_task_authority(steps, store=store, capture=capture)
         generation = previewed["plans"][0].get("leader_generation")
         _require_live(
             type(generation) is dict
@@ -2700,6 +2803,106 @@ def test_m2c_live_preflight_is_read_only(tmp_path, monkeypatch) -> None:
     ]
     assert _validate_preflight_payload(rejected) == []
     assert _tree_snapshot(project) == before
+
+
+def test_live_task_authority_accepts_only_exact_fixed_scenario() -> None:
+    checks = _live_task_authority_checks(_exact_live_steps())
+
+    assert tuple(checks) == _LIVE_TASK_AUTHORITY_FIELDS
+    assert checks == {field: True for field in _LIVE_TASK_AUTHORITY_FIELDS}
+
+
+@pytest.mark.parametrize(
+    ("step_index", "old", "new", "failed_check"),
+    [
+        (0, "artifact.txt", "artifact.bin", "artifact_all_steps"),
+        (0, "draft-v1", "initial-draft", "implementation_draft"),
+        (1, "accepted-v2", "reviewed-v2", "review_target"),
+        (2, "draft-v1", "initial-draft", "revision_transition"),
+        (2, "accepted-v2", "reviewed-v2", "revision_transition"),
+        (3, "accepted-v2", "reviewed-v2", "acceptance_target"),
+    ],
+)
+def test_live_task_authority_rejects_missing_fixed_token(
+    step_index, old, new, failed_check,
+) -> None:
+    steps = _exact_live_steps()
+    steps[step_index]["task"] = steps[step_index]["task"].replace(old, new)
+
+    checks = _live_task_authority_checks(steps)
+
+    assert checks[failed_check] is False
+    assert all(
+        value is True for name, value in checks.items() if name != failed_check
+    )
+
+
+def test_live_task_authority_rejects_phase_drift() -> None:
+    steps = _exact_live_steps()
+    steps[2]["task"] = steps[2]["task"].replace("revision", "rewrite")
+
+    checks = _live_task_authority_checks(steps)
+
+    assert checks["phase_order"] is False
+    assert all(value is True for name, value in checks.items() if name != "phase_order")
+
+
+def test_live_task_authority_rejects_worker_order_drift() -> None:
+    steps = _exact_live_steps()
+    steps[1]["agent_id"] = "claude-worker"
+
+    checks = _live_task_authority_checks(steps)
+
+    assert checks["worker_order"] is False
+    assert all(value is True for name, value in checks.items() if name != "worker_order")
+
+
+def test_require_live_task_authority_is_preconfirmation_zero_write(tmp_path) -> None:
+    store = StateStore(tmp_path)
+    steps = _exact_live_steps()
+    steps[2]["task"] = steps[2]["task"].replace("accepted-v2", "reviewed-v2")
+    before = _tree_snapshot(tmp_path)
+
+    with pytest.raises(_LiveHarnessFailure) as error:
+        _require_live_task_authority(steps, store=store, capture=_PtyTail())
+
+    diagnostic = json.loads(str(error.value))
+    assert diagnostic["code"] == "native_schema_task_authority_invalid"
+    assert diagnostic["task_authority"]["revision_transition"] is False
+    assert set(diagnostic["task_authority"]) == set(_LIVE_TASK_AUTHORITY_FIELDS)
+    assert _tree_snapshot(tmp_path) == before
+    state = store.load()
+    assert state["mission_attempts"] == []
+    assert state["permission_requests"] == []
+
+
+def test_live_failure_rejects_nonclosed_task_authority_without_stringifying() -> None:
+    class RejectedValue:
+        def __str__(self) -> str:
+            raise AssertionError("rejected value was stringified")
+
+        def __repr__(self) -> str:
+            raise AssertionError("rejected value was stringified")
+
+    rejected = {field: True for field in _LIVE_TASK_AUTHORITY_FIELDS}
+    rejected["revision_transition"] = RejectedValue()
+
+    diagnostic = json.loads(
+        str(_live_failure("native_schema_task_authority_invalid", task_authority=rejected))
+    )
+
+    assert "task_authority" not in diagnostic
+
+
+def test_closed_task_authority_requires_exact_key_order_and_bools() -> None:
+    accepted = {field: True for field in _LIVE_TASK_AUTHORITY_FIELDS}
+    reordered = dict(reversed(tuple(accepted.items())))
+    integer_value = dict(accepted)
+    integer_value["phase_order"] = 1
+
+    assert _closed_task_authority(accepted) == accepted
+    assert _closed_task_authority(reordered) is None
+    assert _closed_task_authority(integer_value) is None
 
 
 def test_preflight_isolates_probe_writes_from_real_home(
