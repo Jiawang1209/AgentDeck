@@ -4,6 +4,11 @@
 
 ## 2026-07-15
 
+### Require real AgentSpec semantic authority
+
+- Closed the public semantic request boundary so only exact `AgentSpec` entries from `ProjectConfig.agents` can supply a selected Worker role; a well-formed two-tuple can no longer impersonate a missing configured Worker.
+- The exact-type projection checks `type(item)` before any field access, preserving zero property execution for unrelated malformed, subclass, or hostile entries. Added end-to-end schema and provenance RED/GREEN coverage while retaining direct resolver tuple compatibility. This remains Task 4 pure schema/validation work with no provider I/O, Task 5, CLI regeneration, conversation/state/runtime/tmux/ACP/live behavior, or M2c PASS claim.
+
 ### Enforce semantic schema public budgets
 
 - Deduplicated selected Worker IDs and roles into one `$defs` identity schema per Worker, so long safe roles are stored once instead of once per phase while every portable step branch retains exact identity constraints.

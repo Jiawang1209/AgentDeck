@@ -769,6 +769,7 @@ def test_public_semantic_paths_ignore_malformed_unselected_config_entry(
 @pytest.mark.parametrize(
     "entry",
     [
+        ("reviewer", "review"),
         ("reviewer",),
         ["reviewer", "review"],
         "reviewer",

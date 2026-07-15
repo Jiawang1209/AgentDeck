@@ -743,11 +743,14 @@ cross-field semantic rules.
 The semantic-specific request context resolver must collect exactly one safe
 config entry for each selected Worker while ignoring unrelated malformed or
 unsafe config entries without hashing or comparing hostile subclasses.
-The public request path must pass the raw configured tuple to that resolver,
-which exact-type gates `AgentSpec` before field access; it must not eagerly
-project `.agent_id` or `.role` from every configured item. Unselected malformed,
-subclass, or hostile objects are ignored without property execution, while a
-selected Worker whose exact safe `AgentSpec` is absent fails closed.
+The public request path must first project only entries whose exact type is
+`AgentSpec`, checking the type before any field access, and pass that filtered
+tuple to the resolver; it must not eagerly project `.agent_id` or `.role` from
+every configured item. The resolver may retain tuple input for direct pure
+tests, but a tuple inside `ProjectConfig.agents` must never authorize a selected
+Worker. Unselected malformed, subclass, or hostile objects are ignored without
+property execution, while a selected Worker whose exact safe `AgentSpec` is
+absent fails closed.
 `build_leader_generation_provenance()` and its validator reconstruct the exact
 expected schema from the request; do not trust a supplied version/hash.
 Extend `LEADER_PLAN_DIAGNOSTIC_CODES` only by union with the closed semantic

@@ -4,7 +4,7 @@ import hashlib
 import json
 from typing import TYPE_CHECKING, cast
 
-from agentdeck.models import ProjectConfig
+from agentdeck.models import AgentSpec, ProjectConfig
 from agentdeck.semantic_planning import SEMANTIC_FAILURE_CODES
 from .semantic_plan_schema import (
     SEMANTIC_LEADER_PLAN_SCHEMA_VERSION,
@@ -90,7 +90,11 @@ def build_leader_plan_schema(request: LeaderPlanRequest) -> dict[str, object]:
                 resolve_semantic_leader_plan_context(
                     selected_agent_ids=request.selected_agent_ids,
                     step_count=request.step_count,
-                    configured_context=request.config.agents,
+                    configured_context=tuple(
+                        item
+                        for item in request.config.agents
+                        if type(item) is AgentSpec
+                    ),
                 )
             )
             return build_semantic_leader_plan_schema(
