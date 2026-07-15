@@ -93,6 +93,15 @@ def _fixed_pre_semantic_snapshot(
     return fixed
 
 
+def _agentdeck_file_tree(root: Path) -> dict[str, bytes]:
+    agentdeck_root = root / ".agentdeck"
+    return {
+        str(path.relative_to(agentdeck_root)): path.read_bytes()
+        for path in sorted(agentdeck_root.rglob("*"))
+        if path.is_file()
+    }
+
+
 @pytest.mark.parametrize(
     ("current_step", "stop_reason", "expected_plan_hash", "expected_snapshot_hash"),
     [
@@ -197,6 +206,7 @@ def test_pre_semantic_legacy_corpus_read_status_resume_and_hashes_are_unchanged(
         "semantic_step_hash" not in step
         for step in mission_before["execution_snapshot"]["mission"]["steps"]
     )
+    files_before_read_surfaces = _agentdeck_file_tree(root)
     view = asdict(store.project_view(config))
     assert validate_project_view_contract(view) == {"ok": True, "errors": []}
     assert validate_mission_recovery_contract(view["mission_recovery"]) == {
@@ -204,11 +214,10 @@ def test_pre_semantic_legacy_corpus_read_status_resume_and_hashes_are_unchanged(
         "errors": [],
     }
 
-    state_bytes_before_status = store.state_path.read_bytes()
     status = mission_status_payload(config, store, mission_before)
     assert status["status"] == "stopped"
     assert status["semantic_authority"] is None
-    assert store.state_path.read_bytes() == state_bytes_before_status
+    assert _agentdeck_file_tree(root) == files_before_read_surfaces
 
     now = datetime(2026, 7, 15, tzinfo=timezone.utc)
     resume_preview = apply_mission_state_request(

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections import Counter
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 from datetime import datetime
@@ -1249,27 +1250,25 @@ def test_semantic_daemon_acceptance_runs_natural_language_four_stage_acp_tmux_mi
         workbench_validation = validate_workbench_contract(workbench)
         assert workbench_validation["ok"] is True, workbench_validation["errors"]
 
-        safe_events = {
-            "semantic_authority_extracted",
-            "mission_semantic_preview_created",
-            "mission_semantic_authority_frozen",
-            "worker_task_compiled",
-        }
-        semantic_events = [
-            item for item in events if item["event_type"] in safe_events
+        semantic_lifecycle_types = [
+            item["event_type"]
+            for item in events
+            if item["event_type"].startswith("semantic_")
+            or item["event_type"].startswith("leader_semantic_")
+            or item["event_type"].startswith("mission_semantic_")
+            or item["event_type"] == "worker_task_compiled"
         ]
-        assert [item["event_type"] for item in semantic_events].count(
-            "semantic_authority_extracted"
-        ) == 1
-        assert [item["event_type"] for item in semantic_events].count(
-            "mission_semantic_preview_created"
-        ) == 1
-        assert [item["event_type"] for item in semantic_events].count(
-            "mission_semantic_authority_frozen"
-        ) == 1
-        assert [item["event_type"] for item in semantic_events].count(
-            "worker_task_compiled"
-        ) == 4
+        assert Counter(semantic_lifecycle_types) == Counter(
+            {
+                "semantic_authority_extracted": 1,
+                "mission_semantic_preview_created": 1,
+                "mission_semantic_authority_frozen": 1,
+                "worker_task_compiled": 4,
+            }
+        )
+        assert "semantic_authority_drift_detected" not in semantic_lifecycle_types
+        assert "leader_semantic_candidate_rejected" not in semantic_lifecycle_types
+        assert "leader_semantic_candidate_regenerated" not in semantic_lifecycle_types
 
         def persisted_keys(value: object) -> set[str]:
             if isinstance(value, dict):

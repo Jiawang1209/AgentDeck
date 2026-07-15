@@ -11,6 +11,7 @@
 - Injected an observed fake tmux private-reasoning/full-transcript sentinel into raw Worker output while transport fixtures retain only bounded hashes and canonical handoff fields. Durable state, audit, ProjectView, and workbench contain none of the sentinel or raw transcript.
 - Added a deterministic table-driven pre-semantic corpus with fixed Plan IDs, Mission IDs, canonical Plan hashes, and snapshot hashes. Read/status remains byte-read-only, exact daemon resume preview/confirmation preserves the Plan and execution snapshot hashes, and ProjectView/recovery contracts accept the legacy null-semantic shape without migration or rewrite.
 - Added compact daemon-protocol semantic lineage and conversation/workbench projection coverage. The focused semantic acceptance target passed `23` cases, and the planned broad deterministic regression passed `858` cases. This Task 12 work uses fake transports only and performs no real provider, network, tmux, ACP adapter, Task 13 preflight, or M2c live attempt.
+- Quality-review closure snapshots every file under `.agentdeck` before legacy ProjectView, recovery-contract, and Mission-status reads, then requires the whole tree to remain byte-identical until the explicit resume preview begins. Semantic acceptance now collects every semantic-prefixed lifecycle event plus `worker_task_compiled` before comparing an exact multiset, so unexpected drift, candidate rejection/regeneration, or future semantic event types cannot be hidden by an allowlist filter.
 
 ### Deduplicate completed Mission workbench controls
 
