@@ -113,6 +113,15 @@ _LIVE_ACTIVE_ATTEMPT_STATES = frozenset(
 _LIVE_FAILED_ATTEMPT_STATES = frozenset(
     {"failed", "cancelled", "interrupted"}
 )
+_LIVE_DIAGNOSTIC_CLASSIFICATIONS = frozenset(
+    {
+        "leader_task_authority_missing",
+        "worker_effect_not_requested",
+        "worker_attempt_failed",
+        "worker_attempt_active",
+        "permission_state_inconsistent",
+    }
+)
 
 
 def _exact_live_steps() -> list[dict[str, str]]:
@@ -782,12 +791,10 @@ def _closed_enum(value: object, allowed: frozenset[str]) -> str:
     return value if type(value) is str and value in allowed else "unknown"
 
 
-def _dict_records(value: object) -> list[dict[str, object]]:
-    if type(value) is list:
-        return [item if type(item) is dict else {} for item in value]
-    if type(value) is dict:
-        return [item if type(item) is dict else {} for item in value.values()]
-    return []
+def _dict_records(value: object) -> list[dict[str, object]] | None:
+    if type(value) is not list or not all(type(item) is dict for item in value):
+        return None
+    return value
 
 
 def _live_ledger_diagnostic(
@@ -797,11 +804,26 @@ def _live_ledger_diagnostic(
     task_authority: dict[str, bool] | None,
 ) -> dict[str, object]:
     durable = state if type(state) is dict else {}
-    missions = _dict_records(durable.get("missions"))
-    attempts = _dict_records(durable.get("mission_attempts"))
-    replies = _dict_records(durable.get("mission_worker_replies"))
-    handoffs = _dict_records(durable.get("mission_handoffs"))
-    permissions = _dict_records(durable.get("permission_requests"))
+    mission_records = _dict_records(durable.get("missions"))
+    attempt_records = _dict_records(durable.get("mission_attempts"))
+    reply_records = _dict_records(durable.get("mission_worker_replies"))
+    handoff_records = _dict_records(durable.get("mission_handoffs"))
+    permission_records = _dict_records(durable.get("permission_requests"))
+    collections_valid = all(
+        records is not None
+        for records in (
+            mission_records,
+            attempt_records,
+            reply_records,
+            handoff_records,
+            permission_records,
+        )
+    )
+    missions = mission_records or []
+    attempts = attempt_records or []
+    replies = reply_records or []
+    handoffs = handoff_records or []
+    permissions = permission_records or []
     mission = missions[-1] if missions else {}
     attempt = attempts[-1] if attempts else {}
     attempt_id = attempt.get("attempt_id")
@@ -848,6 +870,8 @@ def _live_ledger_diagnostic(
         and not all(task_authority.values())
     ):
         classification = "leader_task_authority_missing"
+    elif not collections_valid:
+        classification = "permission_state_inconsistent"
     elif permissions:
         classification = "permission_state_inconsistent"
     elif attempt_state in _LIVE_ACTIVE_ATTEMPT_STATES:
@@ -863,6 +887,7 @@ def _live_ledger_diagnostic(
         classification = "worker_effect_not_requested"
     else:
         classification = "permission_state_inconsistent"
+    assert classification in _LIVE_DIAGNOSTIC_CLASSIFICATIONS
 
     return {
         "classification": classification,
@@ -876,8 +901,12 @@ def _live_ledger_diagnostic(
         "reply_state": reply_state,
         "handoff_state": handoff_state,
         "handoff_status": handoff_status,
-        "permission_count": len(permissions),
-        "permission_states": permission_states,
+        "permission_count": (
+            len(permissions) if permission_records is not None else -1
+        ),
+        "permission_states": (
+            permission_states if permission_records is not None else []
+        ),
     }
 
 
@@ -3279,6 +3308,18 @@ _LIVE_LEDGER_KEYS = {
 }
 
 
+def test_live_diagnostic_classifications_are_exactly_locked() -> None:
+    assert globals().get("_LIVE_DIAGNOSTIC_CLASSIFICATIONS") == frozenset(
+        {
+            "leader_task_authority_missing",
+            "worker_effect_not_requested",
+            "worker_attempt_failed",
+            "worker_attempt_active",
+            "permission_state_inconsistent",
+        }
+    )
+
+
 @pytest.mark.parametrize("attempt_state", ("succeeded", "completed"))
 def test_live_failure_classifies_completed_effect_without_permission(
     attempt_state: str,
@@ -3458,6 +3499,66 @@ def test_live_failure_rejects_unrelated_reply_and_handoff_evidence() -> None:
     assert diagnostic["ledger"]["classification"] == "permission_state_inconsistent"
     assert diagnostic["ledger"]["reply_state"] == "unknown"
     assert diagnostic["ledger"]["handoff_state"] == "unknown"
+
+
+@pytest.mark.parametrize(
+    "collection_name",
+    (
+        "missions",
+        "mission_attempts",
+        "mission_worker_replies",
+        "mission_handoffs",
+        "permission_requests",
+    ),
+)
+def test_live_failure_fails_closed_any_malformed_ledger_collection(
+    collection_name: str,
+) -> None:
+    state = _live_diagnostic_state(mission_status="completed")
+    state[collection_name] = ["SECRET /Users/private mat_bad dsp_bad summary"]
+
+    rendered = str(
+        _live_failure("first_permission_timeout", store=_StaticLiveStore(state))
+    )
+    diagnostic = json.loads(rendered)
+
+    assert diagnostic["ledger"]["classification"] == "permission_state_inconsistent"
+    assert diagnostic["ledger"]["permission_count"] == (
+        -1 if collection_name == "permission_requests" else 0
+    )
+    assert diagnostic["ledger"]["permission_states"] == []
+    for forbidden in ("SECRET", "/Users", "mat_", "dsp_", "summary"):
+        assert forbidden not in rendered
+
+
+@pytest.mark.parametrize(
+    "malformed_permissions",
+    (
+        {},
+        "SECRET /Users/private mat_bad dsp_bad summary",
+        ["SECRET /Users/private mat_bad dsp_bad summary"],
+    ),
+)
+def test_live_failure_fails_closed_malformed_permission_collection(
+    malformed_permissions: object,
+) -> None:
+    state = _live_diagnostic_state(mission_status="completed")
+    state["permission_requests"] = malformed_permissions
+
+    rendered = str(
+        _live_failure("first_permission_timeout", store=_StaticLiveStore(state))
+    )
+    diagnostic = json.loads(rendered)
+
+    assert diagnostic["ledger"]["classification"] == "permission_state_inconsistent"
+    assert diagnostic["ledger"]["attempt_state"] == "succeeded"
+    assert diagnostic["ledger"]["reply_state"] == "validated"
+    assert diagnostic["ledger"]["handoff_state"] == "recorded"
+    assert diagnostic["ledger"]["handoff_status"] == "completed"
+    assert diagnostic["ledger"]["permission_count"] == -1
+    assert diagnostic["ledger"]["permission_states"] == []
+    for forbidden in ("SECRET", "/Users", "mat_", "dsp_", "summary"):
+        assert forbidden not in rendered
 
 
 def test_live_failure_uses_one_state_snapshot_for_cardinalities_and_ledger() -> None:

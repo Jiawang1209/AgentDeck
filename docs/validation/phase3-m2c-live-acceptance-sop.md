@@ -134,11 +134,20 @@ audited absolute regular executable instead; do not weaken the path check.
 
 The gate creates a fresh disposable project outside the checkout, initializes
 only project-local AgentDeck state, and sends one natural-language request via
-a bare bounded PTY. Before confirmation, the harness requires the exact four
-task-authority checks for phase order, Worker order, `artifact.txt` in every
-step, and the locked `draft-v1` / `accepted-v2` transition. A failed authority
-check stops before confirmation with zero daemon admission and zero Worker
-effect. It requires:
+a bare bounded PTY. Before confirmation, the harness requires exactly seven
+task-authority fields:
+
+- `phase_order`: implementation, review, revision, and acceptance occur in
+  that order;
+- `worker_order`: the assignments are Claude, Codex, Claude, Codex;
+- `artifact_all_steps`: every task names `artifact.txt`;
+- `implementation_draft`: implementation requires `draft-v1`;
+- `review_target`: review requires `accepted-v2`;
+- `revision_transition`: revision contains both `draft-v1` and `accepted-v2`;
+- `acceptance_target`: acceptance requires `accepted-v2`.
+
+A false field stops before confirmation with zero daemon admission and zero
+Worker effect. It requires:
 
 1. one Codex native-schema preview with exact `implementation`, `review`,
    `revision`, and `acceptance` phases;
@@ -201,16 +210,37 @@ permission_states
 
 Every textual ledger value comes from a closed allowlist; an unknown or
 malformed value becomes `unknown`, and a step outside 1 through 4 becomes `0`.
+Each of `missions`, `mission_attempts`, `mission_worker_replies`,
+`mission_handoffs`, and `permission_requests` must be an exact list containing
+only exact dictionaries. A dict container, string, or list containing any
+non-dict item is malformed and fails closed as `permission_state_inconsistent`
+after the higher-priority Leader authority check. Malformed permissions report
+fixed `permission_count=-1` and `permission_states=[]`; they are never guessed
+to be an empty or populated valid queue. Existing cardinality diagnostics keep
+their independent list/dict counting semantics.
+
 The closed classifications are `leader_task_authority_missing`,
 `worker_effect_not_requested`, `worker_attempt_failed`,
-`worker_attempt_active`, and `permission_state_inconsistent`.
+`worker_attempt_active`, and `permission_state_inconsistent`, guarded by one
+exact classification allowlist. Classification precedence and meaning are:
+
+1. exact closed task-authority failure is `leader_task_authority_missing`;
+2. malformed ledger collections or any valid permission record are
+   `permission_state_inconsistent`;
+3. `prepared`, `admitting`, `submitted`, or `running` attempts are
+   `worker_attempt_active`;
+4. `failed`, `cancelled`, or `interrupted` attempts are
+   `worker_attempt_failed`;
+5. the exact completed-effect facts below are `worker_effect_not_requested`;
+6. every other combination is `permission_state_inconsistent`.
+
 `worker_effect_not_requested` means the snapshot has zero permission requests,
 a `completed` or `succeeded` attempt, a `validated` reply, a `recorded` handoff,
 and canonical handoff status `completed`. It is a diagnostic description of
 durable facts, not authorization, approval, permission confirmation, or a
 scheduler transition. Any permission record classifies as
-`permission_state_inconsistent`, except that an exact closed task-authority
-failure remains the higher-priority classification.
+`permission_state_inconsistent`; exact closed task-authority failure always
+has precedence.
 
 Failures otherwise emit only byte count, truncation flag, SHA-256, a fixed
 stage/code, the closed ledger, and state cardinalities—never IDs, PID, terminal
@@ -241,5 +271,5 @@ conda run --no-capture-output -n agentdeck \
   pytest tests/test_m2c_live_acceptance.py -q
 ```
 
-Expected portable result: `78 passed, 1 skipped`. A printed `ready=false`
+Expected portable result: `87 passed, 1 skipped`. A printed `ready=false`
 payload remains an honest setup result, not M2c PASS.
