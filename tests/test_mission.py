@@ -339,9 +339,25 @@ def test_project_view_and_workbench_share_compact_semantic_authority(
     state["missions"] = [mission]
     store.save(state)
 
-    preview = asdict(store.project_view(project_config))
+    raw_preview = store.project_view(project_config)
+    raw_plan_card = raw_preview.plans["items"][0]["semantic_authority"]
+    raw_mission_item = raw_preview.missions["items"][0]
+    raw_mission_card = raw_mission_item["semantic_authority"]
+    raw_workbench_card = workbench_mission_card(raw_mission_item, "agentdeck")
+    raw_workbench_semantic = raw_workbench_card["semantic_authority"]
+    assert raw_plan_card == raw_mission_card == raw_workbench_semantic
+    assert raw_plan_card is not raw_mission_card
+    assert raw_workbench_semantic is not raw_mission_card
+    raw_plan_card["blockers"].append("projection-only mutation")
+    assert raw_mission_card["blockers"] == []
+    assert raw_workbench_semantic["blockers"] == []
+    raw_workbench_semantic["blockers"].append("workbench-only mutation")
+    assert raw_mission_card["blockers"] == []
+
+    preview = asdict(raw_preview)
     plan_card = preview["plans"]["items"][0]["semantic_authority"]
     mission_card = preview["missions"]["items"][0]["semantic_authority"]
+    plan_card["blockers"] = []
     assert plan_card == mission_card
     assert set(plan_card) == {
         "schema_version", "state", "authority_hash", "requirement_count",
@@ -397,6 +413,55 @@ def test_project_view_and_workbench_share_compact_semantic_authority(
     result = validate_project_view_contract(duplicate_view)
     assert result["ok"] is False
     assert "plans.items plan_id must be unique" in result["errors"]
+
+
+@pytest.mark.parametrize(
+    "drift",
+    ["semantic_authority_hash", "compiled_task_hashes", "preview_generation"],
+)
+def test_project_view_rejects_second_semantic_mission_drift(
+    tmp_path: Path, drift: str
+) -> None:
+    project_config = config(
+        agent("planner", "codex-cli"),
+        agent("reviewer", "claude-cli"),
+        leader=LeaderConfig(provider="fake", model="fake-plan"),
+    )
+    store = StateStore(tmp_path)
+    semantic_plan = LeaderOrchestrator(
+        project_config, FakeLeaderProvider()
+    ).plan_result(
+        "raw context only",
+        project_config.leader.model,
+        selected_agent_ids=("planner", "reviewer"),
+        step_count=4,
+        semantic_authority=_project_view_semantic_authority(),
+    ).plan
+    plan = store.build_plan_record(
+        "semantic task", "fake", "fake-plan", semantic_plan
+    )
+    values = mission_values()
+    values.update(
+        plan_id=plan["plan_id"],
+        plan_hash=canonical_workflow_plan_hash(plan),
+        step_count=4,
+    )
+    mission = store.build_mission_record(**values, semantic_plan=semantic_plan)
+    second = deepcopy(mission)
+    second["mission_id"] = "mis_deadbeefcafe"
+    if drift == "semantic_authority_hash":
+        second[drift] = "sha256:" + "f" * 64
+    elif drift == "compiled_task_hashes":
+        second[drift] = ["sha256:" + "f" * 64] * 4
+    else:
+        second[drift] = 2
+    state = store.load()
+    state["plans"] = [plan]
+    state["missions"] = [mission, second]
+    store.save(state)
+
+    with pytest.raises(ValueError, match="semantic ProjectView provenance invalid"):
+        store.project_view(project_config)
 
 
 def test_project_view_legacy_plan_and_mission_project_null_semantic_authority(

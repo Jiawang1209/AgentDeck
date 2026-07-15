@@ -7982,7 +7982,7 @@ def _validate_project_view_mission_items(
     errors: list[str], payload: dict[str, object]
 ) -> None:
     missions = payload.get("missions")
-    if not isinstance(missions, dict):
+    if type(missions) is not dict:
         if "missions" in payload:
             errors.append("missions must be an object")
         return
@@ -7990,7 +7990,7 @@ def _validate_project_view_mission_items(
         if field not in missions:
             errors.append(f"missing missions field: {field}")
     items = missions.get("items")
-    if not isinstance(items, list):
+    if type(items) is not list:
         if "items" in missions:
             errors.append("missions.items must be a list")
         return
@@ -8307,6 +8307,31 @@ def _validate_project_view_mission_items(
             type(semantic) is dict
             and _project_view_semantic_authority_is_comparable(semantic)
         ):
+            plans = payload.get("plans")
+            plan_items = plans.get("items") if type(plans) is dict else None
+            matching_plans = (
+                [
+                    plan
+                    for plan in plan_items
+                    if type(plan) is dict
+                    and plan.get("plan_id") == item.get("plan_id")
+                ]
+                if type(plan_items) is list
+                else []
+            )
+            if len(matching_plans) != 1:
+                errors.append(
+                    f"missions.items[{index}].semantic_authority requires exactly one linked Plan"
+                )
+            else:
+                plan_semantic = matching_plans[0].get("semantic_authority")
+                if (
+                    _project_view_semantic_authority_is_comparable(plan_semantic)
+                    and plan_semantic != semantic
+                ):
+                    errors.append(
+                        f"missions.items[{index}].semantic_authority must match the linked Plan"
+                    )
             status = item.get("status")
             confirmed_at = item.get("confirmed_at")
             if status == MISSION_STATUSES[0]:
@@ -8537,12 +8562,12 @@ def _validate_plan_leader_generation(
 
 def _validate_project_view_plan_items(errors: list[str], payload: dict[str, object]) -> None:
     plans = payload.get("plans")
-    if not isinstance(plans, dict):
+    if type(plans) is not dict:
         if "plans" in payload:
             errors.append("plans must be an object")
         return
     items = plans.get("items")
-    if not isinstance(items, list):
+    if type(items) is not list:
         if "items" in plans:
             errors.append("plans.items must be a list")
         return
@@ -8583,7 +8608,7 @@ def _validate_project_view_plan_items(errors: list[str], payload: dict[str, obje
             errors.append(f"{prefix}.leader_backend must be an object")
         exact_selected_agent_facts = None
         missions = payload.get("missions")
-        if isinstance(missions, dict) and isinstance(missions.get("items"), list):
+        if type(missions) is dict and type(missions.get("items")) is list:
             matching = next(
                 (
                     mission

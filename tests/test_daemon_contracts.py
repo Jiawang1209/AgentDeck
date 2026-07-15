@@ -287,3 +287,74 @@ def test_project_view_standalone_semantic_plan_cannot_claim_frozen() -> None:
         "project_view.plans.items[0].semantic_authority.state must be preview without a linked Mission"
         in result["errors"]
     )
+
+
+@pytest.mark.parametrize("source_case", ["missing", "wrong_id", "duplicate"])
+def test_project_view_semantic_mission_requires_exactly_one_matching_plan(
+    source_case: str,
+) -> None:
+    payload = project_view_example()
+    compact = {
+        "schema_version": "mission-semantic-authority/v1",
+        "state": "preview",
+        "authority_hash": "sha256:" + "a" * 64,
+        "requirement_count": 4,
+        "proposed_effect_count": 0,
+        "unresolved_count": 0,
+        "compiled_step_count": 2,
+        "blockers": [],
+    }
+    payload["missions"]["items"][0]["semantic_authority"] = deepcopy(compact)
+    payload["plans"]["items"][0]["semantic_authority"] = deepcopy(compact)
+    if source_case == "missing":
+        payload["plans"]["items"] = []
+        payload["plans"]["count"] = 0
+    elif source_case == "wrong_id":
+        payload["plans"]["items"][0]["plan_id"] = "pln_other"
+    else:
+        payload["plans"]["items"].append(
+            deepcopy(payload["plans"]["items"][0])
+        )
+        payload["plans"]["count"] = 2
+
+    result = validate_project_view_contract(payload)
+
+    assert result["ok"] is False
+    assert (
+        "missions.items[0].semantic_authority requires exactly one linked Plan"
+        in result["errors"]
+    )
+
+
+@pytest.mark.parametrize("surface", ["plans", "missions"])
+@pytest.mark.parametrize("container", ["summary", "items"])
+def test_project_view_rejects_hostile_plan_mission_containers_without_hooks(
+    surface: str, container: str
+) -> None:
+    touched: list[str] = []
+
+    class HostileSummary(dict):
+        def get(self, _key, _default=None):
+            touched.append("get")
+            raise RuntimeError("RAW_CONTAINER_SECRET")
+
+        def __iter__(self):
+            touched.append("iter")
+            raise RuntimeError("RAW_CONTAINER_SECRET")
+
+    class HostileItems(list):
+        def __iter__(self):
+            touched.append("iter")
+            raise RuntimeError("RAW_CONTAINER_SECRET")
+
+    payload = project_view_example()
+    if container == "summary":
+        payload[surface] = HostileSummary(payload[surface])
+    else:
+        payload[surface]["items"] = HostileItems(payload[surface]["items"])
+
+    result = validate_project_view_contract(payload)
+
+    assert result["ok"] is False
+    assert touched == []
+    assert "RAW_CONTAINER_SECRET" not in repr(result)

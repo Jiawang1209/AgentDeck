@@ -9952,7 +9952,9 @@ class StateStore:
                         step_count=len(steps) if isinstance(steps, list) else 0,
                         plan=body,
                     ),
-                    "semantic_authority": semantic_by_plan.get(id(plan)),
+                    "semantic_authority": copy.deepcopy(
+                        semantic_by_plan.get(id(plan))
+                    ),
                     "model": plan.get("model"),
                     "dispatch_ready": plan.get("dispatch_ready"),
                     "skill_context": StateStore._plan_skill_context(plan.get("skill_context")),
@@ -10066,7 +10068,9 @@ class StateStore:
                     "leader_backend": leader_backend_identity(provider, model),
                     "plan_id": mission.get("plan_id"),
                     "plan_hash": mission.get("plan_hash"),
-                    "semantic_authority": semantic_by_mission.get(id(mission)),
+                    "semantic_authority": copy.deepcopy(
+                        semantic_by_mission.get(id(mission))
+                    ),
                     "workflow_run_id": mission.get("workflow_run_id"),
                     "current_step": current_step,
                     "step_count": step_count,
@@ -10176,11 +10180,18 @@ class StateStore:
             plan_id = plan.get("plan_id")
             valid_plan_id = type(plan_id) is str and bool(plan_id)
             linked_missions = missions_by_plan.get(plan_id, []) if valid_plan_id else []
-            mission = linked_missions[0] if linked_missions else None
-            compact = StateStore._semantic_authority_projection(plan, mission)
-            by_plan[id(plan)] = compact
-            for mission in linked_missions:
-                by_mission[id(mission)] = compact
+            linked_compacts = [
+                StateStore._semantic_authority_projection(plan, mission)
+                for mission in linked_missions
+            ]
+            plan_compact = (
+                linked_compacts[0]
+                if linked_compacts
+                else StateStore._semantic_authority_projection(plan, None)
+            )
+            by_plan[id(plan)] = plan_compact
+            for mission, mission_compact in zip(linked_missions, linked_compacts):
+                by_mission[id(mission)] = mission_compact
         for plan_id, linked_missions in missions_by_plan.items():
             if plan_id in valid_plan_ids:
                 continue
