@@ -1169,7 +1169,7 @@ no live execution
 
 Fix any issue with another RED/GREEN cycle before committing.
 
-- [ ] **Step 4: Create the single implementation commit**
+- [x] **Step 4: Create the single implementation commit**
 
 Stage only the planned files:
 
@@ -1187,7 +1187,7 @@ git commit -m "test: expose M2c Leader preview terminal"
 Record the exact commit with `git rev-parse HEAD`. This is the frozen
 implementation authority.
 
-- [ ] **Step 5: Run full suite one on the unchanged SHA**
+- [x] **Step 5: Run full suite one on the unchanged SHA**
 
 Run:
 
@@ -1199,14 +1199,14 @@ PYTHONPATH="$PWD/src" conda run --no-capture-output -n agentdeck \
 Expected: PASS with only the repository's explicitly skipped live tests. Record
 the exact count, skips, duration, and confirm the SHA is unchanged.
 
-- [ ] **Step 6: Run full suite two independently on the unchanged SHA**
+- [x] **Step 6: Run full suite two independently on the unchanged SHA**
 
 Run the same command again in a new process.
 
 Expected: the same test count and skips PASS; duration may differ. Confirm the
 SHA is still the frozen implementation authority.
 
-- [ ] **Step 7: Check for an explicit human model input before preflight**
+- [x] **Step 7: Check for an explicit human model input before preflight**
 
 Run without printing the value:
 
@@ -1219,6 +1219,9 @@ and double full suite are complete but the human-selected model id is missing.
 Do not choose `gpt-5.4`, `gpt-5.5`, or any other value on the user's behalf.
 
 - [ ] **Step 8: Run exactly one designated read-only preflight when model input exists**
+
+Not run in this cycle: `AGENTDECK_M2C_LEADER_MODEL` was absent. Designated
+preflight invocation count is zero; no model value was guessed.
 
 Only if Step 7 passes, run:
 
@@ -1242,13 +1245,13 @@ The pytest contract may pass while product readiness is false. If so, record
 the exact fixed blockers and stop. Never rerun the designated preflight in this
 cycle.
 
-- [ ] **Step 9: Audit zero residuals and unchanged authority**
+- [x] **Step 9: Audit zero residuals and unchanged authority**
 
 Confirm no `agentdeck-m2c-live-*` root, controlled launcher, probe process,
 M2c tmux session, or changed global config exists. Confirm the frozen SHA and
 source/test bytes are unchanged by both full suites and preflight.
 
-- [ ] **Step 10: Record verification in one evidence-only commit**
+- [x] **Step 10: Record verification in one evidence-only commit**
 
 Update only the validation report, handoff, HISTORY, and this plan with the
 exact two-suite results, preflight result or explicit missing-model stop, frozen
@@ -1265,7 +1268,7 @@ git add \
 git commit -m "docs: record M2c preview observability evidence"
 ```
 
-- [ ] **Step 11: Stop at the live authorization gate**
+- [x] **Step 11: Stop at the live authorization gate**
 
 Do not run:
 
@@ -1278,3 +1281,14 @@ If preflight is ready, request separate human authorization naming the frozen
 implementation SHA and exact model id. If preflight is blocked or the model id
 is missing, report that blocker instead. M2c remains BLOCKED and M3 remains
 locked in every outcome of this implementation plan.
+
+Verification evidence for this cycle:
+
+- frozen implementation SHA:
+  `9db5b476f885cfcf68a55cbf59673a2d908d3fce`;
+- full suite 1: `4219 passed, 2 skipped in 185.64s`;
+- full suite 2: `4219 passed, 2 skipped in 191.59s`;
+- designated preflight count: `0` (`AGENTDECK_M2C_LEADER_MODEL` missing);
+- live attempt count: `0`;
+- residual matching root/process count: `0`;
+- frozen-SHA status after verification: clean.

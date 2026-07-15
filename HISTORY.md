@@ -4,6 +4,13 @@
 
 ## 2026-07-16
 
+### Freeze M2c Leader Preview observability at the explicit-model gate
+
+- Froze the implementation authority at `9db5b476f885cfcf68a55cbf59673a2d908d3fce` after final independent review, production Conversation contract regression (`84 passed`), compile/diff checks, and the complete non-live M2c harness (`186 passed, 1 skipped in 42.69s`). No `src/agentdeck/**` file changed.
+- Ran two independent full suites on the unchanged SHA: `4219 passed, 2 skipped in 185.64s` and `4219 passed, 2 skipped in 191.59s`. HEAD stayed fixed and the worktree remained clean after both runs.
+- Stopped before the designated read-only preflight because no human-selected `AGENTDECK_M2C_LEADER_MODEL` was present. Preflight invocation count and live attempt count are both zero; no historical or guessed model was used.
+- Audited zero matching live/probe/staged-tool temporary roots and zero matching live pytest processes without inspecting a user tmux server. No provider, ACP adapter, tmux server, package install, login, global configuration, authentication, permission change, or live Mission was invoked. M2c remains **BLOCKED** and M3 locked pending an explicit model plus separate preflight authorization.
+
 ### Implement M2c Leader Preview terminal observability
 
 - Added a dedicated process-aware Preview wait to the opt-in M2c harness. It performs bounded PTY drains, validates the exact new conversation turn's durable failed/cancelled terminal, polls PTY exit, gives durable terminal evidence priority over an outer timeout, and reserves `mission_preview_timeout` for the strict no-Preview/no-terminal/live-process deadline case.

@@ -376,7 +376,23 @@ authentication, network, ACP, tmux, daemon, permission, and Worker behavior
 remain unchanged. No real provider, read-only designated preflight, tmux
 server, ACP adapter, or live Mission ran in this candidate slice.
 
-The implementation commit, two unchanged-SHA full suites, and one designated
-explicit-model read-only preflight are still pending. M2c remains **BLOCKED**,
-M3 remains locked, and any future live attempt still requires separate human
-authorization naming the frozen implementation SHA and exact model identity.
+The implementation authority is frozen at
+`9db5b476f885cfcf68a55cbf59673a2d908d3fce`. On that unchanged SHA, two
+independent full suites passed with `4219 passed, 2 skipped` in `185.64s` and
+`191.59s`. HEAD stayed at the frozen authority and the worktree remained
+clean after both runs.
+
+The required human-selected `AGENTDECK_M2C_LEADER_MODEL` was absent. The
+designated read-only preflight therefore ran zero times; no model id was
+guessed or inherited from the historical run. Live attempt count is also
+zero. A read-only residual audit found zero `/tmp/agentdeck-m2c-live-*`,
+`/tmp/m2c-auth-*`, probe, or staged-tool roots and no matching live pytest
+process. No user tmux server was inspected and no global config, auth, package,
+or permission state was changed.
+
+This is a verified implementation candidate, not M2c PASS. M2c remains
+**BLOCKED** and M3 remains locked at the explicit-model preflight gate. The
+next authorized action is for a human to supply the exact audited model id,
+then approve one new designated read-only preflight. Any future live attempt
+still requires separate authorization naming the frozen implementation SHA
+and exact model identity.
