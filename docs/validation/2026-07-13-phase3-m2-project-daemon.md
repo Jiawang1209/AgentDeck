@@ -6,6 +6,33 @@ Date: 2026-07-15
 
 **Deterministic M2 acceptance: PASS. Two-step real transport rehearsal: PASS. Full approved four-stage M2c rehearsal: BLOCKED.**
 
+## Semantic-authority harness conversion
+
+The new M2c harness replaces its live PASS decision based on free-text phase
+and token searches with the implemented `mission-semantic-authority/v1`
+boundary. Before confirmation it now requires the schema, the unique atomic
+revision transition from `draft-v1\n` to `accepted-v2\n`, byte-equal fresh
+compilation, four semantic-step and task hashes equal to the authoritative
+snapshot, the exact confirmation digest over authority/task/policy/generation
+facts, and zero attempts, permissions, Worker replies, and handoffs. Closed
+failure diagnostics contain only the fixed gate names and booleans. The old
+token checks remain test mutation helpers and cannot produce a live PASS.
+
+The complete non-live M2c harness currently passes `105` tests with exactly one
+opt-in live skip. This is deterministic pre-freeze evidence only. It does not
+claim a real four-stage PASS, change login or global settings, or authorize a
+live attempt. M2c remains **BLOCKED** and M3 remains locked until the new commit
+passes two independent full suites, the single read-only preflight returns
+`ready=true`, `blockers=[]`, and a separately authorized one-shot live run meets
+every success criterion.
+
+This is a control-plane feature around LLM reasoning, not a replacement for an
+LLM. Required user authority, visible Leader proposals, unresolved facts, and
+confirmed frozen authority remain distinct. The one Mission confirmation is
+independent from runtime permissions, and ProjectView exposes only compact
+non-authorizing provenance. A2A, remote execution, GUI redesign, and a terminal
+emulator remain out of scope.
+
 ## Frozen M2c single-live evidence
 
 The latest M2c evidence authority is frozen commit
@@ -47,12 +74,11 @@ These observed facts are the cleanup evidence; no unreported
 `cleanup=complete` or `residual_process_count` payload field is inferred.
 
 The approved four-stage M2c rehearsal remains **BLOCKED**, not a partial PASS,
-and M3 remains locked. The only next gate is a new brainstorming/spec/plan
-round for Leader revision task semantic authority, choosing either a stronger
-native-schema/prompt semantic constraint or a closed per-token diagnostic.
-That work must first produce deterministic RED/GREEN evidence, a new commit, a
-fresh full suite, and a fresh `ready=true` / `blockers=[]` preflight before one
-new single live attempt may be authorized. There is no automatic retry.
+and M3 remains locked. This historical failure motivated the implemented
+semantic-authority control plane and frozen harness described above; it must
+not be retried from the old evidence commit. The next active gate is the new
+frozen commit, two independent full suites, and exactly one read-only preflight.
+There is no automatic retry or live authorization in this document.
 
 ## tmux startup/readiness correction
 

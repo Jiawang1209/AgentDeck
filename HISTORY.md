@@ -4,6 +4,14 @@
 
 ## 2026-07-15
 
+### Prepare semantic M2c live acceptance
+
+- Replaced the M2c live PASS authority source based on Leader-authored phase/token text with a frozen `mission-semantic-authority/v1` gate. Before confirmation the harness now requires the exact schema, one atomic revision transition from `draft-v1\n` to `accepted-v2\n`, byte-equal fresh compilation, four semantic-step and task hashes equal to the authoritative snapshot, and the exact confirmation digest over authority, compiled tasks, policy, and preview generation.
+- Added fail-closed pre-confirmation evidence: attempts, permission requests, Worker replies, and handoffs must all be empty, and a rejected frozen fact emits only the fixed seven boolean gate results plus bounded ledger/cardinality diagnostics. The confirmation text is never written on failure.
+- Retained the old per-token corpus solely as test mutation helpers; it can no longer authorize or pass the live Mission. Added production-helper-backed schema/transition/compiler/hash/binding mutation coverage and a real confirmation-path zero-write regression. The complete non-live M2c harness passes `105` tests with one explicit opt-in live skip.
+- Synchronized README, ProjectView contract, semantic-authority spec, M2 validation, and current handoff truth: AgentDeck is the control plane around LLM reasoning; required/proposed/unresolved/frozen authority are distinct; one Mission confirmation remains independent from runtime permissions; ProjectView exposes compact non-authorizing provenance; A2A, remote execution, GUI redesign, and terminal-emulator work remain out of scope.
+- This change does not claim M2c live PASS. M2c remains **BLOCKED** and M3 remains locked pending an exact frozen commit, two independent unchanged-SHA full suites, one read-only `ready=true` / `blockers=[]` preflight, and separate human authorization for Task 14. No real provider, network, tmux, ACP adapter, login, global-setting change, or live attempt occurred in this slice.
+
 ### Prove semantic Mission authority end to end
 
 - Converted the existing fake-only four-stage daemon acceptance into the full semantic path: natural-language intake, deterministic authority extraction, native Leader candidate, byte-exact compilation, exact preview confirmation, daemon admission, ACP/tmux execution, revision, acceptance, and completion. The test proves four distinct compiled hashes, two permission pauses, four canonical handoffs, three inter-stage links, disconnect/reconnect, takeover/return-control, and final `accepted-v2\n` bytes.

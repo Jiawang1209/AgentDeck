@@ -68,6 +68,20 @@ agentdeck project migration-preview
 
 Natural language is never execution authority. AgentDeck binds confirmation to exact execution facts, does not silently change ACP to tmux, and keeps permission, approval, runtime-safety, and ownership gates independent. Common inline credential assignments are redacted from durable Mission provenance.
 
+For semantic Missions, AgentDeck is the control plane around LLM reasoning, not
+a replacement for it. The user supplies required authority; the Leader may add
+separately visible proposals; ambiguous facts remain unresolved; and only the
+exact confirmed preview becomes frozen authority. AgentDeck then compiles the
+Worker tasks deterministically and binds confirmation to the authority,
+compiled-task, policy, and preview-generation facts. That single Mission
+confirmation does not grant later ACP tool permissions or bypass runtime
+safety, ownership, or approval gates.
+
+ProjectView exposes only compact semantic provenance: schema/state, hashes,
+counts, compiled-step count, and blockers. It does not expose full effects,
+before/after literals, prompts, or secrets. This slice does not add A2A, remote
+execution, a GUI redesign, or a terminal emulator.
+
 Phase 3 M2 now runs daemon-admitted frozen Missions in one verified, on-demand
 project daemon. Closing the interactive client does not revoke the frozen
 authority or stop the scheduler. AgentDeck mediates every Worker transition,

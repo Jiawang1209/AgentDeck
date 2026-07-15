@@ -2,7 +2,7 @@
 
 **Date:** 2026-07-15
 
-**Status:** Human-approved design; implementation requires a separately reviewed TDD plan
+**Status:** Human-approved; deterministic implementation and M2c semantic harness conversion complete, real live acceptance pending
 
 **Milestone:** Phase 3 M2c closure
 
@@ -503,6 +503,25 @@ writes without changing login, global configuration, or permissions.
 
 Even then, live execution requires a new explicit human authorization. The
 harness may make exactly one real attempt and must not retry automatically.
+
+### 17.6 Implemented harness authority boundary
+
+The M2c live harness no longer treats Leader-authored `task` text or fixed-token
+searches as its PASS authority. Before it writes the natural-language
+confirmation, it requires the exact semantic schema, one atomic revision
+transition with the fixed before/after values, byte-equal fresh compilation,
+four semantic-step and task hashes equal to the authoritative snapshot, and an
+exact confirmation digest over authority, compiled-task, policy, and preview
+generation facts. It also requires zero attempts, permissions, Worker replies,
+and handoffs at that boundary. Failure emits only a closed boolean diagnostic.
+
+The old token mutation corpus remains test-only fault injection. It cannot
+authorize a Mission or make a live run pass. This harness conversion does not
+change the product boundary: AgentDeck remains the control plane around Leader
+reasoning; required, proposed, unresolved, and frozen authority remain distinct;
+one Mission confirmation does not grant runtime permissions; and compact
+ProjectView provenance is still non-authorizing. A2A, remote execution, GUI
+redesign, and terminal-emulator work remain out of scope.
 
 ## 18. M2c live success criteria
 

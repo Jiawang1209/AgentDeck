@@ -123,6 +123,18 @@ Authority validation uses only facts each surface actually owns. For a ProjectVi
 
 `plans.items[].semantic_authority` is an additive `project-view/v1` field. Legacy plans project `null`; semantic plans project exactly `schema_version`, `state`, `authority_hash`, `requirement_count`, `proposed_effect_count`, `unresolved_count`, `compiled_step_count`, and `blockers`. The StateStore joins authoritative Plans and Missions by validated non-empty string id, revalidates the complete compiled semantic plan and every linked Mission's four compact persistence facts, then calls `compact_semantic_authority()` as the single source of the displayed hash, counts, and state. It never validates only the first Mission and broadcasts that card over another row. Unconfirmed Missions project `preview`; confirmed Missions project `frozen`. Draft/blocked authority is never inferred from runtime state, and runtime/startup blockers remain on the enclosing Mission instead of appearing as semantic blockers. Targets, literals, before/after content, full authority, Leader candidates, prompts, and secret references are never projected.
 
+The semantic lifecycle is `required` user authority plus separately visible
+Leader `proposed` effects, with ambiguous facts retained as `unresolved`; only
+an exact Mission confirmation produces `frozen` authority. ProjectView's
+`draft|blocked|preview|frozen` state is a compact projection of that lifecycle,
+not a second authority store. AgentDeck uses the full validated plan internally
+to compile deterministic Worker tasks, while ProjectView carries only the
+non-sensitive hash/count projection needed for display and audit correlation.
+The one preview confirmation and later runtime permissions are independent:
+this card never grants ACP tool use, dispatch, ownership, approval, or runtime
+safety authority. A2A, remote execution, GUI redesign, and terminal-emulator
+semantics are outside this contract.
+
 `messages.items[]` includes `prompt_skill_context`, the compact worker skill provenance snapshot captured when `agentdeck dispatch` or `agentdeck approval dispatch` injected loaded skill content into the worker prompt. It uses the same compact shape as `plans.items[].skill_context`, intentionally excludes full `content_snapshot`, and exists so GUI clients can show worker skill context without parsing prompt text. Old or manually seeded messages without skill provenance are normalized to an empty summary.
 
 ## Missions

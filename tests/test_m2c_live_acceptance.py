@@ -30,6 +30,7 @@ import pytest
 from agentdeck import cli as cli_module
 from agentdeck.config import load_config
 from agentdeck.contracts import validate_trace_contract, validate_workbench_contract
+from agentdeck.conversation.bindings import execution_digest
 from agentdeck.daemon.client import DaemonClient
 from agentdeck.daemon.lifecycle import (
     DaemonIdentityError,
@@ -38,6 +39,21 @@ from agentdeck.daemon.lifecycle import (
     project_root_hash,
 )
 from agentdeck.state import StateStore
+from agentdeck.mission_authority import (
+    canonical_workflow_plan_hash,
+    validated_compiled_semantic_plan,
+)
+from agentdeck.mission_orchestration import build_execution_snapshot
+from agentdeck.semantic_planning import (
+    compile_semantic_plan,
+    compile_worker_task,
+    semantic_step_hash,
+)
+from agentdeck.state import (
+    canonical_snapshot_hash,
+    execution_policy_snapshot,
+    leader_backend_identity,
+)
 
 
 LIVE = os.environ.get("AGENTDECK_M2C_LIVE") == "1"
@@ -76,6 +92,15 @@ _LIVE_TASK_AUTHORITY_FIELDS = (
     "review_target",
     "revision_transition",
     "acceptance_target",
+)
+_LIVE_FROZEN_AUTHORITY_FIELDS = (
+    "schema_version",
+    "revision_transition",
+    "fresh_compilation",
+    "semantic_step_hashes",
+    "task_hashes",
+    "confirmation_binding",
+    "preconfirmation_zero_effects",
 )
 _LIVE_MISSION_STATUSES = frozenset(
     {
@@ -116,6 +141,7 @@ _LIVE_FAILED_ATTEMPT_STATES = frozenset(
 _LIVE_DIAGNOSTIC_CLASSIFICATIONS = frozenset(
     {
         "leader_task_authority_missing",
+        "leader_semantic_authority_missing",
         "worker_effect_not_requested",
         "worker_attempt_failed",
         "worker_attempt_active",
@@ -802,6 +828,7 @@ def _live_ledger_diagnostic(
     *,
     code: str,
     task_authority: dict[str, bool] | None,
+    frozen_authority: dict[str, bool] | None = None,
 ) -> dict[str, object]:
     durable = state if type(state) is dict else {}
     mission_records = _dict_records(durable.get("missions"))
@@ -932,6 +959,12 @@ def _live_ledger_diagnostic(
         and not all(task_authority.values())
     ):
         classification = "leader_task_authority_missing"
+    elif (
+        code == "frozen_semantic_authority_invalid"
+        and frozen_authority is not None
+        and not all(frozen_authority.values())
+    ):
+        classification = "leader_semantic_authority_missing"
     elif not collections_valid or not lineage_valid:
         classification = "permission_state_inconsistent"
     elif permissions:
@@ -1016,6 +1049,169 @@ def _live_task_authority_checks(steps: object) -> dict[str, bool]:
     }
 
 
+def _live_frozen_authority_checks(
+    state: object,
+    *,
+    config: object,
+    root: Path,
+    snapshot: object | None = None,
+) -> dict[str, bool]:
+    checks = {field: False for field in _LIVE_FROZEN_AUTHORITY_FIELDS}
+    if type(state) is not dict:
+        return checks
+    plans = state.get("plans")
+    missions = state.get("missions")
+    bindings = state.get("conversation_preview_bindings")
+    if (
+        type(plans) is not list
+        or len(plans) != 1
+        or type(plans[0]) is not dict
+        or type(missions) is not list
+        or len(missions) != 1
+        or type(missions[0]) is not dict
+        or type(bindings) is not list
+        or len(bindings) != 1
+        or type(bindings[0]) is not dict
+    ):
+        return checks
+    plan_record = plans[0]
+    mission = missions[0]
+    raw_plan = plan_record.get("plan")
+    authority = raw_plan.get("semantic_authority") if type(raw_plan) is dict else None
+    requirements = authority.get("requirements") if type(authority) is dict else None
+    checks["schema_version"] = (
+        type(authority) is dict
+        and authority.get("schema_version") == "mission-semantic-authority/v1"
+        and mission.get("semantic_authority_schema_version")
+        == "mission-semantic-authority/v1"
+    )
+    transitions = (
+        [
+            item
+            for item in requirements
+            if type(item) is dict
+            and item.get("kind") == "state_transition"
+            and item.get("phase") == "revision"
+            and item.get("agent_id") == "claude-worker"
+        ]
+        if type(requirements) is list
+        else []
+    )
+    checks["revision_transition"] = (
+        len(transitions) == 1
+        and transitions[0].get("target") == "artifact.txt"
+        and transitions[0].get("operation") == "update"
+        and transitions[0].get("before") == {"content_equals": "draft-v1\n"}
+        and transitions[0].get("after") == {"content_equals": "accepted-v2\n"}
+    )
+    try:
+        validated = validated_compiled_semantic_plan(raw_plan)
+    except (TypeError, ValueError):
+        validated = None
+    if validated is not None:
+        semantic_steps = validated["semantic_steps"]
+        compatibility_steps = validated["steps"]
+        checks["fresh_compilation"] = (
+            len(semantic_steps) == len(compatibility_steps) == 4
+            and all(
+                compile_worker_task(semantic) == compatibility["task"]
+                for semantic, compatibility in zip(
+                    semantic_steps, compatibility_steps, strict=True
+                )
+            )
+        )
+        active_snapshot = snapshot
+        if active_snapshot is None:
+            try:
+                active_snapshot = build_execution_snapshot(
+                    config,
+                    mission,
+                    plan_record,
+                    execution_policy_snapshot(config),
+                )
+            except (TypeError, ValueError):
+                active_snapshot = None
+        snapshot_mission = (
+            active_snapshot.get("mission")
+            if type(active_snapshot) is dict
+            else None
+        )
+        snapshot_steps = (
+            snapshot_mission.get("steps")
+            if type(snapshot_mission) is dict
+            else None
+        )
+        expected_semantic_hashes = [
+            semantic_step_hash(item) for item in semantic_steps
+        ]
+        expected_task_hashes = [
+            canonical_snapshot_hash({"task": item["task"]})
+            for item in compatibility_steps
+        ]
+        raw_task_hashes = [
+            "sha256:" + hashlib.sha256(item["task"].encode("utf-8")).hexdigest()
+            for item in compatibility_steps
+        ]
+        checks["semantic_step_hashes"] = (
+            type(snapshot_steps) is list
+            and len(snapshot_steps) == 4
+            and [item.get("semantic_step_hash") for item in snapshot_steps]
+            == expected_semantic_hashes
+            and [item.get("semantic_step_hash") for item in semantic_steps]
+            == expected_semantic_hashes
+        )
+        checks["task_hashes"] = (
+            type(snapshot_steps) is list
+            and len(snapshot_steps) == 4
+            and [item.get("task_hash") for item in snapshot_steps]
+            == expected_task_hashes
+            and mission.get("compiled_task_hashes") == raw_task_hashes
+            and type(active_snapshot) is dict
+            and mission.get("execution_authority_hash")
+            == active_snapshot.get("execution_hash")
+        )
+    try:
+        confirmation_facts = {
+            "control_kind": "mission_confirm",
+            "project_root": str(root),
+            "leader_provider": config.leader.provider,
+            "leader_model": config.leader.model,
+            "action_id": mission["mission_id"],
+            "action_hash": mission["plan_hash"],
+            "semantic_authority_hash": mission["semantic_authority_hash"],
+            "compiled_task_hashes": mission["compiled_task_hashes"],
+            "policy_snapshot_hash": canonical_snapshot_hash(
+                execution_policy_snapshot(config)
+            ),
+            "preview_generation": mission["preview_generation"],
+        }
+        checks["confirmation_binding"] = bindings[0].get(
+            "execution_digest"
+        ) == execution_digest(confirmation_facts)
+    except (AttributeError, KeyError, TypeError, ValueError):
+        pass
+    checks["preconfirmation_zero_effects"] = all(
+        type(state.get(collection)) is list and state.get(collection) == []
+        for collection in (
+            "mission_attempts",
+            "permission_requests",
+            "mission_worker_replies",
+            "mission_handoffs",
+        )
+    )
+    return checks
+
+
+def _closed_frozen_authority(value: object) -> dict[str, bool] | None:
+    if (
+        type(value) is not dict
+        or tuple(value) != _LIVE_FROZEN_AUTHORITY_FIELDS
+        or not all(type(item) is bool for item in value.values())
+    ):
+        return None
+    return {field: value[field] for field in _LIVE_FROZEN_AUTHORITY_FIELDS}
+
+
 def _closed_task_authority(value: object) -> dict[str, bool] | None:
     if (
         type(value) is not dict
@@ -1033,9 +1229,11 @@ def _live_failure(
     capture: _PtyTail | None = None,
     output: bytes | None = None,
     task_authority: object = None,
+    frozen_authority: object = None,
 ) -> _LiveHarnessFailure:
     diagnostic: dict[str, object] = {"stage": "live_acceptance", "code": code}
     closed_task_authority = _closed_task_authority(task_authority)
+    closed_frozen_authority = _closed_frozen_authority(frozen_authority)
     if store is not None:
         state = store.load()
         diagnostic["cardinalities"] = _state_cardinalities_from_state(state)
@@ -1043,6 +1241,7 @@ def _live_failure(
             state,
             code=code,
             task_authority=closed_task_authority,
+            frozen_authority=closed_frozen_authority,
         )
     if capture is not None:
         diagnostic["pty"] = capture.diagnostic()
@@ -1054,6 +1253,8 @@ def _live_failure(
         }
     if closed_task_authority is not None:
         diagnostic["task_authority"] = closed_task_authority
+    if closed_frozen_authority is not None:
+        diagnostic["frozen_authority"] = closed_frozen_authority
     return _LiveHarnessFailure(json.dumps(diagnostic, sort_keys=True))
 
 
@@ -1081,6 +1282,27 @@ def _require_live_task_authority(
             store=store,
             capture=capture,
             task_authority=checks,
+        )
+
+
+def _require_live_frozen_authority(
+    state: object,
+    *,
+    config: object,
+    root: Path,
+    snapshot: object | None,
+    store: StateStore,
+    capture: _PtyTail,
+) -> None:
+    checks = _live_frozen_authority_checks(
+        state, config=config, root=root, snapshot=snapshot
+    )
+    if not all(checks.values()):
+        raise _live_failure(
+            "frozen_semantic_authority_invalid",
+            store=store,
+            capture=capture,
+            frozen_authority=checks,
         )
 
 
@@ -2368,17 +2590,14 @@ def _create_and_confirm_live_mission(
             store=store,
             capture=capture,
         )
-        expected_phases = ("implementation", "review", "revision", "acceptance")
-        _require_live(
-            all(
-                phase in str(step.get("task", "")).lower()
-                for phase, step in zip(expected_phases, steps, strict=True)
-            ),
-            "native_schema_semantic_phases_invalid",
+        _require_live_frozen_authority(
+            previewed,
+            config=load_config(root),
+            root=root,
+            snapshot=None,
             store=store,
             capture=capture,
         )
-        _require_live_task_authority(steps, store=store, capture=capture)
         generation = previewed["plans"][0].get("leader_generation")
         _require_live(
             type(generation) is dict
@@ -3052,6 +3271,258 @@ def test_live_task_authority_accepts_only_exact_fixed_scenario() -> None:
     assert checks == {field: True for field in _LIVE_TASK_AUTHORITY_FIELDS}
 
 
+def _semantic_live_authority_fixture(
+    tmp_path: Path,
+) -> tuple[Path, object, StateStore, dict[str, object], dict[str, object]]:
+    root = tmp_path / "semantic-live-authority"
+    (root / ".agentdeck").mkdir(parents=True)
+
+    @dataclass(frozen=True)
+    class _PathOnly:
+        path: Path
+
+    paths = {
+        "codex": _PathOnly(Path("/bin/true")),
+        "claude": _PathOnly(Path("/bin/true")),
+        "claude-agent-acp": _PathOnly(Path("/bin/true")),
+        "tmux": _PathOnly(Path("/bin/true")),
+    }
+    _write_live_config(root, paths, session_name="m2c-semantic-fixture")
+    config = load_config(root)
+    requirements: list[dict[str, object]] = []
+    rows = (
+        ("create", "create", "implementation", "claude-worker"),
+        ("review", "review", "review", "codex-worker"),
+        ("state_transition", "update", "revision", "claude-worker"),
+        ("verify", "verify", "acceptance", "codex-worker"),
+    )
+    for index, (kind, operation, phase, agent_id) in enumerate(rows, start=1):
+        requirement: dict[str, object] = {
+            "requirement_id": f"req_{index:012d}",
+            "kind": kind,
+            "target": "artifact.txt",
+            "operation": operation,
+            "phase": phase,
+            "agent_id": agent_id,
+            "sensitivity": "ordinary",
+        }
+        if kind == "state_transition":
+            requirement.update(
+                {
+                    "before": {"content_equals": "draft-v1\n"},
+                    "after": {"content_equals": "accepted-v2\n"},
+                }
+            )
+        else:
+            requirement["literal"] = (
+                "draft-v1\n" if kind == "create" else "accepted-v2\n"
+            )
+        requirements.append(requirement)
+    authority = {
+        "schema_version": "mission-semantic-authority/v1",
+        "source_message_hash": "sha256:" + "a" * 64,
+        "requirements": requirements,
+        "proposed_effects": [],
+        "unresolved": [],
+    }
+    agents = ("claude-worker", "codex-worker")
+    roles = {"claude-worker": "implementation", "codex-worker": "review"}
+    phases = ("implementation", "review", "revision", "acceptance")
+    plan = compile_semantic_plan(
+        authority,
+        {
+            "goal": "Create, review, revise, and verify the artifact",
+            "summary": "Four frozen semantic steps",
+            "steps": [
+                {
+                    "step": index + 1,
+                    "agent_id": agents[index % 2],
+                    "role": roles[agents[index % 2]],
+                    "phase": phases[index],
+                    "authority_refs": [requirements[index]["requirement_id"]],
+                    "proposed_effects": [],
+                    "verification": "Check the exact required effect",
+                    "risk": "low",
+                    "requires_approval": True,
+                }
+                for index in range(4)
+            ],
+        },
+        selected_agent_ids=agents,
+        roles=roles,
+        step_count=4,
+    )
+    store = StateStore(root)
+    plan_record = store.build_plan_record(
+        "semantic live fixture", "codex-cli", "gpt-5.4", plan
+    )
+    plan_hash = canonical_workflow_plan_hash(plan_record)
+    selected_agents = [
+        {
+            "agent_id": agent.agent_id,
+            "provider": agent.provider,
+            "role": agent.role,
+            "workspace_mode": agent.workspace_mode,
+            "runtime_status": "configured",
+            "effective_model": None,
+            "model_source": "configured",
+        }
+        for agent in config.agents
+    ]
+    startup_actions = [
+        {
+            "agent_id": agent.agent_id,
+            "action": "spawn",
+            "runtime_status": "configured",
+            "effective_model": None,
+            "model_source": "configured",
+        }
+        for agent in config.agents
+    ]
+    mission = store.build_mission_record(
+        user_message="semantic live fixture",
+        can_start=True,
+        blockers=[],
+        provider="codex-cli",
+        model="gpt-5.4",
+        leader_backend=leader_backend_identity("codex-cli", "gpt-5.4"),
+        plan_id=plan_record["plan_id"],
+        plan_hash=plan_hash,
+        selected_agents=selected_agents,
+        startup_actions=startup_actions,
+        step_count=4,
+        timeout_seconds=180,
+        semantic_plan=plan,
+    )
+    snapshot = build_execution_snapshot(
+        config, mission, plan_record, execution_policy_snapshot(config)
+    )
+    mission["execution_authority_hash"] = snapshot["execution_hash"]
+    confirmation_facts = {
+        "control_kind": "mission_confirm",
+        "project_root": str(root),
+        "leader_provider": config.leader.provider,
+        "leader_model": config.leader.model,
+        "action_id": mission["mission_id"],
+        "action_hash": mission["plan_hash"],
+        "semantic_authority_hash": mission["semantic_authority_hash"],
+        "compiled_task_hashes": mission["compiled_task_hashes"],
+        "policy_snapshot_hash": canonical_snapshot_hash(
+            execution_policy_snapshot(config)
+        ),
+        "preview_generation": mission["preview_generation"],
+    }
+    state = store.load()
+    state["plans"] = [plan_record]
+    state["missions"] = [mission]
+    state["conversation_preview_bindings"] = [
+        {"execution_digest": execution_digest(confirmation_facts)}
+    ]
+    for collection in (
+        "mission_attempts",
+        "permission_requests",
+        "mission_worker_replies",
+        "mission_handoffs",
+    ):
+        state[collection] = []
+    store.save(state)
+    return root, config, store, state, snapshot
+
+
+def test_live_frozen_authority_accepts_exact_semantic_fixture(tmp_path) -> None:
+    root, config, _store, state, snapshot = _semantic_live_authority_fixture(tmp_path)
+
+    checks = _live_frozen_authority_checks(
+        state, config=config, root=root, snapshot=snapshot
+    )
+
+    assert tuple(checks) == _LIVE_FROZEN_AUTHORITY_FIELDS
+    assert checks == {field: True for field in _LIVE_FROZEN_AUTHORITY_FIELDS}
+
+
+@pytest.mark.parametrize(
+    ("mutation", "failed_check"),
+    [
+        ("schema", "schema_version"),
+        ("revision_before", "revision_transition"),
+        ("compiled_task", "fresh_compilation"),
+        ("semantic_hash", "semantic_step_hashes"),
+        ("task_hash", "task_hashes"),
+        ("binding", "confirmation_binding"),
+    ],
+)
+def test_live_frozen_authority_rejects_each_frozen_fact(
+    tmp_path, mutation: str, failed_check: str,
+) -> None:
+    root, config, _store, state, snapshot = _semantic_live_authority_fixture(tmp_path)
+    mutated_state = copy.deepcopy(state)
+    mutated_snapshot = copy.deepcopy(snapshot)
+    plan = mutated_state["plans"][0]["plan"]
+    if mutation == "schema":
+        plan["semantic_authority"]["schema_version"] = "other/v1"
+    elif mutation == "revision_before":
+        plan["semantic_authority"]["requirements"][2]["before"] = {
+            "content_equals": "other\n"
+        }
+    elif mutation == "compiled_task":
+        plan["steps"][2]["task"] += "drift\n"
+    elif mutation == "semantic_hash":
+        mutated_snapshot["mission"]["steps"][2]["semantic_step_hash"] = (
+            "sha256:" + "f" * 64
+        )
+    elif mutation == "task_hash":
+        mutated_snapshot["mission"]["steps"][2]["task_hash"] = (
+            "sha256:" + "f" * 64
+        )
+    else:
+        mutated_state["conversation_preview_bindings"][0]["execution_digest"] = (
+            "f" * 64
+        )
+
+    checks = _live_frozen_authority_checks(
+        mutated_state, config=config, root=root, snapshot=mutated_snapshot
+    )
+
+    assert checks[failed_check] is False
+
+
+def test_require_live_frozen_authority_is_preconfirmation_zero_write(tmp_path) -> None:
+    root, config, store, state, snapshot = _semantic_live_authority_fixture(tmp_path)
+    state["plans"][0]["plan"]["semantic_authority"]["requirements"][2][
+        "before"
+    ] = {"content_equals": "other\n"}
+    store.save(state)
+    before = _tree_snapshot(root)
+
+    with pytest.raises(_LiveHarnessFailure) as error:
+        _require_live_frozen_authority(
+            state,
+            config=config,
+            root=root,
+            snapshot=snapshot,
+            store=store,
+            capture=_PtyTail(),
+        )
+
+    diagnostic = json.loads(str(error.value))
+    assert diagnostic["code"] == "frozen_semantic_authority_invalid"
+    assert diagnostic["ledger"]["classification"] == (
+        "leader_semantic_authority_missing"
+    )
+    assert diagnostic["frozen_authority"]["revision_transition"] is False
+    assert set(diagnostic["frozen_authority"]) == set(_LIVE_FROZEN_AUTHORITY_FIELDS)
+    assert all(type(value) is bool for value in diagnostic["frozen_authority"].values())
+    assert _tree_snapshot(root) == before
+    after = store.load()
+    for collection in (
+        "mission_attempts",
+        "permission_requests",
+        "mission_worker_replies",
+        "mission_handoffs",
+    ):
+        assert after[collection] == []
+
+
 @pytest.mark.parametrize(
     ("step_index", "old", "new", "failed_check"),
     [
@@ -3169,29 +3640,19 @@ def test_require_live_task_authority_is_preconfirmation_zero_write(tmp_path) -> 
     assert state["permission_requests"] == []
 
 
-def test_live_mission_task_authority_blocks_real_confirmation_path(
+def test_live_mission_frozen_authority_blocks_real_confirmation_path(
     tmp_path, monkeypatch,
 ) -> None:
-    store = StateStore(tmp_path)
-    store.load()
-    store.all_events()
+    root, _config, store, previewed, _snapshot = _semantic_live_authority_fixture(
+        tmp_path
+    )
+    previewed["plans"][0]["plan"]["semantic_authority"]["requirements"][2][
+        "before"
+    ] = {"content_equals": "other\n"}
+    store.save(previewed)
     actual_state_before = copy.deepcopy(store.load())
     actual_events_before = copy.deepcopy(store.all_events())
-    project_tree_before = _tree_snapshot(tmp_path)
-    steps = _exact_live_steps()
-    steps[2]["task"] = steps[2]["task"].replace("accepted-v2", "ACCEPTED-V2")
-    previewed = {
-        "missions": [{"mission_id": "msn_task_authority"}],
-        "plans": [
-            {
-                "plan": {"steps": steps},
-                "leader_generation": {"constraint_mode": "native_json_schema"},
-            }
-        ],
-        "conversation_preview_bindings": [{"mission_id": "msn_task_authority"}],
-        "mission_attempts": [],
-        "permission_requests": [],
-    }
+    project_tree_before = _tree_snapshot(root)
     before = copy.deepcopy(previewed)
     prompt_numbers: list[int] = []
     writes: list[bytes] = []
@@ -3223,7 +3684,7 @@ def test_live_mission_task_authority_blocks_real_confirmation_path(
 
     with pytest.raises(_LiveHarnessFailure) as error:
         _create_and_confirm_live_mission(
-            tmp_path,
+            root,
             store,
             env={},
             openpty_factory=lambda: (read_fd, write_fd),
@@ -3239,7 +3700,8 @@ def test_live_mission_task_authority_blocks_real_confirmation_path(
         )
 
     diagnostic = json.loads(str(error.value))
-    assert diagnostic["code"] == "native_schema_task_authority_invalid"
+    assert diagnostic["code"] == "frozen_semantic_authority_invalid"
+    assert diagnostic["frozen_authority"]["revision_transition"] is False
     assert prompt_numbers == [1]
     assert len(writes) == 1
     assert writes[0].endswith("共4轮。\n".encode("utf-8"))
@@ -3247,12 +3709,14 @@ def test_live_mission_task_authority_blocks_real_confirmation_path(
     assert previewed == before
     actual_state_after = store.load()
     actual_events_after = store.all_events()
-    project_tree_after = _tree_snapshot(tmp_path)
+    project_tree_after = _tree_snapshot(root)
     assert actual_state_after == actual_state_before
     assert actual_events_after == actual_events_before
     assert project_tree_after == project_tree_before
     assert actual_state_after["mission_attempts"] == []
     assert actual_state_after["permission_requests"] == []
+    assert actual_state_after["mission_worker_replies"] == []
+    assert actual_state_after["mission_handoffs"] == []
 
 
 def test_live_failure_rejects_nonclosed_task_authority_without_stringifying() -> None:
@@ -3388,6 +3852,7 @@ def test_live_diagnostic_classifications_are_exactly_locked() -> None:
     assert globals().get("_LIVE_DIAGNOSTIC_CLASSIFICATIONS") == frozenset(
         {
             "leader_task_authority_missing",
+            "leader_semantic_authority_missing",
             "worker_effect_not_requested",
             "worker_attempt_failed",
             "worker_attempt_active",

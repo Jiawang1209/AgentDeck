@@ -67,6 +67,17 @@ agentdeck project migration-preview
 
 自然语言本身永远不是执行授权。确认必须绑定精确执行事实；ACP 不会静默降级成 tmux；permission、approval、runtime safety 与 ownership gate 彼此独立。常见的内联 credential 赋值会在持久化 Mission provenance 中被遮蔽。
 
+对于 semantic Mission，AgentDeck 是围绕 LLM 推理建立的控制平面，而不是
+替代 LLM。用户提供 required authority；Leader 只能添加单独可见的 proposal；
+有歧义的事实保持 unresolved；只有人类确认的精确 preview 才会成为 frozen
+authority。AgentDeck 随后确定性编译 Worker task，并把确认绑定到 authority、
+compiled-task、policy 和 preview-generation 事实。一次 Mission 确认不会授予
+后续 ACP tool permission，也不会绕过 runtime safety、ownership 或 approval gate。
+
+ProjectView 只暴露 compact semantic provenance：schema/state、hash、计数、
+compiled-step count 和 blockers；不会暴露完整 effect、before/after literal、
+prompt 或 secret。本切片不加入 A2A、远程执行、GUI 重设计或终端模拟器。
+
 Phase 3 M2 现已由一个经过验证、按需启动的项目 daemon 推进 admitted
 frozen Mission。关闭交互客户端不会撤销 frozen authority，也不会停止
 scheduler。AgentDeck 负责所有 Worker 状态转换，必须先记录 compact handoff

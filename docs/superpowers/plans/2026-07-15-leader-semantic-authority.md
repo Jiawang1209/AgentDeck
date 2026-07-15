@@ -1396,7 +1396,7 @@ git commit -m "Prove semantic Mission authority end to end"
 - Modify: `docs/handoff/current-development-state.md`
 - Modify: `HISTORY.md`
 
-- [ ] **Step 1: Replace the M2c free-text task gate with RED frozen-authority gates**
+- [x] **Step 1: Replace the M2c free-text task gate with RED frozen-authority gates**
 
 Delete the harness's authority decision based on searching Leader-authored
 `task` strings. Add deterministic assertions that:
@@ -1413,7 +1413,7 @@ Delete the harness's authority decision based on searching Leader-authored
 Keep the existing per-token harness checks only as test mutation helpers, not as
 the authority source or live PASS criterion.
 
-- [ ] **Step 2: Run the complete non-live M2c harness**
+- [x] **Step 2: Run the complete non-live M2c harness**
 
 ```bash
 conda run -n agentdeck pytest tests/test_m2c_live_acceptance.py -q
@@ -1421,7 +1421,7 @@ conda run -n agentdeck pytest tests/test_m2c_live_acceptance.py -q
 
 Expected: all non-live tests pass and exactly the opt-in live node skips.
 
-- [ ] **Step 3: Update user-facing and handoff truth**
+- [x] **Step 3: Update user-facing and handoff truth**
 
 Document:
 
@@ -1436,7 +1436,7 @@ Document:
 Do not claim live PASS. Preserve the previous single-live failure as historical
 evidence and identify the new frozen commit only after committing.
 
-- [ ] **Step 4: Run pre-commit focused and static checks**
+- [x] **Step 4: Run pre-commit focused and static checks**
 
 Run, in order:
 
@@ -1455,7 +1455,7 @@ Expected:
 - no tracked `.agentdeck/` files;
 - status contains only the intended harness/documentation changes.
 
-- [ ] **Step 5: Commit documentation/frozen harness and record SHA**
+- [x] **Step 5: Commit documentation/frozen harness and record SHA**
 
 ```bash
 git add tests/test_m2c_live_acceptance.py README.md docs/contracts/project-view-schema.md docs/superpowers/specs/2026-07-15-leader-semantic-authority-design.md docs/validation/2026-07-13-phase3-m2-project-daemon.md docs/handoff/current-development-state.md HISTORY.md
