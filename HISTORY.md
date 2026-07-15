@@ -4,6 +4,13 @@
 
 ## 2026-07-15
 
+### Harden semantic-authority validation
+
+- Made `mission-semantic-authority/v1` validation total across canonical hashing: lone surrogates, non-NFC text, hostile control characters, booleans, integers outside signed 64-bit range, non-finite or over-bound floats, and oversized canonical payloads now fail with closed non-echoing codes during validation.
+- Added fixed pre-copy resource bounds for requirements, proposed effects, unresolved items, UTF-8 targets, literal values, blocker lists, and whole-authority canonical bytes so validation, compact projection, sorting, deep copying, and hashing stay bounded.
+- Added deterministic RED/GREEN coverage for 20,000-item inputs, 4 KiB targets, oversized authorities, Unicode and number edge cases, validate-to-hash invariants, and a fixed UTF-8/number canonical SHA-256 golden vector.
+- This hardening commit remains inside the pure Task 1 domain. It does not add extraction, compilation, provider/runtime integration, live execution, or an M2c PASS claim; M2c remains **BLOCKED** and M3 remains locked.
+
 ### Add the canonical semantic-authority domain
 
 - Added the pure `mission-semantic-authority/v1` validator with exact requirement, proposed-effect, and bounded unresolved-item field sets; closed non-echoing error codes; project-relative target boundaries; sensitive-reference enforcement; canonical `requirement_id` / `proposed_effect_id` / `unresolved_id` keys; and defensive copies.

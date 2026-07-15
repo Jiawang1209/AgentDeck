@@ -5,6 +5,7 @@ import hashlib
 import json
 import math
 import re
+import unicodedata
 from typing import Any, NoReturn
 
 
@@ -14,6 +15,14 @@ SEMANTIC_REQUIREMENT_KINDS = frozenset(
 )
 SEMANTIC_OPERATIONS = frozenset({"create", "read", "review", "update", "verify"})
 SEMANTIC_SENSITIVITY = frozenset({"ordinary", "secret_ref"})
+SEMANTIC_INTEGER_MIN = -(2**63)
+SEMANTIC_INTEGER_MAX = 2**63 - 1
+SEMANTIC_FLOAT_ABS_MAX = 1.0e308
+SEMANTIC_REQUIREMENTS_MAX = 256
+SEMANTIC_PROPOSED_EFFECTS_MAX = 256
+SEMANTIC_TARGET_UTF8_BYTES_MAX = 1024
+SEMANTIC_LITERAL_UTF8_BYTES_MAX = 4096
+SEMANTIC_AUTHORITY_CANONICAL_BYTES_MAX = 1_000_000
 
 _AUTHORITY_FIELDS = frozenset(
     {
@@ -65,6 +74,7 @@ _ERROR_CODES = frozenset(
         "schema_version_invalid",
         "source_message_hash_invalid",
         "requirements_invalid",
+        "requirements_count_exceeded",
         "requirement_invalid",
         "requirement_fields_invalid",
         "requirement_id_invalid",
@@ -73,6 +83,7 @@ _ERROR_CODES = frozenset(
         "requirement_kind_invalid",
         "requirement_operation_invalid",
         "proposed_effects_invalid",
+        "proposed_effects_count_exceeded",
         "proposal_invalid",
         "proposal_fields_invalid",
         "proposal_id_invalid",
@@ -83,6 +94,9 @@ _ERROR_CODES = frozenset(
         "sensitivity_invalid",
         "ordinary_scalar_invalid",
         "value_constraint_invalid",
+        "unicode_scalar_invalid",
+        "unicode_normalization_invalid",
+        "number_out_of_range",
         "secret_value_not_reference",
         "unresolved_invalid",
         "unresolved_fields_invalid",
@@ -91,6 +105,7 @@ _ERROR_CODES = frozenset(
         "unresolved_ids_not_ordered",
         "unresolved_kind_invalid",
         "canonicalization_invalid",
+        "authority_size_exceeded",
         "compact_state_invalid",
         "compiled_step_count_invalid",
         "blockers_invalid",
@@ -134,6 +149,13 @@ def _has_exact_fields(value: dict[object, object], fields: frozenset[str]) -> bo
 def _validate_target(value: object, *, requirement_id: object = None) -> None:
     if type(value) is not str or not value or "\x00" in value or "\\" in value:
         _fail("target_invalid", requirement_id)
+    if len(value) > SEMANTIC_TARGET_UTF8_BYTES_MAX:
+        _fail("target_invalid", requirement_id)
+    _validate_unicode_scalar(value, requirement_id=requirement_id)
+    if any(unicodedata.category(character) == "Cc" for character in value):
+        _fail("target_invalid", requirement_id)
+    if len(value.encode("utf-8")) > SEMANTIC_TARGET_UTF8_BYTES_MAX:
+        _fail("target_invalid", requirement_id)
     if value.startswith("/") or value.endswith("/") or re.match(r"[A-Za-z]:", value):
         _fail("target_invalid", requirement_id)
     segments = value.split("/")
@@ -146,10 +168,36 @@ def _validate_ordinary_scalar(value: object, *, requirement_id: object = None) -
         _fail("ordinary_scalar_invalid", requirement_id)
 
 
-def _is_json_scalar(value: object) -> bool:
-    if value is None or type(value) in {str, bool, int}:
-        return True
-    return type(value) is float and math.isfinite(value)
+def _validate_unicode_scalar(value: str, *, requirement_id: object = None) -> None:
+    try:
+        value.encode("utf-8")
+    except UnicodeEncodeError:
+        _fail("unicode_scalar_invalid", requirement_id)
+    if unicodedata.normalize("NFC", value) != value:
+        _fail("unicode_normalization_invalid", requirement_id)
+
+
+def _validate_json_scalar(value: object, *, requirement_id: object) -> None:
+    if value is None:
+        return
+    if type(value) is str:
+        if len(value) > SEMANTIC_LITERAL_UTF8_BYTES_MAX:
+            _fail("value_constraint_invalid", requirement_id)
+        _validate_unicode_scalar(value, requirement_id=requirement_id)
+        if len(value.encode("utf-8")) > SEMANTIC_LITERAL_UTF8_BYTES_MAX:
+            _fail("value_constraint_invalid", requirement_id)
+        return
+    if type(value) is bool:
+        _fail("number_out_of_range", requirement_id)
+    if type(value) is int:
+        if not SEMANTIC_INTEGER_MIN <= value <= SEMANTIC_INTEGER_MAX:
+            _fail("number_out_of_range", requirement_id)
+        return
+    if type(value) is float:
+        if not math.isfinite(value) or abs(value) > SEMANTIC_FLOAT_ABS_MAX:
+            _fail("number_out_of_range", requirement_id)
+        return
+    _fail("value_constraint_invalid", requirement_id)
 
 
 def _validate_constraint(
@@ -165,14 +213,9 @@ def _validate_constraint(
             _fail("secret_value_not_reference", requirement_id)
         _validate_ordinary_scalar(value["reference"], requirement_id=requirement_id)
         return
-    if not _has_exact_fields(
-        value, frozenset({"content_equals"})
-    ) or not _is_json_scalar(value["content_equals"]):
+    if not _has_exact_fields(value, frozenset({"content_equals"})):
         _fail("value_constraint_invalid", requirement_id)
-    if type(value["content_equals"]) is str and len(
-        value["content_equals"].encode("utf-8")
-    ) > 4096:
-        _fail("value_constraint_invalid", requirement_id)
+    _validate_json_scalar(value["content_equals"], requirement_id=requirement_id)
 
 
 def _validate_literal(
@@ -188,10 +231,7 @@ def _validate_literal(
             _fail("secret_value_not_reference", requirement_id)
         _validate_ordinary_scalar(value["reference"], requirement_id=requirement_id)
         return
-    if not _is_json_scalar(value):
-        _fail("value_constraint_invalid", requirement_id)
-    if type(value) is str and len(value.encode("utf-8")) > 4096:
-        _fail("value_constraint_invalid", requirement_id)
+    _validate_json_scalar(value, requirement_id=requirement_id)
 
 
 def _validate_requirement(value: object) -> str:
@@ -302,6 +342,8 @@ def validate_semantic_authority(authority: object) -> dict[str, Any]:
     requirements = authority["requirements"]
     if not _is_exact_list(requirements):
         _fail("requirements_invalid")
+    if len(requirements) > SEMANTIC_REQUIREMENTS_MAX:
+        _fail("requirements_count_exceeded")
     requirement_ids = [_validate_requirement(item) for item in requirements]
     _validate_ordered_ids(
         requirement_ids,
@@ -312,6 +354,8 @@ def validate_semantic_authority(authority: object) -> dict[str, Any]:
     proposed_effects = authority["proposed_effects"]
     if not _is_exact_list(proposed_effects):
         _fail("proposed_effects_invalid")
+    if len(proposed_effects) > SEMANTIC_PROPOSED_EFFECTS_MAX:
+        _fail("proposed_effects_count_exceeded")
     proposal_ids = [_validate_proposal(item) for item in proposed_effects]
     _validate_ordered_ids(
         proposal_ids,
@@ -328,6 +372,8 @@ def validate_semantic_authority(authority: object) -> dict[str, Any]:
         duplicate_code="unresolved_ids_not_unique",
         ordered_code="unresolved_ids_not_ordered",
     )
+    if len(_canonical_bytes(authority)) > SEMANTIC_AUTHORITY_CANONICAL_BYTES_MAX:
+        _fail("authority_size_exceeded")
     return deepcopy(authority)
 
 
@@ -340,7 +386,7 @@ def _canonical_bytes(value: object) -> bytes:
             ensure_ascii=False,
             allow_nan=False,
         ).encode("utf-8")
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, UnicodeError, OverflowError):
         _fail("canonicalization_invalid")
 
 

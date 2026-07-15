@@ -551,3 +551,158 @@ def test_nested_hostile_keys_are_rejected_before_any_lookup(container: str) -> N
         validate_semantic_authority(authority)
     assert raised.value.code == code
     assert "DO_NOT_ECHO" not in str(raised.value)
+
+
+def test_validate_success_guarantees_representative_authority_can_be_hashed() -> None:
+    validated = validate_semantic_authority(valid_authority())
+    authority_hash = semantic_authority_hash(validated)
+    assert authority_hash.startswith("sha256:")
+    assert len(authority_hash) == 71
+
+
+def test_lone_surrogate_is_rejected_during_validation_without_echo() -> None:
+    authority = valid_authority()
+    authority["requirements"][0]["after"] = {"content_equals": "\ud800"}
+    with pytest.raises(SemanticAuthorityError) as raised:
+        validate_semantic_authority(authority)
+    assert raised.value.code == "unicode_scalar_invalid"
+    assert str(raised.value) == "unicode_scalar_invalid"
+
+
+@pytest.mark.parametrize(
+    ("value", "valid"),
+    [
+        (-(2**63), True),
+        (2**63 - 1, True),
+        (-(2**63) - 1, False),
+        (2**63, False),
+        (1.0e308, True),
+        (-1.0e308, True),
+        (1.1e308, False),
+        (True, False),
+    ],
+)
+def test_json_number_domain_is_explicit_and_deterministic(
+    value: object, valid: bool
+) -> None:
+    authority = valid_authority()
+    authority["requirements"][0]["after"] = {"content_equals": value}
+    if valid:
+        validated = validate_semantic_authority(authority)
+        assert semantic_authority_hash(validated).startswith("sha256:")
+    else:
+        with pytest.raises(SemanticAuthorityError) as raised:
+            validate_semantic_authority(authority)
+        assert raised.value.code == "number_out_of_range"
+
+
+def test_extremely_large_integer_is_rejected_before_hashing_without_echo() -> None:
+    authority = valid_authority()
+    authority["requirements"][0]["after"] = {"content_equals": 10**5000}
+    with pytest.raises(SemanticAuthorityError) as raised:
+        validate_semantic_authority(authority)
+    assert raised.value.code == "number_out_of_range"
+    assert str(raised.value) == "number_out_of_range"
+
+
+def test_requirement_and_proposal_counts_are_rejected_before_item_walk() -> None:
+    requirements = valid_authority()
+    requirements["requirements"] = [requirements["requirements"][0]] * 20_000
+    with pytest.raises(SemanticAuthorityError) as raised:
+        validate_semantic_authority(requirements)
+    assert raised.value.code == "requirements_count_exceeded"
+
+    proposed = valid_authority()
+    proposed["proposed_effects"] = [proposed["proposed_effects"][0]] * 20_000
+    with pytest.raises(SemanticAuthorityError) as raised:
+        validate_semantic_authority(proposed)
+    assert raised.value.code == "proposed_effects_count_exceeded"
+
+
+def test_compact_rejects_oversized_authority_with_the_same_closed_code() -> None:
+    authority = valid_authority()
+    authority["requirements"] = [authority["requirements"][0]] * 20_000
+    with pytest.raises(SemanticAuthorityError) as raised:
+        compact_semantic_authority(
+            authority, state="preview", compiled_step_count=0, blockers=[]
+        )
+    assert raised.value.code == "requirements_count_exceeded"
+
+
+def test_target_has_a_fixed_utf8_byte_bound_without_echo() -> None:
+    at_boundary = valid_authority()
+    at_boundary["requirements"][0]["target"] = "a" * 1024
+    assert validate_semantic_authority(at_boundary) == at_boundary
+
+    oversized = valid_authority()
+    oversized["requirements"][0]["target"] = "DO_NOT_ECHO" + "a" * 4096
+    with pytest.raises(SemanticAuthorityError) as raised:
+        validate_semantic_authority(oversized)
+    assert raised.value.code == "target_invalid"
+    assert "DO_NOT_ECHO" not in str(raised.value)
+
+
+def test_overall_canonical_authority_bytes_have_a_fixed_bound() -> None:
+    authority = valid_authority()
+    requirements = []
+    for index in range(256):
+        requirements.append(
+            {
+                "requirement_id": f"req_{index:012x}",
+                "kind": "create",
+                "target": f"artifact-{index:03d}.txt",
+                "operation": "create",
+                "literal": "x" * 4096,
+                "phase": "implementation",
+                "agent_id": "claude-worker",
+                "sensitivity": "ordinary",
+            }
+        )
+    authority["requirements"] = requirements
+
+    with pytest.raises(SemanticAuthorityError) as raised:
+        validate_semantic_authority(authority)
+    assert raised.value.code == "authority_size_exceeded"
+
+
+@pytest.mark.parametrize("control", ["\n", "\r", "\t", "\x1f", "\x7f"])
+def test_target_rejects_control_characters_without_echo(control: str) -> None:
+    authority = valid_authority()
+    authority["requirements"][0]["target"] = f"folder/{control}DO_NOT_ECHO.txt"
+    with pytest.raises(SemanticAuthorityError) as raised:
+        validate_semantic_authority(authority)
+    assert raised.value.code == "target_invalid"
+    assert "DO_NOT_ECHO" not in str(raised.value)
+
+
+def test_unicode_text_must_already_be_nfc_and_is_never_silently_normalized() -> None:
+    nfc = valid_authority()
+    nfc["requirements"][0]["target"] = "caf\u00e9.txt"
+    nfc["proposed_effects"][0]["target"] = "caf\u00e9.txt"
+    assert validate_semantic_authority(nfc) == nfc
+
+    nfd_target = valid_authority()
+    nfd_target["requirements"][0]["target"] = "cafe\u0301.txt"
+    with pytest.raises(SemanticAuthorityError) as raised:
+        validate_semantic_authority(nfd_target)
+    assert raised.value.code == "unicode_normalization_invalid"
+
+    nfd_literal = valid_authority()
+    nfd_literal["requirements"][0]["after"] = {
+        "content_equals": "re\u0301vision"
+    }
+    with pytest.raises(SemanticAuthorityError) as raised:
+        validate_semantic_authority(nfd_literal)
+    assert raised.value.code == "unicode_normalization_invalid"
+
+
+def test_canonical_hash_has_a_fixed_utf8_and_number_golden_vector() -> None:
+    authority = valid_authority()
+    authority["requirements"][0]["target"] = "caf\u00e9.txt"
+    authority["requirements"][0]["before"] = {"content_equals": "r\u00e9vision"}
+    authority["requirements"][0]["after"] = {"content_equals": 42}
+    authority["proposed_effects"][0]["target"] = "caf\u00e9.txt"
+
+    assert semantic_authority_hash(authority) == (
+        "sha256:9777311c13a31bfbef7856ba1c7aba7d251440129ef8095e8d7e6fb3cd887e7f"
+    )
