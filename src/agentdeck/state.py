@@ -6536,6 +6536,76 @@ class StateStore:
             mission_ids.append(raw["mission_id"])
         if len(mission_ids) != len(set(mission_ids)):
             raise ValueError("duplicate mission identity")
+        semantic_recovery_config: ProjectConfig | None = None
+        for mission in missions:
+            plan_id = mission.get("plan_id")
+            plans = state.get("plans")
+            plan_matches = (
+                [
+                    item
+                    for item in plans
+                    if type(item) is dict and item.get("plan_id") == plan_id
+                ]
+                if type(plan_id) is str and type(plans) is list
+                else []
+            )
+            plan_body = (
+                plan_matches[0].get("plan") if len(plan_matches) == 1 else None
+            )
+            plan_is_semantic = type(plan_body) is dict and (
+                "semantic_authority" in plan_body
+                or "semantic_steps" in plan_body
+            )
+            execution_snapshot = mission.get("execution_snapshot")
+            snapshot_mission = (
+                execution_snapshot.get("mission")
+                if type(execution_snapshot) is dict
+                else None
+            )
+            present_semantic = frozenset(
+                field
+                for field in SEMANTIC_MISSION_COMPACT_FIELDS
+                if field in mission
+            )
+            if (
+                mission["status"] not in {"preparing", "running"}
+                or (
+                    not present_semantic
+                    and not plan_is_semantic
+                    and not (
+                        type(snapshot_mission) is dict
+                        and "semantic_authority_schema_version" in snapshot_mission
+                    )
+                )
+            ):
+                continue
+            try:
+                if type(plan_id) is not str:
+                    raise ValueError
+                plan = self._unique_plan_record(state, plan_id)
+                persisted_snapshot = validate_execution_snapshot(
+                    mission.get("execution_snapshot")
+                )
+                if semantic_recovery_config is None:
+                    semantic_recovery_config = load_config(self.root)
+                current_snapshot = build_execution_snapshot_authority(
+                    semantic_recovery_config,
+                    mission,
+                    plan,
+                    execution_policy_snapshot(semantic_recovery_config),
+                    memory_provenance=collect_execution_memory_provenance(
+                        Path(semantic_recovery_config.root)
+                    ),
+                )
+            except (KeyError, OSError, TypeError, ValueError):
+                raise ValueError("semantic recovery authority drift") from None
+            if (
+                mission.get("snapshot_hash") != persisted_snapshot["execution_hash"]
+                or mission.get("execution_authority_hash")
+                != persisted_snapshot["execution_hash"]
+                or current_snapshot != persisted_snapshot
+            ):
+                raise ValueError("semantic recovery authority drift")
         attempts = [_validate_mission_attempt_record(item) for item in attempts_raw]
         _require_unique_mission_attempt_lineage(attempts)
         attempt_by_id = {item["attempt_id"]: item for item in attempts}

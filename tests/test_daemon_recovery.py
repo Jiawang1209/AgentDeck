@@ -26,9 +26,17 @@ from agentdeck.daemon.service import (
     authorize_mission_acp_effect,
 )
 from agentdeck.cli import _DaemonAcpWorkerSink, _daemon_acp_update_digest
+from agentdeck.config import load_config, write_default_config
 from agentdeck.daemon.transports import AcpWorkerTransport
 from agentdeck.daemon.recovery import RecoveryFacts
+from agentdeck.mission_orchestration import (
+    LeaderMissionCandidate,
+    confirm_mission_for_daemon,
+    create_mission_preview_from_candidate,
+)
 from agentdeck.models import AgentSpec
+from agentdeck.orchestration.leader import LeaderOrchestrator
+from agentdeck.providers import FakeLeaderProvider
 from agentdeck.runtime.protocol import TransportCapabilities
 from agentdeck.state import (
     StateStore,
@@ -39,6 +47,92 @@ from agentdeck.state import (
 
 MISSION_ID = "mis_aaaaaaaaaaaa"
 ATTEMPT_ID = "mat_bbbbbbbbbbbb"
+
+
+def _real_semantic_authority() -> dict[str, object]:
+    requirements: list[dict[str, object]] = []
+    for index, (kind, operation, phase, agent_id) in enumerate(
+        (
+            ("create", "create", "implementation", "planner"),
+            ("review", "review", "review", "reviewer"),
+            ("state_transition", "update", "revision", "planner"),
+            ("verify", "verify", "acceptance", "reviewer"),
+        ),
+        start=1,
+    ):
+        item: dict[str, object] = {
+            "requirement_id": f"req_{index:012d}",
+            "kind": kind,
+            "target": "artifact.txt",
+            "operation": operation,
+            "phase": phase,
+            "agent_id": agent_id,
+            "sensitivity": "ordinary",
+        }
+        if kind == "state_transition":
+            item.update(
+                {
+                    "before": {"content_equals": "draft-v1\n"},
+                    "after": {"content_equals": "accepted-v2\n"},
+                }
+            )
+        else:
+            item["literal"] = "draft-v1\n" if kind == "create" else "accepted-v2\n"
+        requirements.append(item)
+    return {
+        "schema_version": "mission-semantic-authority/v1",
+        "source_message_hash": "sha256:" + "a" * 64,
+        "requirements": requirements,
+        "proposed_effects": [],
+        "unresolved": [],
+    }
+
+
+def _freeze_real_semantic_mission(tmp_path: Path, monkeypatch):
+    root = tmp_path / "semantic-recovery"
+    root.mkdir()
+    (root / ".git").mkdir()
+    write_default_config(root)
+    config_path = root / ".agentdeck" / "config.toml"
+    config_path.write_text(
+        config_path.read_text(encoding="utf-8")
+        .replace('provider = "deepseek"', 'provider = "fake"', 1)
+        .replace('model = "deepseek-chat"', 'model = "fake-plan"', 1),
+        encoding="utf-8",
+    )
+    config = load_config(root)
+    authority = _real_semantic_authority()
+    result = LeaderOrchestrator(config, FakeLeaderProvider()).plan_result(
+        "semantic recovery context",
+        config.leader.model,
+        selected_agent_ids=("planner", "reviewer"),
+        step_count=4,
+        semantic_authority=authority,
+    )
+    store = StateStore(root)
+    monkeypatch.setattr(
+        "agentdeck.mission_orchestration.shutil.which",
+        lambda command: f"/bin/{command}",
+    )
+    preview = create_mission_preview_from_candidate(
+        config=config,
+        store=store,
+        candidate=LeaderMissionCandidate(
+            provider="fake",
+            model=config.leader.model,
+            user_message="implement review revise accept",
+            plan=result.plan,
+            timeout_seconds=180,
+            selected_agent_ids=("planner", "reviewer"),
+            step_count=4,
+            leader_generation=result.leader_generation,
+            semantic_authority=authority,
+        ),
+    )
+    confirmed = confirm_mission_for_daemon(
+        config=config, store=store, mission_id=preview["mission_id"]
+    )
+    return root, store, preview, confirmed
 
 
 def test_daemon_acp_update_digest_accepts_full_turn_sized_payload() -> None:
@@ -166,7 +260,6 @@ def frozen_snapshot(
     mission_id: str = MISSION_ID,
     *,
     project_root: Path | None = None,
-    semantic: bool = False,
 ) -> dict[str, object]:
     digest = "sha256:" + "a" * 64
     mission = {
@@ -203,15 +296,6 @@ def frozen_snapshot(
         "declared_tests_hash": None,
         "acceptance_criteria_hash": None,
     }
-    if semantic:
-        mission.update(
-            {
-                "semantic_authority_schema_version": "mission-semantic-authority/v1",
-                "semantic_authority_hash": "sha256:" + "b" * 64,
-            }
-        )
-        for index, step in enumerate(mission["steps"], start=1):
-            step["semantic_step_hash"] = "sha256:" + str(index) * 64
     workers = [
         {
             "agent_id": "worker",
@@ -562,9 +646,9 @@ class RecordingStore(StateStore):
         )
 
 
-def _seed_missions(store: StateStore, *, semantic: bool = False) -> None:
+def _seed_missions(store: StateStore) -> None:
     state = store.load()
-    snapshot = frozen_snapshot(project_root=store.root, semantic=semantic)
+    snapshot = frozen_snapshot(project_root=store.root)
     state["missions"] = [
         {
             "mission_id": MISSION_ID,
@@ -629,19 +713,78 @@ def _seed_missions(store: StateStore, *, semantic: bool = False) -> None:
     store.save(state)
 
 
-def test_recovery_accepts_exact_semantic_snapshot_without_full_authority(
-    tmp_path: Path,
+def test_real_semantic_restart_rebuilds_same_snapshot_before_scheduler_enable(
+    tmp_path: Path, monkeypatch
 ) -> None:
-    store = StateStore(tmp_path)
-    _seed_missions(store, semantic=True)
-
-    snapshot, _token = store.load_recovery_snapshot()
-    facts = recovery_facts_from_persisted_state(snapshot, MISSION_ID)
-
-    assert facts.snapshot_state == "valid"
-    assert "requirements" not in json.dumps(
-        snapshot["missions"][0]["execution_snapshot"], sort_keys=True
+    root, _store, preview, confirmed = _freeze_real_semantic_mission(
+        tmp_path, monkeypatch
     )
+    enabled: list[bool] = []
+
+    decisions = reconcile_startup(
+        StateStore(root), enable_scheduler=lambda: enabled.append(True)
+    )
+
+    assert enabled == [True]
+    assert decisions[0]["mission_id"] == preview["mission_id"]
+    assert decisions[0]["classification"] == "resumable"
+    assert decisions[0]["next_transition"] == "prepare_dispatch"
+    recovered = StateStore(root).mission_by_id(preview["mission_id"])
+    assert recovered["snapshot_hash"] == confirmed["snapshot_hash"]
+    assert recovered["execution_snapshot"]["execution_hash"] == confirmed[
+        "snapshot_hash"
+    ]
+
+
+@pytest.mark.parametrize("mutation", ["plan_summary", "semantic_shape_downgrade"])
+def test_real_semantic_restart_rejects_current_authority_drift_before_scheduler_enable(
+    tmp_path: Path, monkeypatch, mutation: str
+) -> None:
+    root, store, _preview, _confirmed = _freeze_real_semantic_mission(
+        tmp_path, monkeypatch
+    )
+    state = store.load()
+    mission = state["missions"][0]
+    if mutation == "plan_summary":
+        state["plans"][0]["plan"]["summary"] = "mutated after semantic freeze"
+    else:
+        for field in (
+            "semantic_authority_schema_version",
+            "semantic_authority_hash",
+            "compiled_task_hashes",
+            "preview_generation",
+        ):
+            del mission[field]
+        frozen = mission["execution_snapshot"]
+        del frozen["mission"]["semantic_authority_schema_version"]
+        del frozen["mission"]["semantic_authority_hash"]
+        for step in frozen["mission"]["steps"]:
+            del step["semantic_step_hash"]
+        frozen["mission_hash"] = canonical_snapshot_hash(frozen["mission"])
+        execution_body = {
+            key: frozen[key]
+            for key in (
+                "mission", "workers", "policy", "limits", "mission_hash",
+                "policy_hash",
+            )
+        }
+        frozen["execution_hash"] = canonical_snapshot_hash(execution_body)
+        mission["snapshot_hash"] = frozen["execution_hash"]
+        mission["execution_authority_hash"] = frozen["execution_hash"]
+    store.save(state)
+    enabled: list[bool] = []
+
+    with pytest.raises(
+        RecoveryError, match="^durable recovery evidence is invalid$"
+    ):
+        reconcile_startup(
+            StateStore(root), enable_scheduler=lambda: enabled.append(True)
+        )
+
+    assert enabled == []
+    persisted = StateStore(root).load()
+    assert persisted["mission_attempts"] == []
+    assert persisted["recovery_decisions"] == []
 
 
 def test_startup_flushes_outboxes_then_atomically_persists_before_enable(
