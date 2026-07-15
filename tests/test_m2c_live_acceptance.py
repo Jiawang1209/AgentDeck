@@ -77,6 +77,42 @@ _LIVE_TASK_AUTHORITY_FIELDS = (
     "revision_transition",
     "acceptance_target",
 )
+_LIVE_MISSION_STATUSES = frozenset(
+    {
+        "pending_confirmation",
+        "preparing",
+        "running",
+        "completed",
+        "stopped",
+        "interrupted",
+    }
+)
+_LIVE_ATTEMPT_STATES = frozenset(
+    {
+        "prepared",
+        "admitting",
+        "submitted",
+        "running",
+        "completed",
+        "succeeded",
+        "failed",
+        "cancelled",
+        "interrupted",
+        "ambiguous",
+    }
+)
+_LIVE_REPLY_STATES = frozenset({"received", "validated", "invalid"})
+_LIVE_HANDOFF_STATES = frozenset({"pending", "recorded"})
+_LIVE_HANDOFF_STATUSES = frozenset({"completed", "blocked", "failed"})
+_LIVE_PERMISSION_STATES = frozenset({"pending", "approved", "denied", "expired"})
+_LIVE_AGENT_IDS = frozenset({"claude-worker", "codex-worker"})
+_LIVE_TRANSPORTS = frozenset({"acp", "tmux"})
+_LIVE_ACTIVE_ATTEMPT_STATES = frozenset(
+    {"prepared", "admitting", "submitted", "running"}
+)
+_LIVE_FAILED_ATTEMPT_STATES = frozenset(
+    {"failed", "cancelled", "interrupted"}
+)
 
 
 def _exact_live_steps() -> list[dict[str, str]]:
@@ -723,8 +759,7 @@ class _LiveCleanupAuthority:
     daemon: _DaemonCleanupIdentity | None = None
 
 
-def _state_cardinalities(store: StateStore) -> dict[str, int]:
-    state = store.load()
+def _state_cardinalities_from_state(state: object) -> dict[str, int]:
     fields = (
         "plans",
         "missions",
@@ -733,11 +768,116 @@ def _state_cardinalities(store: StateStore) -> dict[str, int]:
         "mission_handoffs",
         "mission_worker_replies",
     )
+    if type(state) is not dict:
+        return {field: -1 for field in fields}
     return {
         field: len(state.get(field, []))
         if type(state.get(field, [])) in {list, dict}
         else -1
         for field in fields
+    }
+
+
+def _closed_enum(value: object, allowed: frozenset[str]) -> str:
+    return value if type(value) is str and value in allowed else "unknown"
+
+
+def _dict_records(value: object) -> list[dict[str, object]]:
+    if type(value) is list:
+        return [item if type(item) is dict else {} for item in value]
+    if type(value) is dict:
+        return [item if type(item) is dict else {} for item in value.values()]
+    return []
+
+
+def _live_ledger_diagnostic(
+    state: object,
+    *,
+    code: str,
+    task_authority: dict[str, bool] | None,
+) -> dict[str, object]:
+    durable = state if type(state) is dict else {}
+    missions = _dict_records(durable.get("missions"))
+    attempts = _dict_records(durable.get("mission_attempts"))
+    replies = _dict_records(durable.get("mission_worker_replies"))
+    handoffs = _dict_records(durable.get("mission_handoffs"))
+    permissions = _dict_records(durable.get("permission_requests"))
+    mission = missions[-1] if missions else {}
+    attempt = attempts[-1] if attempts else {}
+    attempt_id = attempt.get("attempt_id")
+
+    def related_record(records: list[dict[str, object]]) -> dict[str, object]:
+        if type(attempt_id) is str:
+            matches = [
+                item
+                for item in records
+                if type(item.get("attempt_id")) is str
+                and item["attempt_id"] == attempt_id
+            ]
+            if len(matches) == 1:
+                return matches[0]
+        return {}
+
+    reply = related_record(replies)
+    handoff = related_record(handoffs)
+    canonical_handoff = handoff.get("canonical_handoff")
+    if type(canonical_handoff) is not dict:
+        canonical_handoff = {}
+
+    step_position = attempt.get("step_position")
+    if type(step_position) is not int or not 1 <= step_position <= 4:
+        step_id = attempt.get("step_id")
+        match = re.fullmatch(r"step_([1-4])", step_id) if type(step_id) is str else None
+        step_position = int(match.group(1)) if match is not None else 0
+
+    mission_status = _closed_enum(mission.get("status"), _LIVE_MISSION_STATUSES)
+    attempt_state = _closed_enum(attempt.get("state"), _LIVE_ATTEMPT_STATES)
+    reply_state = _closed_enum(reply.get("state"), _LIVE_REPLY_STATES)
+    handoff_state = _closed_enum(handoff.get("state"), _LIVE_HANDOFF_STATES)
+    handoff_status = _closed_enum(
+        canonical_handoff.get("status"), _LIVE_HANDOFF_STATUSES
+    )
+    permission_states = [
+        _closed_enum(item.get("status"), _LIVE_PERMISSION_STATES)
+        for item in permissions
+    ]
+
+    if (
+        code == "native_schema_task_authority_invalid"
+        and task_authority is not None
+        and not all(task_authority.values())
+    ):
+        classification = "leader_task_authority_missing"
+    elif permissions:
+        classification = "permission_state_inconsistent"
+    elif attempt_state in _LIVE_ACTIVE_ATTEMPT_STATES:
+        classification = "worker_attempt_active"
+    elif attempt_state in _LIVE_FAILED_ATTEMPT_STATES:
+        classification = "worker_attempt_failed"
+    elif (
+        attempt_state in {"completed", "succeeded"}
+        and reply_state == "validated"
+        and handoff_state == "recorded"
+        and handoff_status == "completed"
+    ):
+        classification = "worker_effect_not_requested"
+    else:
+        classification = "permission_state_inconsistent"
+
+    return {
+        "classification": classification,
+        "mission_status": mission_status,
+        "step_position": step_position,
+        "agent_id": _closed_enum(attempt.get("agent_id"), _LIVE_AGENT_IDS),
+        "configured_transport": _closed_enum(
+            attempt.get("configured_transport"), _LIVE_TRANSPORTS
+        ),
+        "attempt_state": attempt_state,
+        "reply_state": reply_state,
+        "handoff_state": handoff_state,
+        "handoff_status": handoff_status,
+        "permission_count": len(permissions),
+        "permission_states": permission_states,
     }
 
 
@@ -804,8 +944,15 @@ def _live_failure(
     task_authority: object = None,
 ) -> _LiveHarnessFailure:
     diagnostic: dict[str, object] = {"stage": "live_acceptance", "code": code}
+    closed_task_authority = _closed_task_authority(task_authority)
     if store is not None:
-        diagnostic["cardinalities"] = _state_cardinalities(store)
+        state = store.load()
+        diagnostic["cardinalities"] = _state_cardinalities_from_state(state)
+        diagnostic["ledger"] = _live_ledger_diagnostic(
+            state,
+            code=code,
+            task_authority=closed_task_authority,
+        )
     if capture is not None:
         diagnostic["pty"] = capture.diagnostic()
     if output is not None:
@@ -814,7 +961,6 @@ def _live_failure(
             "truncated": False,
             "sha256": hashlib.sha256(output).hexdigest(),
         }
-    closed_task_authority = _closed_task_authority(task_authority)
     if closed_task_authority is not None:
         diagnostic["task_authority"] = closed_task_authority
     return _LiveHarnessFailure(json.dumps(diagnostic, sort_keys=True))
@@ -3045,6 +3191,285 @@ def test_closed_task_authority_requires_exact_key_order_and_bools() -> None:
     assert _closed_task_authority(accepted) == accepted
     assert _closed_task_authority(reordered) is None
     assert _closed_task_authority(integer_value) is None
+
+
+class _StaticLiveStore:
+    def __init__(self, state: dict[str, object], *, reject_second_load: bool = False):
+        self.state = state
+        self.reject_second_load = reject_second_load
+        self.load_count = 0
+
+    def load(self) -> dict[str, object]:
+        self.load_count += 1
+        if self.reject_second_load and self.load_count > 1:
+            raise AssertionError("live failure loaded durable state more than once")
+        return self.state
+
+
+def _live_diagnostic_state(
+    *,
+    mission_status: object = "running",
+    attempt_state: object = "succeeded",
+    reply_state: object = "validated",
+    handoff_state: object = "recorded",
+    handoff_status: object = "completed",
+    permissions: object = None,
+) -> dict[str, object]:
+    attempt_id = "mat_secret_attempt"
+    dispatch_key = "dsp_secret_dispatch"
+    secret = "SECRET model output /Users/private/.credentials"
+    return {
+        "plans": [{"summary": secret}],
+        "missions": [{"status": mission_status, "goal": secret}],
+        "mission_attempts": [
+            {
+                "attempt_id": attempt_id,
+                "step_id": "step_1",
+                "agent_id": "claude-worker",
+                "configured_transport": "acp",
+                "state": attempt_state,
+                "dispatch_key": dispatch_key,
+                "blocker": secret,
+                "terminal_reason": secret,
+                "task": secret,
+                "prompt": secret,
+            }
+        ],
+        "mission_worker_replies": [
+            {
+                "attempt_id": attempt_id,
+                "state": reply_state,
+                "summary": secret,
+                "acp_update": secret,
+                "provider_output": secret,
+                "pty_text": secret,
+            }
+        ],
+        "mission_handoffs": [
+            {
+                "attempt_id": attempt_id,
+                "state": handoff_state,
+                "canonical_handoff": {
+                    "status": handoff_status,
+                    "summary": secret,
+                    "verification": secret,
+                    "risks": secret,
+                    "next_steps": secret,
+                },
+            }
+        ],
+        "permission_requests": (
+            [] if permissions is None else permissions
+        ),
+    }
+
+
+_LIVE_LEDGER_KEYS = {
+    "classification",
+    "mission_status",
+    "step_position",
+    "agent_id",
+    "configured_transport",
+    "attempt_state",
+    "reply_state",
+    "handoff_state",
+    "handoff_status",
+    "permission_count",
+    "permission_states",
+}
+
+
+@pytest.mark.parametrize("attempt_state", ("succeeded", "completed"))
+def test_live_failure_classifies_completed_effect_without_permission(
+    attempt_state: str,
+) -> None:
+    state = _live_diagnostic_state(
+        mission_status="completed",
+        attempt_state=attempt_state,
+    )
+
+    diagnostic = json.loads(
+        str(
+            _live_failure(
+                "first_permission_timeout",
+                store=_StaticLiveStore(state),
+            )
+        )
+    )
+
+    assert diagnostic["ledger"] == {
+        "classification": "worker_effect_not_requested",
+        "mission_status": "completed",
+        "step_position": 1,
+        "agent_id": "claude-worker",
+        "configured_transport": "acp",
+        "attempt_state": attempt_state,
+        "reply_state": "validated",
+        "handoff_state": "recorded",
+        "handoff_status": "completed",
+        "permission_count": 0,
+        "permission_states": [],
+    }
+
+
+def test_live_failure_classifies_active_worker_attempt() -> None:
+    state = _live_diagnostic_state(
+        attempt_state="running",
+        reply_state="received",
+        handoff_state="pending",
+        handoff_status="blocked",
+    )
+
+    diagnostic = json.loads(
+        str(_live_failure("first_permission_timeout", store=_StaticLiveStore(state)))
+    )
+
+    assert diagnostic["ledger"]["classification"] == "worker_attempt_active"
+
+
+@pytest.mark.parametrize("attempt_state", ("failed", "cancelled", "interrupted"))
+def test_live_failure_classifies_failed_worker_attempt(attempt_state: str) -> None:
+    state = _live_diagnostic_state(
+        attempt_state=attempt_state,
+        reply_state="invalid",
+        handoff_state="pending",
+        handoff_status="failed",
+    )
+
+    diagnostic = json.loads(
+        str(
+            _live_failure(
+                "mission_completion_timeout",
+                store=_StaticLiveStore(state),
+            )
+        )
+    )
+
+    assert diagnostic["ledger"]["classification"] == "worker_attempt_failed"
+
+
+@pytest.mark.parametrize("attempt_state", ("running", "failed"))
+def test_live_failure_prioritizes_any_permission_as_inconsistent(attempt_state: str) -> None:
+    state = _live_diagnostic_state(
+        attempt_state=attempt_state,
+        permissions=[{"status": "pending", "target": "SECRET /Users/private"}],
+    )
+
+    diagnostic = json.loads(
+        str(_live_failure("first_permission_timeout", store=_StaticLiveStore(state)))
+    )
+
+    assert diagnostic["ledger"]["classification"] == "permission_state_inconsistent"
+    assert diagnostic["ledger"]["permission_count"] == 1
+    assert diagnostic["ledger"]["permission_states"] == ["pending"]
+
+
+def test_live_failure_prioritizes_closed_missing_task_authority() -> None:
+    task_authority = {field: True for field in _LIVE_TASK_AUTHORITY_FIELDS}
+    task_authority["revision_transition"] = False
+    state = _live_diagnostic_state(
+        attempt_state="running",
+        permissions=[{"status": "pending"}],
+    )
+
+    diagnostic = json.loads(
+        str(
+            _live_failure(
+                "native_schema_task_authority_invalid",
+                store=_StaticLiveStore(state),
+                task_authority=task_authority,
+            )
+        )
+    )
+
+    assert diagnostic["ledger"]["classification"] == "leader_task_authority_missing"
+
+
+def test_live_failure_closes_malformed_ledger_values_without_leaking() -> None:
+    secret = "SECRET /Users/private mat_secret dsp_secret summary blocker"
+    state = _live_diagnostic_state(
+        mission_status=secret,
+        attempt_state=secret,
+        reply_state=secret,
+        handoff_state=secret,
+        handoff_status=secret,
+        permissions=[{"status": secret, "tool": secret}],
+    )
+    attempt = state["mission_attempts"][0]
+    assert type(attempt) is dict
+    attempt["step_id"] = "step_99"
+    attempt["agent_id"] = secret
+    attempt["configured_transport"] = secret
+
+    rendered = str(_live_failure("unknown_failure", store=_StaticLiveStore(state)))
+    diagnostic = json.loads(rendered)
+
+    assert diagnostic["ledger"] == {
+        "classification": "permission_state_inconsistent",
+        "mission_status": "unknown",
+        "step_position": 0,
+        "agent_id": "unknown",
+        "configured_transport": "unknown",
+        "attempt_state": "unknown",
+        "reply_state": "unknown",
+        "handoff_state": "unknown",
+        "handoff_status": "unknown",
+        "permission_count": 1,
+        "permission_states": ["unknown"],
+    }
+    assert set(diagnostic["ledger"]) == _LIVE_LEDGER_KEYS
+    for forbidden in (
+        "SECRET",
+        "/Users",
+        "mat_",
+        "dsp_",
+        "summary",
+        "task",
+        "goal",
+        "blocker",
+        "terminal_reason",
+        "target",
+        "tool",
+        "prompt",
+        "pty_text",
+        "acp_update",
+        "provider_output",
+        "verification",
+        "risks",
+        "next_steps",
+        "credentials",
+    ):
+        assert forbidden not in rendered
+
+
+def test_live_failure_rejects_unrelated_reply_and_handoff_evidence() -> None:
+    state = _live_diagnostic_state(mission_status="completed")
+    reply = state["mission_worker_replies"][0]
+    handoff = state["mission_handoffs"][0]
+    assert type(reply) is dict
+    assert type(handoff) is dict
+    reply["attempt_id"] = "mat_unrelated_reply"
+    handoff["attempt_id"] = "mat_unrelated_handoff"
+
+    diagnostic = json.loads(
+        str(_live_failure("first_permission_timeout", store=_StaticLiveStore(state)))
+    )
+
+    assert diagnostic["ledger"]["classification"] == "permission_state_inconsistent"
+    assert diagnostic["ledger"]["reply_state"] == "unknown"
+    assert diagnostic["ledger"]["handoff_state"] == "unknown"
+
+
+def test_live_failure_uses_one_state_snapshot_for_cardinalities_and_ledger() -> None:
+    state = _live_diagnostic_state(mission_status="stopped", attempt_state="failed")
+    store = _StaticLiveStore(state, reject_second_load=True)
+
+    diagnostic = json.loads(str(_live_failure("first_permission_timeout", store=store)))
+
+    assert store.load_count == 1
+    assert diagnostic["cardinalities"]["mission_attempts"] == 1
+    assert diagnostic["ledger"]["attempt_state"] == "failed"
+    assert diagnostic["ledger"]["mission_status"] == "stopped"
 
 
 def test_preflight_isolates_probe_writes_from_real_home(

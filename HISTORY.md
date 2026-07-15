@@ -4,6 +4,15 @@
 
 ## 2026-07-15
 
+### Classify M2c live permission failures safely
+
+- **Strict RED/GREEN**: added static-store and hostile durable-state fixtures first; the focused classification target failed `10` cases (`67` deselected) only because `_live_failure()` had no ledger, then passed all `10` after the minimal projector. The final successful-state matrix additionally covers both `succeeded` and `completed` attempts.
+- **Same-snapshot closed ledger**: `_live_failure()` now loads durable state once and derives both existing cardinalities and an exact 11-key ledger from that snapshot. Mission, attempt, reply, handoff, permission, Worker, and transport values use fixed allowlists; malformed strings become `unknown`, and invalid step positions become `0`.
+- **Fail-closed classification**: precedence is exact missing Leader task authority, any permission record, active attempt, failed/cancelled/interrupted attempt, then zero-permission completed effect with validated reply and recorded completed handoff; every other combination is `permission_state_inconsistent`. Classification is diagnostic only and does not approve, confirm, dispatch, advance, retry, or otherwise change permission behavior.
+- **Leak-negative coverage**: fixtures deliberately contain `SECRET`, home/absolute paths, attempt/dispatch IDs, task/model summaries, blockers, terminal reasons, targets, tools, prompts, ACP/provider-like text, verification, risks, and next steps. Serialized diagnostics prove none are present and the ledger key set is exact.
+- **Lineage self-review RED/GREEN**: an unrelated reply/handoff regression first failed because the projector fell back to the last records and misclassified them as a completed effect; requiring exactly one record with the current attempt ID made that node pass and otherwise projects `unknown` fail-closed.
+- **Non-live verification**: the focused classification target passes, and the complete `tests/test_m2c_live_acceptance.py` run passes `78` tests with exactly `1` opt-in live skip. No live command was run; production permission, ACP, tmux, scheduler, provider, and runtime behavior remain unchanged.
+
 ### Gate M2c live confirmation on fixed task authority
 
 - **Strict RED**: added the exact four-step Claude/Codex implementation, review, revision, and acceptance scenario plus missing-token, phase-order, Worker-order, closed-diagnostic, and zero-write rejection coverage. `conda run --no-capture-output -n agentdeck pytest tests/test_m2c_live_acceptance.py -k task_authority -q` first failed `12` tests (`42` deselected) only because the locked authority constant and three requested helpers did not yet exist.

@@ -134,7 +134,11 @@ audited absolute regular executable instead; do not weaken the path check.
 
 The gate creates a fresh disposable project outside the checkout, initializes
 only project-local AgentDeck state, and sends one natural-language request via
-a bare bounded PTY. It requires:
+a bare bounded PTY. Before confirmation, the harness requires the exact four
+task-authority checks for phase order, Worker order, `artifact.txt` in every
+step, and the locked `draft-v1` / `accepted-v2` transition. A failed authority
+check stops before confirmation with zero daemon admission and zero Worker
+effect. It requires:
 
 1. one Codex native-schema preview with exact `implementation`, `review`,
    `revision`, and `acceptance` phases;
@@ -185,9 +189,33 @@ Process fingerprints use Linux `/proc/<pid>/stat` start ticks or macOS
 `libproc.proc_pidinfo(PROC_PIDTBSDINFO)` start seconds plus microseconds, bound
 with PID, UID, and PGID; unsupported or unreadable kernel identity fails closed
 without a coarse `ps` timestamp fallback.
-Failures emit only byte count, truncation flag, SHA-256, a fixed stage/code, and
-state cardinalities—never PID, terminal text, paths, commands, environment
-values, or raw exceptions.
+Failures with a durable store load that store exactly once and derive both
+state cardinalities and a transcript-free ledger from that same snapshot. The
+ledger has exactly these fields:
+
+```text
+classification mission_status step_position agent_id configured_transport
+attempt_state reply_state handoff_state handoff_status permission_count
+permission_states
+```
+
+Every textual ledger value comes from a closed allowlist; an unknown or
+malformed value becomes `unknown`, and a step outside 1 through 4 becomes `0`.
+The closed classifications are `leader_task_authority_missing`,
+`worker_effect_not_requested`, `worker_attempt_failed`,
+`worker_attempt_active`, and `permission_state_inconsistent`.
+`worker_effect_not_requested` means the snapshot has zero permission requests,
+a `completed` or `succeeded` attempt, a `validated` reply, a `recorded` handoff,
+and canonical handoff status `completed`. It is a diagnostic description of
+durable facts, not authorization, approval, permission confirmation, or a
+scheduler transition. Any permission record classifies as
+`permission_state_inconsistent`, except that an exact closed task-authority
+failure remains the higher-priority classification.
+
+Failures otherwise emit only byte count, truncation flag, SHA-256, a fixed
+stage/code, the closed ledger, and state cardinalities—never IDs, PID, terminal
+text, paths, commands, task/model text, prompts, environment values,
+credentials, raw ACP/provider output, or raw exceptions.
 
 ## 5. Classify the result
 
@@ -198,6 +226,9 @@ values, or raw exceptions.
 - Do not retry an unknown external effect. A second run is permitted only after
   a specific in-scope defect has a deterministic RED regression, a minimal
   committed fix, focused/full green verification, and a newly frozen commit.
+- Every new live attempt, including one after a classified failure, requires a
+  newly frozen commit and a fresh read-only preflight with `ready=true` and
+  `blockers=[]`; a prior preflight or classification never authorizes reuse.
 
 Only Task 11 may append a genuine PASS or BLOCKED live report to
 `docs/validation/2026-07-13-phase3-m2-project-daemon.md`. This Task 10 SOP and
@@ -210,5 +241,5 @@ conda run --no-capture-output -n agentdeck \
   pytest tests/test_m2c_live_acceptance.py -q
 ```
 
-Expected portable result: `39 passed, 1 skipped`. A printed `ready=false`
+Expected portable result: `78 passed, 1 skipped`. A printed `ready=false`
 payload remains an honest setup result, not M2c PASS.
