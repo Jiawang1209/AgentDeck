@@ -9952,7 +9952,7 @@ class StateStore:
                         step_count=len(steps) if isinstance(steps, list) else 0,
                         plan=body,
                     ),
-                    "semantic_authority": semantic_by_plan.get(plan.get("plan_id")),
+                    "semantic_authority": semantic_by_plan.get(id(plan)),
                     "model": plan.get("model"),
                     "dispatch_ready": plan.get("dispatch_ready"),
                     "skill_context": StateStore._plan_skill_context(plan.get("skill_context")),
@@ -10066,7 +10066,7 @@ class StateStore:
                     "leader_backend": leader_backend_identity(provider, model),
                     "plan_id": mission.get("plan_id"),
                     "plan_hash": mission.get("plan_hash"),
-                    "semantic_authority": semantic_by_mission.get(mission_id),
+                    "semantic_authority": semantic_by_mission.get(id(mission)),
                     "workflow_run_id": mission.get("workflow_run_id"),
                     "current_step": current_step,
                     "step_count": step_count,
@@ -10154,29 +10154,35 @@ class StateStore:
         if type(plans) is not list:
             raise ValueError("semantic ProjectView provenance invalid")
         mission_rows = missions if type(missions) is list else []
-        plans_by_id: dict[object, dict[str, Any]] = {}
+        valid_plan_ids: set[str] = set()
         for plan in plans:
-            if not isinstance(plan, dict) or plan.get("plan_id") is None:
+            if not isinstance(plan, dict):
                 continue
             plan_id = plan.get("plan_id")
-            plans_by_id.setdefault(plan_id, plan)
-        missions_by_plan: dict[object, list[dict[str, Any]]] = {}
+            if type(plan_id) is str and plan_id:
+                valid_plan_ids.add(plan_id)
+        missions_by_plan: dict[str, list[dict[str, Any]]] = {}
         for mission in mission_rows:
             if not isinstance(mission, dict):
                 continue
             plan_id = mission.get("plan_id")
-            missions_by_plan.setdefault(plan_id, []).append(mission)
+            if type(plan_id) is str and plan_id:
+                missions_by_plan.setdefault(plan_id, []).append(mission)
         by_plan: dict[object, dict[str, Any] | None] = {}
         by_mission: dict[object, dict[str, Any] | None] = {}
-        for plan_id, plan in plans_by_id.items():
-            linked_missions = missions_by_plan.get(plan_id, [])
+        for plan in plans:
+            if not isinstance(plan, dict):
+                continue
+            plan_id = plan.get("plan_id")
+            valid_plan_id = type(plan_id) is str and bool(plan_id)
+            linked_missions = missions_by_plan.get(plan_id, []) if valid_plan_id else []
             mission = linked_missions[0] if linked_missions else None
             compact = StateStore._semantic_authority_projection(plan, mission)
-            by_plan[plan_id] = compact
+            by_plan[id(plan)] = compact
             for mission in linked_missions:
-                by_mission[mission.get("mission_id")] = compact
+                by_mission[id(mission)] = compact
         for plan_id, linked_missions in missions_by_plan.items():
-            if plan_id in plans_by_id:
+            if plan_id in valid_plan_ids:
                 continue
             for mission in linked_missions:
                 _active, _semantic_plan, present = semantic_mission_provenance_shape(
@@ -10184,7 +10190,10 @@ class StateStore:
                 )
                 if present:
                     raise ValueError("semantic ProjectView provenance invalid")
-                by_mission[mission.get("mission_id")] = None
+                by_mission[id(mission)] = None
+        for mission in mission_rows:
+            if isinstance(mission, dict) and id(mission) not in by_mission:
+                by_mission[id(mission)] = None
         return by_plan, by_mission
 
     @staticmethod

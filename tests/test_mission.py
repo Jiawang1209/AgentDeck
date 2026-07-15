@@ -442,6 +442,44 @@ def test_project_view_legacy_plan_and_mission_project_null_semantic_authority(
     assert "RAW_CONTAINER_SECRET" not in repr(malformed)
 
 
+@pytest.mark.parametrize("bad_plan_id", [[], {"nested": "value"}, True])
+def test_project_view_bad_plan_id_is_bounded_contract_failure(
+    tmp_path: Path, bad_plan_id: object
+) -> None:
+    from agentdeck.contracts import validate_project_view_contract
+
+    project_config = config(
+        agent("planner", "codex-cli"),
+        agent("reviewer", "claude-cli"),
+        leader=LeaderConfig(provider="fake", model="fake-plan"),
+    )
+    store = StateStore(tmp_path)
+    plan_body = {
+        "goal": "legacy",
+        "summary": "legacy",
+        "steps": [
+            {"step": 1, "agent_id": "planner", "role": "planning", "task": "one"},
+            {"step": 2, "agent_id": "reviewer", "role": "review", "task": "two"},
+        ],
+    }
+    plan = store.build_plan_record("legacy", "fake", "fake-plan", plan_body)
+    values = mission_values()
+    values.update(plan_id=plan["plan_id"], plan_hash=canonical_workflow_plan_hash(plan))
+    mission = store.build_mission_record(**values)
+    plan["plan_id"] = deepcopy(bad_plan_id)
+    mission["plan_id"] = deepcopy(bad_plan_id)
+    state = store.load()
+    state["plans"] = [plan]
+    state["missions"] = [mission]
+    store.save(state)
+
+    payload = asdict(store.project_view(project_config))
+    result = validate_project_view_contract(payload)
+
+    assert result["ok"] is False
+    assert any("plan_id" in error for error in result["errors"])
+
+
 def test_state_store_default_and_legacy_state_are_mission_compatible(tmp_path) -> None:
     store = StateStore(tmp_path)
 

@@ -6761,6 +6761,9 @@ def test_workbench_contract_reuses_project_view_semantic_projection() -> None:
     }
     payload["project_view"]["missions"]["items"][0]["semantic_authority"] = compact
     payload["project_view"]["plans"]["items"][0]["semantic_authority"] = compact
+    payload["project_view"]["plans"]["items"][0]["plan_id"] = payload[
+        "project_view"
+    ]["missions"]["items"][0]["plan_id"]
     payload["project_view"]["plans"]["items"][0]["step_count"] = compact[
         "compiled_step_count"
     ]

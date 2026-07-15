@@ -203,3 +203,87 @@ def test_project_view_bad_missions_shape_returns_contract_error_not_exception() 
     result = validate_project_view_contract(payload)
 
     assert result["ok"] is False
+
+
+def test_project_view_mission_item_rejects_harmless_unknown_field() -> None:
+    payload = project_view_example()
+    payload["missions"]["items"][0]["harmless_extra"] = "not-authority"
+
+    result = validate_project_view_contract(payload)
+
+    assert result["ok"] is False
+    assert "missions.items[0] fields are invalid" in result["errors"]
+
+
+def test_project_view_mission_item_rejects_hostile_mapping_without_hooks() -> None:
+    touched: list[str] = []
+
+    class HostileMission(dict):
+        def get(self, _key, _default=None):
+            touched.append("get")
+            raise RuntimeError("RAW_MISSION_SECRET")
+
+        def items(self):
+            touched.append("items")
+            raise RuntimeError("RAW_MISSION_SECRET")
+
+    payload = project_view_example()
+    payload["missions"]["items"][0] = HostileMission()
+
+    result = validate_project_view_contract(payload)
+
+    assert result["ok"] is False
+    assert touched == []
+    assert "RAW_MISSION_SECRET" not in repr(result)
+
+
+def test_project_view_rejects_semantic_frozen_state_before_confirmation() -> None:
+    payload = project_view_example()
+    compact = {
+        "schema_version": "mission-semantic-authority/v1",
+        "state": "frozen",
+        "authority_hash": "sha256:" + "a" * 64,
+        "requirement_count": 4,
+        "proposed_effect_count": 0,
+        "unresolved_count": 0,
+        "compiled_step_count": 2,
+        "blockers": [],
+    }
+    payload["plans"]["items"][0]["semantic_authority"] = deepcopy(compact)
+    payload["missions"]["items"][0]["semantic_authority"] = deepcopy(compact)
+
+    result = validate_project_view_contract(payload)
+
+    assert result["ok"] is False
+    assert (
+        "missions.items[0].semantic_authority.state must match Mission lifecycle"
+        in result["errors"]
+    )
+
+
+def test_project_view_standalone_semantic_plan_cannot_claim_frozen() -> None:
+    payload = project_view_example()
+    payload["missions"] = {
+        "count": 0,
+        "by_status": {},
+        "latest_id": None,
+        "items": [],
+    }
+    payload["plans"]["items"][0]["semantic_authority"] = {
+        "schema_version": "mission-semantic-authority/v1",
+        "state": "frozen",
+        "authority_hash": "sha256:" + "a" * 64,
+        "requirement_count": 4,
+        "proposed_effect_count": 0,
+        "unresolved_count": 0,
+        "compiled_step_count": 2,
+        "blockers": [],
+    }
+
+    result = validate_project_view_contract(payload)
+
+    assert result["ok"] is False
+    assert (
+        "project_view.plans.items[0].semantic_authority.state must be preview without a linked Mission"
+        in result["errors"]
+    )

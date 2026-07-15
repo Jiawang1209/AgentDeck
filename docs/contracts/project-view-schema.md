@@ -220,6 +220,16 @@ Discovery includes `semantic_authority_fields`, the ordered exact eight-field co
   "missions_fields": [],
   "mission_item_fields": [],
   "plan_item_fields": [],
+  "semantic_authority_fields": [
+    "schema_version",
+    "state",
+    "authority_hash",
+    "requirement_count",
+    "proposed_effect_count",
+    "unresolved_count",
+    "compiled_step_count",
+    "blockers"
+  ],
   "mission_recovery_fields": [],
   "mission_recovery_step_fields": [],
   "mission_recovery_result_fields": [],

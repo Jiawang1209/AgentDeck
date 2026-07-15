@@ -8011,20 +8011,28 @@ def _validate_project_view_mission_items(
         errors.append("missions.by_status must be an object of integer counts")
     expected_statuses: dict[str, int] = {}
     for item in items:
-        if isinstance(item, dict):
+        if type(item) is dict:
             status = item.get("status")
             if isinstance(status, str):
                 expected_statuses[status] = expected_statuses.get(status, 0) + 1
     if isinstance(by_status, dict) and by_status != expected_statuses:
         errors.append("missions.by_status must match mission item statuses")
     latest_id = missions.get("latest_id")
-    expected_latest_id = items[-1].get("mission_id") if items and isinstance(items[-1], dict) else None
+    expected_latest_id = items[-1].get("mission_id") if items and type(items[-1]) is dict else None
     if latest_id != expected_latest_id:
         errors.append("missions.latest_id must match the final mission item")
-    mission_ids = [item.get("mission_id") for item in items if isinstance(item, dict)]
+    mission_ids = [
+        item.get("mission_id")
+        for item in items
+        if type(item) is dict and type(item.get("mission_id")) is str
+    ]
     if len(mission_ids) != len(set(mission_ids)):
         errors.append("missions.items mission_id must be unique")
-    mission_plan_ids = [item.get("plan_id") for item in items if type(item) is dict]
+    mission_plan_ids = [
+        item.get("plan_id")
+        for item in items
+        if type(item) is dict and type(item.get("plan_id")) is str
+    ]
     if len(mission_plan_ids) != len(set(mission_plan_ids)):
         errors.append("missions.items plan_id must be unique")
 
@@ -8093,12 +8101,14 @@ def _validate_project_view_mission_items(
         "startup_actions": MISSION_STATE_STARTUP_ACTION_REQUIRED_FIELDS,
     }
     for index, item in enumerate(items):
-        if not isinstance(item, dict):
+        if type(item) is not dict:
             errors.append(f"missions.items[{index}] must be an object")
             continue
         for field in PROJECT_VIEW_MISSION_ITEM_FIELDS:
             if field not in item:
                 errors.append(f"missing mission item field at index {index}: {field}")
+        if set(item) != set(PROJECT_VIEW_MISSION_ITEM_FIELDS):
+            errors.append(f"missions.items[{index}] fields are invalid")
         for field in sorted(forbidden_fields.intersection(item)):
             errors.append(f"missions.items[{index}] must not contain raw field: {field}")
         for path in forbidden_semantic_paths(item, f"missions.items[{index}]"):
@@ -8292,6 +8302,30 @@ def _validate_project_view_mission_items(
             value=item.get("semantic_authority"),
             step_count=item.get("step_count"),
         )
+        semantic = item.get("semantic_authority")
+        if (
+            type(semantic) is dict
+            and _project_view_semantic_authority_is_comparable(semantic)
+        ):
+            status = item.get("status")
+            confirmed_at = item.get("confirmed_at")
+            if status == MISSION_STATUSES[0]:
+                lifecycle_valid = confirmed_at is None
+                expected_semantic_state = "preview"
+            elif status in MISSION_STATUSES[1:]:
+                lifecycle_valid = _mission_nonempty_string(confirmed_at)
+                expected_semantic_state = "frozen"
+            else:
+                lifecycle_valid = False
+                expected_semantic_state = None
+            if not lifecycle_valid:
+                errors.append(
+                    f"missions.items[{index}].semantic_authority lifecycle is invalid"
+                )
+            if semantic.get("state") != expected_semantic_state:
+                errors.append(
+                    f"missions.items[{index}].semantic_authority.state must match Mission lifecycle"
+                )
 
 
 def _validate_project_view_skill_items(errors: list[str], payload: dict[str, object]) -> None:
@@ -8522,11 +8556,15 @@ def _validate_project_view_plan_items(errors: list[str], payload: dict[str, obje
         and type(agent.get("agent_id")) is str
         and bool(agent.get("agent_id"))
     } if isinstance(agents, list) else set()
-    plan_ids = [item.get("plan_id") for item in items if type(item) is dict]
+    plan_ids = [
+        item.get("plan_id")
+        for item in items
+        if type(item) is dict and type(item.get("plan_id")) is str
+    ]
     if len(plan_ids) != len(set(plan_ids)):
         errors.append("plans.items plan_id must be unique")
     for index, item in enumerate(items):
-        if not isinstance(item, dict):
+        if type(item) is not dict:
             errors.append(f"plans.items[{index}] must be an object")
             continue
         prefix = f"project_view.plans.items[{index}]"
@@ -8536,6 +8574,8 @@ def _validate_project_view_plan_items(errors: list[str], payload: dict[str, obje
                 errors.append(f"missing plan item field at index {index}: {field}")
         if set(item) != set(PROJECT_VIEW_PLAN_ITEM_FIELDS):
             errors.append(f"{prefix} fields are invalid")
+        if type(item.get("plan_id")) is not str or not item.get("plan_id"):
+            errors.append(f"{prefix}.plan_id must be a non-empty string")
         leader_backend = item.get("leader_backend")
         if isinstance(leader_backend, dict):
             _validate_leader_backend(errors, prefix, leader_backend)
@@ -8584,6 +8624,15 @@ def _validate_project_view_plan_items(errors: list[str], payload: dict[str, obje
         ):
             errors.append(
                 f"{prefix}.semantic_authority must match the linked Mission"
+            )
+        if (
+            matching is None
+            and type(plan_semantic) is dict
+            and _project_view_semantic_authority_is_comparable(plan_semantic)
+            and plan_semantic.get("state") != "preview"
+        ):
+            errors.append(
+                f"{prefix}.semantic_authority.state must be preview without a linked Mission"
             )
 
 
