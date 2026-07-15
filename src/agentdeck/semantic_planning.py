@@ -64,6 +64,10 @@ _MAX_JSON_TREE_NODES = 10_000
 _MAX_JSON_COLLECTION_ITEMS = 512
 _HASH_RE = re.compile(r"sha256:[0-9a-f]{64}\Z")
 _REQUIREMENT_ID_RE = re.compile(r"req_[0-9a-f]{12}\Z")
+_TRANSITION_FRAGMENT_RE = re.compile(
+    r"(req_[0-9a-f]{12})[:./][A-Za-z0-9_-][A-Za-z0-9._:-]{0,63}\Z"
+)
+_AUTHORITY_REF_CHARS_MAX = 81
 _ORDINARY_SCALAR_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}\Z")
 _INSTRUCTION_RE = re.compile(
     r"(?:ignore\s+(?:all\s+)?previous\s+instructions?"
@@ -110,7 +114,9 @@ def _exact_list(value: object) -> bool:
 
 
 def _safe_text(value: object, *, allow_instruction: bool = False) -> bool:
-    if type(value) is not str or not value or unicodedata.normalize("NFC", value) != value:
+    if type(value) is not str or not value or len(value) > _MAX_TEXT_BYTES:
+        return False
+    if unicodedata.normalize("NFC", value) != value:
         return False
     try:
         encoded = value.encode("utf-8")
@@ -118,7 +124,10 @@ def _safe_text(value: object, *, allow_instruction: bool = False) -> bool:
         return False
     if len(encoded) > _MAX_TEXT_BYTES:
         return False
-    if any(unicodedata.category(char) in {"Cc", "Cs"} for char in value):
+    if any(
+        unicodedata.category(char) in {"Cc", "Cs", "Zl", "Zp"}
+        for char in value
+    ):
         return False
     if semantic_text_contains_sensitive_value(value):
         return False
@@ -150,15 +159,25 @@ def _validated_authority(authority: object) -> dict[str, Any]:
 def _validate_context(
     selected_agent_ids: object, roles: object, step_count: object
 ) -> tuple[tuple[str, ...], dict[str, str], int]:
+    if type(roles) is not dict:
+        _fail("semantic_candidate_schema_invalid")
+    if any(
+        type(key) is not str
+        or type(value) is not str
+        or not value
+        or len(value) > _MAX_TEXT_BYTES
+        for key, value in roles.items()
+    ):
+        _fail("semantic_candidate_schema_invalid")
+    if any(not _safe_text(value) for value in roles.values()):
+        _fail("semantic_candidate_schema_invalid")
     if (
         type(selected_agent_ids) is not tuple
         or not selected_agent_ids
         or len(selected_agent_ids) > _MAX_ITEMS
         or any(type(item) is not str or not _safe_text(item) for item in selected_agent_ids)
         or len(set(selected_agent_ids)) != len(selected_agent_ids)
-        or type(roles) is not dict
         or set(roles) != set(selected_agent_ids)
-        or any(type(value) is not str or not _safe_text(value) for value in roles.values())
         or type(step_count) is not int
         or step_count <= 0
         or step_count > _MAX_ITEMS
@@ -242,15 +261,6 @@ def _validate_effect_conflicts(
             _fail("semantic_effect_conflict")
 
 
-def _looks_like_transition_fragment(reference: str, transition_ids: set[str]) -> bool:
-    return any(
-        reference.startswith(f"{requirement_id}:")
-        or reference.startswith(f"{requirement_id}.")
-        or reference.startswith(f"{requirement_id}/")
-        for requirement_id in transition_ids
-    )
-
-
 def validate_semantic_candidate(
     authority: object,
     candidate: object,
@@ -307,12 +317,19 @@ def validate_semantic_candidate(
         ):
             _fail("semantic_candidate_schema_invalid", step=index)
         refs = raw_step["authority_refs"]
-        if not _exact_list(refs) or len(refs) > _MAX_ITEMS or any(type(ref) is not str for ref in refs):
+        if not _exact_list(refs) or len(refs) > _MAX_ITEMS:
+            _fail("semantic_candidate_schema_invalid", step=index)
+        for reference in refs:
+            if type(reference) is not str or len(reference) > _AUTHORITY_REF_CHARS_MAX:
+                _fail("semantic_candidate_schema_invalid", step=index)
+            if _REQUIREMENT_ID_RE.fullmatch(reference) is not None:
+                continue
+            fragment = _TRANSITION_FRAGMENT_RE.fullmatch(reference)
+            if fragment is not None and fragment.group(1) in transition_ids:
+                _fail("semantic_transition_incomplete", step=index)
             _fail("semantic_candidate_schema_invalid", step=index)
         for reference in refs:
             if reference not in by_id:
-                if _looks_like_transition_fragment(reference, transition_ids):
-                    _fail("semantic_transition_incomplete", requirement_id=reference, step=index)
                 _fail("semantic_candidate_schema_invalid", requirement_id=reference, step=index)
             if reference in seen:
                 if reference in transition_ids:
@@ -396,6 +413,8 @@ def _preflight_exact_json_tree(value: object) -> None:
                 stack.extend((child, depth + 1) for child in item)
             continue
         if type(item) is str:
+            if len(item) > _MAX_TEXT_BYTES:
+                _fail("semantic_compilation_failed")
             try:
                 encoded = item.encode("utf-8")
             except UnicodeError:
@@ -524,9 +543,19 @@ def semantic_step_hash(semantic_step: object) -> str:
 
 def _json_line(value: object) -> str:
     try:
-        return json.dumps(value, ensure_ascii=False, separators=(",", ":"), allow_nan=False)
+        serialized = json.dumps(
+            value, ensure_ascii=False, separators=(",", ":"), allow_nan=False
+        )
     except (TypeError, ValueError, UnicodeError, OverflowError):
         _fail("semantic_compilation_failed")
+    serialized = (
+        serialized.replace("\x85", "\\u0085")
+        .replace("\u2028", "\\u2028")
+        .replace("\u2029", "\\u2029")
+    )
+    if len(serialized.splitlines()) != 1:
+        _fail("semantic_compilation_failed")
+    return serialized
 
 
 def compile_worker_task(semantic_step: object) -> str:

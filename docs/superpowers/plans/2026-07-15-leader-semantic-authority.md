@@ -522,6 +522,17 @@ validation. Before validating, hashing, or comparing any proposal, candidate
 validation must sum proposal counts across all steps and enforce the exported
 `SEMANTIC_PROPOSED_EFFECTS_MAX` authority-wide limit.
 
+Every compiler logical field must remain one Python `splitlines()` physical
+line. Candidate verification rejects control, surrogate, Zl, and Zp
+separators; required literals remain representable, so canonical JSON value
+lines must explicitly escape NEL, LS, PS, and every other physical separator
+and assert the one-line invariant. Role maps require an exact built-in dict
+with exact string keys and bounded safe string values before equality, hashing,
+or lookup. Candidate authority refs require exact bounded `req_` IDs before any
+lookup; only the bounded `req_<12hex>[:./]<suffix>` grammar may extract a safe
+base ID to preserve `semantic_transition_incomplete`. Exact text gates reject
+oversized character counts before normalization or UTF-8 encoding.
+
 - [ ] **Step 2: Run RED**
 
 ```bash

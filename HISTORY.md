@@ -4,6 +4,12 @@
 
 ## 2026-07-15
 
+### Enforce semantic compiler physical lines
+
+- Escaped every Python physical-line separator that JSON may otherwise preserve, asserted one physical line per serialized logical value, and rejected Zl/Zp separators in candidate and persisted verification guidance.
+- Hardened role maps and candidate authority refs with exact built-in key/value checks and cheap character bounds before equality, hashing, lookup, normalization, or transition classification; only one bounded transition-fragment grammar can preserve the atomic-transition diagnostic.
+- Reordered candidate and public text resource gates so oversized strings fail before normalization/UTF-8 work, with RED/GREEN armed-subclass, hostile-ref, Unicode separator, and splitlines coverage. This remains Task 3 only and adds no Task 4, provider, conversation, state, runtime, tmux, ACP, live execution, or M2c PASS claim.
+
 ### Unify semantic proposal conflict validation
 
 - Reused one proposal validator across Leader candidates and persisted semantic steps, ordering exact scalar and sensitive checks before canonical authority target/operation validation with a fixed legal placeholder ID, and computing real proposal IDs only after canonical acceptance.
