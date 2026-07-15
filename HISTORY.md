@@ -4,6 +4,12 @@
 
 ## 2026-07-15
 
+### Correct the Claude handoff prompt
+
+- Replaced the stale Claude Code CLI prompt that instructed a new agent to resume the already-complete project-daemon Task 14.
+- The handoff prompt now preserves frozen authority `1a22618ba083a76f4a21ffc7ebc7a3e513e4aae6`, the single-live pre-confirmation semantic-authority boundary, zero downstream effects, M2c **BLOCKED**, M3 locked, and no automatic retry.
+- Its only continuation is a new brainstorming/spec/plan round for Leader revision task semantic authority before any approved implementation, deterministic RED/GREEN, new commit, full regression, ready preflight, or newly authorized single live attempt. No test, preflight, or live gate was rerun for this documentation-only correction.
+
 ### Correct stale M2c active routing
 
 - Reclassified the remaining Task 11 `650d6fc4` / `probe_wrote_files` / zero-live passages in the handoff as historical evidence rather than active instructions.
