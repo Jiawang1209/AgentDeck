@@ -4,6 +4,13 @@
 
 ## 2026-07-16
 
+### Design M2c Leader Preview terminal observability
+
+- Approved a north-star-first correction for the blocked Task 14 Preview gate: the M2c harness must prefer the exact new conversation turn's durable failed/cancelled terminal over a later outer timeout, continuously drain and poll the bounded PTY, distinguish process exit from genuine no-terminal timeout, and retain only closed Leader diagnostics plus existing byte-count/truncation/hash evidence.
+- Defined a dedicated `_wait_for_mission_preview()` contract, journal/outbox event reconciliation, fail-closed Preview/terminal race handling, one-to-one stable failure codes for every production Leader stage, and deterministic RED coverage for timeout, nonzero, schema, cancelled, oversize, leakage, malformed evidence, PTY exit, and genuine `mission_preview_timeout`.
+- Removed model defaulting from the approved design. Future Task 14 preflight/live commands must explicitly provide `AGENTDECK_M2C_LEADER_MODEL`; one immutable validated value feeds preflight v2, disposable config, drift verification, and evidence. Missing, invalid, or drifted identity blocks before provider execution, with no automatic model/provider fallback.
+- Kept MCP, provider timeout, authentication, network, production ConversationSession, ACP/tmux, daemon, permission, and Worker behavior unchanged until a new closed diagnostic supplies evidence. The unchanged non-live M2c baseline passes `122` tests with one explicit live skip; no preflight, provider, tmux server, ACP adapter, or live Mission ran. M2c remains **BLOCKED** and M3 remains locked pending written-spec review, a detailed TDD plan, implementation, frozen verification, and separate live authorization.
+
 ### Record the single Task 14 M2c live blocker
 
 - Froze Task 14 authority at `954b868cafc509a6a767f35930b345bbccbdf887` after two independent full suites (`4155 passed, 2 skipped` in `195.15s` and `185.79s`) and one designated read-only preflight (`ready=true`, `blockers=[]`, `1 passed in 3.05s`) for Codex CLI `0.131.0`, Claude CLI `2.1.208`, Claude Agent ACP `0.58.1`, and tmux `3.6a`.
