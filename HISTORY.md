@@ -4,6 +4,14 @@
 
 ## 2026-07-15
 
+### Prove semantic Mission authority end to end
+
+- Converted the existing fake-only four-stage daemon acceptance into the full semantic path: natural-language intake, deterministic authority extraction, native Leader candidate, byte-exact compilation, exact preview confirmation, daemon admission, ACP/tmux execution, revision, acceptance, and completion. The test proves four distinct compiled hashes, two permission pauses, four canonical handoffs, three inter-stage links, disconnect/reconnect, takeover/return-control, and final `accepted-v2\n` bytes.
+- Bound whole-path evidence across the frozen Plan/Mission, execution snapshot, attempt/reply/handoff records, compact audit events, ProjectView, workbench, and recovery summaries. The artifact remains `draft-v1\n` while revision permission is pending and changes to `accepted-v2\n` only across the uniquely hashed revision step.
+- Injected an observed fake tmux private-reasoning/full-transcript sentinel into raw Worker output while transport fixtures retain only bounded hashes and canonical handoff fields. Durable state, audit, ProjectView, and workbench contain none of the sentinel or raw transcript.
+- Added a deterministic table-driven pre-semantic corpus with fixed Plan IDs, Mission IDs, canonical Plan hashes, and snapshot hashes. Read/status remains byte-read-only, exact daemon resume preview/confirmation preserves the Plan and execution snapshot hashes, and ProjectView/recovery contracts accept the legacy null-semantic shape without migration or rewrite.
+- Added compact daemon-protocol semantic lineage and conversation/workbench projection coverage. The focused semantic acceptance target passed `23` cases, and the planned broad deterministic regression passed `858` cases. This Task 12 work uses fake transports only and performs no real provider, network, tmux, ACP adapter, Task 13 preflight, or M2c live attempt.
+
 ### Deduplicate completed Mission workbench controls
 
 - Made review-gate stage controls identify `code_review` and `round_review` in their labels. When neither reviewer role is configured, their disabled trace/inbox controls now retain distinct deterministic `control_id` values instead of colliding on the same null command and global agent slot.

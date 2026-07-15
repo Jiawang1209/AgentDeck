@@ -77,6 +77,71 @@ def test_workbench_conversation_surfaces_share_project_view_truth(tmp_path: Path
     assert _tree(tmp_path) == before
 
 
+def test_semantic_preview_surfaces_share_one_compact_non_leaking_authority(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / ".git").mkdir()
+    write_default_config(tmp_path)
+    config_path = tmp_path / ".agentdeck" / "config.toml"
+    config_path.write_text(
+        config_path.read_text(encoding="utf-8")
+        .replace('provider = "deepseek"', 'provider = "fake"', 1)
+        .replace('model = "deepseek-chat"', 'model = "fake-plan"', 1),
+        encoding="utf-8",
+    )
+    config = load_config(tmp_path)
+    store = StateStore(tmp_path)
+    session = ConversationSession(root=tmp_path, config=config, store=store)
+    response = session.handle(
+        "Have planner and reviewer complete 4 steps strictly sequentially. "
+        "The phases must be exactly implementation, review, revision, acceptance: "
+        "First, planner creates artifact.txt with content exactly draft-v1 newline; "
+        "Second, reviewer performs a read-only review and requires accepted-v2; "
+        "Third, planner updates artifact.txt to exactly accepted-v2 newline; "
+        "Fourth, reviewer performs read-only verification of the exact bytes. "
+        "There are 4 steps."
+    )
+    assert response.kind == "mission_preview"
+    before = _tree(tmp_path)
+
+    project_view = asdict(store.project_view(config))
+    workbench = cli._workbench_snapshot_payload(project_view, store)
+    plan_card = project_view["plans"]["items"][-1]["semantic_authority"]
+    mission_card = project_view["missions"]["items"][-1]["semantic_authority"]
+
+    assert plan_card == mission_card == workbench["mission_card"][
+        "semantic_authority"
+    ]
+    assert set(mission_card) == {
+        "schema_version",
+        "state",
+        "authority_hash",
+        "requirement_count",
+        "proposed_effect_count",
+        "unresolved_count",
+        "compiled_step_count",
+        "blockers",
+    }
+    assert mission_card["state"] == "preview"
+    assert mission_card["requirement_count"] == 4
+    assert mission_card["compiled_step_count"] == 4
+    assert validate_workbench_contract(workbench) == {"ok": True, "errors": []}
+    rendered = repr(
+        (plan_card, mission_card, workbench["mission_card"]["semantic_authority"])
+    )
+    for forbidden in (
+        "artifact.txt",
+        "draft-v1",
+        "accepted-v2",
+        "semantic_steps",
+        "prompt",
+        "transcript",
+        "secret_ref",
+    ):
+        assert forbidden not in rendered
+    assert _tree(tmp_path) == before
+
+
 def test_natural_language_migration_preview_is_read_only_and_never_calls_provider(
     tmp_path: Path,
 ) -> None:

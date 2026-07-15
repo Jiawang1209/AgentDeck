@@ -36,62 +36,54 @@ from agentdeck.daemon.lifecycle import (
     project_root_hash,
     reconcile_endpoint,
 )
-from agentdeck.conversation.leader_gateway import LEADER_FAILURE_STAGES
+from agentdeck.conversation.bindings import execution_digest
+from agentdeck.conversation.leader_gateway import LEADER_FAILURE_STAGES, LeaderGateway
+from agentdeck.conversation.session import ConversationSession
 from agentdeck.mission_orchestration import confirm_mission_for_daemon, create_mission_preview
 from agentdeck.providers import LeaderPlanRequest
-from agentdeck.state import StateStore
+from agentdeck.providers.fake import FakeLeaderProvider
+from agentdeck.semantic_authority import semantic_authority_hash
+from agentdeck.semantic_planning import compile_worker_task, semantic_step_hash
+from agentdeck.state import (
+    StateStore,
+    canonical_snapshot_hash,
+    execution_policy_snapshot,
+)
 
 
 FAKE_AGENT = Path(__file__).parent / "fixtures" / "fake_acp_agent.py"
 CONVERSATION_WRAPPER = Path(__file__).parent / "fixtures" / "conversation_cli_wrapper.py"
 
 
-class _FourStageProvider:
-    name = "fake"
+class _FourStageProvider(FakeLeaderProvider):
+    """Native semantic fake whose guidance keeps the existing transport oracle stable."""
 
-    def plan(self, request: LeaderPlanRequest) -> dict[str, object]:
-        assert request.selected_agent_ids == ("claude-worker", "codex-worker")
-        assert request.step_count == 4
-        return {
-            "goal": "complete deterministic four-stage Mission",
-            "summary": "implementation, review, revision, acceptance",
-            "steps": [
-                {
-                    "step": 1,
-                    "agent_id": "claude-worker",
-                    "role": "implementation",
-                    "task": "implementation: create artifact.txt containing draft-v1",
-                    "risk": "edit requires approval",
-                    "requires_approval": True,
-                },
-                {
-                    "step": 2,
-                    "agent_id": "codex-worker",
-                    "role": "review",
-                    "task": "review: require artifact.txt to contain accepted-v2",
-                    "risk": "review only",
-                    "requires_approval": True,
-                },
-                {
-                    "step": 3,
-                    "agent_id": "claude-worker",
-                    "role": "implementation",
-                    "task": "revision: replace draft-v1 with accepted-v2",
-                    "risk": "edit requires approval",
-                    "requires_approval": True,
-                },
-                {
-                    "step": 4,
-                    "agent_id": "codex-worker",
-                    "role": "review",
-                    "task": "acceptance: verify artifact.txt equals accepted-v2",
-                    "risk": "verification only",
-                    "requires_approval": True,
-                },
-            ],
-            "approval_required": True,
-            "dispatch_ready": False,
-        }
+    _GUIDANCE = (
+        "implementation: create artifact.txt containing draft-v1",
+        "review: require artifact.txt to contain accepted-v2",
+        "revision: replace draft-v1 with accepted-v2",
+        "acceptance: verify artifact.txt equals accepted-v2",
+    )
+
+    @staticmethod
+    def _semantic_candidate(
+        authority: dict[str, object],
+        *,
+        selected_agent_ids: tuple[str, ...],
+        roles: dict[str, str],
+        step_count: int,
+    ) -> dict[str, object]:
+        assert selected_agent_ids == ("claude-worker", "codex-worker")
+        assert step_count == 4
+        candidate = FakeLeaderProvider._semantic_candidate(
+            authority,
+            selected_agent_ids=selected_agent_ids,
+            roles=roles,
+            step_count=step_count,
+        )
+        for step, guidance in zip(candidate["steps"], _FourStageProvider._GUIDANCE):
+            step["verification"] = guidance
+        return candidate
 
 
 def _cleanup_pty(process: subprocess.Popen[bytes], master: int) -> None:
@@ -591,6 +583,8 @@ def _write_m2c_fake_tmux(
         "prompt=Path(os.environ['AGENTDECK_ACCEPTANCE_TMUX_PROMPT'])\n"
         "log=Path(os.environ['AGENTDECK_ACCEPTANCE_ORDER'])\n"
         "artifact=Path(os.environ['AGENTDECK_ACCEPTANCE_ARTIFACT'])\n"
+        "raw_marker=Path(os.environ['AGENTDECK_ACCEPTANCE_RAW_MARKER'])\n"
+        "secret_marker=os.environ['AGENTDECK_ACCEPTANCE_SECRET_MARKER']\n"
         "if 'split-window' in args:\n"
         " print('%m2c-codex')\n"
         "if 'load-buffer' in args:\n"
@@ -619,7 +613,8 @@ def _write_m2c_fake_tmux(
         "   summary='acceptance artifact exact bytes verified'; verification='artifact equals accepted-v2'; next_steps='done'\n"
         "  else: raise RuntimeError('M2c acceptance artifact mismatch')\n"
         "  prompt.unlink()\n"
-        "  print('\\n'.join([f'handoff_token: {token}','status: completed',f'summary: {summary}',f'verification: {verification}','risks: none',f'next_steps: {next_steps}']))\n"
+        "  raw_marker.write_text(secret_marker, encoding='utf-8')\n"
+        "  print('\\n'.join([f'handoff_token: {token}','status: completed',f'summary: {summary}',f'verification: {verification}','risks: none',f'next_steps: {next_steps}',f'private_reasoning: {secret_marker}',f'full_transcript: {secret_marker}']))\n"
         "elif 'display-message' in args:\n"
         " print(args[args.index('-t') + 1])\n",
         encoding="utf-8",
@@ -746,7 +741,9 @@ def _create_and_confirm_through_bare_pty(
         _cleanup_pty(process, master)
 
 
-def test_daemon_acceptance_runs_four_stage_acp_tmux_mission(monkeypatch) -> None:
+def test_semantic_daemon_acceptance_runs_natural_language_four_stage_acp_tmux_mission(
+    monkeypatch,
+) -> None:
     parent = Path(tempfile.mkdtemp(prefix="agentdeck-m2c-four-stage-", dir="/tmp"))
     root = (parent / "repo").resolve()
     root.mkdir()
@@ -756,7 +753,9 @@ def test_daemon_acceptance_runs_four_stage_acp_tmux_mission(monkeypatch) -> None
     acp_log = root / "m2c-acp.jsonl"
     tmux_log = root / "m2c-tmux.jsonl"
     tmux_prompt = root / "m2c-tmux-prompt.txt"
+    raw_marker_path = root / "m2c-raw-marker.txt"
     config_path = root / ".agentdeck" / "config.toml"
+    secret_marker = "SEMANTIC_SECRET_MARKER_8f11 FULL_TRANSCRIPT_MARKER_2aa1"
     text = config_path.read_text(encoding="utf-8")
     text = text.replace('provider = "deepseek"', 'provider = "fake"', 1)
     text = text.replace('model = "deepseek-chat"', 'model = "fake-plan"', 1)
@@ -799,28 +798,82 @@ def test_daemon_acceptance_runs_four_stage_acp_tmux_mission(monkeypatch) -> None
     monkeypatch.setenv("AGENTDECK_ACCEPTANCE_TMUX_PROMPT", str(tmux_prompt))
     monkeypatch.setenv("AGENTDECK_ACCEPTANCE_ORDER", str(tmux_log))
     monkeypatch.setenv("AGENTDECK_ACCEPTANCE_ARTIFACT", str(artifact))
+    monkeypatch.setenv("AGENTDECK_ACCEPTANCE_RAW_MARKER", str(raw_marker_path))
+    monkeypatch.setenv("AGENTDECK_ACCEPTANCE_SECRET_MARKER", secret_marker)
 
     config = load_config(root)
     store = StateStore(root)
     with _acceptance_resource_guard(root=root, parent=parent) as resources:
-        preview = create_mission_preview(
+        mission_text = (
+            "Have claude-worker and codex-worker complete 4 steps strictly sequentially. "
+            "The phases must be exactly implementation, review, revision, acceptance: "
+            "First, claude-worker creates artifact.txt with content exactly draft-v1 newline; "
+            "Second, codex-worker performs a read-only review and requires accepted-v2; "
+            "Third, claude-worker updates artifact.txt to exactly accepted-v2 newline; "
+            "Fourth, codex-worker performs read-only verification of the exact bytes. "
+            "There are 4 steps."
+        )
+        confirmed_payload: dict[str, object] = {}
+
+        def freeze_preview(mission_id: str) -> dict[str, object]:
+            confirmed_payload.update(
+                confirm_mission_for_daemon(
+                    config=config, store=store, mission_id=mission_id
+                )
+            )
+            return dict(confirmed_payload)
+
+        session = ConversationSession(
+            root=root,
             config=config,
             store=store,
-            provider=_FourStageProvider(),
-            user_message=(
-                "让 claude-worker 和 codex-worker 严格串行完成四阶段，共4轮"
+            leader_gateway=LeaderGateway(
+                provider_factory=lambda _name: _FourStageProvider()
             ),
-            timeout_seconds=30,
+            preview_executor=freeze_preview,
         )
+        response = session.handle(mission_text)
+        assert response.kind == "mission_preview"
+        preview = response.payload
         plan = store.plan_by_id(str(preview["plan_id"]))["plan"]
-        assert [item["task"] for item in plan["steps"]] == [
-            "implementation: create artifact.txt containing draft-v1",
-            "review: require artifact.txt to contain accepted-v2",
-            "revision: replace draft-v1 with accepted-v2",
-            "acceptance: verify artifact.txt equals accepted-v2",
+        assert plan["semantic_authority"]["requirements"]
+        assert [
+            item["phase"] for item in plan["semantic_steps"]
+        ] == ["implementation", "review", "revision", "acceptance"]
+        assert [
+            item["task"] for item in plan["steps"]
+        ] == [compile_worker_task(item) for item in plan["semantic_steps"]]
+        assert [
+            item["semantic_step_hash"] for item in plan["semantic_steps"]
+        ] == [semantic_step_hash(item) for item in plan["semantic_steps"]]
+        confirmation = session.handle("确认执行当前预览")
+        assert confirmation.kind == "preview_executed"
+        confirmed = dict(confirmed_payload)
+        authority_hash = semantic_authority_hash(plan["semantic_authority"])
+        compiled_task_hashes = [
+            "sha256:" + hashlib.sha256(step["task"].encode("utf-8")).hexdigest()
+            for step in plan["steps"]
         ]
-        confirmed = confirm_mission_for_daemon(
-            config=config, store=store, mission_id=str(preview["mission_id"])
+        assert len(set(compiled_task_hashes)) == 4
+        frozen_mission = store.mission_by_id(str(preview["mission_id"]))
+        assert frozen_mission["semantic_authority_hash"] == authority_hash
+        assert frozen_mission["compiled_task_hashes"] == compiled_task_hashes
+        binding = store.load()["conversation_preview_bindings"][-1]
+        assert binding["execution_digest"] == execution_digest(
+            {
+                "control_kind": "mission_confirm",
+                "project_root": str(root),
+                "leader_provider": config.leader.provider,
+                "leader_model": config.leader.model,
+                "action_id": preview["mission_id"],
+                "action_hash": preview["plan_hash"],
+                "semantic_authority_hash": authority_hash,
+                "compiled_task_hashes": compiled_task_hashes,
+                "policy_snapshot_hash": canonical_snapshot_hash(
+                    execution_policy_snapshot(config)
+                ),
+                "preview_generation": 1,
+            }
         )
 
         admission_clients: list[DaemonClient] = []
@@ -959,6 +1012,7 @@ def test_daemon_acceptance_runs_four_stage_acp_tmux_mission(monkeypatch) -> None
             "running",
         }
         assert all(item["step_id"] != "step_4" for item in safe_window["mission_attempts"])
+        assert artifact.read_bytes() == b"draft-v1\n"
         assert [json.loads(line)["phase"] for line in tmux_log.read_text().splitlines()] == [
             "review"
         ]
@@ -1035,10 +1089,19 @@ def test_daemon_acceptance_runs_four_stage_acp_tmux_mission(monkeypatch) -> None
             "codex-worker",
         ]
         assert [item["state"] for item in attempts] == ["succeeded"] * 4
+        semantic_hashes = [
+            item["semantic_step_hash"] for item in plan["semantic_steps"]
+        ]
+        assert [item["semantic_step_hash"] for item in attempts] == semantic_hashes
         assert len(completed["permission_requests"]) == 2
         handoffs = completed["mission_handoffs"]
         assert len(handoffs) == 4
         assert [item["state"] for item in handoffs] == ["recorded"] * 4
+        assert [item["semantic_step_hash"] for item in handoffs] == semantic_hashes
+        assert [
+            item["semantic_step_hash"]
+            for item in completed["mission_worker_replies"]
+        ] == semantic_hashes
         assert [item["attempt_id"] for item in handoffs] == [
             item["attempt_id"] for item in attempts
         ]
@@ -1048,8 +1111,43 @@ def test_daemon_acceptance_runs_four_stage_acp_tmux_mission(monkeypatch) -> None
         assert artifact.read_bytes() == b"accepted-v2\n"
         assert mission["status"] == "completed"
         assert mission["current_step"] == mission["step_count"] == 4
+        transitions = [
+            item
+            for item in plan["semantic_authority"]["requirements"]
+            if item["kind"] == "state_transition"
+        ]
+        assert transitions == [
+            {
+                **transitions[0],
+                "target": "artifact.txt",
+                "operation": "update",
+                "phase": "revision",
+                "agent_id": "claude-worker",
+                "before": {"content_equals": "draft-v1\n"},
+                "after": {"content_equals": "accepted-v2\n"},
+            }
+        ]
+        snapshot = mission["execution_snapshot"]
+        assert snapshot["mission"]["semantic_authority_hash"] == authority_hash
+        assert [
+            item["semantic_step_hash"] for item in snapshot["mission"]["steps"]
+        ] == semantic_hashes
+        assert [
+            item["task_hash"] for item in snapshot["mission"]["steps"]
+        ] == [
+            canonical_snapshot_hash({"task": item["task"]}) for item in plan["steps"]
+        ]
 
         events = store.all_events()
+        compiled_events = [
+            item for item in events if item["event_type"] == "worker_task_compiled"
+        ]
+        assert [item["payload"]["semantic_step_hash"] for item in compiled_events] == (
+            semantic_hashes
+        )
+        assert [item["payload"]["task_hash"] for item in compiled_events] == [
+            canonical_snapshot_hash({"task": item["task"]}) for item in plan["steps"]
+        ]
         submitted = [
             item for item in events if item["event_type"] == "mission_attempt_submitted"
         ]
@@ -1117,6 +1215,62 @@ def test_daemon_acceptance_runs_four_stage_acp_tmux_mission(monkeypatch) -> None
             for item in tmux_prompts
         )
 
+        view = asdict(store.project_view(config))
+        plan_card = next(
+            item["semantic_authority"]
+            for item in view["plans"]["items"]
+            if item["plan_id"] == preview["plan_id"]
+        )
+        mission_card = next(
+            item["semantic_authority"]
+            for item in view["missions"]["items"]
+            if item["mission_id"] == preview["mission_id"]
+        )
+        assert plan_card == mission_card == {
+            "schema_version": "mission-semantic-authority/v1",
+            "state": "frozen",
+            "authority_hash": authority_hash,
+            "requirement_count": 4,
+            "proposed_effect_count": 0,
+            "unresolved_count": 0,
+            "compiled_step_count": 4,
+            "blockers": [],
+        }
+        recovery = view["mission_recovery"]
+        assert [
+            item["semantic_step_hash"] for item in recovery["completed_steps"]
+        ] == semantic_hashes
+        assert [
+            item["semantic_step_hash"] for item in recovery["recent_results"]
+        ] == semantic_hashes[-3:]
+        workbench = cli_module._workbench_snapshot_payload(view, store)
+        assert workbench["mission_card"]["semantic_authority"] == mission_card
+        assert workbench["mission_recovery_card"] == recovery
+        workbench_validation = validate_workbench_contract(workbench)
+        assert workbench_validation["ok"] is True, workbench_validation["errors"]
+
+        safe_events = {
+            "semantic_authority_extracted",
+            "mission_semantic_preview_created",
+            "mission_semantic_authority_frozen",
+            "worker_task_compiled",
+        }
+        semantic_events = [
+            item for item in events if item["event_type"] in safe_events
+        ]
+        assert [item["event_type"] for item in semantic_events].count(
+            "semantic_authority_extracted"
+        ) == 1
+        assert [item["event_type"] for item in semantic_events].count(
+            "mission_semantic_preview_created"
+        ) == 1
+        assert [item["event_type"] for item in semantic_events].count(
+            "mission_semantic_authority_frozen"
+        ) == 1
+        assert [item["event_type"] for item in semantic_events].count(
+            "worker_task_compiled"
+        ) == 4
+
         def persisted_keys(value: object) -> set[str]:
             if isinstance(value, dict):
                 return set(value) | {
@@ -1143,8 +1297,23 @@ def test_daemon_acceptance_runs_four_stage_acp_tmux_mission(monkeypatch) -> None
             }
         )
         serialized_state = json.dumps(completed, ensure_ascii=False, sort_keys=True)
+        serialized_audit = json.dumps(events, ensure_ascii=False, sort_keys=True)
         assert "You are executing one explicitly authorized AgentDeck" not in serialized_state
         assert "Return exactly one structured block:" not in serialized_state
+        serialized_projection = json.dumps(
+            {"project_view": view, "workbench": workbench},
+            ensure_ascii=False,
+            sort_keys=True,
+        )
+        assert raw_marker_path.read_text(encoding="utf-8") == secret_marker
+        for forbidden in (
+            secret_marker,
+            "full_transcript",
+            "raw_tmux_capture",
+        ):
+            assert forbidden not in (
+                serialized_state + serialized_audit + serialized_projection
+            )
 
 
 def test_background_mission_acceptance_orders_workers_and_recovers_controller(

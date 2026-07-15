@@ -1316,7 +1316,7 @@ git commit -m "Enforce semantic authority during Worker dispatch"
 - Modify: `tests/test_conversation_surfaces.py`
 - Modify: `HISTORY.md`
 
-- [ ] **Step 1: Add RED end-to-end semantic acceptance**
+- [x] **Step 1: Add RED end-to-end semantic acceptance**
 
 Drive a disposable project through:
 
@@ -1342,13 +1342,13 @@ disconnect/reconnect, takeover/return-control, and no transcript/secret marker.
 Add a table-driven legacy corpus containing pre-semantic plan/Mission/snapshot
 fixtures. Read/status/resume behavior and canonical hashes must remain unchanged.
 
-- [ ] **Step 2: Run RED acceptance targets**
+- [x] **Step 2: Run RED acceptance targets**
 
 ```bash
 conda run -n agentdeck pytest tests/test_conversation_acceptance.py tests/test_daemon_acceptance.py tests/test_daemon_background_mission.py -k semantic -q
 ```
 
-- [ ] **Step 3: Enforce the deterministic acceptance stop rule**
+- [x] **Step 3: Enforce the deterministic acceptance stop rule**
 
 If the RED target fails for a requirement not already mapped to Tasks 1–11,
 stop execution and amend the written plan before changing production code. If a
@@ -1358,7 +1358,7 @@ boundary, then restart Task 12 from Step 1. Task 12 itself adds acceptance tests
 only. Do not add a new command, provider, fallback, permission class,
 transcript store, or test-only production switch.
 
-- [ ] **Step 4: Run broad deterministic regression**
+- [x] **Step 4: Run broad deterministic regression**
 
 ```bash
 conda run -n agentdeck pytest \
@@ -1377,7 +1377,7 @@ conda run -n agentdeck pytest \
 
 Expected: all pass with only explicitly marked live skips.
 
-- [ ] **Step 5: Commit deterministic acceptance**
+- [x] **Step 5: Commit deterministic acceptance**
 
 ```bash
 git add tests/test_conversation_acceptance.py tests/test_daemon_acceptance.py tests/test_daemon_background_mission.py tests/test_daemon_protocol.py tests/test_daemon_supervisor.py tests/test_conversation_surfaces.py HISTORY.md

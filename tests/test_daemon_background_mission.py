@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+from copy import deepcopy
+from dataclasses import asdict
+from datetime import datetime, timezone
 import json
 import os
 from pathlib import Path
@@ -13,6 +16,10 @@ import time
 import pytest
 
 from agentdeck.config import load_config, write_default_config
+from agentdeck.contracts import (
+    validate_mission_recovery_contract,
+    validate_project_view_contract,
+)
 import agentdeck.daemon.client as daemon_client_module
 from agentdeck.daemon.client import (
     DaemonClient,
@@ -25,9 +32,15 @@ from agentdeck.daemon.lifecycle import (
     project_root_hash,
     reconcile_endpoint,
 )
-from agentdeck.mission_orchestration import confirm_mission_for_daemon, create_mission_preview
+from agentdeck.daemon.service import apply_mission_state_request
+from agentdeck.mission_authority import canonical_workflow_plan_hash
+from agentdeck.mission_orchestration import (
+    confirm_mission_for_daemon,
+    create_mission_preview,
+    mission_status_payload,
+)
 from agentdeck.providers import LeaderPlanRequest
-from agentdeck.state import StateStore
+from agentdeck.state import StateStore, canonical_snapshot_hash
 
 
 FAKE_AGENT = Path(__file__).parent / "fixtures" / "fake_acp_agent.py"
@@ -50,6 +63,183 @@ class TwoWorkerProvider:
             "declared_tests": ["deterministic ACP fixture"],
             "acceptance_criteria": ["both workers complete"],
         }
+
+
+def _fixed_pre_semantic_snapshot(
+    snapshot: dict[str, object], *, corpus_index: int
+) -> dict[str, object]:
+    fixed = deepcopy(snapshot)
+    mission = fixed["mission"]
+    mission["mission_id"] = f"mis_{corpus_index:012x}"
+    mission["plan_id"] = "pln_000000000001"
+    mission["project_scope_hash"] = "sha256:" + f"{corpus_index + 1:x}" * 64
+    for index, worker in enumerate(fixed["workers"], start=1):
+        worker["runtime_identity_hash"] = "sha256:" + f"{index + 8:x}" * 64
+    fixed["mission_hash"] = canonical_snapshot_hash(mission)
+    fixed["policy_hash"] = canonical_snapshot_hash(fixed["policy"])
+    fixed["execution_hash"] = canonical_snapshot_hash(
+        {
+            key: fixed[key]
+            for key in (
+                "mission",
+                "workers",
+                "policy",
+                "limits",
+                "mission_hash",
+                "policy_hash",
+            )
+        }
+    )
+    return fixed
+
+
+@pytest.mark.parametrize(
+    ("current_step", "stop_reason", "expected_plan_hash", "expected_snapshot_hash"),
+    [
+        (
+            0,
+            "human_pause",
+            "sha256:4fe7c3e525a370ca4280654c9eb9816291c3950ba5d32b8926da7ecb1e57f037",
+            "sha256:81f4f8114c22b1af910c3ec2b2a4487535680deb5aec2c5514548a456f40db71",
+        ),
+        (
+            1,
+            "worker_interrupted",
+            "sha256:4fe7c3e525a370ca4280654c9eb9816291c3950ba5d32b8926da7ecb1e57f037",
+            "sha256:dbce5752de26d59657883d5d6132bf18c52e0d4640e8613da092fb95b50a2329",
+        ),
+    ],
+)
+def test_pre_semantic_legacy_corpus_read_status_resume_and_hashes_are_unchanged(
+    tmp_path: Path,
+    current_step: int,
+    stop_reason: str,
+    expected_plan_hash: str,
+    expected_snapshot_hash: str,
+) -> None:
+    root = tmp_path / f"legacy-{current_step}"
+    root.mkdir()
+    (root / ".git").mkdir()
+    write_default_config(root)
+    config_path = root / ".agentdeck" / "config.toml"
+    config_path.write_text(
+        config_path.read_text(encoding="utf-8")
+        .replace('provider = "deepseek"', 'provider = "fake"', 1)
+        .replace('model = "deepseek-chat"', 'model = "fake-plan"', 1),
+        encoding="utf-8",
+    )
+    config = load_config(root)
+    store = StateStore(root)
+    preview = create_mission_preview(
+        config=config,
+        store=store,
+        provider=TwoWorkerProvider(),
+        user_message="让 planner 和 reviewer 严格串行完成两步，共2轮",
+        timeout_seconds=30,
+    )
+    confirmed = confirm_mission_for_daemon(
+        config=config, store=store, mission_id=str(preview["mission_id"])
+    )
+    store.admit_mission_execution(
+        str(preview["mission_id"]), snapshot_hash=str(confirmed["snapshot_hash"])
+    )
+    state = store.load()
+    old_plan_id = str(preview["plan_id"])
+    old_mission_id = str(preview["mission_id"])
+    fixed_plan_id = "pln_000000000001"
+    fixed_mission_id = f"mis_{current_step + 1:012x}"
+    state["plans"][0]["plan_id"] = fixed_plan_id
+    fixed_plan_hash = canonical_workflow_plan_hash(state["plans"][0])
+    mission = state["missions"][0]
+    mission["mission_id"] = fixed_mission_id
+    mission["plan_id"] = fixed_plan_id
+    mission["plan_hash"] = fixed_plan_hash
+    mission["execution_snapshot"]["mission"]["plan_id"] = fixed_plan_id
+    mission["execution_snapshot"]["mission"]["plan_hash"] = fixed_plan_hash
+    fixed_snapshot = _fixed_pre_semantic_snapshot(
+        mission["execution_snapshot"], corpus_index=current_step + 1
+    )
+    mission.update(
+        status="stopped",
+        stop_reason=stop_reason,
+        current_step=current_step,
+        blockers=[],
+        can_start=False,
+        snapshot_hash=fixed_snapshot["execution_hash"],
+        execution_authority_hash=fixed_snapshot["execution_hash"],
+        execution_snapshot=fixed_snapshot,
+    )
+    mission["daemon_admission"]["snapshot_hash"] = fixed_snapshot["execution_hash"]
+    for key, value in tuple(state.items()):
+        if key not in {"plans", "missions"} and isinstance(value, list):
+            state[key] = []
+    store.save(state)
+    store.events_path.write_text("", encoding="utf-8")
+
+    serialized_fixture = json.dumps(store.load(), sort_keys=True)
+    assert old_plan_id not in serialized_fixture
+    assert old_mission_id not in serialized_fixture
+    assert store.all_events() == []
+
+    plan_before = store.plan_by_id(fixed_plan_id)
+    mission_before = store.mission_by_id(fixed_mission_id)
+    snapshot_before = json.dumps(
+        mission_before["execution_snapshot"], sort_keys=True, separators=(",", ":")
+    )
+    plan_hash_before = canonical_workflow_plan_hash(plan_before)
+    assert plan_hash_before == expected_plan_hash
+    assert mission_before["snapshot_hash"] == expected_snapshot_hash
+    assert plan_hash_before == mission_before["plan_hash"]
+    assert "semantic_authority" not in plan_before["plan"]
+    assert "semantic_steps" not in plan_before["plan"]
+    assert "semantic_authority_schema_version" not in mission_before
+    assert all(
+        "semantic_step_hash" not in step
+        for step in mission_before["execution_snapshot"]["mission"]["steps"]
+    )
+    view = asdict(store.project_view(config))
+    assert validate_project_view_contract(view) == {"ok": True, "errors": []}
+    assert validate_mission_recovery_contract(view["mission_recovery"]) == {
+        "ok": True,
+        "errors": [],
+    }
+
+    state_bytes_before_status = store.state_path.read_bytes()
+    status = mission_status_payload(config, store, mission_before)
+    assert status["status"] == "stopped"
+    assert status["semantic_authority"] is None
+    assert store.state_path.read_bytes() == state_bytes_before_status
+
+    now = datetime(2026, 7, 15, tzinfo=timezone.utc)
+    resume_preview = apply_mission_state_request(
+        store,
+        action="mission_resume",
+        params={"mission_id": fixed_mission_id},
+        generation=7,
+        now=now,
+    )
+    resumed = apply_mission_state_request(
+        store,
+        action="mission_resume",
+        params={
+            "mission_id": fixed_mission_id,
+            "preview_id": resume_preview["preview_id"],
+        },
+        generation=7,
+        now=now,
+    )
+
+    assert resumed["state"] == "running"
+    plan_after = store.plan_by_id(fixed_plan_id)
+    mission_after = store.mission_by_id(fixed_mission_id)
+    assert mission_after["status"] == "running"
+    assert canonical_workflow_plan_hash(plan_after) == plan_hash_before
+    assert mission_after["plan_hash"] == mission_before["plan_hash"]
+    assert mission_after["snapshot_hash"] == mission_before["snapshot_hash"]
+    assert json.dumps(
+        mission_after["execution_snapshot"], sort_keys=True, separators=(",", ":")
+    ) == snapshot_before
+    assert "semantic_authority_schema_version" not in mission_after
 
 
 def _wait_for_completed(store: StateStore, mission_id: str, timeout: float = 12) -> dict[str, object]:

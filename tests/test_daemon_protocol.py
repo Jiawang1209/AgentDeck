@@ -432,6 +432,46 @@ def test_error_response_round_trip_uses_compact_error_shape() -> None:
     assert decode_response(encode_response(response, max_bytes=MAX_BYTES), max_bytes=MAX_BYTES) == response
 
 
+def test_semantic_lineage_event_round_trips_compact_hashes_without_transcript() -> None:
+    semantic_hash = "sha256:" + "a" * 64
+    task_hash = "sha256:" + "b" * 64
+    event = RpcEvent(
+        event_id="evt_semantic_compiled",
+        revision=17,
+        kind="worker_task_compiled",
+        summary={
+            "mission_id": "mis_111111111111",
+            "attempt_id": "mat_222222222222",
+            "step_id": "step_3",
+            "agent_id": "planner",
+            "task_hash": task_hash,
+            "semantic_step_hash": semantic_hash,
+        },
+    )
+
+    frame = encode_event(event, max_bytes=MAX_BYTES)
+    decoded = decode_event(frame, max_bytes=MAX_BYTES)
+
+    assert decoded == event
+    assert decoded.summary == {
+        "mission_id": "mis_111111111111",
+        "attempt_id": "mat_222222222222",
+        "step_id": "step_3",
+        "agent_id": "planner",
+        "task_hash": task_hash,
+        "semantic_step_hash": semantic_hash,
+    }
+    rendered = frame.decode("utf-8")
+    for forbidden in (
+        "SEMANTIC_SECRET_MARKER_8f11",
+        "transcript",
+        "prompt",
+        "artifact.txt",
+        "accepted-v2",
+    ):
+        assert forbidden not in rendered
+
+
 @pytest.mark.parametrize("revision", [-1, True, 1.5])
 def test_event_revision_is_a_nonnegative_integer_without_bool(revision: object) -> None:
     event = RpcEvent(
