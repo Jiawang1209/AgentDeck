@@ -358,6 +358,17 @@ the authority domain's 64-item unresolved bound, collapse the diagnostics
 deterministically to one bounded summary item that contains no raw clause,
 target, literal, key, or secret.
 
+All five operations (`create`, `read`, `review`, `update`, and `verify`) must
+share the same anchored full-clause parser. Explicit whole-target variants and
+the narrowly supported target-omitted review/verification variants are
+separate grammar branches. Operation classification reads only the anchored
+action position; it must not search filenames or literals. Target discovery
+must not use `finditer()` or any equivalent restart-from-the-middle scan, and
+each complete candidate receives one linear whole-token fullmatch.
+Target-omitted review or verification may inherit a target only from the one
+unique state established by earlier accepted clauses in sequential order;
+later clauses must never provide target authority to an earlier clause.
+
 Generate ids from the canonical requirement body without `requirement_id`,
 using the first 12 lowercase SHA-256 hex characters. Never use timestamps,
 random ids, locale, cwd, file contents, or provider calls.

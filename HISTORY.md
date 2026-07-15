@@ -4,6 +4,13 @@
 
 ## 2026-07-15
 
+### Unify conservative semantic clause parsing
+
+- Replaced scattered operation/target scanning with one anchored `_ParsedClause` per clause across create, read, review, update, and verify; explicit whole-target and target-omitted read-only variants are distinct grammar branches, and omitted review/verification targets can only inherit one uniquely established prior state rather than a future target.
+- Removed the legacy `_TARGET_RE.finditer()` masking path, so operation classification reads only the anchored action position and target validation performs one whole project-relative fullmatch without restarting inside repeated or whitespace paths.
+- Canonicalized sensitive keys into separator-normalized components plus collapsed lowercase suffix families, covering acronym, camel, snake, private/signing/encryption/SSH key, secret, token, credential, and password variants before literal, ID, or source-hash construction.
+- Added RED/GREEN coverage for read tails, read whole-target paths, repeated path structure, legacy scanner removal, and sensitive-key families. This remains Task 2 extraction only and does not claim final approval, M2c PASS, live execution, or Task 3 progress.
+
 ### Synchronize semantic extraction plan
 
 - Synchronized the Task 2 written constraints with the implemented conservative boundaries: full supported-clause consumption, anchored whole-token target fullmatch without substring downgrade, and deterministic non-echoing collapse above the 64-item unresolved domain bound.

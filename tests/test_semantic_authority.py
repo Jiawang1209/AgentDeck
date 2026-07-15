@@ -520,6 +520,118 @@ def test_extract_rejects_chinese_clause_tail_without_whitespace() -> None:
 
 
 @pytest.mark.parametrize(
+    "assignment",
+    [
+        "APIKEY:SECRET",
+        "ACCESSKEY:SECRET",
+        "DBPASSWORD:SECRET",
+        "private_key:SECRET",
+        "privateKey:SECRET",
+        "PRIVATE_KEY:SECRET",
+        "signing_key:SECRET",
+        "encryption_key:SECRET",
+        "ssh_key:SECRET",
+        "client_secret:SECRET",
+        "refresh_token:SECRET",
+    ],
+)
+def test_extract_uses_canonical_sensitive_key_family_classifier(
+    assignment: str,
+) -> None:
+    message = f"第一轮 claude-worker 创建 artifact.txt 且内容为 {assignment}。"
+    first = extract_semantic_authority(
+        message,
+        selected_agent_ids=("claude-worker",),
+        step_count=1,
+        phases=("implementation",),
+    )
+    second = extract_semantic_authority(
+        message.replace("SECRET", "OTHER_SECRET"),
+        selected_agent_ids=("claude-worker",),
+        step_count=1,
+        phases=("implementation",),
+    )
+    assert first["requirements"] == []
+    assert [item["kind"] for item in first["unresolved"]] == [
+        "sensitive_content"
+    ]
+    assert first["source_message_hash"] == second["source_message_hash"]
+    assert "SECRET" not in json.dumps(first)
+
+
+def test_extract_read_requires_complete_clause_consumption() -> None:
+    authority = extract_semantic_authority(
+        "First, claude-worker reads artifact.txt without approval",
+        selected_agent_ids=("claude-worker",),
+        step_count=1,
+        phases=("implementation",),
+    )
+    assert authority["requirements"] == []
+    assert [item["kind"] for item in authority["unresolved"]] == [
+        "unsupported_clause_logic"
+    ]
+
+
+def test_extract_read_never_restarts_target_from_middle() -> None:
+    authority = extract_semantic_authority(
+        "First, claude-worker reads foo bar/artifact.txt",
+        selected_agent_ids=("claude-worker",),
+        step_count=1,
+        phases=("implementation",),
+    )
+    assert authority["requirements"] == []
+    assert authority["unresolved"]
+
+
+def test_target_omitted_review_never_binds_to_a_future_target() -> None:
+    authority = extract_semantic_authority(
+        "First, claude-worker performs a read-only review and requires draft; "
+        "Second, claude-worker creates artifact.txt with content exactly draft",
+        selected_agent_ids=("claude-worker",),
+        step_count=2,
+        phases=("review", "implementation"),
+    )
+    assert [item["operation"] for item in authority["requirements"]] == [
+        "create"
+    ]
+    assert [item["kind"] for item in authority["unresolved"]] == [
+        "missing_target"
+    ]
+
+
+def test_extractor_has_no_legacy_target_finditer_scanner() -> None:
+    assert not hasattr(semantic_authority_module, "_TARGET_RE")
+
+
+def test_read_repeated_path_uses_one_whole_target_fullmatch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    real_pattern = semantic_authority_module._SAFE_TARGET_RE
+
+    class CountingPattern:
+        calls = 0
+
+        def fullmatch(self, value: str):
+            self.calls += 1
+            return real_pattern.fullmatch(value)
+
+    counting = CountingPattern()
+    monkeypatch.setattr(semantic_authority_module, "_SAFE_TARGET_RE", counting)
+    path = "/".join(["folder"] * 32 + ["artifact.txt"])
+    authority = extract_semantic_authority(
+        f"First, claude-worker reads {path}",
+        selected_agent_ids=("claude-worker",),
+        step_count=1,
+        phases=("implementation",),
+    )
+    assert authority["requirements"] == []
+    assert [item["kind"] for item in authority["unresolved"]] == [
+        "missing_literal"
+    ]
+    assert counting.calls == 1
+
+
+@pytest.mark.parametrize(
     "target",
     [
         "./artifact.txt",
@@ -540,7 +652,10 @@ def test_extract_never_starts_target_matching_from_the_middle(target: str) -> No
     )
     assert authority["requirements"] == []
     assert authority["unresolved"]
-    assert authority["unresolved"][0]["kind"] == "unsafe_target"
+    assert authority["unresolved"][0]["kind"] in {
+        "unsafe_target",
+        "unsupported_clause_logic",
+    }
 
 
 def test_extract_validates_each_explicit_target_as_one_whole_token(

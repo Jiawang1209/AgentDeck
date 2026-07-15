@@ -125,19 +125,6 @@ _FILENAME_TOKEN = r"[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)+"
 _SAFE_TARGET_RE = re.compile(
     rf"(?:[A-Za-z0-9_-]+/)*{_FILENAME_TOKEN}\Z"
 )
-_TARGET_RE = re.compile(
-    r"(?<![A-Za-z0-9_.-])"
-    r"(?:"
-    r"(?:[A-Za-z]:)?(?:[A-Za-z0-9_-]+[\\])+"
-    rf"{_FILENAME_TOKEN}"
-    r"|(?:/|(?:\.\./)+|[A-Za-z]:)?"
-    rf"(?:[A-Za-z0-9_-]+/)*{_FILENAME_TOKEN}"
-    r")(?=\s|[；;。.，,]|$)"
-)
-_UNSAFE_TARGET_SUFFIX_RE = re.compile(
-    rf"(?<![A-Za-z0-9_.-])(?:[A-Za-z0-9_-]+/)*{_FILENAME_TOKEN}"
-    r"[^A-Za-z0-9_.\-\s；;。.，,][^\s；;。.，,]*"
-)
 _WINDOWS_FORBIDDEN_TARGET_CHARS = frozenset(':?*"<>|')
 _LITERAL_TEXT = r"[A-Za-z0-9](?:[A-Za-z0-9._:-]{0,254}[A-Za-z0-9])?"
 _LITERAL_TOKEN = (
@@ -169,7 +156,10 @@ _UNSUPPORTED_LOGIC_RE = re.compile(
     re.IGNORECASE,
 )
 _AMBIGUOUS_OPERATION_RE = re.compile(
-    r"创建\s*(?:或|并)\s*更新|\bcreate\s+(?:or|and)\s+update\b",
+    r"(?:创建|更新|审查|验收|读取)\s*(?:或|并|且)\s*"
+    r"(?:创建|更新|审查|验收|读取)"
+    r"|\b(?:create|update|review|verify|read)s?\s+(?:or|and)\s+"
+    r"(?:create|update|review|verify|read)s?\b",
     re.IGNORECASE,
 )
 _AGENT_ACTION_TOKEN = r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}"
@@ -199,16 +189,6 @@ _ACTION_PATTERNS = (
     ),
     ("read", re.compile(rf"{_ENGLISH_ACTION_PREFIX}reads?\s", re.IGNORECASE)),
 )
-_OPERATION_MENTION_PATTERNS = (
-    ("create", re.compile(r"创建|\bcreates?\b", re.IGNORECASE)),
-    ("update", re.compile(r"精确改为|更新|\b(?:updates?|changes?)\b", re.IGNORECASE)),
-    ("review", re.compile(r"审查|\breviews?\b", re.IGNORECASE)),
-    (
-        "verify",
-        re.compile(r"验收|\b(?:verification|verif(?:y|ies))\b", re.IGNORECASE),
-    ),
-    ("read", re.compile(r"读取|\breads?\b(?!-only)", re.IGNORECASE)),
-)
 _EXPLICIT_ACTION_AGENT_PATTERNS = (
     re.compile(
         rf"^(?:第一轮|第二轮|第三轮|第四轮)\s+({_AGENT_ACTION_TOKEN})\s+"
@@ -227,6 +207,9 @@ _ASSIGNMENT_RE = re.compile(
 _SENSITIVE_KEY_COMPONENTS = frozenset(
     {"token", "secret", "password", "passwd", "credential", "credentials"}
 )
+_SENSITIVE_KEY_PREFIXES = frozenset(
+    {"api", "access", "private", "signing", "encryption", "ssh", "client", "secret"}
+)
 _TARGET_SEGMENT_PATTERNS = (
     re.compile(rf"{_CHINESE_ACTION_PREFIX}创建\s+(?P<target>.+?)\s+且内容"),
     re.compile(rf"{_CHINESE_ACTION_PREFIX}将\s+(?P<target>.+?)\s+精确改为"),
@@ -238,24 +221,42 @@ _TARGET_SEGMENT_PATTERNS = (
         rf"{_ENGLISH_ACTION_PREFIX}(?:updates?|changes?)\s+(?P<target>.+?)\s+to\s+exactly",
         re.IGNORECASE,
     ),
+    re.compile(rf"{_CHINESE_ACTION_PREFIX}只读读取\s+(?P<target>.+?)。?$"),
+    re.compile(
+        rf"{_CHINESE_ACTION_PREFIX}只读审查\s+(?P<target>.+?)\s+并要求"
+    ),
+    re.compile(
+        rf"{_CHINESE_ACTION_PREFIX}只读验收\s+(?P<target>.+?)\s+精确字节。?$"
+    ),
+    re.compile(
+        rf"{_ENGLISH_ACTION_PREFIX}reads?\s+(?P<target>.+?)$", re.IGNORECASE
+    ),
+    re.compile(
+        rf"{_ENGLISH_ACTION_PREFIX}reviews?\s+(?P<target>.+?)\s+and\s+requires?",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        rf"{_ENGLISH_ACTION_PREFIX}verif(?:y|ies)\s+(?P<target>.+?)\s+exact\s+bytes$",
+        re.IGNORECASE,
+    ),
 )
-_GENERIC_TARGET_TOKEN_RE = re.compile(r"\S+")
+_OPEN_TARGET_RE = re.compile(r"(?P<target>\S*\.[^\s]*)\s*$")
 _SUPPORTED_CLAUSE_PATTERNS = {
     "create": (
         re.compile(
-            rf"{_CHINESE_ACTION_PREFIX}创建\s+.+?\s+且内容为\s+{_LITERAL_TEXT}(?:\s*换行)?。?"
+            rf"{_CHINESE_ACTION_PREFIX}创建\s+\S+\s+且内容为\s+{_LITERAL_TEXT}(?:\s*换行)?。?"
         ),
         re.compile(
-            rf"{_ENGLISH_ACTION_PREFIX}creates?\s+.+?\s+with\s+content\s+(?:is\s+)?exactly\s+{_LITERAL_TEXT}(?:\s+newline)?",
+            rf"{_ENGLISH_ACTION_PREFIX}creates?\s+\S+\s+with\s+content\s+(?:is\s+)?exactly\s+{_LITERAL_TEXT}(?:\s+newline)?",
             re.IGNORECASE,
         ),
     ),
     "update": (
         re.compile(
-            rf"{_CHINESE_ACTION_PREFIX}将\s+.+?\s+精确改为\s+{_LITERAL_TEXT}(?:\s*换行)?。?"
+            rf"{_CHINESE_ACTION_PREFIX}将\s+\S+\s+精确改为\s+{_LITERAL_TEXT}(?:\s*换行)?。?"
         ),
         re.compile(
-            rf"{_ENGLISH_ACTION_PREFIX}(?:updates?|changes?)\s+.+?\s+to\s+exactly\s+{_LITERAL_TEXT}(?:\s+newline)?",
+            rf"{_ENGLISH_ACTION_PREFIX}(?:updates?|changes?)\s+\S+\s+to\s+exactly\s+{_LITERAL_TEXT}(?:\s+newline)?",
             re.IGNORECASE,
         ),
     ),
@@ -264,7 +265,14 @@ _SUPPORTED_CLAUSE_PATTERNS = {
             rf"{_CHINESE_ACTION_PREFIX}只读审查并要求\s+{_LITERAL_TEXT}(?:\s*换行)?。?"
         ),
         re.compile(
+            rf"{_CHINESE_ACTION_PREFIX}只读审查\s+\S+\s+并要求\s+{_LITERAL_TEXT}(?:\s*换行)?。?"
+        ),
+        re.compile(
             rf"{_ENGLISH_ACTION_PREFIX}performs?\s+(?:a\s+)?read-only\s+review\s+and\s+requires?\s+{_LITERAL_TEXT}(?:\s+newline)?",
+            re.IGNORECASE,
+        ),
+        re.compile(
+            rf"{_ENGLISH_ACTION_PREFIX}reviews?\s+\S+\s+and\s+requires?\s+{_LITERAL_TEXT}(?:\s+newline)?",
             re.IGNORECASE,
         ),
     ),
@@ -273,13 +281,20 @@ _SUPPORTED_CLAUSE_PATTERNS = {
             rf"{_CHINESE_ACTION_PREFIX}只读验收精确字节(?:。共\d+轮)?。?"
         ),
         re.compile(
+            rf"{_CHINESE_ACTION_PREFIX}只读验收\s+\S+\s+精确字节。?"
+        ),
+        re.compile(
             rf"{_ENGLISH_ACTION_PREFIX}performs?\s+read-only\s+verification\s+of\s+the\s+exact\s+bytes(?:\.\s+There\s+are\s+\d+\s+steps)?",
+            re.IGNORECASE,
+        ),
+        re.compile(
+            rf"{_ENGLISH_ACTION_PREFIX}verif(?:y|ies)\s+\S+\s+exact\s+bytes",
             re.IGNORECASE,
         ),
     ),
     "read": (
-        re.compile(rf"{_CHINESE_ACTION_PREFIX}只读读取\s+.+?。?"),
-        re.compile(rf"{_ENGLISH_ACTION_PREFIX}reads?\s+.+?", re.IGNORECASE),
+        re.compile(rf"{_CHINESE_ACTION_PREFIX}只读读取\s+\S+。?"),
+        re.compile(rf"{_ENGLISH_ACTION_PREFIX}reads?\s+\S+", re.IGNORECASE),
     ),
 }
 
@@ -290,6 +305,15 @@ class _ExtractionInput:
     selected_agent_ids: tuple[str, ...]
     step_count: int
     phases: tuple[str, ...] | None
+
+
+@dataclass(frozen=True)
+class _ParsedClause:
+    operation: str | None
+    explicit_agent_id: str | None
+    targets: tuple[str, ...]
+    values: tuple[str, ...]
+    fully_supported: bool
 
 
 class SemanticAuthorityError(ValueError):
@@ -609,7 +633,9 @@ def _ordered_clauses(message: str, step_count: int) -> tuple[str, ...]:
     return clauses
 
 
-def _explicit_targets(clause: str) -> tuple[str, ...]:
+def _targets_from_clause(
+    clause: str, operation: str | None
+) -> tuple[str, ...]:
     for pattern in _TARGET_SEGMENT_PATTERNS:
         match = pattern.search(clause)
         if match is not None:
@@ -620,12 +646,17 @@ def _explicit_targets(clause: str) -> tuple[str, ...]:
                 if candidate.strip()
             )
             return candidates
-    candidates: list[str] = []
-    for match in _GENERIC_TARGET_TOKEN_RE.finditer(clause):
-        token = match.group(0).strip("；;。.，,")
-        if "." in token and token not in candidates:
-            candidates.append(token)
-    return tuple(candidates)
+    if operation is not None:
+        return ()
+    match = _OPEN_TARGET_RE.search(clause)
+    if match is None:
+        return ()
+    return (match.group("target").strip("；;。.，,"),)
+
+
+def _explicit_targets(clause: str) -> tuple[str, ...]:
+    operation = _classify_operation(clause)
+    return _targets_from_clause(clause, operation)
 
 
 def _validate_extraction_target(value: str) -> None:
@@ -634,7 +665,7 @@ def _validate_extraction_target(value: str) -> None:
         _fail("target_invalid")
 
 
-def _explicit_values(clause: str) -> tuple[str, ...]:
+def _values_from_clause(clause: str) -> tuple[str, ...]:
     values: list[str] = []
     matches: list[tuple[int, str]] = []
     for pattern in _VALUE_PATTERNS:
@@ -649,6 +680,10 @@ def _explicit_values(clause: str) -> tuple[str, ...]:
     return tuple(values)
 
 
+def _explicit_values(clause: str) -> tuple[str, ...]:
+    return _values_from_clause(clause)
+
+
 def _classify_operation(clause: str) -> str | None:
     for operation, pattern in _ACTION_PATTERNS:
         if pattern.search(clause):
@@ -656,28 +691,10 @@ def _classify_operation(clause: str) -> str | None:
     return None
 
 
-def _masked_semantic_clause(clause: str) -> str:
-    masked = list(clause)
-    spans = [match.span() for match in _TARGET_RE.finditer(clause)]
-    for pattern in _VALUE_PATTERNS:
-        spans.extend(match.span(1) for match in pattern.finditer(clause))
-    for start, end in spans:
-        masked[start:end] = " " * (end - start)
-    return "".join(masked)
-
-
-def _operation_mentions(clause: str) -> tuple[str, ...]:
-    masked = _masked_semantic_clause(clause)
-    mentions: list[tuple[int, str]] = []
-    for operation, pattern in _OPERATION_MENTION_PATTERNS:
-        mentions.extend((match.start(), operation) for match in pattern.finditer(masked))
-    return tuple(operation for _, operation in sorted(mentions))
-
-
 def _clause_logic_kind(clause: str) -> str | None:
     if _UNSUPPORTED_LOGIC_RE.search(clause):
         return "unsupported_clause_logic"
-    if _AMBIGUOUS_OPERATION_RE.search(clause) or len(_operation_mentions(clause)) > 1:
+    if _AMBIGUOUS_OPERATION_RE.search(clause):
         return "ambiguous_operation"
     return None
 
@@ -688,6 +705,17 @@ def _explicit_action_agent(clause: str) -> str | None:
         if match is not None:
             return match.group(1)
     return None
+
+
+def _parse_clause(clause: str) -> _ParsedClause:
+    operation = _classify_operation(clause)
+    return _ParsedClause(
+        operation=operation,
+        explicit_agent_id=_explicit_action_agent(clause),
+        targets=_targets_from_clause(clause, operation),
+        values=_values_from_clause(clause),
+        fully_supported=_clause_is_fully_supported(clause, operation),
+    )
 
 
 def _classify_sensitive(clause: str) -> str:
@@ -709,10 +737,13 @@ def _sensitive_key_components(key: str) -> tuple[str, ...]:
 
 def _is_sensitive_assignment_key(key: str) -> bool:
     components = _sensitive_key_components(key)
-    if any(component in _SENSITIVE_KEY_COMPONENTS for component in components):
+    collapsed = "".join(components)
+    if any(collapsed.endswith(suffix) for suffix in _SENSITIVE_KEY_COMPONENTS):
         return True
-    pairs = tuple(zip(components, components[1:]))
-    return any(pair in {("api", "key"), ("access", "key")} for pair in pairs)
+    if not collapsed.endswith("key"):
+        return False
+    prefix = collapsed[:-3]
+    return any(prefix.endswith(family) for family in _SENSITIVE_KEY_PREFIXES)
 
 
 def _redact_sensitive_assignments(message: str) -> str:
@@ -771,16 +802,17 @@ def _requirements_from_clauses(
             if phases is not None and index < len(phases)
             else f"step-{index + 1}"
         )
+        parsed = _parse_clause(clause)
         expected_agent_id = selected_agent_ids[index % len(selected_agent_ids)]
-        explicit_agent_id = _explicit_action_agent(clause)
+        explicit_agent_id = parsed.explicit_agent_id
         agent_mismatch = (
             explicit_agent_id is not None
             and explicit_agent_id != expected_agent_id
         )
         agent_id = expected_agent_id
-        operation = _classify_operation(clause)
+        operation = parsed.operation
         logic_kind = _clause_logic_kind(clause)
-        supported_clause = _clause_is_fully_supported(clause, operation)
+        supported_clause = parsed.fully_supported
         sensitivity = _classify_sensitive(clause)
         if sensitivity != "ordinary":
             analyses.append(
@@ -799,10 +831,10 @@ def _requirements_from_clauses(
                 }
             )
             continue
-        targets = _explicit_targets(clause)
-        values = _explicit_values(clause)
+        targets = parsed.targets
+        values = parsed.values
         safe_targets: list[str] = []
-        unsafe_target = _UNSAFE_TARGET_SUFFIX_RE.search(clause) is not None
+        unsafe_target = False
         for target in targets:
             try:
                 _validate_extraction_target(target)
@@ -869,9 +901,6 @@ def _requirements_from_clauses(
         if analysis["logic_kind"] is not None:
             add_unresolved(analysis["logic_kind"], phase, agent_id)
             continue
-        if analysis["unsafe_target"]:
-            add_unresolved("unsafe_target", phase, agent_id)
-            continue
         if len(targets) > 1:
             add_unresolved("ambiguous_target", phase, agent_id)
             continue
@@ -887,6 +916,9 @@ def _requirements_from_clauses(
         if not analysis["supported_clause"]:
             add_unresolved("unsupported_clause_logic", phase, agent_id)
             continue
+        if analysis["unsafe_target"]:
+            add_unresolved("unsafe_target", phase, agent_id)
+            continue
         if operation is None:
             if targets or values:
                 add_unresolved("unbound_explicit_detail", phase, agent_id)
@@ -896,9 +928,9 @@ def _requirements_from_clauses(
             continue
 
         target = targets[0] if targets else None
-        if target is None and operation in {"read", "review", "verify"}:
-            if len(safe_global_targets) == 1:
-                target = safe_global_targets[0]
+        if target is None and operation in {"review", "verify"}:
+            if len(states) == 1:
+                target = next(iter(states))
         if target is None:
             add_unresolved("missing_target", phase, agent_id)
             continue
@@ -919,7 +951,6 @@ def _requirements_from_clauses(
         if (
             literal is None
             and operation in {"read", "verify"}
-            and len(safe_global_targets) == 1
         ):
             literal = states.get(target)
         if literal is None:
