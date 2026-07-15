@@ -537,6 +537,8 @@ def test_api_provider_error_metadata_is_immutable_and_sanitized() -> None:
         ("stage", "timeout"),
         ("diagnostic_code", "semantic_effect_conflict"),
         ("attempt_count", 1),
+        ("args", ("RAW_ERROR_SECRET",)),
+        ("_metadata_frozen", False),
     ):
         with pytest.raises(AttributeError):
             setattr(error, field, value)
@@ -567,6 +569,37 @@ def test_api_semantic_network_failure_is_sanitized_and_not_retried(
     assert raised.value.diagnostic_code is None
     assert raised.value.attempt_count == 1
     assert "RAW_URL_SECRET" not in str(raised.value)
+
+
+def test_api_semantic_non_object_http_envelope_is_sanitized(
+    tmp_path, monkeypatch
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    config = cli.load_config(root)
+    monkeypatch.setenv("AGENTDECK_LEADER_API_KEY", "test-key")
+
+    class ListEnvelopeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def read(self) -> bytes:
+            return b'[{"RAW_ENVELOPE_SECRET":true}]'
+
+    monkeypatch.setattr(
+        "agentdeck.providers.openai_compatible.request.urlopen",
+        lambda _request, timeout: ListEnvelopeResponse(),
+    )
+
+    with pytest.raises(OpenAICompatibleProviderError) as raised:
+        OpenAICompatibleProvider().plan_result(semantic_cli_request(config))
+
+    assert raised.value.stage == "json_parse"
+    assert raised.value.diagnostic_code == "semantic_candidate_schema_invalid"
+    assert raised.value.attempt_count == 1
+    assert "RAW_ENVELOPE_SECRET" not in str(raised.value)
 
 
 class FakeMissionProvider:

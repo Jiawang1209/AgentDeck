@@ -57,7 +57,9 @@ class OpenAICompatibleProviderError(RuntimeError):
             "semantic_authority_sensitive_value",
         }
     )
-    _FROZEN_FIELDS = frozenset({"stage", "diagnostic_code", "attempt_count"})
+    _FROZEN_FIELDS = frozenset(
+        {"stage", "diagnostic_code", "attempt_count", "args", "_metadata_frozen"}
+    )
 
     def __init__(
         self,
@@ -344,7 +346,14 @@ class OpenAICompatibleProvider:
             raise
         except OSError:
             raise OpenAICompatibleProviderError("nonzero", attempt_count=1) from None
-        except (JSONDecodeError, UnicodeError, RuntimeError, TypeError, ValueError):
+        except (
+            AttributeError,
+            JSONDecodeError,
+            UnicodeError,
+            RuntimeError,
+            TypeError,
+            ValueError,
+        ):
             raise OpenAICompatibleProviderError(
                 "json_parse",
                 "semantic_candidate_schema_invalid",
