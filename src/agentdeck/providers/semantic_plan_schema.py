@@ -18,8 +18,7 @@ SEMANTIC_LEADER_PLAN_SCHEMA_VERSION = "leader-semantic-plan/v1"
 
 _MAX_STEPS = 64
 _MAX_TEXT_LENGTH = 4096
-_PHASE_START_PATTERN = r"^[A-Za-z0-9]"
-_PHASE_INVALID_PATTERN = r"[^A-Za-z0-9._:-]"
+_PHASE_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}(?![\s\S])"
 
 
 class SemanticPlanSchemaAuthorityError(ValueError):
@@ -90,8 +89,30 @@ def resolve_semantic_leader_plan_context(
     selected = set(agents)
     roles: dict[str, str] = {}
     for entry in configured_context:
-        if type(entry) is not tuple or len(entry) != 2:
-            _fail()
+        if type(entry) is not tuple:
+            candidate = (
+                entry
+                if type(entry) is str
+                else entry[0]
+                if type(entry) is list and entry
+                else None
+            )
+            if (
+                type(candidate) is str
+                and semantic_context_text_is_safe(candidate)
+                and candidate in selected
+            ):
+                _fail()
+            continue
+        if len(entry) != 2:
+            if (
+                entry
+                and type(entry[0]) is str
+                and semantic_context_text_is_safe(entry[0])
+                and entry[0] in selected
+            ):
+                _fail()
+            continue
         agent_id, role = entry
         if type(agent_id) is not str:
             continue
@@ -113,7 +134,7 @@ def _normalize_authority(
     selected_agent_ids: object,
     roles: object,
     step_count: object,
-) -> tuple[dict[str, object], tuple[str, ...], dict[str, str], int, tuple[tuple[str, ...], ...]]:
+) -> tuple[dict[str, object], tuple[str, ...], dict[str, str], int]:
     if type(semantic_authority) is not dict:
         _fail()
     try:
@@ -149,15 +170,7 @@ def _normalize_authority(
             if agent_id != agents[index % len(agents)]:
                 _fail()
 
-    phases_by_step: list[tuple[str, ...]] = []
-    for index in range(count):
-        expected_agent = agents[index % len(agents)]
-        phases: list[str] = []
-        for phase, agent_id in phase_agent_pairs:
-            if agent_id == expected_agent and phase not in phases:
-                phases.append(phase)
-        phases_by_step.append(tuple(phases))
-    return authority, agents, role_map, count, tuple(phases_by_step)
+    return authority, agents, role_map, count
 
 
 def semantic_authority_identity(semantic_authority: object) -> tuple[str, str]:
@@ -175,60 +188,36 @@ def semantic_authority_identity(semantic_authority: object) -> tuple[str, str]:
         _fail()
 
 
-def _phase_schema(phases: tuple[str, ...]) -> dict[str, object]:
-    if phases:
-        return {"type": "string", "enum": list(phases)}
+def _open_phase_schema() -> dict[str, object]:
     return {
         "type": "string",
-        "pattern": _PHASE_START_PATTERN,
-        "not": {"pattern": _PHASE_INVALID_PATTERN},
+        "pattern": _PHASE_PATTERN,
         "minLength": 1,
         "maxLength": 128,
     }
 
 
-def _step_schema(
+def _step_branch_schema(
     *,
-    index: int,
+    step_count: int,
     agent_id: str,
     role: str,
     phase_schema: dict[str, object],
-    authority_refs_schema: dict[str, object],
-    authority_scope_ref: str | None,
+    authority_refs_ref: str,
 ) -> dict[str, object]:
-    schema: dict[str, object] = {
+    return {
         "type": "object",
         "properties": {
-            "step": {"type": "integer", "const": index},
+            "step": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": step_count,
+            },
             "agent_id": {"type": "string", "const": agent_id},
             "role": {"type": "string", "const": role},
             "phase": phase_schema,
-            "authority_refs": authority_refs_schema,
-            "proposed_effects": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "target": {
-                            "type": "string",
-                            "minLength": 1,
-                            "maxLength": 1024,
-                        },
-                        "operation": {
-                            "type": "string",
-                            "enum": sorted(SEMANTIC_OPERATIONS),
-                        },
-                        "sensitivity": {
-                            "type": "string",
-                            "const": "ordinary",
-                        },
-                    },
-                    "required": ["target", "operation", "sensitivity"],
-                    "additionalProperties": False,
-                },
-                "minItems": 0,
-                "maxItems": SEMANTIC_PROPOSED_EFFECTS_MAX,
-            },
+            "authority_refs": {"$ref": authority_refs_ref},
+            "proposed_effects": {"$ref": "#/$defs/proposed_effects"},
             "verification": {
                 "type": "string",
                 "minLength": 1,
@@ -250,25 +239,49 @@ def _step_schema(
         ],
         "additionalProperties": False,
     }
-    if authority_scope_ref is not None:
-        schema["allOf"] = [{"$ref": authority_scope_ref}]
-    return schema
 
 
 def _semantic_schema_definitions(
     *,
     authority: dict[str, object],
     agents: tuple[str, ...],
-) -> tuple[dict[str, object], dict[str, str], dict[str, str]]:
+    roles: dict[str, str],
+    step_count: int,
+) -> tuple[dict[str, object], tuple[str, ...]]:
     empty_name = "authority_refs_empty"
     definitions: dict[str, object] = {
         empty_name: {
             "type": "array",
-            "items": False,
+            "items": {"type": "string"},
             "minItems": 0,
             "maxItems": 0,
             "uniqueItems": True,
-        }
+        },
+        "proposed_effects": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "target": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 1024,
+                    },
+                    "operation": {
+                        "type": "string",
+                        "enum": sorted(SEMANTIC_OPERATIONS),
+                    },
+                    "sensitivity": {
+                        "type": "string",
+                        "const": "ordinary",
+                    },
+                },
+                "required": ["target", "operation", "sensitivity"],
+                "additionalProperties": False,
+            },
+            "minItems": 0,
+            "maxItems": SEMANTIC_PROPOSED_EFFECTS_MAX,
+        },
     }
     requirements = cast(list[dict[str, object]], authority["requirements"])
     grouped: dict[tuple[str, str], list[str]] = {}
@@ -288,36 +301,30 @@ def _semantic_schema_definitions(
             "uniqueItems": True,
         }
 
-    phase_names: dict[str, str] = {}
-    scope_names: dict[str, str] = {}
-    for index, agent_id in enumerate(agents, start=1):
-        phases = tuple(phase for candidate, phase in grouped if candidate == agent_id)
-        if not phases:
-            continue
-        phase_name = f"phase_{index:04d}"
-        scope_name = f"authority_scope_{index:04d}"
-        phase_names[agent_id] = phase_name
-        scope_names[agent_id] = scope_name
-        definitions[phase_name] = {"type": "string", "enum": list(phases)}
-        definitions[scope_name] = {
-            "allOf": [
-                {
-                    "if": {
-                        "properties": {"phase": {"const": phase}},
-                        "required": ["phase"],
-                    },
-                    "then": {
-                        "properties": {
-                            "authority_refs": {
-                                "$ref": f"#/$defs/{refs_names[(agent_id, phase)]}"
-                            }
-                        }
-                    },
-                }
-                for phase in phases
-            ]
-        }
-    return definitions, phase_names, scope_names
+    branch_names: list[str] = []
+    if grouped:
+        for index, (agent_id, phase) in enumerate(grouped, start=1):
+            name = f"step_branch_{index:04d}"
+            branch_names.append(name)
+            definitions[name] = _step_branch_schema(
+                step_count=step_count,
+                agent_id=agent_id,
+                role=roles[agent_id],
+                phase_schema={"type": "string", "const": phase},
+                authority_refs_ref=f"#/$defs/{refs_names[(agent_id, phase)]}",
+            )
+    else:
+        for index, agent_id in enumerate(agents, start=1):
+            name = f"step_branch_{index:04d}"
+            branch_names.append(name)
+            definitions[name] = _step_branch_schema(
+                step_count=step_count,
+                agent_id=agent_id,
+                role=roles[agent_id],
+                phase_schema=_open_phase_schema(),
+                authority_refs_ref="#/$defs/authority_refs_empty",
+            )
+    return definitions, tuple(branch_names)
 
 
 def build_semantic_leader_plan_schema(
@@ -328,45 +335,18 @@ def build_semantic_leader_plan_schema(
     step_count: object,
 ) -> dict[str, object]:
     """Build a pure, non-executable native schema from closed authority metadata."""
-    authority, agents, role_map, count, phases_by_step = _normalize_authority(
+    authority, agents, role_map, count = _normalize_authority(
         semantic_authority=semantic_authority,
         selected_agent_ids=selected_agent_ids,
         roles=roles,
         step_count=step_count,
     )
-    definitions, phase_names, scope_names = _semantic_schema_definitions(
+    definitions, branch_names = _semantic_schema_definitions(
         authority=authority,
         agents=agents,
+        roles=role_map,
+        step_count=count,
     )
-    requirement_count = len(cast(list[object], authority["requirements"]))
-    prefix_items = [
-        _step_schema(
-            index=index,
-            agent_id=agents[(index - 1) % len(agents)],
-            role=role_map[agents[(index - 1) % len(agents)]],
-            phase_schema=(
-                {"$ref": f"#/$defs/{phase_names[agents[(index - 1) % len(agents)]]}"}
-                if phases_by_step[index - 1]
-                else _phase_schema(())
-            ),
-            authority_refs_schema=(
-                {
-                    "type": "array",
-                    "minItems": 0,
-                    "maxItems": requirement_count,
-                    "uniqueItems": True,
-                }
-                if phases_by_step[index - 1]
-                else {"$ref": "#/$defs/authority_refs_empty"}
-            ),
-            authority_scope_ref=(
-                f"#/$defs/{scope_names[agents[(index - 1) % len(agents)]]}"
-                if phases_by_step[index - 1]
-                else None
-            ),
-        )
-        for index in range(1, count + 1)
-    ]
     return {
         "$id": SEMANTIC_LEADER_PLAN_SCHEMA_VERSION,
         "$defs": definitions,
@@ -376,8 +356,12 @@ def build_semantic_leader_plan_schema(
             "summary": {"type": "string", "minLength": 1, "maxLength": _MAX_TEXT_LENGTH},
             "steps": {
                 "type": "array",
-                "prefixItems": prefix_items,
-                "items": False,
+                "items": {
+                    "anyOf": [
+                        {"$ref": f"#/$defs/{name}"}
+                        for name in branch_names
+                    ]
+                },
                 "minItems": count,
                 "maxItems": count,
             },

@@ -21,7 +21,11 @@ from agentdeck.providers.plan_schema import (
     validate_leader_generation_provenance,
     validate_provider_plan_schema,
 )
-from agentdeck.providers.semantic_plan_schema import build_semantic_leader_plan_schema
+from agentdeck.providers.semantic_plan_schema import (
+    SemanticPlanSchemaAuthorityError,
+    build_semantic_leader_plan_schema,
+    resolve_semantic_leader_plan_context,
+)
 from agentdeck.semantic_planning import semantic_context_text_is_safe
 
 
@@ -89,6 +93,7 @@ def _assert_closed_object_schemas(value: object) -> None:
     if type(value) is dict:
         if value.get("type") == "object":
             assert value.get("additionalProperties") is False
+            assert set(value.get("required", [])) == set(value.get("properties", {}))
         for child in value.values():
             _assert_closed_object_schemas(child)
     elif type(value) is list:
@@ -96,27 +101,45 @@ def _assert_closed_object_schemas(value: object) -> None:
             _assert_closed_object_schemas(child)
 
 
+def _resolve_schema_ref(
+    schema: dict[str, object], reference: str
+) -> dict[str, object]:
+    assert reference.startswith("#/$defs/")
+    return schema["$defs"][reference.removeprefix("#/$defs/")]
+
+
+def _semantic_step_branch(
+    schema: dict[str, object], *, agent_id: str, phase: str | None
+) -> dict[str, object]:
+    branches = schema["properties"]["steps"]["items"]["anyOf"]
+    for branch_ref in branches:
+        branch = _resolve_schema_ref(schema, branch_ref["$ref"])
+        properties = branch["properties"]
+        if properties["agent_id"]["const"] != agent_id:
+            continue
+        if phase is None or properties["phase"].get("const") == phase:
+            return branch
+    raise AssertionError("semantic step branch not found")
+
+
 def _scoped_authority_ref_ids(
-    schema: dict[str, object], *, step_index: int, phase: str
+    schema: dict[str, object], *, agent_id: str, phase: str
 ) -> tuple[str, ...]:
-    step_schema = schema["properties"]["steps"]["prefixItems"][step_index]
-    scope_ref = step_schema["allOf"][0]["$ref"]
-    scope = schema["$defs"][scope_ref.removeprefix("#/$defs/")]
-    for conditional in scope["allOf"]:
-        if conditional["if"]["properties"]["phase"]["const"] == phase:
-            refs_ref = conditional["then"]["properties"]["authority_refs"]["$ref"]
-            refs_schema = schema["$defs"][refs_ref.removeprefix("#/$defs/")]
-            return tuple(refs_schema["items"]["enum"])
-    return ()
+    branch = _semantic_step_branch(schema, agent_id=agent_id, phase=phase)
+    refs_schema = _resolve_schema_ref(
+        schema,
+        branch["properties"]["authority_refs"]["$ref"],
+    )
+    return tuple(refs_schema["items"]["enum"])
 
 
 def _scoped_authority_refs_accept(
-    schema: dict[str, object], *, step_index: int, phase: str, refs: list[str]
+    schema: dict[str, object], *, agent_id: str, phase: str, refs: list[str]
 ) -> bool:
     allowed = set(
         _scoped_authority_ref_ids(
             schema,
-            step_index=step_index,
+            agent_id=agent_id,
             phase=phase,
         )
     )
@@ -131,8 +154,106 @@ def _string_schema_accepts(schema: dict[str, object], value: str) -> bool:
     pattern = schema.get("pattern")
     if pattern is not None and re.search(pattern, value) is None:
         return False
-    forbidden = schema.get("not", {}).get("pattern")
-    return forbidden is None or re.search(forbidden, value) is None
+    return True
+
+
+_UNSUPPORTED_STRICT_SCHEMA_KEYS = frozenset(
+    {
+        "allOf",
+        "not",
+        "if",
+        "then",
+        "else",
+        "dependentRequired",
+        "dependentSchemas",
+        "prefixItems",
+    }
+)
+
+
+def _assert_portable_strict_schema(value: object) -> None:
+    if type(value) is dict:
+        assert not (_UNSUPPORTED_STRICT_SCHEMA_KEYS & set(value))
+        if "items" in value:
+            assert type(value["items"]) is dict
+        for child in value.values():
+            _assert_portable_strict_schema(child)
+    elif type(value) is list:
+        for child in value:
+            _assert_portable_strict_schema(child)
+
+
+def _strict_schema_budget(schema: dict[str, object]) -> dict[str, int]:
+    property_count = 0
+    string_budget = 0
+    enum_total = 0
+    enum_max = 0
+
+    def count_raw(value: object) -> None:
+        nonlocal property_count, string_budget, enum_total, enum_max
+        if type(value) is not dict:
+            if type(value) is list:
+                for item in value:
+                    count_raw(item)
+            return
+        properties = value.get("properties")
+        if type(properties) is dict:
+            property_count += len(properties)
+            string_budget += sum(len(name) for name in properties)
+        definitions = value.get("$defs")
+        if type(definitions) is dict:
+            string_budget += sum(len(name) for name in definitions)
+        enum = value.get("enum")
+        if type(enum) is list:
+            enum_total += len(enum)
+            enum_max = max(enum_max, len(enum))
+            string_budget += sum(len(item) for item in enum if type(item) is str)
+        const = value.get("const")
+        if type(const) is str:
+            string_budget += len(const)
+        for child in value.values():
+            count_raw(child)
+
+    definitions = schema.get("$defs", {})
+
+    def schema_depth(
+        value: dict[str, object], depth: int, active_refs: frozenset[str]
+    ) -> int:
+        reference = value.get("$ref")
+        if type(reference) is str and reference.startswith("#/$defs/"):
+            name = reference.removeprefix("#/$defs/")
+            if name in active_refs:
+                return depth
+            return schema_depth(
+                definitions[name],
+                depth,
+                active_refs | {name},
+            )
+        depths = [depth]
+        properties = value.get("properties")
+        if type(properties) is dict:
+            depths.extend(
+                schema_depth(child, depth + 1, active_refs)
+                for child in properties.values()
+            )
+        items = value.get("items")
+        if type(items) is dict:
+            depths.append(schema_depth(items, depth + 1, active_refs))
+        alternatives = value.get("anyOf")
+        if type(alternatives) is list:
+            depths.extend(
+                schema_depth(child, depth, active_refs) for child in alternatives
+            )
+        return max(depths)
+
+    count_raw(schema)
+    return {
+        "property_count": property_count,
+        "string_budget": string_budget,
+        "enum_total": enum_total,
+        "enum_max": enum_max,
+        "max_depth": schema_depth(schema, 1, frozenset()),
+    }
 
 
 def test_schema_freezes_worker_order_step_count_and_approval() -> None:
@@ -190,8 +311,8 @@ def test_semantic_schema_is_exact_closed_and_contains_only_safe_authority() -> N
     assert schema["required"] == ["goal", "summary", "steps"]
     steps = schema["properties"]["steps"]
     assert steps["minItems"] == steps["maxItems"] == 2
-    assert steps["items"] is False
-    assert len(steps["prefixItems"]) == 2
+    assert set(steps["items"]) == {"anyOf"}
+    assert len(steps["items"]["anyOf"]) == 2
     expected_agents = ("reviewer", "planner")
     expected_roles = ("review", "planning")
     expected_phases = ("implementation", "review")
@@ -206,33 +327,46 @@ def test_semantic_schema_is_exact_closed_and_contains_only_safe_authority() -> N
         "risk",
         "requires_approval",
     ]
-    for index, step_schema in enumerate(steps["prefixItems"], start=1):
+    for index, (agent_id, role, phase) in enumerate(
+        zip(expected_agents, expected_roles, expected_phases),
+        start=1,
+    ):
+        step_schema = _semantic_step_branch(
+            schema,
+            agent_id=agent_id,
+            phase=phase,
+        )
         properties = step_schema["properties"]
         assert step_schema["required"] == required_fields
-        assert properties["step"] == {"type": "integer", "const": index}
+        assert properties["step"] == {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 2,
+        }
         assert properties["agent_id"] == {
             "type": "string",
-            "const": expected_agents[index - 1],
+            "const": agent_id,
         }
         assert properties["role"] == {
             "type": "string",
-            "const": expected_roles[index - 1],
+            "const": role,
         }
-        phase_ref = properties["phase"]["$ref"]
-        assert schema["$defs"][phase_ref.removeprefix("#/$defs/")] == {
+        assert properties["phase"] == {
             "type": "string",
-            "enum": [expected_phases[index - 1]],
+            "const": phase,
         }
-        assert properties["authority_refs"] == {
-            "type": "array",
-            "minItems": 0,
-            "maxItems": 2,
-            "uniqueItems": True,
-        }
-        assert properties["authority_refs"]["uniqueItems"] is True
+        refs_schema = _resolve_schema_ref(
+            schema,
+            properties["authority_refs"]["$ref"],
+        )
+        assert refs_schema["uniqueItems"] is True
         assert properties["risk"] == {"type": "string", "const": "low"}
         assert properties["requires_approval"] == {"type": "boolean", "const": True}
-        proposal = properties["proposed_effects"]["items"]
+        proposal_array = _resolve_schema_ref(
+            schema,
+            properties["proposed_effects"]["$ref"],
+        )
+        proposal = proposal_array["items"]
         assert proposal["required"] == ["target", "operation", "sensitivity"]
         assert proposal["properties"]["operation"] == {
             "type": "string",
@@ -250,33 +384,32 @@ def test_semantic_schema_is_exact_closed_and_contains_only_safe_authority() -> N
     assert encoded.count("req_111111111111") == 1
     assert encoded.count("req_222222222222") == 1
     assert _scoped_authority_ref_ids(
-        schema, step_index=0, phase="implementation"
+        schema, agent_id="reviewer", phase="implementation"
     ) == ("req_111111111111",)
-    assert _scoped_authority_ref_ids(schema, step_index=0, phase="review") == ()
-    assert _scoped_authority_ref_ids(schema, step_index=1, phase="review") == (
+    assert _scoped_authority_ref_ids(
+        schema, agent_id="planner", phase="review"
+    ) == (
         "req_222222222222",
     )
-    assert _scoped_authority_ref_ids(
-        schema, step_index=1, phase="implementation"
-    ) == ()
     assert _scoped_authority_refs_accept(
         schema,
-        step_index=0,
+        agent_id="reviewer",
         phase="implementation",
         refs=["req_111111111111"],
     )
     assert not _scoped_authority_refs_accept(
         schema,
-        step_index=0,
+        agent_id="reviewer",
         phase="implementation",
         refs=["req_222222222222"],
     )
     assert not _scoped_authority_refs_accept(
         schema,
-        step_index=1,
+        agent_id="planner",
         phase="review",
         refs=["req_111111111111"],
     )
+    _assert_portable_strict_schema(schema)
     _assert_closed_object_schemas(schema)
 
 
@@ -388,7 +521,8 @@ def test_open_semantic_schema_accepts_safe_nfc_roles(role: str) -> None:
         _open_semantic_request_with_context(field="role", value=role)
     )
 
-    assert schema["properties"]["steps"]["prefixItems"][0]["properties"]["role"] == {
+    branch = _semantic_step_branch(schema, agent_id="reviewer", phase=None)
+    assert branch["properties"]["role"] == {
         "type": "string",
         "const": role,
     }
@@ -416,16 +550,17 @@ def test_open_semantic_phase_schema_has_absolute_scalar_boundaries(
             field="role", value="architecture planning"
         )
     )
-    step = schema["properties"]["steps"]["prefixItems"][0]
+    step = _semantic_step_branch(schema, agent_id="reviewer", phase=None)
     phase_schema = step["properties"]["phase"]
-    refs_schema = schema["$defs"][
-        step["properties"]["authority_refs"]["$ref"].removeprefix("#/$defs/")
-    ]
+    refs_schema = _resolve_schema_ref(
+        schema,
+        step["properties"]["authority_refs"]["$ref"],
+    )
 
     assert _string_schema_accepts(phase_schema, phase) is accepted
     assert refs_schema == {
         "type": "array",
-        "items": False,
+        "items": {"type": "string"},
         "minItems": 0,
         "maxItems": 0,
         "uniqueItems": True,
@@ -508,6 +643,52 @@ def test_unselected_invalid_config_context_does_not_change_semantic_identity() -
         provider="codex-cli",
         provenance=baseline_provenance,
     ) == baseline_provenance
+
+
+def test_semantic_context_resolver_ignores_malformed_unselected_entries() -> None:
+    configured_context = (
+        ("reviewer", "review"),
+        ("planner", "planning"),
+        (),
+        ("unused",),
+        ("unused", "role", "extra"),
+        "not-a-tuple",
+        ["also", "not", "a", "tuple"],
+    )
+
+    assert resolve_semantic_leader_plan_context(
+        selected_agent_ids=("reviewer", "planner"),
+        step_count=2,
+        configured_context=configured_context,
+    ) == (
+        ("reviewer", "planner"),
+        {"reviewer": "review", "planner": "planning"},
+        2,
+    )
+
+
+@pytest.mark.parametrize(
+    "malformed",
+    [
+        ("reviewer",),
+        ("reviewer", "review", "extra"),
+        "reviewer",
+        ["reviewer", "review"],
+    ],
+)
+def test_semantic_context_resolver_rejects_malformed_selected_entry(
+    malformed: object,
+) -> None:
+    with pytest.raises(SemanticPlanSchemaAuthorityError):
+        resolve_semantic_leader_plan_context(
+            selected_agent_ids=("reviewer", "planner"),
+            step_count=2,
+            configured_context=(
+                ("reviewer", "review"),
+                ("planner", "planning"),
+                malformed,
+            ),
+        )
 
 
 def test_duplicate_selected_config_context_fails_closed() -> None:
@@ -597,6 +778,13 @@ def test_semantic_schema_maximum_authority_is_compact_and_deterministic() -> Non
     )
     assert len(encoded.encode("utf-8")) < 150_000
     assert all(encoded.count(requirement_id) == 1 for requirement_id in requirement_ids)
+    budget = _strict_schema_budget(first)
+    assert budget["property_count"] < 5_000
+    assert budget["max_depth"] <= 10
+    assert budget["string_budget"] < 120_000
+    assert budget["enum_total"] <= 1_000
+    assert budget["enum_max"] <= 1_000
+    _assert_portable_strict_schema(first)
 
 
 @pytest.mark.parametrize(

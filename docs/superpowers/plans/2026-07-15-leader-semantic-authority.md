@@ -657,9 +657,10 @@ git commit -m "Harden semantic planning boundaries"
 
 Assert a legacy request still produces byte-identical `leader-plan/v1`. A
 request with `semantic_authority` must produce
-`leader-semantic-plan/v1`, exact step count, selected Worker enum, exact role
-const per allowed Worker, no `task` property, required semantic fields, and
-`additionalProperties=false` at every object level.
+`leader-semantic-plan/v1`, exact step count, portable nested `anyOf` step
+branches, exact Worker/role/phase constants per branch, phase-scoped opaque
+authority references, no `task` property, required semantic fields, and
+`additionalProperties=false` at every instance-object level.
 
 Assert generation provenance records the semantic schema version/hash and
 rejects provenance rebuilt against a different authority hash, requirement set,
@@ -707,6 +708,25 @@ the plan body, ProjectView, prompt, or raw durable state.
 `build_leader_plan_schema()` delegates to
 `build_semantic_leader_plan_schema()` only when semantic authority is present.
 The semantic schema exposes requirement ids as enums but no raw secret value.
+It must stay inside the strict native structured-output subset: the root is an
+object; fixed-length `steps` uses `items.anyOf` with `$defs`/`$ref` to complete
+step-object branches; every object declares all fields required and sets
+`additionalProperties=false`. Do not emit `prefixItems`, boolean subschemas,
+`allOf`, `not`, `if`/`then`/`else`, `dependentRequired`, or
+`dependentSchemas`; those composition forms are unsupported by the official
+strict-schema surface even though general JSON Schema validators may accept
+them. Keep the maximum 64-step/256-requirement schema within the documented
+nesting, property, aggregate-enum, enum/const/property/definition string, and
+schema-size budgets, with each opaque requirement id stored only once.
+
+The portable native schema freezes allowed Worker/role/phase/reference
+branches and exact array length, but intentionally does not encode ordinal
+step numbering or round-robin branch position. `validate_semantic_candidate()`
+remains the deterministic authority for exact `step` numbering, round-robin
+Worker order, full requirement coverage, and all cross-field semantic rules.
+The semantic-specific request context resolver must collect exactly one safe
+config entry for each selected Worker while ignoring unrelated malformed or
+unsafe config entries without hashing or comparing hostile subclasses.
 `build_leader_generation_provenance()` and its validator reconstruct the exact
 expected schema from the request; do not trust a supplied version/hash.
 Extend `LEADER_PLAN_DIAGNOSTIC_CODES` only by union with the closed semantic

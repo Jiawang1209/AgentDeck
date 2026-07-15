@@ -4,6 +4,12 @@
 
 ## 2026-07-15
 
+### Make semantic Leader schema strict-portable
+
+- Replaced unsupported `prefixItems` and `allOf`/`if`/`then`/`not` composition with a root object whose fixed-length `steps.items` uses nested `anyOf` references to complete exact step-object branches in `$defs`; the schema retains agent/role/phase-scoped opaque references while Task 3 validation remains authoritative for ordinal numbering and round-robin order.
+- Removed boolean subschemas, kept every instance object fully required with `additionalProperties=false`, and added deterministic maximum-authority checks for nesting, property count, aggregate enum count, enum/const/property/definition string budget, schema bytes, and one-time requirement-ID storage.
+- Corrected selected-context resolution so malformed unrelated entries, including non-two-tuples, are ignored while malformed selected entries fail closed. Added RED/GREEN portability, open-phase, scoped-ref, context-isolation, provenance, and legacy regression coverage. This remains Task 4 pure schema/validation work with no provider I/O, Task 5, CLI regeneration, conversation/state/runtime/tmux/ACP/live behavior, or M2c PASS claim.
+
 ### Scope semantic schema authority references
 
 - Replaced per-step copies of every semantic requirement ID with deterministic top-level `$defs`: opaque IDs are stored once per selected-agent/phase scope, step schemas reuse agent-level conditionals, and wrong-phase or wrong-Worker references are rejected while open authority requires an empty reference list.
