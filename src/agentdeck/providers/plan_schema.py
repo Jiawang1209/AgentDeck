@@ -90,10 +90,7 @@ def build_leader_plan_schema(request: LeaderPlanRequest) -> dict[str, object]:
                 resolve_semantic_leader_plan_context(
                     selected_agent_ids=request.selected_agent_ids,
                     step_count=request.step_count,
-                    configured_context=tuple(
-                        (agent.agent_id, agent.role)
-                        for agent in request.config.agents
-                    ),
+                    configured_context=request.config.agents,
                 )
             )
             return build_semantic_leader_plan_schema(

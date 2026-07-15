@@ -89,6 +89,38 @@ def _semantic_request(**changes: object) -> LeaderPlanRequest:
     return _request(**changes)
 
 
+def _open_semantic_authority() -> dict[str, object]:
+    authority = _semantic_authority()
+    authority["requirements"] = []
+    return authority
+
+
+def _phased_semantic_authority(
+    selected_agent_ids: tuple[str, ...], *, step_count: int
+) -> dict[str, object]:
+    requirements = []
+    for index in range(step_count):
+        requirements.append(
+            {
+                "requirement_id": f"req_{index:012x}",
+                "kind": "read",
+                "target": f"artifact_{index}.txt",
+                "operation": "read",
+                "phase": f"phase_{index:02d}",
+                "agent_id": selected_agent_ids[index % len(selected_agent_ids)],
+                "sensitivity": "ordinary",
+                "literal": f"value_{index}",
+            }
+        )
+    return {
+        "schema_version": "mission-semantic-authority/v1",
+        "source_message_hash": f"sha256:{'d' * 64}",
+        "requirements": requirements,
+        "proposed_effects": [],
+        "unresolved": [],
+    }
+
+
 def _assert_closed_object_schemas(value: object) -> None:
     if type(value) is dict:
         if value.get("type") == "object":
@@ -115,7 +147,11 @@ def _semantic_step_branch(
     for branch_ref in branches:
         branch = _resolve_schema_ref(schema, branch_ref["$ref"])
         properties = branch["properties"]
-        if properties["agent_id"]["const"] != agent_id:
+        agent_schema = _resolve_schema_ref(
+            schema,
+            properties["agent_id"]["$ref"],
+        )
+        if agent_schema["const"] != agent_id:
             continue
         if phase is None or properties["phase"].get("const") == phase:
             return branch
@@ -375,11 +411,13 @@ def test_semantic_schema_is_exact_closed_and_contains_only_safe_authority() -> N
             "minimum": 1,
             "maximum": 2,
         }
-        assert properties["agent_id"] == {
+        assert set(properties["agent_id"]) == {"$ref"}
+        assert _resolve_schema_ref(schema, properties["agent_id"]["$ref"]) == {
             "type": "string",
             "const": agent_id,
         }
-        assert properties["role"] == {
+        assert set(properties["role"]) == {"$ref"}
+        assert _resolve_schema_ref(schema, properties["role"]["$ref"]) == {
             "type": "string",
             "const": role,
         }
@@ -554,7 +592,10 @@ def test_open_semantic_schema_accepts_safe_nfc_roles(role: str) -> None:
     )
 
     branch = _semantic_step_branch(schema, agent_id="reviewer", phase=None)
-    assert branch["properties"]["role"] == {
+    assert _resolve_schema_ref(
+        schema,
+        branch["properties"]["role"]["$ref"],
+    ) == {
         "type": "string",
         "const": role,
     }
@@ -610,6 +651,16 @@ class _HostileContextString(str):
 
     def __eq__(self, other: object) -> bool:
         raise AssertionError("hostile string equality must not run")
+
+
+class _HostileAgentEntry:
+    @property
+    def agent_id(self) -> str:
+        raise AssertionError("unselected agent_id property must not run")
+
+    @property
+    def role(self) -> str:
+        raise AssertionError("unselected role property must not run")
 
 
 @pytest.mark.parametrize("field", ["agent_id", "role"])
@@ -674,6 +725,80 @@ def test_unselected_invalid_config_context_does_not_change_semantic_identity() -
         provider="codex-cli",
         provenance=baseline_provenance,
     ) == baseline_provenance
+
+
+@pytest.mark.parametrize(
+    "entry",
+    [
+        (),
+        [],
+        "unselected-scalar",
+        _HostileAgentEntry(),
+    ],
+)
+def test_public_semantic_paths_ignore_malformed_unselected_config_entry(
+    entry: object,
+) -> None:
+    request = _semantic_request()
+    changed = replace(
+        request,
+        config=replace(request.config, agents=request.config.agents + (entry,)),
+    )
+    schema = build_leader_plan_schema(request)
+    provenance = build_leader_generation_provenance(
+        request=request,
+        provider="codex-cli",
+        constraint_mode="native_json_schema",
+        schema=schema,
+    )
+
+    assert build_leader_plan_schema(changed) == schema
+    assert build_leader_generation_provenance(
+        request=changed,
+        provider="codex-cli",
+        constraint_mode="native_json_schema",
+        schema=schema,
+    ) == provenance
+    assert validate_leader_generation_provenance(
+        request=changed,
+        provider="codex-cli",
+        provenance=provenance,
+    ) == provenance
+
+
+@pytest.mark.parametrize(
+    "entry",
+    [
+        ("reviewer",),
+        ["reviewer", "review"],
+        "reviewer",
+        _HostileAgentEntry(),
+    ],
+)
+def test_public_semantic_paths_reject_malformed_selected_config_entry(
+    entry: object,
+) -> None:
+    request = _semantic_request()
+    remaining = tuple(
+        item for item in request.config.agents if item.agent_id != "reviewer"
+    )
+    changed = replace(
+        request,
+        config=replace(request.config, agents=remaining + (entry,)),
+    )
+
+    with pytest.raises(ProviderPlanValidationError) as schema_error:
+        build_leader_plan_schema(changed)
+    with pytest.raises(ValueError) as provenance_error:
+        build_leader_generation_provenance(
+            request=changed,
+            provider="fake",
+            constraint_mode="local",
+        )
+
+    assert schema_error.value.code == "authority_invalid"
+    assert str(schema_error.value) == "provider plan authority is invalid"
+    assert str(provenance_error.value) == "leader generation request authority is invalid"
 
 
 def test_semantic_context_resolver_ignores_malformed_unselected_entries() -> None:
@@ -817,6 +942,67 @@ def test_semantic_schema_maximum_authority_is_compact_and_deterministic() -> Non
     assert budget["enum_max"] <= 1_000
     _assert_portable_strict_schema(first)
 
+
+def test_semantic_schema_deduplicates_long_role_constants_across_phases() -> None:
+    selected = ("reviewer", "planner")
+    roles = {
+        "reviewer": "r" * 4096,
+        "planner": "p" * 4096,
+    }
+
+    schema = build_semantic_leader_plan_schema(
+        semantic_authority=_phased_semantic_authority(selected, step_count=64),
+        selected_agent_ids=selected,
+        roles=roles,
+        step_count=64,
+    )
+    encoded = json.dumps(schema, ensure_ascii=False, sort_keys=True)
+
+    assert encoded.count(roles["reviewer"]) == 1
+    assert encoded.count(roles["planner"]) == 1
+    assert _strict_schema_budget(schema)["string_budget"] < 120_000
+
+
+def test_semantic_schema_budget_guard_fails_closed_without_echo() -> None:
+    selected = tuple(f"worker_{index:02d}" for index in range(64))
+    roles = {
+        agent_id: f"{index:02d}" + "r" * 4094
+        for index, agent_id in enumerate(selected)
+    }
+
+    with pytest.raises(SemanticPlanSchemaAuthorityError) as raised:
+        build_semantic_leader_plan_schema(
+            semantic_authority=_open_semantic_authority(),
+            selected_agent_ids=selected,
+            roles=roles,
+            step_count=64,
+        )
+
+    assert str(raised.value) == "semantic plan schema authority is invalid"
+    assert roles["worker_00"] not in str(raised.value)
+
+
+@pytest.mark.parametrize(
+    ("selected_count", "step_count"),
+    [
+        (1, 1),
+        (3, 2),
+        (65, 64),
+    ],
+)
+def test_semantic_schema_rejects_selected_count_outside_step_authority(
+    selected_count: int,
+    step_count: int,
+) -> None:
+    selected = tuple(f"worker_{index:02d}" for index in range(selected_count))
+
+    with pytest.raises(SemanticPlanSchemaAuthorityError):
+        build_semantic_leader_plan_schema(
+            semantic_authority=_open_semantic_authority(),
+            selected_agent_ids=selected,
+            roles={agent_id: "planning" for agent_id in selected},
+            step_count=step_count,
+        )
 
 @pytest.mark.parametrize(
     "mutation",

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import json
 from typing import cast
 
+from agentdeck.models import AgentSpec
 from agentdeck.semantic_authority import (
     SEMANTIC_AUTHORITY_SCHEMA_VERSION,
     SEMANTIC_OPERATIONS,
@@ -19,6 +21,11 @@ SEMANTIC_LEADER_PLAN_SCHEMA_VERSION = "leader-semantic-plan/v1"
 _MAX_STEPS = 64
 _MAX_TEXT_LENGTH = 4096
 _PHASE_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}(?![\s\S])"
+_MAX_SCHEMA_BYTES = 150_000
+_MAX_SCHEMA_PROPERTIES = 5_000
+_MAX_SCHEMA_DEPTH = 10
+_MAX_SCHEMA_ENUM_ITEMS = 1_000
+_MAX_SCHEMA_STRING_BUDGET = 120_000
 
 
 class SemanticPlanSchemaAuthorityError(ValueError):
@@ -64,6 +71,7 @@ def _normalize_selected_context(
         or step_count < 2
         or step_count > _MAX_STEPS
         or len(selected_agent_ids) < 2
+        or len(selected_agent_ids) > step_count
         or any(
             not semantic_context_text_is_safe(agent_id)
             for agent_id in selected_agent_ids
@@ -89,6 +97,19 @@ def resolve_semantic_leader_plan_context(
     selected = set(agents)
     roles: dict[str, str] = {}
     for entry in configured_context:
+        if type(entry) is AgentSpec:
+            agent_id = entry.agent_id
+            if type(agent_id) is not str:
+                continue
+            if not semantic_context_text_is_safe(agent_id):
+                continue
+            if agent_id not in selected:
+                continue
+            role = entry.role
+            if not semantic_context_text_is_safe(role) or agent_id in roles:
+                _fail()
+            roles[agent_id] = cast(str, role)
+            continue
         if type(entry) is not tuple:
             candidate = (
                 entry
@@ -200,8 +221,8 @@ def _open_phase_schema() -> dict[str, object]:
 def _step_branch_schema(
     *,
     step_count: int,
-    agent_id: str,
-    role: str,
+    agent_id_ref: str,
+    role_ref: str,
     phase_schema: dict[str, object],
     authority_refs_ref: str,
 ) -> dict[str, object]:
@@ -213,8 +234,8 @@ def _step_branch_schema(
                 "minimum": 1,
                 "maximum": step_count,
             },
-            "agent_id": {"type": "string", "const": agent_id},
-            "role": {"type": "string", "const": role},
+            "agent_id": {"$ref": agent_id_ref},
+            "role": {"$ref": role_ref},
             "phase": phase_schema,
             "authority_refs": {"$ref": authority_refs_ref},
             "proposed_effects": {"$ref": "#/$defs/proposed_effects"},
@@ -283,6 +304,16 @@ def _semantic_schema_definitions(
         },
     }
     requirements = cast(list[dict[str, object]], authority["requirements"])
+    identity_refs: dict[str, tuple[str, str]] = {}
+    for index, agent_id in enumerate(agents, start=1):
+        agent_name = f"agent_id_{index:04d}"
+        role_name = f"agent_role_{index:04d}"
+        definitions[agent_name] = {"type": "string", "const": agent_id}
+        definitions[role_name] = {"type": "string", "const": roles[agent_id]}
+        identity_refs[agent_id] = (
+            f"#/$defs/{agent_name}",
+            f"#/$defs/{role_name}",
+        )
     grouped: dict[tuple[str, str], list[str]] = {}
     for requirement in requirements:
         key = cast(str, requirement["agent_id"]), cast(str, requirement["phase"])
@@ -304,10 +335,11 @@ def _semantic_schema_definitions(
         for index, (agent_id, phase) in enumerate(grouped, start=1):
             name = f"step_branch_{index:04d}"
             branch_names.append(name)
+            agent_id_ref, role_ref = identity_refs[agent_id]
             definitions[name] = _step_branch_schema(
                 step_count=step_count,
-                agent_id=agent_id,
-                role=roles[agent_id],
+                agent_id_ref=agent_id_ref,
+                role_ref=role_ref,
                 phase_schema={"type": "string", "const": phase},
                 authority_refs_ref=f"#/$defs/{refs_names[(agent_id, phase)]}",
             )
@@ -315,14 +347,107 @@ def _semantic_schema_definitions(
         for index, agent_id in enumerate(agents, start=1):
             name = f"step_branch_{index:04d}"
             branch_names.append(name)
+            agent_id_ref, role_ref = identity_refs[agent_id]
             definitions[name] = _step_branch_schema(
                 step_count=step_count,
-                agent_id=agent_id,
-                role=roles[agent_id],
+                agent_id_ref=agent_id_ref,
+                role_ref=role_ref,
                 phase_schema=_open_phase_schema(),
                 authority_refs_ref="#/$defs/authority_refs_empty",
             )
     return definitions, tuple(branch_names)
+
+
+def _validate_semantic_schema_budget(schema: dict[str, object]) -> None:
+    property_count = 0
+    string_budget = 0
+    enum_total = 0
+
+    def count_raw(value: object) -> None:
+        nonlocal property_count, string_budget, enum_total
+        if type(value) is list:
+            for item in cast(list[object], value):
+                count_raw(item)
+            return
+        if type(value) is not dict:
+            return
+        mapping = cast(dict[str, object], value)
+        properties = mapping.get("properties")
+        if type(properties) is dict:
+            property_names = cast(dict[str, object], properties)
+            property_count += len(property_names)
+            string_budget += sum(len(name) for name in property_names)
+        definitions = mapping.get("$defs")
+        if type(definitions) is dict:
+            string_budget += sum(len(name) for name in definitions)
+        enum = mapping.get("enum")
+        if type(enum) is list:
+            enum_values = cast(list[object], enum)
+            enum_total += len(enum_values)
+            string_budget += sum(
+                len(item) for item in enum_values if type(item) is str
+            )
+        const = mapping.get("const")
+        if type(const) is str:
+            string_budget += len(const)
+        for child in mapping.values():
+            count_raw(child)
+
+    definitions = cast(dict[str, dict[str, object]], schema.get("$defs", {}))
+
+    def schema_depth(
+        value: dict[str, object], depth: int, active_refs: frozenset[str]
+    ) -> int:
+        reference = value.get("$ref")
+        if type(reference) is str and reference.startswith("#/$defs/"):
+            name = reference.removeprefix("#/$defs/")
+            if name in active_refs:
+                return depth
+            target = definitions.get(name)
+            if type(target) is not dict:
+                _fail()
+            return schema_depth(target, depth, active_refs | {name})
+        depths = [depth]
+        properties = value.get("properties")
+        if type(properties) is dict:
+            depths.extend(
+                schema_depth(child, depth + 1, active_refs)
+                for child in properties.values()
+                if type(child) is dict
+            )
+        items = value.get("items")
+        if type(items) is dict:
+            depths.append(schema_depth(items, depth + 1, active_refs))
+        alternatives = value.get("anyOf")
+        if type(alternatives) is list:
+            depths.extend(
+                schema_depth(child, depth, active_refs)
+                for child in alternatives
+                if type(child) is dict
+            )
+        return max(depths)
+
+    count_raw(schema)
+    try:
+        encoded_size = len(
+            json.dumps(
+                schema,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+                allow_nan=False,
+            ).encode("utf-8")
+        )
+    except (TypeError, ValueError, UnicodeError):
+        _fail()
+    if (
+        encoded_size > _MAX_SCHEMA_BYTES
+        or property_count > _MAX_SCHEMA_PROPERTIES
+        or schema_depth(schema, 1, frozenset()) > _MAX_SCHEMA_DEPTH
+        or enum_total > _MAX_SCHEMA_ENUM_ITEMS
+        or string_budget > _MAX_SCHEMA_STRING_BUDGET
+    ):
+        _fail()
 
 
 def build_semantic_leader_plan_schema(
@@ -345,7 +470,7 @@ def build_semantic_leader_plan_schema(
         roles=role_map,
         step_count=count,
     )
-    return {
+    schema = {
         "$id": SEMANTIC_LEADER_PLAN_SCHEMA_VERSION,
         "$defs": definitions,
         "type": "object",
@@ -367,3 +492,5 @@ def build_semantic_leader_plan_schema(
         "required": ["goal", "summary", "steps"],
         "additionalProperties": False,
     }
+    _validate_semantic_schema_budget(schema)
+    return schema

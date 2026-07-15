@@ -4,6 +4,12 @@
 
 ## 2026-07-15
 
+### Enforce semantic schema public budgets
+
+- Deduplicated selected Worker IDs and roles into one `$defs` identity schema per Worker, so long safe roles are stored once instead of once per phase while every portable step branch retains exact identity constraints.
+- Enforced the public semantic authority bounds `2 <= selected Worker count <= step count <= 64` and added a production fail-closed schema budget gate for 150,000 UTF-8 bytes, 5,000 properties, nesting depth 10, 1,000 aggregate enum items, and 120,000 enum/const/property/definition string characters.
+- Removed eager config-agent projection from the public semantic schema path. The resolver now exact-type gates `AgentSpec` before reading fields, ignores malformed or hostile unselected entries without executing their properties, and rejects a missing or malformed selected entry through the fixed credential-free authority error. Added RED/GREEN public schema/provenance, long-role, budget, selected-count, and legacy regression coverage. This remains Task 4 pure schema/validation work with no provider I/O, Task 5, CLI regeneration, conversation/state/runtime/tmux/ACP/live behavior, or M2c PASS claim.
+
 ### Keep semantic arrays inside strict subset
 
 - Removed unsupported `uniqueItems` from empty and phase-scoped semantic authority-reference arrays; emitted array constraints now stay within the documented `minItems`/`maxItems` strict subset.

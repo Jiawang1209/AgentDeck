@@ -723,6 +723,17 @@ schema within the documented nesting, property, aggregate-enum,
 enum/const/property/definition string, and schema-size budgets, with each
 opaque requirement id stored only once.
 
+This budget is a production boundary, not test-only evidence. Before returning
+the schema, fail closed when canonical UTF-8 JSON exceeds 150,000 bytes, the
+raw schema exceeds 5,000 properties, reference-expanded nesting exceeds 10,
+aggregate enum membership exceeds 1,000, or enum/const/property/definition
+strings exceed 120,000 characters. Store each selected Worker ID and role once
+in a dedicated `$defs` identity schema and reference it from every phase branch;
+safe maximum-length roles must therefore not be copied once per phase. Preserve
+the existing minimum of two selected Workers and two steps, require selected
+Worker count to be no greater than step count, and cap both through the existing
+64-step authority.
+
 The portable native schema freezes allowed Worker/role/phase/reference
 branches and exact array length, but intentionally does not encode ordinal
 step numbering or round-robin branch position. `validate_semantic_candidate()`
@@ -732,6 +743,11 @@ cross-field semantic rules.
 The semantic-specific request context resolver must collect exactly one safe
 config entry for each selected Worker while ignoring unrelated malformed or
 unsafe config entries without hashing or comparing hostile subclasses.
+The public request path must pass the raw configured tuple to that resolver,
+which exact-type gates `AgentSpec` before field access; it must not eagerly
+project `.agent_id` or `.role` from every configured item. Unselected malformed,
+subclass, or hostile objects are ignored without property execution, while a
+selected Worker whose exact safe `AgentSpec` is absent fails closed.
 `build_leader_generation_provenance()` and its validator reconstruct the exact
 expected schema from the request; do not trust a supplied version/hash.
 Extend `LEADER_PLAN_DIAGNOSTIC_CODES` only by union with the closed semantic
