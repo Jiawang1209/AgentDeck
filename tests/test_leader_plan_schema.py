@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
-from dataclasses import replace
+from dataclasses import asdict, replace
 import hashlib
 import json
 import re
@@ -1602,10 +1602,43 @@ def test_leader_plan_result_semantic_diagnostics_cannot_mutate_internal_state() 
             "regeneration_used": False,
         },
     )
-    assert "semantic_diagnostics" not in vars(result)
-    stored = vars(result)["_semantic_diagnostics"]
+    assert "_semantic_diagnostics" not in vars(result)
+    stored = vars(result)["semantic_diagnostics"]
+    assert all(type(item) is tuple for item in stored)
     with pytest.raises(TypeError):
         stored[0]["code"] = "semantic_effect_conflict"
+
+
+def test_leader_plan_result_preserves_dataclass_public_compatibility() -> None:
+    result = LeaderPlanResult(
+        plan={"goal": "g"},
+        leader_generation={"provider": "fake"},
+        semantic_diagnostics=(
+            {
+                "code": "semantic_candidate_missing_requirement",
+                "attempt_count": 1,
+                "regeneration_used": False,
+            },
+        ),
+    )
+
+    replaced = replace(result)
+
+    assert replaced == result
+    assert replaced is not result
+    assert "semantic_diagnostics=" in repr(result)
+    assert "_semantic_diagnostics" not in repr(result)
+    assert asdict(result) == {
+        "plan": {"goal": "g"},
+        "leader_generation": {"provider": "fake"},
+        "semantic_diagnostics": (
+            {
+                "code": "semantic_candidate_missing_requirement",
+                "attempt_count": 1,
+                "regeneration_used": False,
+            },
+        ),
+    }
 
 
 def test_legacy_leader_plan_result_construction_keeps_empty_diagnostics() -> None:

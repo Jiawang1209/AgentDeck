@@ -4,6 +4,12 @@
 
 ## 2026-07-15
 
+### Preserve LeaderPlanResult dataclass compatibility
+
+- Restored `semantic_diagnostics` as the public frozen dataclass field while retaining immutable tuple-of-scalar-pairs physical storage and fresh plain-dict projection on every read.
+- Preserved standard `dataclasses.replace()`, generated equality/repr, and `asdict()` behavior with the exact public `{plan, leader_generation, semantic_diagnostics}` shape; `vars()` keeps the public field name but exposes no mutable diagnostic dictionaries.
+- Added RED/GREEN compatibility probes for replace, repr, asdict, equality, defensive mutation, and immutable physical storage. This is a Task 5 quality follow-up only and adds no Task 6, provider/live, state, runtime, tmux, ACP, or M2c PASS behavior.
+
 ### Freeze semantic CLI generation inputs
 
 - Snapshot and exactly validate semantic authority before timeout setup, schema construction, prompt generation, or subprocess start; schema, both bounded attempts, deterministic compilation, replacement prompt, and generation provenance now consume only that defensive snapshot even if the caller mutates its original authority concurrently.

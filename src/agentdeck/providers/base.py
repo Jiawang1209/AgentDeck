@@ -29,21 +29,14 @@ class LeaderPlanRequest:
     regeneration_diagnostic: str | None = None
 
 
-@dataclass(frozen=True, init=False)
+@dataclass(frozen=True)
 class LeaderPlanResult:
     plan: dict[str, object]
     leader_generation: dict[str, object]
-    _semantic_diagnostics: tuple[tuple[tuple[str, object], ...], ...]
+    semantic_diagnostics: tuple[dict[str, object], ...] = ()
 
-    def __init__(
-        self,
-        plan: dict[str, object],
-        leader_generation: dict[str, object],
-        semantic_diagnostics: tuple[dict[str, object], ...] = (),
-    ) -> None:
-        object.__setattr__(self, "plan", plan)
-        object.__setattr__(self, "leader_generation", leader_generation)
-        diagnostics = semantic_diagnostics
+    def __post_init__(self) -> None:
+        diagnostics = object.__getattribute__(self, "semantic_diagnostics")
         if type(diagnostics) is not tuple:
             raise ValueError("leader plan semantic diagnostics are invalid")
         immutable: list[tuple[tuple[str, object], ...]] = []
@@ -74,11 +67,13 @@ class LeaderPlanResult:
                     ("regeneration_used", copied["regeneration_used"]),
                 )
             )
-        object.__setattr__(self, "_semantic_diagnostics", tuple(immutable))
+        object.__setattr__(self, "semantic_diagnostics", tuple(immutable))
 
-    @property
-    def semantic_diagnostics(self) -> tuple[dict[str, object], ...]:
-        return tuple(dict(item) for item in self._semantic_diagnostics)
+    def __getattribute__(self, name: str) -> object:
+        value = object.__getattribute__(self, name)
+        if name == "semantic_diagnostics":
+            return tuple(dict(item) for item in value)
+        return value
 
 
 class LeaderProvider(Protocol):
