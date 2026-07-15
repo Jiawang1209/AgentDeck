@@ -118,7 +118,10 @@ def confirm_mission_for_daemon(
             raise MissionRunError("mission is not pending confirmation")
         plan, _agents = _frozen_preflight(config, store, mission)
         policy = execution_policy_snapshot(config)
-        build_execution_snapshot(config, mission, plan, policy)
+        try:
+            build_execution_snapshot(config, mission, plan, policy)
+        except MissionRunError:
+            raise MissionRunError("mission confirmation drift") from None
         return store.freeze_mission_execution(
             mission_id,
             confirmed_at=utc_now(),

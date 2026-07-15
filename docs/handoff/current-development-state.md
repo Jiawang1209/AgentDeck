@@ -72,7 +72,7 @@ Lane guidance: this supports the **end-to-end golden demo first**. Remote skill 
 ## Active Goal
 
 **Task 13 semantic M2c harness conversion is implemented; it becomes frozen evidence authority only after unchanged-SHA verification.**
-The complete non-live harness passes `105` tests with one explicit opt-in live
+The complete non-live harness passes `110` tests with one explicit opt-in live
 skip. The live confirmation path no longer treats Leader-authored free-text
 phase/token matches as authority: before confirmation it validates
 `mission-semantic-authority/v1`, the unique atomic revision before/after state,
@@ -236,7 +236,7 @@ Please continue AgentDeck development from this repository.
 Read CLAUDE.md, AGENT.md, the top of HISTORY.md, docs/roadmap/ultimate-goal-roadmap.md, and docs/handoff/current-development-state.md first.
 Use conda activate agentdeck or conda run -n agentdeck for commands.
 Every development iteration must update HISTORY.md, run verification, and commit locally.
-Treat Phase 3 M2 Tasks 1–14 as complete. Frozen commit `1a22618ba083a76f4a21ffc7ebc7a3e513e4aae6` and its pre-confirmation failure remain historical live evidence; M2c is BLOCKED and M3 remains locked. The approved semantic-authority design and Tasks 1–12 are implemented. The Task 13 revision containing this handoff converts the M2c harness from free-text task gates to frozen schema/transition/compiler/snapshot/binding gates and passes 105 non-live tests with one live skip. Verify its exact unchanged SHA with two independent full suites, then run only the designated read-only preflight once. Stop before Task 14 and request separate human authorization even if ready=true and blockers=[]. Never retry automatically. Do not redo M1 or earlier phases; do not merge/push, auto-install, change authentication, add A2A, remote execution, global roaming, Workspace Client, full transcript persistence, or terminal-emulator work.
+Treat Phase 3 M2 Tasks 1–14 as complete. Frozen commit `1a22618ba083a76f4a21ffc7ebc7a3e513e4aae6` and its pre-confirmation failure remain historical live evidence; M2c is BLOCKED and M3 remains locked. The approved semantic-authority design and Tasks 1–12 are implemented. The Task 13 revision containing this handoff converts the M2c harness from free-text task gates to frozen schema/transition/compiler/snapshot/binding gates and passes 110 non-live tests with one live skip. Verify its exact unchanged SHA with two independent full suites, then run only the designated read-only preflight once. Stop before Task 14 and request separate human authorization even if ready=true and blockers=[]. Never retry automatically. Do not redo M1 or earlier phases; do not merge/push, auto-install, change authentication, add A2A, remote execution, global roaming, Workspace Client, full transcript persistence, or terminal-emulator work.
 ```
 
 ## Historical development log — not active

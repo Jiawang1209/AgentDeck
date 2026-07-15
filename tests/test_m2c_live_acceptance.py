@@ -3449,6 +3449,7 @@ def test_live_frozen_authority_accepts_exact_semantic_fixture(tmp_path) -> None:
         ("semantic_hash", "semantic_step_hashes"),
         ("task_hash", "task_hashes"),
         ("binding", "confirmation_binding"),
+        ("preexisting_attempt", "preconfirmation_zero_effects"),
     ],
 )
 def test_live_frozen_authority_rejects_each_frozen_fact(
@@ -3474,10 +3475,12 @@ def test_live_frozen_authority_rejects_each_frozen_fact(
         mutated_snapshot["mission"]["steps"][2]["task_hash"] = (
             "sha256:" + "f" * 64
         )
-    else:
+    elif mutation == "binding":
         mutated_state["conversation_preview_bindings"][0]["execution_digest"] = (
             "f" * 64
         )
+    else:
+        mutated_state["mission_attempts"] = [{"preexisting": True}]
 
     checks = _live_frozen_authority_checks(
         mutated_state, config=config, root=root, snapshot=mutated_snapshot
@@ -3640,15 +3643,28 @@ def test_require_live_task_authority_is_preconfirmation_zero_write(tmp_path) -> 
     assert state["permission_requests"] == []
 
 
+@pytest.mark.parametrize(
+    "mutation",
+    (
+        "revision_transition",
+        "mission_attempts",
+        "permission_requests",
+        "mission_worker_replies",
+        "mission_handoffs",
+    ),
+)
 def test_live_mission_frozen_authority_blocks_real_confirmation_path(
-    tmp_path, monkeypatch,
+    tmp_path, monkeypatch, mutation: str,
 ) -> None:
     root, _config, store, previewed, _snapshot = _semantic_live_authority_fixture(
         tmp_path
     )
-    previewed["plans"][0]["plan"]["semantic_authority"]["requirements"][2][
-        "before"
-    ] = {"content_equals": "other\n"}
+    if mutation == "revision_transition":
+        previewed["plans"][0]["plan"]["semantic_authority"]["requirements"][2][
+            "before"
+        ] = {"content_equals": "other\n"}
+    else:
+        previewed[mutation] = [{"preexisting": True}]
     store.save(previewed)
     actual_state_before = copy.deepcopy(store.load())
     actual_events_before = copy.deepcopy(store.all_events())
@@ -3701,7 +3717,21 @@ def test_live_mission_frozen_authority_blocks_real_confirmation_path(
 
     diagnostic = json.loads(str(error.value))
     assert diagnostic["code"] == "frozen_semantic_authority_invalid"
-    assert diagnostic["frozen_authority"]["revision_transition"] is False
+    assert diagnostic["ledger"]["classification"] == (
+        "leader_semantic_authority_missing"
+    )
+    assert diagnostic["frozen_authority"]["revision_transition"] is (
+        mutation != "revision_transition"
+    )
+    assert diagnostic["frozen_authority"]["preconfirmation_zero_effects"] is (
+        mutation == "revision_transition"
+    )
+    assert set(diagnostic["frozen_authority"]) == set(
+        _LIVE_FROZEN_AUTHORITY_FIELDS
+    )
+    assert all(
+        type(value) is bool for value in diagnostic["frozen_authority"].values()
+    )
     assert prompt_numbers == [1]
     assert len(writes) == 1
     assert writes[0].endswith("共4轮。\n".encode("utf-8"))
@@ -3713,10 +3743,15 @@ def test_live_mission_frozen_authority_blocks_real_confirmation_path(
     assert actual_state_after == actual_state_before
     assert actual_events_after == actual_events_before
     assert project_tree_after == project_tree_before
-    assert actual_state_after["mission_attempts"] == []
-    assert actual_state_after["permission_requests"] == []
-    assert actual_state_after["mission_worker_replies"] == []
-    assert actual_state_after["mission_handoffs"] == []
+    for collection in (
+        "mission_attempts",
+        "permission_requests",
+        "mission_worker_replies",
+        "mission_handoffs",
+    ):
+        assert actual_state_after[collection] == (
+            [{"preexisting": True}] if mutation == collection else []
+        )
 
 
 def test_live_failure_rejects_nonclosed_task_authority_without_stringifying() -> None:

@@ -18,7 +18,7 @@ facts, and zero attempts, permissions, Worker replies, and handoffs. Closed
 failure diagnostics contain only the fixed gate names and booleans. The old
 token checks remain test mutation helpers and cannot produce a live PASS.
 
-The complete non-live M2c harness currently passes `105` tests with exactly one
+The complete non-live M2c harness currently passes `110` tests with exactly one
 opt-in live skip. This is deterministic pre-freeze evidence only. It does not
 claim a real four-stage PASS, change login or global settings, or authorize a
 live attempt. M2c remains **BLOCKED** and M3 remains locked until the new commit

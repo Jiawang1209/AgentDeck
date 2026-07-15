@@ -11588,6 +11588,7 @@ AUTHORITATIVE_STATE_MUTATION_METHODS = (
     "record_protocol_turn",
     "record_release",
     "record_reply",
+    "record_semantic_worker_dispatch_event",
     "record_skill_load",
     "record_skill_suggestion",
     "record_tmux_mission_attempt_completion",
