@@ -4,6 +4,11 @@
 
 ## 2026-07-15
 
+### Deduplicate completed Mission workbench controls
+
+- Made review-gate stage controls identify `code_review` and `round_review` in their labels. When neither reviewer role is configured, their disabled trace/inbox controls now retain distinct deterministic `control_id` values instead of colliding on the same null command and global agent slot.
+- Added a focused regression for the exact missing-reviewer state exposed by the completed semantic four-stage Mission, and synchronized the workbench discovery fixture and contract example. The validator remains strict; no controls are silently dropped or renumbered.
+
 ### Enforce semantic authority during Worker dispatch
 
 - Quality-review recovery closure sends semantic recovery through the real `reconnect_conversation` contract path, publishes exact legacy/semantic step and result alternatives, and requires each compact result hash to equal its completed frozen step while StateStore binds snapshot, attempt, and reply lineage before projection. Contract discovery, ProjectView/workbench docs, and both READMEs describe the additive shape without exposing authority content. Semantic dispatch audit idempotency now safely collapses the same byte-identical event id across the journal/outbox crash window, then treats same-payload logical repeats as idempotent and different payloads as conflicts. The Worker coordinator comment now accurately records that construction may persist compact audit facts but performs no external Worker I/O.

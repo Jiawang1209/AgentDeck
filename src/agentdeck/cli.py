@@ -4583,17 +4583,26 @@ def _review_gate_stage(
         "trace_command": trace_command,
         "inbox_command": inbox_command,
         "blocker": blocker,
-        "controls": _review_gate_stage_controls(trace_command, inbox_command, blocker),
+        "controls": _review_gate_stage_controls(
+            stage, trace_command, inbox_command, blocker
+        ),
     }
 
 
 def _review_gate_stage_controls(
-    trace_command: str | None, inbox_command: str | None, blocker: str | None
+    stage: str,
+    trace_command: str | None,
+    inbox_command: str | None,
+    blocker: str | None,
 ) -> list[dict[str, object]]:
+    stage_label = {
+        "code_review": "code review",
+        "round_review": "round review",
+    }[stage]
     return [
         _control(
             kind="trace",
-            label="Trace review",
+            label=f"Trace {stage_label}",
             command=trace_command,
             safety="inspect",
             enabled=trace_command is not None,
@@ -4601,7 +4610,7 @@ def _review_gate_stage_controls(
         ),
         _control(
             kind="inbox",
-            label="Inspect reviewer inbox",
+            label=f"Inspect {stage_label.replace(' review', ' reviewer')} inbox",
             command=inbox_command,
             safety="inspect",
             enabled=inbox_command is not None,

@@ -611,7 +611,7 @@ The card fuses runtime and ledger facts without creating a second state source. 
     "controls": [
       {
         "kind": "trace",
-        "label": "Trace review",
+        "label": "Trace code review",
         "command": "agentdeck trace --id rep_xxx",
         "safety": "inspect",
         "enabled": true,

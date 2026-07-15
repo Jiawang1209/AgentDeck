@@ -15791,7 +15791,7 @@ def workbench_example() -> dict[str, object]:
                 "controls": [
                     {
                         "kind": "trace",
-                        "label": "Trace review",
+                        "label": "Trace code review",
                         "command": "agentdeck trace --id rep_review",
                         "safety": "inspect",
                         "enabled": True,
@@ -15799,7 +15799,7 @@ def workbench_example() -> dict[str, object]:
                     },
                     {
                         "kind": "inbox",
-                        "label": "Inspect reviewer inbox",
+                        "label": "Inspect code reviewer inbox",
                         "command": "agentdeck inbox --agent reviewer",
                         "safety": "inspect",
                         "enabled": True,
@@ -15819,7 +15819,7 @@ def workbench_example() -> dict[str, object]:
                 "controls": [
                     {
                         "kind": "trace",
-                        "label": "Trace review",
+                        "label": "Trace round review",
                         "command": None,
                         "safety": "inspect",
                         "enabled": False,
@@ -15827,7 +15827,7 @@ def workbench_example() -> dict[str, object]:
                     },
                     {
                         "kind": "inbox",
-                        "label": "Inspect reviewer inbox",
+                        "label": "Inspect round reviewer inbox",
                         "command": None,
                         "safety": "inspect",
                         "enabled": False,

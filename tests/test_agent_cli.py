@@ -3875,6 +3875,32 @@ def test_leader_chat_memory_context_is_read_only_and_avoids_provider_calls(
     assert StateStore(root).list_events(limit=1)[0]["event_type"] == "leader_chat_turn"
 
 
+def test_workbench_review_gate_missing_roles_keep_stage_control_ids_unique() -> None:
+    card = cli._workbench_review_gate_card(
+        {
+            "agents": [{"agent_id": "worker", "role": "implementation"}],
+            "replies": {"items": []},
+            "artifacts": {"items": [{"artifact_id": "art_1"}]},
+        }
+    )
+
+    registry = cli._workbench_control_registry({"review_gate_card": card})
+    stage_controls = [
+        item
+        for item in registry
+        if item["scope"] == "review_gate" and item["kind"] in {"trace", "inbox"}
+    ]
+
+    assert len(stage_controls) == 4
+    assert len({item["control_id"] for item in stage_controls}) == 4
+    assert [item["label"] for item in stage_controls] == [
+        "Trace code review",
+        "Inspect code reviewer inbox",
+        "Trace round review",
+        "Inspect round reviewer inbox",
+    ]
+
+
 def test_leader_chat_review_gate_is_read_only_and_surfaces_control_palette(
     tmp_path, monkeypatch, capsys
 ) -> None:
