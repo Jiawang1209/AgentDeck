@@ -273,44 +273,6 @@ def test_double_semantic_failure_writes_only_turn_terminal_and_safe_audit(
         assert forbidden not in rendered
 
 
-def test_successful_semantic_regeneration_emits_compact_audit(tmp_path: Path) -> None:
-    _config, store = _project(tmp_path)
-
-    class RegeneratedProvider(FakeLeaderProvider):
-        def plan_result(self, request):
-            result = super().plan_result(request)
-            return LeaderPlanResult(
-                plan=result.plan,
-                leader_generation=result.leader_generation,
-                semantic_diagnostics=(
-                    {
-                        "code": "semantic_candidate_missing_requirement",
-                        "attempt_count": 2,
-                        "regeneration_used": True,
-                    },
-                ),
-            )
-
-    session = ConversationSession(
-        root=tmp_path,
-        leader_gateway=LeaderGateway(
-            provider_factory=lambda _name: RegeneratedProvider()
-        ),
-    )
-    response = session.handle(SEMANTIC_MESSAGE)
-
-    assert response.kind == "mission_preview"
-    events = store.all_events()
-    assert [
-        event["payload"] for event in events
-        if event["event_type"] == "leader_semantic_candidate_rejected"
-    ] == [{"code": "semantic_candidate_missing_requirement", "attempt_count": 2}]
-    assert [
-        event["payload"] for event in events
-        if event["event_type"] == "leader_semantic_candidate_regenerated"
-    ] == [{"attempt_count": 2}]
-
-
 def test_semantic_landing_rejection_emits_closed_safe_audit_and_zero_scheduling(
     tmp_path: Path,
 ) -> None:
@@ -347,6 +309,162 @@ def test_semantic_landing_rejection_emits_closed_safe_audit_and_zero_scheduling(
         SEMANTIC_MESSAGE, "artifact.txt", "draft-v1", "task-tamper-secret"
     ):
         assert forbidden not in rendered
+
+
+def test_session_rejects_gateway_rebased_source_hash_before_scheduling(
+    tmp_path: Path,
+) -> None:
+    _config, store = _project(tmp_path)
+    inner = LeaderGateway(provider_factory=lambda _name: FakeLeaderProvider())
+
+    class RebasedGateway:
+        def generate_mission(self, request, cancel):
+            candidate = inner.generate_mission(request, cancel)
+            frozen = deepcopy(candidate.semantic_authority)
+            frozen["source_message_hash"] = f"sha256:{'f' * 64}"
+            plan = deepcopy(candidate.plan)
+            plan["semantic_authority"] = deepcopy(frozen)
+            provenance = build_leader_generation_provenance(
+                request=LeaderPlanRequest(
+                    task=request.planning_task,
+                    config=request.config,
+                    model=request.config.leader.model,
+                    skill_context=request.skill_context,
+                    selected_agent_ids=request.selected_agent_ids,
+                    step_count=request.step_count,
+                    timeout_seconds=request.timeout_seconds,
+                    semantic_authority=deepcopy(frozen),
+                ),
+                provider="fake",
+                constraint_mode="local",
+            )
+            return replace(
+                candidate,
+                plan=plan,
+                semantic_authority=frozen,
+                leader_generation=provenance,
+            )
+
+    response = ConversationSession(
+        root=tmp_path, leader_gateway=RebasedGateway()
+    ).handle(SEMANTIC_MESSAGE)
+
+    assert response.kind == "failed"
+    state = store.load()
+    for key in (
+        "plans", "missions", "approvals", "messages", "jobs", "inbox",
+        "conversation_preview_bindings",
+    ):
+        assert state.get(key, []) == []
+    assert [
+        event["payload"] for event in store.all_events()
+        if event["event_type"] == "leader_semantic_candidate_rejected"
+    ] == [{"code": "semantic_compilation_drift", "attempt_count": 1}]
+
+
+def test_session_rejects_hostile_worker_tuple_without_equality_hook(
+    tmp_path: Path,
+) -> None:
+    _config, store = _project(tmp_path)
+    inner = LeaderGateway(provider_factory=lambda _name: FakeLeaderProvider())
+    touched: list[str] = []
+
+    class HostileTuple(tuple):
+        def __eq__(self, _other):
+            touched.append("eq")
+            raise AssertionError("hostile equality executed")
+
+    class HostileGateway:
+        def generate_mission(self, request, cancel):
+            candidate = inner.generate_mission(request, cancel)
+            return replace(
+                candidate,
+                selected_agent_ids=HostileTuple(candidate.selected_agent_ids),
+            )
+
+    response = ConversationSession(
+        root=tmp_path, leader_gateway=HostileGateway()
+    ).handle(SEMANTIC_MESSAGE)
+
+    assert response.kind == "failed"
+    assert touched == []
+    assert store.load()["plans"] == []
+    assert store.load()["missions"] == []
+
+
+def test_legal_project_local_proposal_reaches_semantic_preview(tmp_path: Path) -> None:
+    _config, store = _project(tmp_path)
+
+    class ProposalProvider(FakeLeaderProvider):
+        @staticmethod
+        def _semantic_candidate(authority, *, selected_agent_ids, roles, step_count):
+            candidate = FakeLeaderProvider._semantic_candidate(
+                authority,
+                selected_agent_ids=selected_agent_ids,
+                roles=roles,
+                step_count=step_count,
+            )
+            candidate["steps"][1]["proposed_effects"] = [
+                {
+                    "target": "notes/report.txt",
+                    "operation": "create",
+                    "sensitivity": "ordinary",
+                }
+            ]
+            return candidate
+
+    response = ConversationSession(
+        root=tmp_path,
+        leader_gateway=LeaderGateway(
+            provider_factory=lambda _name: ProposalProvider()
+        ),
+    ).handle(SEMANTIC_MESSAGE)
+
+    assert response.kind == "mission_preview"
+    assert len(store.load()["plans"]) == len(store.load()["missions"]) == 1
+
+
+def test_regeneration_audit_uses_generation_provenance_not_diagnostic_shape(
+    tmp_path: Path,
+) -> None:
+    _config, store = _project(tmp_path)
+
+    class ActualRegeneratedProvider(FakeLeaderProvider):
+        def plan_result(self, request):
+            result = super().plan_result(request)
+            return LeaderPlanResult(
+                plan=result.plan,
+                leader_generation=build_leader_generation_provenance(
+                    request=request,
+                    provider="fake",
+                    constraint_mode="local",
+                    attempt_count=2,
+                ),
+                semantic_diagnostics=(
+                    {
+                        "code": "semantic_candidate_missing_requirement",
+                        "attempt_count": 1,
+                        "regeneration_used": False,
+                    },
+                ),
+            )
+
+    response = ConversationSession(
+        root=tmp_path,
+        leader_gateway=LeaderGateway(
+            provider_factory=lambda _name: ActualRegeneratedProvider()
+        ),
+    ).handle(SEMANTIC_MESSAGE)
+
+    assert response.kind == "mission_preview"
+    assert [
+        event["payload"] for event in store.all_events()
+        if event["event_type"] == "leader_semantic_candidate_rejected"
+    ] == [{"code": "semantic_candidate_missing_requirement", "attempt_count": 1}]
+    assert [
+        event["payload"] for event in store.all_events()
+        if event["event_type"] == "leader_semantic_candidate_regenerated"
+    ] == [{"attempt_count": 2}]
 
 
 def test_uninitialized_session_and_setup_preview_are_zero_write(tmp_path: Path) -> None:

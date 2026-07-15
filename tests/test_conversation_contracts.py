@@ -87,6 +87,56 @@ def test_conversation_runtime_exposes_exact_semantic_clarification_card() -> Non
     assert validate_conversation_runtime_contract(hostile)["ok"] is False
 
 
+@pytest.mark.parametrize(
+    ("control_index", "field", "value"),
+    [
+        (0, "command", "agentdeck approval dispatch --confirm"),
+        (0, "safety", "explicit_user"),
+        (0, "enabled", False),
+        (1, "command", "agentdeck mission confirm"),
+        (1, "kind", "confirm"),
+        (1, "blocker", "hidden"),
+    ],
+)
+def test_semantic_clarification_controls_reject_disguised_execution(
+    control_index: int, field: str, value: object,
+) -> None:
+    payload = conversation_runtime_example()
+    payload["semantic_clarification_card"]["controls"][control_index][field] = value
+
+    assert validate_conversation_runtime_contract(payload)["ok"] is False
+
+
+@pytest.mark.parametrize("hostile_location", ["card", "control"])
+def test_conversation_contract_rejects_hostile_mapping_without_hooks(
+    hostile_location: str,
+) -> None:
+    touched: list[str] = []
+
+    class HostileDict(dict):
+        def get(self, *_args, **_kwargs):
+            touched.append("get")
+            raise AssertionError("hostile get executed")
+
+        def items(self):
+            touched.append("items")
+            raise AssertionError("hostile items executed")
+
+        def __iter__(self):
+            touched.append("iter")
+            raise AssertionError("hostile iter executed")
+
+    payload = conversation_runtime_example()
+    card = payload["semantic_clarification_card"]
+    if hostile_location == "card":
+        payload["semantic_clarification_card"] = HostileDict(card)
+    else:
+        card["controls"][0] = HostileDict(card["controls"][0])
+
+    assert validate_conversation_runtime_contract(payload)["ok"] is False
+    assert touched == []
+
+
 def test_leader_backend_rejects_ready_backend_with_blockers_and_silent_fallback() -> None:
     payload = leader_backend_example()
     payload["readiness"] = "ready"

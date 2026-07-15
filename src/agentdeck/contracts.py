@@ -17637,6 +17637,42 @@ def _validate_m1_controls(
             errors.append(f"{label} enabled control cannot have blocker")
 
 
+def _semantic_clarification_controls_are_exact(value: object) -> bool:
+    if type(value) is not list or len(value) != 2:
+        return False
+    expected = (
+        {
+            "kind": "clarify",
+            "label": "Provide clarification",
+            "command": "reply with clarified mission requirements",
+            "safety": "inspect",
+            "enabled": True,
+            "blocker": None,
+        },
+        {
+            "kind": "inspect",
+            "label": "Inspect status",
+            "command": "agentdeck status",
+            "safety": "inspect",
+            "enabled": True,
+            "blocker": None,
+        },
+    )
+    for index, control in enumerate(value):
+        if type(control) is not dict or set(control) != set(M1_CONTROL_FIELDS):
+            return False
+        if any(
+            type(control[field]) is not str
+            for field in ("kind", "label", "command", "safety")
+        ):
+            return False
+        if type(control["enabled"]) is not bool or control["blocker"] is not None:
+            return False
+        if control != expected[index]:
+            return False
+    return True
+
+
 def validate_conversation_runtime_contract(payload: object) -> dict[str, object]:
     errors, item = _required_contract_fields(
         payload, CONVERSATION_RUNTIME_RESPONSE_FIELDS, "conversation_runtime"
@@ -17659,44 +17695,34 @@ def validate_conversation_runtime_contract(payload: object) -> dict[str, object]
     }
     if clarification is None:
         pass
-    elif not isinstance(clarification, dict) or set(clarification) != clarification_fields:
+    elif type(clarification) is not dict or set(clarification) != clarification_fields:
         errors.append("conversation_runtime semantic clarification card fields are invalid")
     else:
-        if clarification.get("schema_version") != "mission-semantic-authority/v1":
+        if (
+            type(clarification["schema_version"]) is not str
+            or clarification["schema_version"] != "mission-semantic-authority/v1"
+        ):
             errors.append("conversation_runtime semantic clarification schema is invalid")
-        authority_hash = clarification.get("authority_hash")
+        authority_hash = clarification["authority_hash"]
         if (
             type(authority_hash) is not str
             or re.fullmatch(r"sha256:[0-9a-f]{64}", authority_hash) is None
         ):
             errors.append("conversation_runtime semantic clarification hash is invalid")
         if (
-            type(clarification.get("unresolved_count")) is not int
+            type(clarification["unresolved_count"]) is not int
             or clarification["unresolved_count"] < 1
         ):
             errors.append("conversation_runtime semantic clarification count is invalid")
-        question = clarification.get("question")
+        question = clarification["question"]
         try:
             question_bytes = question.encode("utf-8") if type(question) is str else b""
         except UnicodeEncodeError:
             question_bytes = b""
         if type(question) is not str or not question_bytes or len(question_bytes) > 512:
             errors.append("conversation_runtime semantic clarification question is invalid")
-        _validate_m1_controls(errors, clarification, "semantic_clarification_card")
-        clarification_controls = clarification.get("controls")
-        if (
-            not isinstance(clarification_controls, list)
-            or len(clarification_controls) != 2
-            or {
-                control.get("kind")
-                for control in clarification_controls
-                if isinstance(control, dict)
-            } != {"clarify", "inspect"}
-            or any(
-                not isinstance(control, dict)
-                or control.get("kind") not in {"clarify", "inspect"}
-                for control in clarification_controls
-            )
+        if not _semantic_clarification_controls_are_exact(
+            clarification["controls"]
         ):
             errors.append("conversation_runtime semantic clarification controls are unsafe")
     controls = item.get("controls")

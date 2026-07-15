@@ -1021,6 +1021,13 @@ git add src/agentdeck/conversation/leader_gateway.py src/agentdeck/conversation/
 git commit -m "Bind conversation planning to semantic authority"
 ```
 
+**Review closure:** The implementation additionally binds the returned frozen
+authority back to the exact local draft with proposals removed, validates
+generation provenance against that draft, derives regeneration audit from the
+validated generation envelope, permits separately validated local proposals,
+and exact-type gates clarification cards, controls, Worker/count identities,
+authority, and compiled plans before copying or comparison hooks can execute.
+
 ## Task 8: Plan/Mission persistence and exact preview confirmation binding
 
 **Files:**

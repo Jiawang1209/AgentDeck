@@ -46,6 +46,7 @@ from .providers.plan_schema import (
     ProviderPlanValidationError,
     validate_leader_generation_provenance,
 )
+from .semantic_authority import validate_semantic_authority
 from .state import StateStore
 from .state import (
     build_execution_snapshot_authority,
@@ -614,6 +615,14 @@ def create_mission_preview_from_candidate(
     )
     if (candidate.semantic_authority is None) != (not plan_is_semantic):
         raise MissionPreviewError("mission preview plan invalid")
+    validated_candidate_authority: dict[str, object] | None = None
+    if candidate.semantic_authority is not None:
+        try:
+            validated_candidate_authority = validate_semantic_authority(
+                candidate.semantic_authority
+            )
+        except Exception:
+            raise MissionPreviewError("mission preview plan invalid") from None
     if candidate.step_count is not None and (
         type(candidate.step_count) is not int
         or candidate.step_count < 2
@@ -642,6 +651,10 @@ def create_mission_preview_from_candidate(
     leader_generation: dict[str, object] | None = None
     if candidate.selected_agent_ids is not None:
         try:
+            provenance_authority = None
+            if validated_candidate_authority is not None:
+                provenance_authority = deepcopy(validated_candidate_authority)
+                provenance_authority["proposed_effects"] = []
             leader_generation = validate_leader_generation_provenance(
                 request=LeaderPlanRequest(
                     task=candidate.user_message,
@@ -651,21 +664,21 @@ def create_mission_preview_from_candidate(
                     selected_agent_ids=candidate.selected_agent_ids,
                     step_count=candidate.step_count,
                     timeout_seconds=candidate.timeout_seconds,
-                    semantic_authority=deepcopy(candidate.semantic_authority),
+                    semantic_authority=provenance_authority,
                 ),
                 provider=provider,
                 provenance=candidate.leader_generation,
             )
         except Exception:
             raise MissionPreviewError("mission preview generation invalid") from None
-        if candidate.semantic_authority is not None:
+        if validated_candidate_authority is not None:
             # Task 7 validates semantic generation transiently. Task 8 owns its
             # durable plan/Mission representation and confirmation binding.
             leader_generation = None
     try:
-        raw_plan = deepcopy(candidate.plan)
-        if candidate.semantic_authority is not None:
-            draft_authority = deepcopy(candidate.semantic_authority)
+        raw_plan = candidate.plan
+        if validated_candidate_authority is not None:
+            draft_authority = deepcopy(validated_candidate_authority)
             draft_authority["proposed_effects"] = []
             raw_plan = rebuild_compiled_semantic_plan(
                 LeaderPlanRequest(
@@ -680,7 +693,7 @@ def create_mission_preview_from_candidate(
                 ),
                 raw_plan,
             )
-            if raw_plan["semantic_authority"] != candidate.semantic_authority:
+            if raw_plan["semantic_authority"] != validated_candidate_authority:
                 raise ValueError("semantic authority drift")
             raw_plan = {
                 "goal": raw_plan["goal"],
@@ -700,6 +713,8 @@ def create_mission_preview_from_candidate(
                     for step in raw_plan["steps"]
                 ],
             }
+        else:
+            raw_plan = deepcopy(candidate.plan)
         validate_provider_plan_schema(raw_plan, config=selected_config)
         validate_mission_plan(raw_plan, selected_agent_ids, candidate.timeout_seconds)
         if len(raw_plan["steps"]) != step_count:

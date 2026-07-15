@@ -92,9 +92,9 @@ def rebuild_compiled_semantic_plan(
         raise SemanticPlanningError("semantic_compilation_drift")
     candidate_steps: list[dict[str, object]] = []
     for raw_step in semantic_steps:
-        semantic_step_hash(raw_step)
         if type(raw_step) is not dict or set(raw_step) != _COMPILED_SEMANTIC_STEP_FIELDS:
             raise SemanticPlanningError("semantic_compilation_drift")
+        semantic_step_hash(raw_step)
         proposals = raw_step.get("proposed_effects")
         if type(proposals) is not list:
             raise SemanticPlanningError("semantic_compilation_drift")

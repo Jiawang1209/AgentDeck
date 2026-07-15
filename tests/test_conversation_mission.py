@@ -23,6 +23,7 @@ from agentdeck.mission_orchestration import (
 from agentdeck.models import AgentSpec
 from agentdeck.models import EventRecord
 from agentdeck.providers import LeaderPlanRequest
+from agentdeck.providers.fake import FakeLeaderProvider
 from agentdeck.providers.plan_schema import build_leader_generation_provenance
 from agentdeck.state import StateStore
 from agentdeck.semantic_authority import extract_semantic_authority
@@ -207,6 +208,71 @@ def test_semantic_candidate_landing_requires_exact_transient_tuple(
 
     with pytest.raises(MissionPreviewError, match="mission preview plan invalid"):
         create_mission_preview_from_candidate(config=config, store=store, candidate=candidate)
+    assert store.load()["plans"] == []
+    assert store.load()["missions"] == []
+
+
+@pytest.mark.parametrize("hostile_location", ["authority", "plan"])
+def test_semantic_landing_rejects_hostile_copy_hooks_without_execution(
+    tmp_path: Path, hostile_location: str,
+) -> None:
+    _root, config, store = _project(tmp_path)
+    selected = ("planner", "reviewer")
+    authority = extract_semantic_authority(
+        "First, planner creates artifact.txt with content exactly draft-v1 newline; "
+        "Second, reviewer performs read-only verification of the exact bytes. There are 2 steps.",
+        selected_agent_ids=selected,
+        step_count=2,
+        phases=("implementation", "acceptance"),
+    )
+    request = LeaderPlanRequest(
+        task="semantic mission",
+        config=config,
+        model="fake-plan",
+        selected_agent_ids=selected,
+        step_count=2,
+        timeout_seconds=180,
+        semantic_authority=authority,
+    )
+    result = FakeLeaderProvider().plan_result(request)
+    candidate_authority = deepcopy(authority)
+    candidate_plan = deepcopy(result.plan)
+    touched: list[str] = []
+
+    class HostileDict(dict):
+        def __deepcopy__(self, _memo):
+            touched.append("deepcopy")
+            raise AssertionError("hostile deepcopy executed")
+
+        def get(self, *_args, **_kwargs):
+            touched.append("get")
+            raise AssertionError("hostile get executed")
+
+    if hostile_location == "authority":
+        candidate_authority["requirements"][0] = HostileDict(
+            candidate_authority["requirements"][0]
+        )
+    else:
+        candidate_plan["semantic_steps"][0] = HostileDict(
+            candidate_plan["semantic_steps"][0]
+        )
+    candidate = LeaderMissionCandidate(
+        provider="fake",
+        model="fake-plan",
+        user_message="semantic mission",
+        plan=candidate_plan,
+        timeout_seconds=180,
+        selected_agent_ids=selected,
+        step_count=2,
+        leader_generation=result.leader_generation,
+        semantic_authority=candidate_authority,
+    )
+
+    with pytest.raises(MissionPreviewError):
+        create_mission_preview_from_candidate(
+            config=config, store=store, candidate=candidate
+        )
+    assert touched == []
     assert store.load()["plans"] == []
     assert store.load()["missions"] == []
 

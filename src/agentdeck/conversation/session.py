@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, replace
+from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 import hashlib
 import json
@@ -17,11 +18,14 @@ from ..mission_orchestration import (
 )
 from ..mission import mission_intent, select_mission_agents
 from ..models import EventRecord, ProjectConfig, new_id, utc_now
+from ..providers import LeaderPlanRequest
 from ..state import StateStore, migration_preview
 from ..semantic_authority import (
     extract_semantic_authority,
     semantic_authority_hash,
+    validate_semantic_authority,
 )
+from ..providers.plan_schema import validate_leader_generation_provenance
 from .bindings import execution_digest
 from .leader_gateway import (
     CancellationToken,
@@ -629,15 +633,14 @@ class ConversationSession:
                 selected_agent_ids=selected,
                 step_count=step_count,
             )
+            skill_context = asdict(self.store.project_view(self.config)).get("skills")
             candidate = self.leader_gateway.generate_mission(
                 LeaderRequest(
                     config=planning_config,
                     user_message=text,
                     planning_task=planning_task,
                     timeout_seconds=180,
-                    skill_context=asdict(self.store.project_view(self.config)).get(
-                        "skills"
-                    ),
+                    skill_context=skill_context,
                     selected_agent_ids=selected,
                     step_count=step_count,
                     semantic_authority=(
@@ -646,18 +649,45 @@ class ConversationSession:
                 ),
                 self.cancel_token,
             )
+            validated_semantic_generation: dict[str, object] | None = None
             try:
-                candidate_authority_matches = (
-                    candidate.selected_agent_ids == selected
-                    and candidate.step_count == step_count
-                    and (
-                        not semantic_active
-                        or candidate.semantic_authority is not None
-                        and semantic_authority_hash(candidate.semantic_authority)
-                        == semantic_authority_hash(
-                            candidate.plan["semantic_authority"]
+                returned_authority = (
+                    validate_semantic_authority(candidate.semantic_authority)
+                    if semantic_active
+                    else None
+                )
+                if semantic_active:
+                    returned_required = deepcopy(returned_authority)
+                    local_required = validate_semantic_authority(semantic_authority)
+                    returned_required["proposed_effects"] = []
+                    local_required["proposed_effects"] = []
+                    if returned_required != local_required:
+                        raise ValueError("semantic authority drift")
+                    validated_semantic_generation = (
+                        validate_leader_generation_provenance(
+                            request=LeaderPlanRequest(
+                                task=planning_task,
+                                config=planning_config,
+                                model=planning_config.leader.model,
+                                skill_context=skill_context,
+                                selected_agent_ids=selected,
+                                step_count=step_count,
+                                timeout_seconds=180,
+                                semantic_authority=local_required,
+                            ),
+                            provider=planning_config.leader.provider,
+                            provenance=candidate.leader_generation,
                         )
                     )
+                candidate_authority_matches = (
+                    type(candidate.selected_agent_ids) is tuple
+                    and all(
+                        type(agent_id) is str
+                        for agent_id in candidate.selected_agent_ids
+                    )
+                    and candidate.selected_agent_ids == selected
+                    and type(candidate.step_count) is int
+                    and candidate.step_count == step_count
                 )
             except Exception:
                 raise LeaderGatewayError(
@@ -728,13 +758,16 @@ class ConversationSession:
                             (
                                 EventRecord.create(
                                     "leader_semantic_candidate_regenerated",
-                                    {"attempt_count": 2},
+                                    {
+                                        "attempt_count": validated_semantic_generation[
+                                            "attempt_count"
+                                        ]
+                                    },
                                 ),
                             )
-                            if any(
-                                diagnostic["regeneration_used"]
-                                for diagnostic in candidate.semantic_diagnostics
-                            )
+                            if validated_semantic_generation is not None
+                            and validated_semantic_generation["attempt_count"] == 2
+                            and validated_semantic_generation["regeneration_used"] is True
                             else ()
                         ),
                         EventRecord.create(

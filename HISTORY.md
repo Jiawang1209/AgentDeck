@@ -12,6 +12,9 @@
 - Reused one public compiled-semantic-plan reconstruction validator across Leader orchestration and conversation landing. Task 7 validates semantic generation provenance transiently but intentionally leaves semantic plan/Mission persistence and confirmation binding to Task 8.
 - Added compact extraction, candidate-rejection, and successful-regeneration audit events containing only schema/hash/count/closed-code facts. Double semantic failure records only the required conversation lifecycle plus safe audit facts and creates no plan, Mission, preview binding, approval, message, job, or inbox.
 - Extended `conversation-runtime/v1` discovery with the exact `semantic_clarification_card` shape and clarify/inspect-only controls. Added RED/GREEN conversation, Gateway mutation, landing drift, regeneration, leakage-negative, and exact live-shaped fake-provider coverage; no real provider, network, tmux, ACP, daemon execution, or live M2c attempt was performed.
+- Review closure now binds every returned frozen authority back to the exact locally extracted draft after clearing proposals, validates generation provenance against that proposal-free draft, and separately accepts validated project-local proposals through fresh compilation. A Gateway cannot rebase the source hash even when it returns an internally consistent replacement plan and provenance.
+- Regeneration audit truth now comes from validated generation provenance (`attempt_count=2`, `regeneration_used=true`), while the rejected-attempt event retains the real attempt-1 diagnostic. Clarification controls require two exact inspect-safe shapes and reject renamed or disguised confirmation/dispatch commands.
+- Semantic landing validates authority and compiled-plan exact trees before any defensive copy. Hostile mapping subclasses and copy/access hooks are rejected without execution in both landing and conversation-contract validation.
 
 ### Apply semantic authority across local and API Leaders
 
