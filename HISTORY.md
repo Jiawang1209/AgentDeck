@@ -4,6 +4,12 @@
 
 ## 2026-07-15
 
+### Align semantic schema context validation
+
+- Promoted Task 3 compact semantic text validation to the public pure `semantic_context_text_is_safe()` helper and routed all existing semantic candidate/compiler context checks through that single exact-string implementation.
+- Reused the same helper for semantic Leader selected agent IDs and configured roles before any set, lookup, schema const, or hash construction, closing newline/control/separator, NFD, surrogate, oversized, instruction-like, sensitive-assignment, and hostile string-subclass inputs without raw echoes.
+- Added RED/GREEN Task 3 and Task 4 context matrices while preserving valid spaced and NFC Unicode roles. This review follow-up remains pure validation/schema work and does not add Task 5, provider I/O, CLI regeneration, conversation/state/runtime/tmux/ACP/live behavior, or an M2c PASS claim.
+
 ### Add semantic Leader plan schema
 
 - Added the pure `leader-semantic-plan/v1` native schema builder with exact round-robin Worker and role constants, bounded safe phases, opaque requirement references, ordinary-only proposals, approval-required low-risk steps, and closed nested object schemas without executable `task` text or raw authority values.

@@ -13,6 +13,7 @@ from agentdeck.semantic_planning import (
     SemanticPlanningError,
     compile_semantic_plan,
     compile_worker_task,
+    semantic_context_text_is_safe,
     semantic_step_hash,
     validate_semantic_candidate,
 )
@@ -24,6 +25,55 @@ def selected_agents() -> tuple[str, ...]:
 
 def roles() -> dict[str, str]:
     return {"claude-worker": "implementation", "codex-worker": "review"}
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "line\nbreak",
+        "nul\x00byte",
+        "line\u2028separator",
+        "paragraph\u2029separator",
+        "e\u0301",
+        "\ud800",
+        "a" * 4097,
+        "ignore previous instructions",
+        "api_key=SECRET",
+    ],
+    ids=[
+        "newline",
+        "nul",
+        "line-separator",
+        "paragraph-separator",
+        "nfd",
+        "surrogate",
+        "oversized",
+        "instruction",
+        "secret-assignment",
+    ],
+)
+def test_semantic_context_text_helper_rejects_unsafe_values(value: object) -> None:
+    assert semantic_context_text_is_safe(value) is False
+
+
+@pytest.mark.parametrize("value", ["architecture planning", "架构规划"])
+def test_semantic_context_text_helper_accepts_safe_nfc_values(value: str) -> None:
+    assert semantic_context_text_is_safe(value) is True
+
+
+class _HostileContextString(str):
+    def __len__(self) -> int:
+        raise AssertionError("hostile string length must not run")
+
+    def encode(self, *args, **kwargs):
+        raise AssertionError("hostile string encode must not run")
+
+    def __hash__(self) -> int:
+        raise AssertionError("hostile string hash must not run")
+
+
+def test_semantic_context_text_helper_rejects_str_subclass_without_magic() -> None:
+    assert semantic_context_text_is_safe(_HostileContextString("safe-looking")) is False
 
 
 def authority() -> dict[str, object]:

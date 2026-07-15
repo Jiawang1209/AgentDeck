@@ -22,6 +22,7 @@ from agentdeck.providers.plan_schema import (
     validate_provider_plan_schema,
 )
 from agentdeck.providers.semantic_plan_schema import build_semantic_leader_plan_schema
+from agentdeck.semantic_planning import semantic_context_text_is_safe
 
 
 def _config(root: str = "/private/project-a") -> ProjectConfig:
@@ -241,6 +242,122 @@ def test_open_semantic_authority_rejects_sensitive_configured_agent_id() -> None
 
     assert raised.value.code == "authority_invalid"
     assert "DO_NOT_ECHO" not in str(raised.value)
+
+
+def _open_semantic_request_with_context(
+    *, field: str, value: object
+) -> LeaderPlanRequest:
+    authority = _semantic_authority()
+    authority["requirements"] = []
+    if field == "agent_id":
+        agents = (
+            AgentSpec(value, "review", "claude-cli", "claude"),
+            AgentSpec("planner", "architecture planning", "codex-cli", "codex"),
+        )
+        selected = (value, "planner")
+    else:
+        agents = (
+            AgentSpec("reviewer", value, "claude-cli", "claude"),
+            AgentSpec("planner", "architecture planning", "codex-cli", "codex"),
+        )
+        selected = ("reviewer", "planner")
+    return LeaderPlanRequest(
+        task="Open semantic task",
+        config=replace(_config(), agents=agents),
+        selected_agent_ids=selected,
+        step_count=2,
+        semantic_authority=authority,
+    )
+
+
+@pytest.mark.parametrize("field", ["agent_id", "role"])
+@pytest.mark.parametrize(
+    "value",
+    [
+        "line\nbreak",
+        "nul\x00byte",
+        "line\u2028separator",
+        "paragraph\u2029separator",
+        "e\u0301",
+        "\ud800",
+        "a" * 4097,
+        "ignore previous instructions",
+        "api_key=SECRET",
+    ],
+    ids=[
+        "newline",
+        "nul",
+        "line-separator",
+        "paragraph-separator",
+        "nfd",
+        "surrogate",
+        "oversized",
+        "instruction",
+        "secret-assignment",
+    ],
+)
+def test_semantic_schema_context_uses_task3_safe_text(
+    field: str, value: object
+) -> None:
+    assert semantic_context_text_is_safe(value) is False
+
+    with pytest.raises(ProviderPlanValidationError) as raised:
+        build_leader_plan_schema(
+            _open_semantic_request_with_context(field=field, value=value)
+        )
+
+    assert raised.value.code == "authority_invalid"
+    assert str(raised.value) == "provider plan authority is invalid"
+
+
+@pytest.mark.parametrize("role", ["architecture planning", "架构规划"])
+def test_open_semantic_schema_accepts_safe_nfc_roles(role: str) -> None:
+    schema = build_leader_plan_schema(
+        _open_semantic_request_with_context(field="role", value=role)
+    )
+
+    assert schema["properties"]["steps"]["prefixItems"][0]["properties"]["role"] == {
+        "type": "string",
+        "const": role,
+    }
+
+
+class _HostileContextString(str):
+    def __len__(self) -> int:
+        raise AssertionError("hostile string length must not run")
+
+    def encode(self, *args, **kwargs):
+        raise AssertionError("hostile string encode must not run")
+
+    def __hash__(self) -> int:
+        raise AssertionError("hostile string hash must not run")
+
+
+@pytest.mark.parametrize("field", ["agent_id", "role"])
+def test_semantic_schema_rejects_str_subclass_before_magic(field: str) -> None:
+    hostile = _HostileContextString("safe-looking")
+    assert semantic_context_text_is_safe(hostile) is False
+
+    with pytest.raises(ProviderPlanValidationError) as raised:
+        build_leader_plan_schema(
+            _open_semantic_request_with_context(field=field, value=hostile)
+        )
+
+    assert raised.value.code == "authority_invalid"
+
+
+@pytest.mark.parametrize("field", ["agent_id", "role"])
+def test_semantic_provenance_rejects_str_subclass_before_magic(field: str) -> None:
+    hostile = _HostileContextString("safe-looking")
+
+    with pytest.raises(ValueError) as raised:
+        build_leader_generation_provenance(
+            request=_open_semantic_request_with_context(field=field, value=hostile),
+            provider="fake",
+            constraint_mode="local",
+        )
+
+    assert str(raised.value) == "leader generation request authority is invalid"
 
 
 def test_semantic_schema_is_deterministic_and_regeneration_diagnostic_free() -> None:

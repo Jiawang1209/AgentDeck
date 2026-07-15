@@ -113,7 +113,8 @@ def _exact_list(value: object) -> bool:
     return type(value) is list
 
 
-def _safe_text(value: object, *, allow_instruction: bool = False) -> bool:
+def semantic_context_text_is_safe(value: object) -> bool:
+    """Return whether an exact string is safe compact semantic context."""
     if type(value) is not str or not value or len(value) > _MAX_TEXT_BYTES:
         return False
     if unicodedata.normalize("NFC", value) != value:
@@ -131,7 +132,7 @@ def _safe_text(value: object, *, allow_instruction: bool = False) -> bool:
         return False
     if semantic_text_contains_sensitive_value(value):
         return False
-    return allow_instruction or _INSTRUCTION_RE.search(value) is None
+    return _INSTRUCTION_RE.search(value) is None
 
 
 def _contains_sensitive_authority(value: object) -> bool:
@@ -169,13 +170,16 @@ def _validate_context(
         for key, value in roles.items()
     ):
         _fail("semantic_candidate_schema_invalid")
-    if any(not _safe_text(value) for value in roles.values()):
+    if any(not semantic_context_text_is_safe(value) for value in roles.values()):
         _fail("semantic_candidate_schema_invalid")
     if (
         type(selected_agent_ids) is not tuple
         or not selected_agent_ids
         or len(selected_agent_ids) > _MAX_ITEMS
-        or any(type(item) is not str or not _safe_text(item) for item in selected_agent_ids)
+        or any(
+            type(item) is not str or not semantic_context_text_is_safe(item)
+            for item in selected_agent_ids
+        )
         or len(set(selected_agent_ids)) != len(selected_agent_ids)
         or set(roles) != set(selected_agent_ids)
         or type(step_count) is not int
@@ -276,7 +280,9 @@ def validate_semantic_candidate(
     agents, role_map, count = _validate_context(selected_agent_ids, roles, step_count)
     if not _exact_dict(candidate) or set(candidate) != _CANDIDATE_FIELDS:
         _fail("semantic_candidate_schema_invalid")
-    if not _safe_text(candidate["goal"]) or not _safe_text(candidate["summary"]):
+    if not semantic_context_text_is_safe(
+        candidate["goal"]
+    ) or not semantic_context_text_is_safe(candidate["summary"]):
         _fail("semantic_candidate_schema_invalid")
     steps = candidate["steps"]
     if not _exact_list(steps) or len(steps) != count:
@@ -313,7 +319,7 @@ def validate_semantic_candidate(
         if (
             type(phase) is not str
             or _ORDINARY_SCALAR_RE.fullmatch(phase) is None
-            or not _safe_text(phase)
+            or not semantic_context_text_is_safe(phase)
         ):
             _fail("semantic_candidate_schema_invalid", step=index)
         refs = raw_step["authority_refs"]
@@ -352,7 +358,7 @@ def validate_semantic_candidate(
             validated_proposals.append(
                 _validate_proposal_shape(proposal, persisted=False, step=index)
             )
-        if not _safe_text(raw_step["verification"]):
+        if not semantic_context_text_is_safe(raw_step["verification"]):
             _fail("semantic_candidate_schema_invalid", step=index)
         if type(raw_step["risk"]) is not str or raw_step["risk"] not in _SAFE_RISKS:
             _fail("semantic_candidate_schema_invalid", step=index)
@@ -385,7 +391,7 @@ def _bounded_ordinary_scalar(value: object) -> bool:
     return (
         type(value) is str
         and _ORDINARY_SCALAR_RE.fullmatch(value) is not None
-        and _safe_text(value)
+        and semantic_context_text_is_safe(value)
     )
 
 
@@ -455,7 +461,7 @@ def _validate_semantic_step(
         or body["step"] <= 0
         or body["step"] > _MAX_ITEMS
         or not _bounded_ordinary_scalar(body["agent_id"])
-        or not _safe_text(body["role"])
+        or not semantic_context_text_is_safe(body["role"])
         or not _bounded_ordinary_scalar(body["phase"])
         or not _exact_list(body["authority_refs"])
         or len(body["authority_refs"]) > _MAX_ITEMS
@@ -470,7 +476,7 @@ def _validate_semantic_step(
         or not _exact_list(body["required_effects"])
         or len(body["required_effects"]) > _MAX_ITEMS
         or not body["required_effects"] and not body["proposed_effects"]
-        or not _safe_text(body["verification"])
+        or not semantic_context_text_is_safe(body["verification"])
         or type(body["risk"]) is not str
         or body["risk"] not in _SAFE_RISKS
         or type(body["requires_approval"]) is not bool

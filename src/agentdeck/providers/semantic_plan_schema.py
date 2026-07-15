@@ -11,6 +11,7 @@ from agentdeck.semantic_authority import (
     semantic_text_contains_sensitive_value,
     validate_semantic_authority,
 )
+from agentdeck.semantic_planning import semantic_context_text_is_safe
 
 
 SEMANTIC_LEADER_PLAN_SCHEMA_VERSION = "leader-semantic-plan/v1"
@@ -76,29 +77,21 @@ def _normalize_authority(
         or step_count < 2
         or step_count > _MAX_STEPS
         or len(selected_agent_ids) < 2
-        or len(set(selected_agent_ids)) != len(selected_agent_ids)
         or any(
-            type(agent_id) is not str
-            or not agent_id
-            or len(agent_id) > 128
-            or semantic_text_contains_sensitive_value(agent_id)
+            not semantic_context_text_is_safe(agent_id)
             for agent_id in selected_agent_ids
         )
         or type(roles) is not dict
     ):
         _fail()
     agents = cast(tuple[str, ...], selected_agent_ids)
+    if len(set(agents)) != len(agents):
+        _fail()
     role_values = cast(dict[object, object], roles)
     if (
-        any(type(key) is not str for key in role_values)
+        any(not semantic_context_text_is_safe(key) for key in role_values)
         or set(role_values) != set(agents)
-        or any(
-            type(value) is not str
-            or not value
-            or len(value) > _MAX_TEXT_LENGTH
-            or semantic_text_contains_sensitive_value(value)
-            for value in role_values.values()
-        )
+        or any(not semantic_context_text_is_safe(value) for value in role_values.values())
     ):
         _fail()
     role_map = cast(dict[str, str], role_values)

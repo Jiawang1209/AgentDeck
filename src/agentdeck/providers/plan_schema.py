@@ -5,7 +5,10 @@ import json
 from typing import TYPE_CHECKING, cast
 
 from agentdeck.models import ProjectConfig
-from agentdeck.semantic_planning import SEMANTIC_FAILURE_CODES
+from agentdeck.semantic_planning import (
+    SEMANTIC_FAILURE_CODES,
+    semantic_context_text_is_safe,
+)
 from .semantic_plan_schema import (
     SEMANTIC_LEADER_PLAN_SCHEMA_VERSION,
     SemanticPlanSchemaAuthorityError,
@@ -84,19 +87,38 @@ def _validate_regeneration_diagnostic(request: LeaderPlanRequest) -> None:
 def build_leader_plan_schema(request: LeaderPlanRequest) -> dict[str, object]:
     _validate_regeneration_diagnostic(request)
     if request.semantic_authority is not None:
-        if request.selected_agent_ids is None or request.step_count is None:
+        selected_agent_ids = request.selected_agent_ids
+        step_count = request.step_count
+        if (
+            type(selected_agent_ids) is not tuple
+            or type(step_count) is not int
+            or any(
+                not semantic_context_text_is_safe(agent_id)
+                for agent_id in selected_agent_ids
+            )
+        ):
             raise ProviderPlanValidationError("authority_invalid")
-        selected_agent_ids, step_count = leader_plan_authority(request)
-        configured_roles = {
-            agent.agent_id: agent.role
-            for agent in request.config.agents
-            if agent.agent_id in selected_agent_ids
-        }
+        configured_roles: dict[str, str] = {}
+        for agent in request.config.agents:
+            if not semantic_context_text_is_safe(
+                agent.agent_id
+            ) or not semantic_context_text_is_safe(agent.role):
+                raise ProviderPlanValidationError("authority_invalid")
+            if agent.agent_id in configured_roles:
+                raise ProviderPlanValidationError("authority_invalid")
+            configured_roles[agent.agent_id] = agent.role
+        try:
+            selected_roles = {
+                agent_id: configured_roles[agent_id]
+                for agent_id in selected_agent_ids
+            }
+        except KeyError:
+            raise ProviderPlanValidationError("authority_invalid") from None
         try:
             return build_semantic_leader_plan_schema(
                 semantic_authority=request.semantic_authority,
                 selected_agent_ids=selected_agent_ids,
-                roles=configured_roles,
+                roles=selected_roles,
                 step_count=step_count,
             )
         except (SemanticPlanSchemaAuthorityError, TypeError, ValueError):
@@ -197,18 +219,18 @@ def build_leader_generation_provenance(
         _validate_regeneration_diagnostic(request)
     except ProviderPlanValidationError:
         raise ValueError("leader generation request authority is invalid") from None
-    try:
-        selected_agent_ids, step_count = leader_plan_authority(request)
-    except ProviderPlanValidationError:
-        if request.semantic_authority is not None:
-            raise ValueError("leader generation request authority is invalid") from None
-        raise
     semantic_expected_schema: dict[str, object] | None = None
     if request.semantic_authority is not None:
         try:
             semantic_expected_schema = build_leader_plan_schema(request)
         except ProviderPlanValidationError:
             raise ValueError("leader generation request authority is invalid") from None
+        selected_agent_ids = request.selected_agent_ids
+        step_count = request.step_count
+        if type(selected_agent_ids) is not tuple or type(step_count) is not int:
+            raise ValueError("leader generation request authority is invalid")
+    else:
+        selected_agent_ids, step_count = leader_plan_authority(request)
     expected_schema: dict[str, object] | None = None
     if schema is not None:
         try:
