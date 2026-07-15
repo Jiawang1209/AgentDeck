@@ -1072,6 +1072,11 @@ never calls a provider, reads or writes tmux, decides a permission, advances a
 Mission, or writes state. The standalone conversation reconnection surface
 consumes this same ProjectView field, so workbench and conversation cannot
 diverge into separate recovery truth.
+Legacy step/result rows retain their exact historical shapes. Semantic rows add
+only `semantic_step_hash`; the recovery validator requires one consistent shape
+and requires every recent result hash to equal its corresponding completed-step
+hash, while StateStore binds that value to the persisted snapshot/attempt/reply
+lineage before projection. Contract discovery exposes both exact alternatives.
 
 Existing-project migration remains outside snapshot rendering. Read-only
 `agentdeck project migration-preview` reports the exact source hash, only

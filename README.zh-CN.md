@@ -22,7 +22,9 @@ agentdeck
 如果项目存在后台 Mission recovery 事实，bare `agentdeck` 会先打印经过
 ProjectView contract 校验的同源 `mission_recovery` 卡，再进入正常持续会话；
 没有待恢复 Mission 时保持原来的安静启动体验。该重连渲染完全确定性，
-不调用 LLM、不读取 tmux、不写 state，也不重建完整 transcript。
+不调用 LLM、不读取 tmux、不写 state，也不重建完整 transcript。语义 Mission
+只暴露与冻结 step、attempt 和已验证结果一致的 compact step hash；legacy
+recovery card 保持原有精确形状。
 
 ```text
 你        › 让 Codex 实现这个功能，Claude 负责审查。

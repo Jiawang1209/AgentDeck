@@ -156,10 +156,7 @@ def test_reconnection_summary_requires_no_llm(tmp_path: Path, monkeypatch) -> No
     assert response.payload["decision"]["kind"] == "permission"
 
 
-def test_reconnection_projects_only_compact_semantic_step_hash_provenance(
-    tmp_path: Path,
-) -> None:
-    _config, store = _seed_waiting_permission_mission(tmp_path)
+def _seed_semantic_recovery_hashes(store: StateStore) -> list[str]:
     state = store.load()
     step_hashes = [f"sha256:{index:064x}" for index in range(1, 7)]
     for step, step_hash in zip(
@@ -177,8 +174,19 @@ def test_reconnection_projects_only_compact_semantic_step_hash_provenance(
         )
         reply["semantic_step_hash"] = attempt["semantic_step_hash"]
     store.save(state)
+    return step_hashes
 
-    payload = StateStore._mission_recovery_summary(store.load())
+
+def test_reconnection_projects_only_compact_semantic_step_hash_provenance(
+    tmp_path: Path,
+) -> None:
+    config, store = _seed_waiting_permission_mission(tmp_path)
+    step_hashes = _seed_semantic_recovery_hashes(store)
+
+    response = session_module.reconnect_conversation(
+        tmp_path, config=config, store=store
+    )
+    payload = response.payload
 
     assert [item["semantic_step_hash"] for item in payload["recent_results"]] == (
         step_hashes[:4]
@@ -186,6 +194,41 @@ def test_reconnection_projects_only_compact_semantic_step_hash_provenance(
     serialized = json.dumps(payload, ensure_ascii=False)
     assert "SECRET raw result" not in serialized
     assert "semantic_authority" not in serialized
+
+
+def test_reconnection_rejects_semantic_hash_outside_completed_step_lineage(
+    tmp_path: Path,
+) -> None:
+    config, store = _seed_waiting_permission_mission(tmp_path)
+    _seed_semantic_recovery_hashes(store)
+    state = store.load()
+    state["mission_worker_replies"][0]["semantic_step_hash"] = "sha256:" + "f" * 64
+    store.save(state)
+
+    with pytest.raises(ValueError, match="semantic recovery lineage is invalid"):
+        session_module.reconnect_conversation(tmp_path, config=config, store=store)
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda card: card["recent_results"][0].update(
+            {"semantic_step_hash": "sha256:" + "f" * 64}
+        ),
+        lambda card: card["recent_results"][0].pop("semantic_step_hash"),
+        lambda card: card["completed_steps"][1].pop("semantic_step_hash"),
+    ],
+)
+def test_recovery_contract_rejects_mixed_or_cross_lineage_semantic_shapes(
+    tmp_path: Path,
+    mutate,
+) -> None:
+    _config, store = _seed_waiting_permission_mission(tmp_path)
+    _seed_semantic_recovery_hashes(store)
+    payload = StateStore._mission_recovery_summary(store.load())
+    mutate(payload)
+
+    assert contracts_module.validate_mission_recovery_contract(payload)["ok"] is False
 
 
 def test_bare_cli_renders_same_source_recovery_before_entering_ui(

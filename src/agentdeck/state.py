@@ -6640,15 +6640,25 @@ class StateStore:
                 or matches[0].get("agent_id") != agent_id
             ):
                 raise ValueError("semantic dispatch event authority is invalid")
+            events_by_id: dict[str, dict[str, Any]] = {}
+            for item in [
+                *self.all_events(),
+                *state.setdefault("protocol_event_outbox", []),
+            ]:
+                if type(item) is not dict or type(item.get("event_id")) is not str:
+                    continue
+                existing = events_by_id.get(item["event_id"])
+                if existing is not None and existing != item:
+                    raise ValueError("semantic dispatch event conflicts")
+                events_by_id[item["event_id"]] = item
             known = [
-                item for item in [*self.all_events(), *state.setdefault("protocol_event_outbox", [])]
-                if type(item) is dict
-                and item.get("event_type") == event_type
+                item for item in events_by_id.values()
+                if item.get("event_type") == event_type
                 and type(item.get("payload")) is dict
                 and item["payload"].get("attempt_id") == attempt_id
             ]
             if known:
-                if len(known) == 1 and known[0].get("payload") == payload:
+                if all(item.get("payload") == payload for item in known):
                     return copy.deepcopy(known[0])
                 raise ValueError("semantic dispatch event conflicts")
             event = asdict(EventRecord.create(event_type, payload))
@@ -11216,6 +11226,11 @@ class StateStore:
                     "position": item["position"],
                     "agent_id": item["agent_id"],
                     "role": item["role"],
+                    **(
+                        {"semantic_step_hash": item["semantic_step_hash"]}
+                        if "semantic_step_hash" in item
+                        else {}
+                    ),
                 }
             )
         # Recovery progress only claims the compact frozen step facts that can
@@ -11236,6 +11251,21 @@ class StateStore:
                 validated_attempt = _validate_mission_attempt_record(item)
             except ValueError:
                 continue
+            matching_steps = [
+                step for step in steps
+                if step.get("step_id") == validated_attempt.get("step_id")
+                and step.get("agent_id") == validated_attempt.get("agent_id")
+            ]
+            semantic_lineage = (
+                "semantic_step_hash" in validated_attempt
+                or any("semantic_step_hash" in step for step in steps)
+            )
+            if semantic_lineage and (
+                len(matching_steps) != 1
+                or validated_attempt.get("semantic_step_hash")
+                != matching_steps[0].get("semantic_step_hash")
+            ):
+                raise ValueError("semantic recovery lineage is invalid")
             attempts[validated_attempt["attempt_id"]] = validated_attempt
         recent_results: list[dict[str, object]] = []
         from .daemon.recovery import validate_mission_reply_evidence_record
@@ -11251,6 +11281,8 @@ class StateStore:
             attempt = attempts.get(reply_attempt_id)
             if attempt is None or attempt.get("dispatch_key") != reply.get("dispatch_key"):
                 continue
+            if reply.get("semantic_step_hash") != attempt.get("semantic_step_hash"):
+                raise ValueError("semantic recovery lineage is invalid")
             handoff = reply.get("canonical_handoff")
             if not isinstance(handoff, dict):
                 continue

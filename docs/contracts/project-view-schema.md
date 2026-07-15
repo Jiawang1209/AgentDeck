@@ -148,11 +148,15 @@ state from a transcript, tmux pane, or provider call.
 The stable fields are `mode`, `mission_id`, `classification`, `progress`,
 `completed_steps`, `recent_results`, `active_step`, `wait_reason`, `decision`,
 `trace_commands`, and `workspace_control`. Completed/active steps expose only
-`step_id`, `position`, `agent_id`, and `role`. Recent validated results expose
-only Mission/attempt lineage plus hashes and an artifact count; raw Worker
+`step_id`, `position`, `agent_id`, and `role` for legacy Missions. Semantic
+Missions use an exact additive step shape with `semantic_step_hash`. Recent
+validated results likewise use either the exact legacy shape or the exact
+semantic shape with the same hash as their corresponding completed step and
+persisted attempt lineage. Raw Worker
 summaries, verification text, artifact contents, native trace ids, prompts,
 credentials, and full conversation text are excluded. Invalid recovery,
-attempt, or reply records are ignored rather than projected.
+attempt, or reply records are ignored rather than projected; a well-formed but
+cross-lineage semantic hash rejects the recovery card instead of being ignored.
 
 The validator requires exact field sets and scalar types throughout the card.
 `decision` is exactly `{kind, attempt_id, controls}` and its kind must match the
@@ -232,7 +236,9 @@ Discovery includes `semantic_authority_fields`, the ordered exact eight-field co
   ],
   "mission_recovery_fields": [],
   "mission_recovery_step_fields": [],
+  "mission_recovery_semantic_step_fields": [],
   "mission_recovery_result_fields": [],
+  "mission_recovery_semantic_result_fields": [],
   "mission_recovery_control_fields": [],
   "recovery_fields": [],
   "recovery_pending_fields": [],

@@ -1732,9 +1732,10 @@ class DaemonWorkerCoordinator:
     def launch(self, attempt: dict[str, object]) -> None:
         if attempt.get("state") != "prepared":
             raise ServiceError("Worker attempt must be prepared")
-        # Construction is state-free and performs no external I/O.  Complete
-        # all prompt/config authority checks before acquiring an admission
-        # claim so a local configuration error cannot strand `admitting`.
+        # Construction performs all prompt/config authority checks and may
+        # persist only compact semantic audit facts before admission.  It does
+        # no external Worker I/O, so a local authority error cannot strand
+        # `admitting`.
         transport = self.transport_for(dict(attempt))
         claimed = self.store.claim_mission_attempt_admission(
             attempt_id=attempt["attempt_id"], dispatch_key=attempt["dispatch_key"]

@@ -376,9 +376,15 @@ PROJECT_VIEW_MISSION_RECOVERY_FIELDS = (
     "trace_commands", "workspace_control",
 )
 MISSION_RECOVERY_STEP_FIELDS = ("step_id", "position", "agent_id", "role")
+MISSION_RECOVERY_SEMANTIC_STEP_FIELDS = (
+    *MISSION_RECOVERY_STEP_FIELDS, "semantic_step_hash",
+)
 MISSION_RECOVERY_RESULT_FIELDS = (
     "attempt_id", "step_id", "agent_id", "state", "summary_hash",
     "verification_hash", "artifact_count",
+)
+MISSION_RECOVERY_SEMANTIC_RESULT_FIELDS = (
+    *MISSION_RECOVERY_RESULT_FIELDS, "semantic_step_hash",
 )
 MISSION_RECOVERY_DECISION_FIELDS = ("kind", "attempt_id", "controls")
 MISSION_RECOVERY_CONTROL_FIELDS = DAEMON_CONTROL_FIELDS
@@ -3178,7 +3184,13 @@ def project_view_contract_payload(contract_path: Path) -> dict[str, object]:
         "scheduler_fields": list(PROJECT_VIEW_SCHEDULER_FIELDS),
         "mission_recovery_fields": list(PROJECT_VIEW_MISSION_RECOVERY_FIELDS),
         "mission_recovery_step_fields": list(MISSION_RECOVERY_STEP_FIELDS),
+        "mission_recovery_semantic_step_fields": list(
+            MISSION_RECOVERY_SEMANTIC_STEP_FIELDS
+        ),
         "mission_recovery_result_fields": list(MISSION_RECOVERY_RESULT_FIELDS),
+        "mission_recovery_semantic_result_fields": list(
+            MISSION_RECOVERY_SEMANTIC_RESULT_FIELDS
+        ),
         "mission_recovery_control_fields": list(MISSION_RECOVERY_CONTROL_FIELDS),
     }
 
@@ -6898,7 +6910,13 @@ def workbench_contract_payload(contract_path: Path) -> dict[str, object]:
         "client_session_card_fields": list(CLIENT_SESSION_RESPONSE_FIELDS),
         "mission_recovery_card_fields": list(PROJECT_VIEW_MISSION_RECOVERY_FIELDS),
         "mission_recovery_step_fields": list(MISSION_RECOVERY_STEP_FIELDS),
+        "mission_recovery_semantic_step_fields": list(
+            MISSION_RECOVERY_SEMANTIC_STEP_FIELDS
+        ),
         "mission_recovery_result_fields": list(MISSION_RECOVERY_RESULT_FIELDS),
+        "mission_recovery_semantic_result_fields": list(
+            MISSION_RECOVERY_SEMANTIC_RESULT_FIELDS
+        ),
         "conversation_runtime_card_fields": list(CONVERSATION_RUNTIME_RESPONSE_FIELDS),
         "leader_backend_card_fields": list(LEADER_BACKEND_RESPONSE_FIELDS),
         "worker_transport_item_fields": list(WORKER_TRANSPORT_RESPONSE_FIELDS),
@@ -7441,10 +7459,16 @@ def validate_mission_recovery_contract(payload: object) -> dict[str, object]:
         completed_steps = []
     completed_by_id: dict[str, dict[str, object]] = {}
     completed_positions: list[int] = []
+    completed_semantic_modes: list[bool] = []
     for index, item in enumerate(completed_steps):
+        item_fields = frozenset(item) if isinstance(item, dict) else frozenset()
+        semantic_item = item_fields == frozenset(MISSION_RECOVERY_SEMANTIC_STEP_FIELDS)
         if (
             not isinstance(item, dict)
-            or set(item) != set(MISSION_RECOVERY_STEP_FIELDS)
+            or item_fields not in {
+                frozenset(MISSION_RECOVERY_STEP_FIELDS),
+                frozenset(MISSION_RECOVERY_SEMANTIC_STEP_FIELDS),
+            }
             or type(item.get("position")) is not int
             or item["position"] < 1
             or item.get("step_id") != f"step_{item['position']}"
@@ -7455,19 +7479,34 @@ def validate_mission_recovery_contract(payload: object) -> dict[str, object]:
         ):
             errors.append(f"completed_steps[{index}] is invalid")
             continue
+        if semantic_item and (
+            type(item.get("semantic_step_hash")) is not str
+            or re.fullmatch(
+                r"sha256:[0-9a-f]{64}", item["semantic_step_hash"]
+            ) is None
+        ):
+            errors.append(f"completed_steps[{index}].semantic_step_hash is invalid")
         if completed is not None and item["position"] > completed:
             errors.append(f"completed_steps[{index}] exceeds progress")
         completed_positions.append(item["position"])
+        completed_semantic_modes.append(semantic_item)
         completed_by_id[item["step_id"]] = item
     if completed_positions != sorted(set(completed_positions)):
         errors.append("completed_steps positions must be unique and ordered")
     if completed is not None and completed_positions != list(range(1, completed + 1)):
         errors.append("completed_steps must exactly cover contiguous completed progress")
+    if completed_semantic_modes and len(set(completed_semantic_modes)) != 1:
+        errors.append("completed_steps must use one exact recovery step shape")
     active_step = payload.get("active_step")
     if active_step is not None:
+        active_fields = frozenset(active_step) if isinstance(active_step, dict) else frozenset()
+        active_semantic = active_fields == frozenset(MISSION_RECOVERY_SEMANTIC_STEP_FIELDS)
         if (
             not isinstance(active_step, dict)
-            or set(active_step) != set(MISSION_RECOVERY_STEP_FIELDS)
+            or active_fields not in {
+                frozenset(MISSION_RECOVERY_STEP_FIELDS),
+                frozenset(MISSION_RECOVERY_SEMANTIC_STEP_FIELDS),
+            }
             or type(active_step.get("position")) is not int
             or active_step.get("step_id") != f"step_{active_step.get('position')}"
             or type(active_step.get("agent_id")) is not str
@@ -7480,6 +7519,15 @@ def validate_mission_recovery_contract(payload: object) -> dict[str, object]:
             or active_step.get("position") > total
         ):
             errors.append("active_step is invalid")
+        elif active_semantic and (
+            type(active_step.get("semantic_step_hash")) is not str
+            or re.fullmatch(
+                r"sha256:[0-9a-f]{64}", active_step["semantic_step_hash"]
+            ) is None
+        ):
+            errors.append("active_step.semantic_step_hash is invalid")
+        elif completed_semantic_modes and active_semantic != completed_semantic_modes[0]:
+            errors.append("active_step must use the completed step recovery shape")
     if classification == "terminal" and active_step is not None:
         errors.append("terminal recovery cannot expose an active step")
     recent_results = payload.get("recent_results")
@@ -7491,9 +7539,13 @@ def validate_mission_recovery_contract(payload: object) -> dict[str, object]:
     recent_attempt_ids: list[str] = []
     recent_step_positions: list[int] = []
     for index, item in enumerate(recent_results):
+        item_fields = frozenset(item) if isinstance(item, dict) else frozenset()
         if (
             not isinstance(item, dict)
-            or set(item) != set(MISSION_RECOVERY_RESULT_FIELDS)
+            or item_fields not in {
+                frozenset(MISSION_RECOVERY_RESULT_FIELDS),
+                frozenset(MISSION_RECOVERY_SEMANTIC_RESULT_FIELDS),
+            }
             or type(item.get("attempt_id")) is not str
             or re.fullmatch(r"mat_[0-9a-f]{12}", item["attempt_id"]) is None
             or type(item.get("step_id")) is not str
@@ -7511,6 +7563,11 @@ def validate_mission_recovery_contract(payload: object) -> dict[str, object]:
             errors.append(f"recent_results[{index}] must match a completed step")
         else:
             recent_step_positions.append(int(step["position"]))
+            step_semantic_hash = step.get("semantic_step_hash")
+            if item.get("semantic_step_hash") != step_semantic_hash:
+                errors.append(
+                    f"recent_results[{index}].semantic_step_hash must match completed step"
+                )
         for field in ("summary_hash", "verification_hash"):
             if not isinstance(item.get(field), str) or re.fullmatch(
                 r"sha256:[0-9a-f]{64}", str(item.get(field))

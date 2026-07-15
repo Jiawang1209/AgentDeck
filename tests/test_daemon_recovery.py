@@ -39,7 +39,7 @@ from agentdeck.mission_orchestration import (
     create_mission_preview_from_candidate,
 )
 from agentdeck.mission_authority import canonical_workflow_plan_hash
-from agentdeck.models import AgentSpec
+from agentdeck.models import AgentSpec, EventRecord
 from agentdeck.orchestration.leader import LeaderOrchestrator
 from agentdeck.providers import FakeLeaderProvider
 from agentdeck.runtime.protocol import TransportCapabilities
@@ -848,6 +848,54 @@ def test_semantic_dispatch_recompiles_only_current_step_before_transport(
         "mission_id", "attempt_id", "step_id", "agent_id",
         "task_hash", "semantic_step_hash",
     }
+
+
+def test_semantic_dispatch_audit_is_idempotent_across_journal_outbox_crash_window(
+    tmp_path: Path, monkeypatch
+) -> None:
+    root, store, preview, confirmed = _freeze_real_semantic_mission(
+        tmp_path, monkeypatch
+    )
+    store.admit_mission_execution(
+        preview["mission_id"], snapshot_hash=confirmed["snapshot_hash"]
+    )
+    attempt = store.prepare_mission_attempt(
+        mission_id=preview["mission_id"], step_id="step_1",
+        agent_id="planner", configured_transport="tmux",
+    )
+    monkeypatch.setattr(
+        StateStore, "project_view",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            agents=[{"agent_id": "planner", "runtime": {"pane_id": "%7"}}]
+        ),
+    )
+    monkeypatch.setattr(cli, "TmuxWorkerTransport", lambda **_kwargs: SimpleNamespace())
+    cli._daemon_worker_transport_for(
+        store=store, service=SimpleNamespace(), root=root, attempt=attempt
+    )
+    event = next(
+        item for item in store.load()["protocol_event_outbox"]
+        if item["event_type"] == "worker_task_compiled"
+    )
+    store.append_event(EventRecord(**event))
+
+    repeated = store.record_semantic_worker_dispatch_event(
+        "worker_task_compiled", **event["payload"]
+    )
+
+    assert repeated == event
+    assert len([
+        item for item in store.load()["protocol_event_outbox"]
+        if item["event_type"] == "worker_task_compiled"
+    ]) == 1
+    with pytest.raises(ValueError, match="semantic dispatch event conflicts"):
+        store.record_semantic_worker_dispatch_event(
+            "worker_task_compiled",
+            **{
+                **event["payload"],
+                "task_hash": "sha256:" + "f" * 64,
+            },
+        )
 
 
 @pytest.mark.parametrize(

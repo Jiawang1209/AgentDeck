@@ -1689,6 +1689,13 @@ def test_project_view_contract_response_matches_cli_shape(tmp_path: Path) -> Non
     payload = project_view_contract_response(contract_path)
 
     assert payload == project_view_contract_payload(contract_path)
+    assert payload["mission_recovery_semantic_step_fields"] == [
+        "step_id", "position", "agent_id", "role", "semantic_step_hash",
+    ]
+    assert payload["mission_recovery_semantic_result_fields"] == [
+        "attempt_id", "step_id", "agent_id", "state", "summary_hash",
+        "verification_hash", "artifact_count", "semantic_step_hash",
+    ]
 
 
 def test_project_view_contract_response_includes_example_without_drift(tmp_path: Path) -> None:
@@ -2563,6 +2570,12 @@ def test_workbench_contract_response_includes_example_without_drift(tmp_path: Pa
     assert isinstance(example["mission_card"], dict)
     assert "semantic_authority" in payload["mission_card_fields"]
     assert example["mission_card"]["semantic_authority"] is None
+    assert payload["mission_recovery_semantic_step_fields"][-1] == (
+        "semantic_step_hash"
+    )
+    assert payload["mission_recovery_semantic_result_fields"][-1] == (
+        "semantic_step_hash"
+    )
     assert validate_workbench_contract(example) == {"ok": True, "errors": []}
     lineage_card_fields = [
         "mode",

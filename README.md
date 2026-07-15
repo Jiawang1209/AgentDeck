@@ -23,7 +23,9 @@ When a project has a background Mission recovery fact, bare `agentdeck` first
 prints the validated ProjectView `mission_recovery` card and then enters the
 normal conversation UI. A project with no Mission to recover remains quiet.
 This reconnect rendering is deterministic and does not call an LLM, inspect
-tmux, write state, or reconstruct a transcript.
+tmux, write state, or reconstruct a transcript. Semantic Missions expose only
+their compact step hash, bound across the frozen step, attempt, and validated
+result; legacy recovery cards keep their existing exact shape.
 
 ```text
 You       › Let Codex implement this and Claude review it.
