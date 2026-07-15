@@ -18,7 +18,9 @@ from ..mission_orchestration import (
 )
 from ..mission import mission_intent, select_mission_agents
 from ..mission_authority import (
+    SEMANTIC_MISSION_COMPACT_FIELDS,
     canonical_workflow_plan_hash,
+    semantic_mission_provenance_shape,
     validated_compiled_semantic_plan,
 )
 from ..models import EventRecord, ProjectConfig, new_id, utc_now
@@ -189,23 +191,14 @@ def _mission_confirmation_facts(
         "action_hash": mission["plan_hash"],
     }
     plan = plan_record.get("plan")
-    semantic_plan = type(plan) is dict and (
-        "semantic_authority" in plan or "semantic_steps" in plan
+    semantic_active, semantic_plan, present = semantic_mission_provenance_shape(
+        plan, mission
     )
-    semantic_fields = (
-        "semantic_authority_schema_version",
-        "semantic_authority_hash",
-        "compiled_task_hashes",
-        "preview_generation",
-    )
-    has_semantic_mission = any(field in mission for field in semantic_fields)
-    if not semantic_plan and not has_semantic_mission:
+    if not semantic_active:
         return base
     if not semantic_plan:
         raise ValueError("semantic confirmation stale")
-    if set(field for field in semantic_fields if field in mission) != set(
-        semantic_fields
-    ):
+    if present != SEMANTIC_MISSION_COMPACT_FIELDS:
         raise ValueError("semantic confirmation stale")
     validated = validated_compiled_semantic_plan(plan)
     authority = validated["semantic_authority"]
@@ -524,16 +517,22 @@ class ConversationSession:
         try:
             mission = self.store.mission_by_id(action_id)
             plan = self.store.plan_by_id(str(mission["plan_id"]))
+        except KeyError:
+            return ConversationResponse("blocked", {"blocker": "preview target missing"})
+        try:
             current_config = load_config(self.root)
+        except Exception:
+            return ConversationResponse(
+                "blocked", {"blocker": "semantic confirmation stale"}
+            )
+        try:
             facts = _mission_confirmation_facts(
                 root=self.root,
                 config=current_config,
                 mission=mission,
                 plan_record=plan,
             )
-        except KeyError:
-            return ConversationResponse("blocked", {"blocker": "preview target missing"})
-        except (OSError, TypeError, ValueError):
+        except (KeyError, OSError, TypeError, ValueError):
             return ConversationResponse(
                 "blocked", {"blocker": "semantic confirmation stale"}
             )

@@ -44,7 +44,9 @@ from .mission import (
     mission_status_transition_allowed,
 )
 from .mission_authority import (
+    SEMANTIC_MISSION_COMPACT_FIELDS,
     canonical_workflow_plan_hash,
+    semantic_mission_provenance_shape,
     validated_compiled_semantic_plan,
 )
 from .models import (
@@ -5742,9 +5744,18 @@ class StateStore:
                 },
             )
             semantic_frozen_event: EventRecord | None = None
-            if "semantic_authority_schema_version" in mission:
+            plan_body = plan.get("plan")
+            semantic_active, plan_is_semantic, present_semantic = (
+                semantic_mission_provenance_shape(plan_body, mission)
+            )
+            if semantic_active:
+                if (
+                    not plan_is_semantic
+                    or present_semantic != SEMANTIC_MISSION_COMPACT_FIELDS
+                ):
+                    raise MissionStateError("execution authority drift")
                 validated_semantic = validated_compiled_semantic_plan(
-                    plan.get("plan")
+                    plan_body
                 )
                 expected_authority_hash = semantic_authority_hash(
                     validated_semantic["semantic_authority"]

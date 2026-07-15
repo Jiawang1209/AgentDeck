@@ -32,7 +32,9 @@ from .mission import (
     validate_mission_plan,
 )
 from .mission_authority import (
+    SEMANTIC_MISSION_COMPACT_FIELDS,
     canonical_workflow_plan_hash,
+    semantic_mission_provenance_shape,
     validated_compiled_semantic_plan,
 )
 from .models import (
@@ -452,19 +454,12 @@ def _mission_semantic_authority_card(
     state: str,
 ) -> dict[str, object] | None:
     plan = plan_record.get("plan")
-    semantic_plan = type(plan) is dict and (
-        "semantic_authority" in plan or "semantic_steps" in plan
+    semantic_active, semantic_plan, present = semantic_mission_provenance_shape(
+        plan, mission
     )
-    semantic_fields = {
-        "semantic_authority_schema_version",
-        "semantic_authority_hash",
-        "compiled_task_hashes",
-        "preview_generation",
-    }
-    present = {field for field in semantic_fields if field in mission}
-    if not semantic_plan and not present:
+    if not semantic_active:
         return None
-    if not semantic_plan or present != semantic_fields:
+    if not semantic_plan or present != SEMANTIC_MISSION_COMPACT_FIELDS:
         raise ValueError("semantic Mission provenance invalid")
     validated = validated_compiled_semantic_plan(plan)
     authority = validated["semantic_authority"]
@@ -1097,7 +1092,10 @@ def mission_status_payload(
     try:
         status_plan = store.plan_by_id(str(mission.get("plan_id") or ""))
     except KeyError:
-        if "semantic_authority_schema_version" in mission:
+        semantic_active, _plan_semantic, _present = (
+            semantic_mission_provenance_shape(None, mission)
+        )
+        if semantic_active:
             raise MissionRunError("semantic Mission provenance invalid") from None
     else:
         semantic_state = (

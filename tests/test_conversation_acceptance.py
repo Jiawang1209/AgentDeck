@@ -398,6 +398,47 @@ def test_semantic_confirmation_reloads_disk_config_and_blocks_drift(
     )
 
 
+@pytest.mark.parametrize(
+    "malformed_config",
+    [
+        'leader = "SECRET_CONFIG_SHAPE"\n',
+        'runtime = ["SECRET_CONFIG_SHAPE"]\n[leader]\nprovider = "fake"\nmodel = "fake-plan"\napproval_mode = "confirm"\n',
+        '[leader]\nprovider = "fake"\nmodel = "fake-plan"\napproval_mode = ["SECRET_CONFIG_SHAPE"]\n',
+        '[[agents]]\nrole = "SECRET_CONFIG_SHAPE"\n',
+    ],
+)
+def test_semantic_confirmation_blocks_malformed_disk_config_shape_without_leakage(
+    tmp_path: Path, malformed_config: str,
+) -> None:
+    session, _preview = _semantic_session(tmp_path)
+    executions: list[str] = []
+    session.preview_executor = lambda mission_id: executions.append(mission_id) or {
+        "mission_id": mission_id,
+        "status": "started",
+    }
+    config_path = session.root / ".agentdeck" / "config.toml"
+    config_path.write_text(malformed_config, encoding="utf-8")
+
+    response = session.handle("确认执行当前预览")
+
+    assert response.kind == "blocked"
+    assert response.payload == {"blocker": "semantic confirmation stale"}
+    assert "SECRET_CONFIG_SHAPE" not in repr(response)
+    assert executions == []
+    state = session.store.load()
+    assert state["missions"][0]["status"] == "pending_confirmation"
+    assert state["missions"][0]["confirmed_at"] is None
+    assert session.store._conversation_summary(state)["pending_preview"] is not None
+    for collection in (
+        "attempts", "mission_attempts", "permission_requests", "messages", "jobs", "inbox",
+    ):
+        assert state.get(collection, []) == []
+    assert not any(
+        event["event_type"] == "mission_semantic_authority_frozen"
+        for event in session.store.all_events()
+    )
+
+
 def test_phase3_m1_foreground_conversation_acceptance(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

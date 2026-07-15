@@ -1499,6 +1499,109 @@ def test_semantic_confirmation_freezes_authority_event_in_mission_atomic_save(
     }
 
 
+@pytest.mark.parametrize("mutation", ["all_missing", "partial_missing", "wrong"])
+def test_direct_daemon_confirmation_rejects_semantic_mission_compact_drift_zero_write(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mutation: str
+) -> None:
+    _root, config, store, _path = project(tmp_path)
+    monkeypatch.setattr(
+        "agentdeck.mission_orchestration.shutil.which",
+        lambda command: f"/bin/{command}",
+    )
+    preview = create_mission_preview_from_candidate(
+        config=config,
+        store=store,
+        candidate=semantic_candidate_fixture(config),
+    )
+    state = store.load()
+    mission = state["missions"][0]
+    compact_fields = (
+        "semantic_authority_schema_version",
+        "semantic_authority_hash",
+        "compiled_task_hashes",
+        "preview_generation",
+    )
+    if mutation == "all_missing":
+        for field in compact_fields:
+            del mission[field]
+    elif mutation == "partial_missing":
+        del mission["semantic_authority_hash"]
+    else:
+        mission["semantic_authority_hash"] = "sha256:" + "f" * 64
+    store.save(state)
+    before = store.state_path.read_bytes()
+
+    with pytest.raises(MissionRunError, match="^mission confirmation drift$"):
+        confirm_mission_for_daemon(
+            config=config,
+            store=store,
+            mission_id=preview["mission_id"],
+        )
+
+    assert store.state_path.read_bytes() == before
+    after = store.mission_by_id(preview["mission_id"])
+    assert after["status"] == "pending_confirmation"
+    assert after["confirmed_at"] is None
+    assert after["execution_snapshot"] is None
+    assert after["snapshot_hash"] is None
+    assert not any(
+        event["event_type"]
+        in {"mission_execution_frozen", "mission_semantic_authority_frozen"}
+        for event in store.all_events()
+    )
+
+
+@pytest.mark.parametrize(
+    "remaining_fields",
+    [
+        ("semantic_authority_schema_version",),
+        ("semantic_authority_hash",),
+        ("compiled_task_hashes",),
+        ("preview_generation",),
+        ("semantic_authority_hash", "compiled_task_hashes"),
+    ],
+)
+def test_mission_status_rejects_missing_plan_with_any_semantic_compact_provenance(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    remaining_fields: tuple[str, ...],
+) -> None:
+    _root, config, store, _path = project(tmp_path)
+    monkeypatch.setattr(
+        "agentdeck.mission_orchestration.shutil.which",
+        lambda command: f"/bin/{command}",
+    )
+    preview = create_mission_preview_from_candidate(
+        config=config,
+        store=store,
+        candidate=semantic_candidate_fixture(config),
+    )
+    state = store.load()
+    state["plans"] = []
+    mission = state["missions"][0]
+    compact_fields = {
+        "semantic_authority_schema_version",
+        "semantic_authority_hash",
+        "compiled_task_hashes",
+        "preview_generation",
+    }
+    for field in compact_fields - set(remaining_fields):
+        del mission[field]
+    store.save(state)
+    before = store.state_path.read_bytes()
+
+    with pytest.raises(
+        MissionRunError, match="^semantic Mission provenance invalid$"
+    ):
+        mission_status_payload(
+            config,
+            store,
+            store.mission_by_id(preview["mission_id"]),
+        )
+
+    assert store.state_path.read_bytes() == before
+
+
 def test_semantic_blocked_preview_projects_only_sanitized_blocker_code(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

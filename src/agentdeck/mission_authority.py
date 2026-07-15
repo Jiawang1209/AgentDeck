@@ -9,6 +9,29 @@ from .semantic_authority import semantic_authority_hash, validate_semantic_autho
 from .semantic_planning import compile_worker_task, semantic_step_hash
 
 
+SEMANTIC_MISSION_COMPACT_FIELDS = frozenset(
+    {
+        "semantic_authority_schema_version",
+        "semantic_authority_hash",
+        "compiled_task_hashes",
+        "preview_generation",
+    }
+)
+
+
+def semantic_mission_provenance_shape(
+    plan: object, mission: Mapping[str, object]
+) -> tuple[bool, bool, frozenset[str]]:
+    """Return active, plan-semantic, and present compact provenance fields."""
+    plan_is_semantic = type(plan) is dict and (
+        "semantic_authority" in plan or "semantic_steps" in plan
+    )
+    present = frozenset(
+        field for field in SEMANTIC_MISSION_COMPACT_FIELDS if field in mission
+    )
+    return plan_is_semantic or bool(present), plan_is_semantic, present
+
+
 def _bounded_text(value: object, limit: int = 4096) -> bool:
     if type(value) is not str or not value:
         return False

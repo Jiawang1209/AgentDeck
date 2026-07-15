@@ -6229,7 +6229,7 @@ def validate_mission_preview_contract(payload: object) -> dict[str, object]:
         step_count=payload.get("step_count"),
     )
     semantic_card = payload.get("semantic_authority")
-    if isinstance(semantic_card, dict):
+    if type(semantic_card) is dict:
         if semantic_card.get("state") != "preview":
             errors.append(
                 "mission_preview.semantic_authority.state must be preview"
@@ -6473,7 +6473,7 @@ def validate_mission_status_contract(payload: object) -> dict[str, object]:
         step_count=payload.get("step_count"),
     )
     semantic_card = payload.get("semantic_authority")
-    if isinstance(semantic_card, dict):
+    if type(semantic_card) is dict:
         expected_semantic_state = (
             "frozen"
             if payload.get("confirmed_at") is not None

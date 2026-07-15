@@ -188,6 +188,9 @@ from agentdeck.contracts import (
     validate_loop_once_contract,
     validate_leader_review_contract,
     validate_leader_summary_contract,
+    validate_mission_preview_contract,
+    validate_mission_run_contract,
+    validate_mission_status_contract,
     validate_project_view_contract,
     validate_protocol_runtime_contract,
     validate_release_contract,
@@ -6052,6 +6055,34 @@ def test_mission_semantic_authority_card_rejects_extra_raw_or_draft(
     mutation(payload["semantic_authority"])
 
     assert validate_mission_preview_contract(payload)["ok"] is False
+
+
+@pytest.mark.parametrize(
+    ("kind", "validator"),
+    [
+        ("preview", validate_mission_preview_contract),
+        ("status", validate_mission_status_contract),
+        ("run", validate_mission_run_contract),
+    ],
+)
+def test_mission_contract_rejects_hostile_semantic_card_without_hooks_or_leakage(
+    kind: str, validator
+) -> None:
+    touched: list[str] = []
+
+    class HostileCard(dict):
+        def get(self, _key, _default=None):
+            touched.append("get")
+            raise RuntimeError("RAW_CONTRACT_SECRET")
+
+    payload = mission_example(kind)
+    payload["semantic_authority"] = HostileCard()
+
+    result = validator(payload)
+
+    assert result["ok"] is False
+    assert touched == []
+    assert "RAW_CONTRACT_SECRET" not in repr(result)
 
 
 @pytest.mark.parametrize(
