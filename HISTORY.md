@@ -4,6 +4,13 @@
 
 ## 2026-07-15
 
+### Extract conservative Mission semantics
+
+- Added a pure deterministic `extract_semantic_authority()` boundary for the bounded Chinese and English clause forms covered by this slice, preserving the existing exact semantic-authority domain, canonical source hash, and phase/clause generation order.
+- Extracted explicit create/review/update/verify requirements, represented updates as one atomic before/after state transition, and limited target/final-state propagation to a single unambiguous target with a unique explicit later state.
+- Added closed non-echoing input failures and bounded opaque unresolved items for ambiguous targets, missing transition origins, unsafe paths, unsupported exact-value syntax, raw sensitive assignments, and explicit details that cannot be safely bound; open planning goals remain open.
+- Added RED/GREEN coverage for the exact four-phase Chinese request, an equivalent English request, canonical body-derived IDs, stable repeated extraction, ambiguity/safety handling, exact built-in input types, process-context stability, and no file/subprocess/network I/O. This slice does not add a compiler, provider integration, conversation integration, live execution, or an M2c PASS claim.
+
 ### Preserve semantic-authority generation order
 
 - Corrected the opaque-ID protocol: requirement, proposed-effect, and unresolved IDs are format-checked unique identities, not lexicographic sort keys; their arrays retain semantic generation order without normalization.

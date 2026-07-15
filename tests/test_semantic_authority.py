@@ -1,7 +1,13 @@
 from __future__ import annotations
 
+import builtins
 from copy import deepcopy
+import hashlib
 import json
+import locale
+import os
+import subprocess
+import urllib.request
 
 import pytest
 
@@ -12,6 +18,7 @@ from agentdeck.semantic_authority import (
     SEMANTIC_SENSITIVITY,
     SemanticAuthorityError,
     compact_semantic_authority,
+    extract_semantic_authority,
     semantic_authority_hash,
     validate_semantic_authority,
 )
@@ -45,6 +52,436 @@ def valid_authority() -> dict[str, object]:
         ],
         "unresolved": [],
     }
+
+
+_CHINESE_LIVE_REQUEST = (
+    "让 claude-worker 和 codex-worker 严格串行完成4轮。阶段必须精确为 "
+    "implementation、review、revision、acceptance：第一轮 claude-worker 创建 "
+    "artifact.txt 且内容为 draft-v1 换行；第二轮 codex-worker 只读审查并要求 "
+    "accepted-v2；第三轮 claude-worker 将 artifact.txt 精确改为 accepted-v2 换行；"
+    "第四轮 codex-worker 只读验收精确字节。共4轮。\n"
+)
+_ENGLISH_LIVE_REQUEST = (
+    "Have claude-worker and codex-worker complete 4 steps strictly sequentially. "
+    "The phases must be exactly implementation, review, revision, acceptance: "
+    "First, claude-worker creates artifact.txt with content exactly draft-v1 newline; "
+    "Second, codex-worker performs a read-only review and requires accepted-v2; "
+    "Third, claude-worker updates artifact.txt to exactly accepted-v2 newline; "
+    "Fourth, codex-worker performs read-only verification of the exact bytes. "
+    "There are 4 steps.\n"
+)
+_EXTRACTION_ARGS = {
+    "selected_agent_ids": ("claude-worker", "codex-worker"),
+    "step_count": 4,
+    "phases": ("implementation", "review", "revision", "acceptance"),
+}
+
+
+class _ExtractionString(str):
+    pass
+
+
+def _requirement_id(body: dict[str, object]) -> str:
+    canonical = json.dumps(
+        body,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+        allow_nan=False,
+    ).encode("utf-8")
+    return f"req_{hashlib.sha256(canonical).hexdigest()[:12]}"
+
+
+def _expected_extracted_requirements() -> list[dict[str, object]]:
+    bodies = [
+        {
+            "kind": "create",
+            "target": "artifact.txt",
+            "operation": "create",
+            "literal": "draft-v1\n",
+            "phase": "implementation",
+            "agent_id": "claude-worker",
+            "sensitivity": "ordinary",
+        },
+        {
+            "kind": "review",
+            "target": "artifact.txt",
+            "operation": "review",
+            "literal": "accepted-v2\n",
+            "phase": "review",
+            "agent_id": "codex-worker",
+            "sensitivity": "ordinary",
+        },
+        {
+            "kind": "state_transition",
+            "target": "artifact.txt",
+            "operation": "update",
+            "before": {"content_equals": "draft-v1\n"},
+            "after": {"content_equals": "accepted-v2\n"},
+            "phase": "revision",
+            "agent_id": "claude-worker",
+            "sensitivity": "ordinary",
+        },
+        {
+            "kind": "verify",
+            "target": "artifact.txt",
+            "operation": "verify",
+            "literal": "accepted-v2\n",
+            "phase": "acceptance",
+            "agent_id": "codex-worker",
+            "sensitivity": "ordinary",
+        },
+    ]
+    return [{"requirement_id": _requirement_id(body), **body} for body in bodies]
+
+
+@pytest.mark.parametrize("message", [_CHINESE_LIVE_REQUEST, _ENGLISH_LIVE_REQUEST])
+def test_extract_live_request_produces_exact_ordered_atomic_requirements(
+    message: str,
+) -> None:
+    authority = extract_semantic_authority(message, **_EXTRACTION_ARGS)
+
+    assert authority == {
+        "schema_version": SEMANTIC_AUTHORITY_SCHEMA_VERSION,
+        "source_message_hash": f"sha256:{hashlib.sha256(message.encode('utf-8')).hexdigest()}",
+        "requirements": _expected_extracted_requirements(),
+        "proposed_effects": [],
+        "unresolved": [],
+    }
+
+
+def test_extract_is_stable_and_keeps_semantic_generation_order() -> None:
+    first = extract_semantic_authority(_CHINESE_LIVE_REQUEST, **_EXTRACTION_ARGS)
+    second = extract_semantic_authority(_CHINESE_LIVE_REQUEST, **_EXTRACTION_ARGS)
+
+    assert first == second
+    assert semantic_authority_hash(first) == semantic_authority_hash(second)
+    assert [item["phase"] for item in first["requirements"]] == list(
+        _EXTRACTION_ARGS["phases"]
+    )
+    for item in first["requirements"]:
+        body = {key: value for key, value in item.items() if key != "requirement_id"}
+        assert item["requirement_id"] == _requirement_id(body)
+
+
+@pytest.mark.parametrize(
+    ("message", "kind"),
+    [
+        (
+            "第一轮 claude-worker 创建 a.txt 和 b.txt 且内容为 draft 换行。",
+            "ambiguous_target",
+        ),
+        (
+            "第一轮 claude-worker 将 artifact.txt 精确改为 accepted 换行。",
+            "missing_transition_origin",
+        ),
+        (
+            "第一轮 claude-worker 创建 /tmp/artifact.txt 且内容为 draft 换行。",
+            "unsafe_target",
+        ),
+        (
+            "第一轮 claude-worker 创建 artifact.txt 且内容精确匹配 /draft-.*/。",
+            "unsupported_literal",
+        ),
+        (
+            "第一轮 claude-worker 创建 artifact.txt 且内容为 api_key=SECRET。",
+            "sensitive_content",
+        ),
+    ],
+)
+def test_explicit_unsafe_or_ambiguous_clauses_become_bounded_unresolved(
+    message: str, kind: str
+) -> None:
+    authority = extract_semantic_authority(
+        message,
+        selected_agent_ids=("claude-worker",),
+        step_count=1,
+        phases=("implementation",),
+    )
+
+    assert authority["requirements"] == []
+    assert len(authority["unresolved"]) == 1
+    unresolved = authority["unresolved"][0]
+    assert set(unresolved) == {"unresolved_id", "kind", "phase", "agent_id"}
+    assert unresolved["kind"] == kind
+    assert unresolved["phase"] == "implementation"
+    assert unresolved["agent_id"] == "claude-worker"
+    assert unresolved["unresolved_id"].startswith("unr_")
+    serialized = json.dumps(authority, ensure_ascii=False)
+    for forbidden in ("/tmp/artifact.txt", "api_key=SECRET", "SECRET", "/draft-.*/"):
+        assert forbidden not in serialized
+
+
+def test_unresolved_ids_are_stable_opaque_and_do_not_reorder_items() -> None:
+    message = (
+        "第一轮 claude-worker 创建 a.txt 和 b.txt 且内容为 draft 换行；"
+        "第二轮 codex-worker 将 artifact.txt 精确改为 accepted 换行。"
+    )
+    args = {
+        "selected_agent_ids": ("claude-worker", "codex-worker"),
+        "step_count": 2,
+        "phases": ("implementation", "revision"),
+    }
+    first = extract_semantic_authority(message, **args)
+    second = extract_semantic_authority(message, **args)
+    assert first["unresolved"] == second["unresolved"]
+    assert [item["kind"] for item in first["unresolved"]] == [
+        "ambiguous_target",
+        "missing_transition_origin",
+    ]
+
+
+def test_open_goal_remains_open_but_unbound_explicit_detail_is_unresolved() -> None:
+    open_goal = extract_semantic_authority(
+        "让两个 agent 改进项目文档",
+        selected_agent_ids=("claude-worker", "codex-worker"),
+        step_count=2,
+    )
+    assert open_goal["requirements"] == []
+    assert open_goal["unresolved"] == []
+
+    explicit_filename = extract_semantic_authority(
+        "让两个 agent 改进 project.md",
+        selected_agent_ids=("claude-worker", "codex-worker"),
+        step_count=2,
+    )
+    assert explicit_filename["requirements"] == []
+    assert [item["kind"] for item in explicit_filename["unresolved"]] == [
+        "unbound_explicit_detail"
+    ]
+
+
+@pytest.mark.parametrize(
+    ("message", "agents", "steps", "phases", "code"),
+    [
+        (1, ("claude-worker",), 1, None, "extraction_message_invalid"),
+        (
+            _ExtractionString("safe"),
+            ("claude-worker",),
+            1,
+            None,
+            "extraction_message_invalid",
+        ),
+        ("safe", ["claude-worker"], 1, None, "extraction_agents_invalid"),
+        ("safe", ("claude-worker", 1), 1, None, "extraction_agents_invalid"),
+        ("safe", ("claude-worker",), True, None, "extraction_step_count_invalid"),
+        ("safe", ("claude-worker",), 0, None, "extraction_step_count_invalid"),
+        (
+            "safe",
+            ("claude-worker",),
+            2,
+            ("implementation",),
+            "extraction_consistency_invalid",
+        ),
+        (
+            "safe",
+            ("claude-worker",),
+            1,
+            ["implementation"],
+            "extraction_phases_invalid",
+        ),
+        (
+            "safe",
+            ("claude-worker",),
+            1,
+            ("bad phase",),
+            "extraction_phases_invalid",
+        ),
+        (
+            "claude-worker then codex-worker",
+            ("codex-worker", "claude-worker"),
+            2,
+            ("implementation", "review"),
+            "extraction_agent_order_invalid",
+        ),
+    ],
+)
+def test_extract_input_boundary_fails_closed_without_echo(
+    message: object,
+    agents: object,
+    steps: object,
+    phases: object,
+    code: str,
+) -> None:
+    with pytest.raises(SemanticAuthorityError) as raised:
+        extract_semantic_authority(
+            message,
+            selected_agent_ids=agents,
+            step_count=steps,
+            phases=phases,
+        )
+    assert raised.value.code == code
+    assert str(raised.value) == code
+    assert "safe" not in str(raised.value)
+
+
+def test_extract_respects_existing_bounds_and_does_not_change_process_context() -> None:
+    cwd = os.getcwd()
+    locale_before = locale.setlocale(locale.LC_ALL)
+    with pytest.raises(SemanticAuthorityError) as raised:
+        extract_semantic_authority(
+            "x" * 4097,
+            selected_agent_ids=("claude-worker",),
+            step_count=1,
+        )
+    assert raised.value.code == "extraction_message_invalid"
+    assert os.getcwd() == cwd
+    assert locale.setlocale(locale.LC_ALL) == locale_before
+
+
+def test_extract_is_pure_and_performs_no_io(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fail(*args, **kwargs):
+        raise AssertionError("I/O is forbidden")
+
+    monkeypatch.setattr(builtins, "open", fail)
+    monkeypatch.setattr(subprocess, "run", fail)
+    monkeypatch.setattr(urllib.request, "urlopen", fail)
+
+    authority = extract_semantic_authority(_CHINESE_LIVE_REQUEST, **_EXTRACTION_ARGS)
+    assert authority["requirements"] == _expected_extracted_requirements()
+
+
+def test_extract_rejects_colon_style_raw_sensitive_assignment_without_echo() -> None:
+    message = "第一轮 claude-worker 创建 artifact.txt 且内容为 password:SECRET。"
+    authority = extract_semantic_authority(
+        message,
+        selected_agent_ids=("claude-worker",),
+        step_count=1,
+        phases=("implementation",),
+    )
+    assert authority["requirements"] == []
+    assert [item["kind"] for item in authority["unresolved"]] == [
+        "sensitive_content"
+    ]
+    assert "SECRET" not in json.dumps(authority)
+
+
+@pytest.mark.parametrize(
+    ("secret_key", "separator"),
+    [
+        ("token", ":"),
+        ("access token", ":"),
+        ("refresh_token", ":"),
+        ("client_secret", "="),
+        ("db_password", "="),
+        ("service_passwd", ":"),
+        ("client_api_key", "="),
+        ("aws_access_key", ":"),
+        ("service_credential", "="),
+    ],
+)
+def test_extract_rejects_raw_sensitive_key_forms_without_truncation_or_echo(
+    secret_key: str,
+    separator: str,
+) -> None:
+    message = (
+        "第一轮 claude-worker 创建 artifact.txt 且内容为 "
+        f"{secret_key}{separator}SECRET。"
+    )
+    authority = extract_semantic_authority(
+        message,
+        selected_agent_ids=("claude-worker",),
+        step_count=1,
+        phases=("implementation",),
+    )
+    assert authority["requirements"] == []
+    assert [item["kind"] for item in authority["unresolved"]] == [
+        "sensitive_content"
+    ]
+    serialized = json.dumps(authority)
+    assert "SECRET" not in serialized
+    assert "access" not in serialized
+
+
+def test_extract_does_not_treat_secretary_as_a_sensitive_key_component() -> None:
+    message = "第一轮 claude-worker 创建 artifact.txt 且内容为 secretary:PUBLIC。"
+    authority = extract_semantic_authority(
+        message,
+        selected_agent_ids=("claude-worker",),
+        step_count=1,
+        phases=("implementation",),
+    )
+    assert authority["requirements"][0]["literal"] == "secretary:PUBLIC"
+    assert authority["unresolved"] == []
+
+
+def test_extract_keeps_explicit_operation_when_literal_has_same_word() -> None:
+    message = (
+        "First, claude-worker create artifact.txt with content exactly create newline"
+    )
+    authority = extract_semantic_authority(
+        message,
+        selected_agent_ids=("claude-worker",),
+        step_count=1,
+        phases=("implementation",),
+    )
+    assert len(authority["requirements"]) == 1
+    requirement = authority["requirements"][0]
+    assert requirement["kind"] == "create"
+    assert requirement["operation"] == "create"
+    assert requirement["literal"] == "create\n"
+    assert authority["unresolved"] == []
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "处理 create.txt 且内容为 draft",
+        "处理 artifact.txt 且内容为 create",
+    ],
+)
+def test_extract_does_not_classify_operation_words_inside_targets_or_values(
+    message: str,
+) -> None:
+    authority = extract_semantic_authority(
+        message,
+        selected_agent_ids=("claude-worker",),
+        step_count=1,
+        phases=("implementation",),
+    )
+    assert authority["requirements"] == []
+    assert [item["kind"] for item in authority["unresolved"]] == [
+        "unbound_explicit_detail"
+    ]
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        r"第一轮 claude-worker 创建 C:\tmp\artifact.txt 且内容为 draft 换行。",
+        r"第一轮 claude-worker 创建 tmp\artifact.txt 且内容为 draft 换行。",
+    ],
+)
+def test_extract_rejects_windows_backslash_target_without_narrowing_it(
+    message: str,
+) -> None:
+    authority = extract_semantic_authority(
+        message,
+        selected_agent_ids=("claude-worker",),
+        step_count=1,
+        phases=("implementation",),
+    )
+    assert authority["requirements"] == []
+    assert [item["kind"] for item in authority["unresolved"]] == ["unsafe_target"]
+    assert "artifact.txt" not in json.dumps(authority)
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "第二轮 claude-worker 创建 a.txt 且内容为 a；第一轮 claude-worker 创建 b.txt 且内容为 b。",
+        "第一轮 claude-worker 创建 a.txt 且内容为 a；第一轮 claude-worker 创建 b.txt 且内容为 b。",
+    ],
+)
+def test_extract_rejects_out_of_order_or_duplicate_ordinals(message: str) -> None:
+    with pytest.raises(SemanticAuthorityError) as raised:
+        extract_semantic_authority(
+            message,
+            selected_agent_ids=("claude-worker",),
+            step_count=2,
+            phases=("implementation", "review"),
+        )
+    assert raised.value.code == "extraction_consistency_invalid"
 
 
 def test_constants_are_the_closed_domain() -> None:
