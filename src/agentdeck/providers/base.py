@@ -29,17 +29,24 @@ class LeaderPlanRequest:
     regeneration_diagnostic: str | None = None
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, init=False)
 class LeaderPlanResult:
     plan: dict[str, object]
     leader_generation: dict[str, object]
-    semantic_diagnostics: tuple[dict[str, object], ...] = ()
+    _semantic_diagnostics: tuple[tuple[tuple[str, object], ...], ...]
 
-    def __post_init__(self) -> None:
-        diagnostics = self.semantic_diagnostics
+    def __init__(
+        self,
+        plan: dict[str, object],
+        leader_generation: dict[str, object],
+        semantic_diagnostics: tuple[dict[str, object], ...] = (),
+    ) -> None:
+        object.__setattr__(self, "plan", plan)
+        object.__setattr__(self, "leader_generation", leader_generation)
+        diagnostics = semantic_diagnostics
         if type(diagnostics) is not tuple:
             raise ValueError("leader plan semantic diagnostics are invalid")
-        copied: list[dict[str, object]] = []
+        immutable: list[tuple[tuple[str, object], ...]] = []
         for item in diagnostics:
             if (
                 type(item) is not dict
@@ -59,8 +66,19 @@ class LeaderPlanResult:
                 or regeneration_used is not (attempt_count > 1)
             ):
                 raise ValueError("leader plan semantic diagnostics are invalid")
-            copied.append(deepcopy(item))
-        object.__setattr__(self, "semantic_diagnostics", tuple(copied))
+            copied = deepcopy(item)
+            immutable.append(
+                (
+                    ("code", copied["code"]),
+                    ("attempt_count", copied["attempt_count"]),
+                    ("regeneration_used", copied["regeneration_used"]),
+                )
+            )
+        object.__setattr__(self, "_semantic_diagnostics", tuple(immutable))
+
+    @property
+    def semantic_diagnostics(self) -> tuple[dict[str, object], ...]:
+        return tuple(dict(item) for item in self._semantic_diagnostics)
 
 
 class LeaderProvider(Protocol):

@@ -1448,6 +1448,57 @@ def test_native_cli_semantic_double_failure_is_sanitized_and_bounded(
     assert "RAW_TASK_SECRET" not in rendered
 
 
+def test_native_cli_semantic_authority_is_snapshotted_before_subprocess_mutation(
+    tmp_path, monkeypatch
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    config = cli.load_config(root)
+    request = semantic_cli_request(config)
+    external_authority = request.semantic_authority
+    assert external_authority is not None
+    expected_hash = semantic_authority_hash(external_authority)
+    calls: list[dict[str, object]] = []
+
+    def fake_run(command, **kwargs):
+        call_index = len(calls)
+        schema_path = Path(command[command.index("--output-schema") + 1])
+        calls.append(
+            {
+                "prompt": kwargs["input"],
+                "schema": json.loads(schema_path.read_text(encoding="utf-8")),
+            }
+        )
+        if call_index == 0:
+            external_authority["requirements"][0]["literal"] = (
+                "MUTATED_AFTER_PROCESS_START\n"
+            )
+        result_path = Path(command[command.index("--output-last-message") + 1])
+        result_path.write_text(
+            json.dumps(
+                semantic_cli_candidate(omit_requirement=call_index == 0)
+            ),
+            encoding="utf-8",
+        )
+        return subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr("agentdeck.providers.cli_subprocess.subprocess.run", fake_run)
+
+    result = CodexCliProvider().plan_result(request)
+
+    assert external_authority["requirements"][0]["literal"] == (
+        "MUTATED_AFTER_PROCESS_START\n"
+    )
+    assert len(calls) == 2
+    assert calls[0]["schema"] == calls[1]["schema"]
+    assert expected_hash in calls[0]["prompt"]
+    assert expected_hash in calls[1]["prompt"]
+    assert "MUTATED_AFTER_PROCESS_START" not in calls[1]["prompt"]
+    assert result.leader_generation["semantic_authority_hash"] == expected_hash
+    frozen = result.plan["semantic_authority"]
+    assert frozen["requirements"][0]["literal"] == "draft-v1\n"
+    assert semantic_authority_hash(frozen) == expected_hash
+
+
 @pytest.mark.parametrize("authority_kind", ["unresolved", "sensitive"])
 def test_native_cli_semantic_invalid_authority_never_starts_a_process(
     tmp_path, monkeypatch, authority_kind

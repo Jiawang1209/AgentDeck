@@ -349,6 +349,19 @@ class CliLeaderProvider:
         return timeout
 
     def _native_plan_result(self, request: LeaderPlanRequest) -> LeaderPlanResult:
+        if request.semantic_authority is not None:
+            try:
+                authority_snapshot = validate_semantic_authority(
+                    request.semantic_authority
+                )
+            except (TypeError, ValueError):
+                raise CliLeaderProviderError(
+                    "schema",
+                    "authority_invalid",
+                    attempt_count=0,
+                    constraint_mode=self.constraint_mode,
+                ) from None
+            request = replace(request, semantic_authority=authority_snapshot)
         provider_timeout = self._positive_timeout(self.timeout)
         requested_timeout = self._positive_timeout(
             self.timeout

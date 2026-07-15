@@ -1579,6 +1579,35 @@ def test_leader_plan_result_semantic_diagnostics_are_exact_and_defensive() -> No
     assert result.semantic_diagnostics[0] is not diagnostic
 
 
+def test_leader_plan_result_semantic_diagnostics_cannot_mutate_internal_state() -> None:
+    result = LeaderPlanResult(
+        plan={"goal": "g"},
+        leader_generation={"provider": "fake"},
+        semantic_diagnostics=(
+            {
+                "code": "semantic_candidate_missing_requirement",
+                "attempt_count": 1,
+                "regeneration_used": False,
+            },
+        ),
+    )
+
+    projected = result.semantic_diagnostics
+    projected[0]["code"] = "semantic_effect_conflict"
+
+    assert result.semantic_diagnostics == (
+        {
+            "code": "semantic_candidate_missing_requirement",
+            "attempt_count": 1,
+            "regeneration_used": False,
+        },
+    )
+    assert "semantic_diagnostics" not in vars(result)
+    stored = vars(result)["_semantic_diagnostics"]
+    with pytest.raises(TypeError):
+        stored[0]["code"] = "semantic_effect_conflict"
+
+
 def test_legacy_leader_plan_result_construction_keeps_empty_diagnostics() -> None:
     plan = {"goal": "legacy"}
     provenance = {"provider": "fake"}

@@ -4,6 +4,12 @@
 
 ## 2026-07-15
 
+### Freeze semantic CLI generation inputs
+
+- Snapshot and exactly validate semantic authority before timeout setup, schema construction, prompt generation, or subprocess start; schema, both bounded attempts, deterministic compilation, replacement prompt, and generation provenance now consume only that defensive snapshot even if the caller mutates its original authority concurrently.
+- Replaced externally reachable mutable semantic diagnostic dictionaries with immutable internal scalar tuples and a defensive projection property. Callers retain the same constructor and read shape, but mutating one returned diagnostic can no longer rewrite later reads or internal generation evidence.
+- Added RED/GREEN subprocess-mutation and post-construction diagnostic-mutation regressions, including second-prompt hash stability, frozen effect stability, immutable `vars()` storage, schema identity, and provenance binding. This is a Task 5 quality follow-up only and adds no Task 6, state/runtime/tmux/ACP/live behavior, or M2c PASS claim.
+
 ### Generate semantic plans with CLI Leaders
 
 - Routed Codex `--output-schema` and Claude `--json-schema` native results through the same closed semantic candidate validator and deterministic compiler, so provider output contains no executable `task` authority while compatibility Worker tasks are produced locally with frozen semantic authority and step hashes.

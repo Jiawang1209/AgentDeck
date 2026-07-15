@@ -818,14 +818,19 @@ Expected: new tests fail.
 
 When `request.semantic_authority` is present:
 
-1. native envelope keys are `goal/summary/steps` with semantic step fields;
-2. `_validate_native_plan()` calls `compile_semantic_plan()`;
-3. `SemanticPlanningError.code` is copied only into the allowlisted diagnostic;
-4. semantic codes that describe candidate omissions/conflicts are retryable;
-5. sensitive/unresolved/authority-invalid codes are not retryable;
-6. retry uses `replace(request, regeneration_diagnostic=code)` and the existing
+1. before schema, prompt, deadline, or process work, create one validated deep
+   authority snapshot and replace the request; every later artifact and attempt
+   uses only that snapshot, never the caller-owned mutable mapping;
+2. native envelope keys are `goal/summary/steps` with semantic step fields;
+3. `_validate_native_plan()` calls `compile_semantic_plan()`;
+4. `SemanticPlanningError.code` is copied only into the allowlisted diagnostic;
+5. semantic codes that describe candidate omissions/conflicts are retryable;
+6. sensitive/unresolved/authority-invalid codes are not retryable;
+7. retry uses `replace(request, regeneration_diagnostic=code)` and the existing
    total deadline;
-7. cleanup behavior and output-envelope identity checks remain unchanged.
+8. diagnostic evidence is immutable internally and exposed only as fresh compact
+   dict projections; cleanup behavior and output-envelope identity checks remain
+   unchanged.
 
 Legacy requests must continue through the current native validator unchanged.
 
