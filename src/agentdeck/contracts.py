@@ -2858,7 +2858,10 @@ MISSION_RUN_HANDOFF_FIELDS = (
     "step", "agent_id", "status", "summary", "verification", "risks",
     "next_steps", "artifact_paths", "trace_command",
 )
-WORKBENCH_MISSION_CARD_FIELDS = (*MISSION_STATUS_RESPONSE_FIELDS, "confirmation_command")
+WORKBENCH_MISSION_CARD_FIELDS = (
+    *(field for field in MISSION_STATUS_RESPONSE_FIELDS if field != "semantic_authority"),
+    "confirmation_command",
+)
 MISSION_SELECTED_AGENT_FIELDS = (
     "agent_id", "provider", "role", "workspace_mode", "runtime_status",
     "effective_model", "model_source",
@@ -12301,6 +12304,10 @@ def validate_workbench_contract(payload: dict[str, object]) -> dict[str, object]
         errors.append("leader_card must be an object")
     mission_card = payload.get("mission_card")
     if isinstance(mission_card, dict):
+        if "semantic_authority" in mission_card:
+            errors.append(
+                "mission_card.semantic_authority is unavailable before Task 10"
+            )
         status_projection = dict(mission_card)
         confirmation_command = status_projection.pop("confirmation_command", None)
         controls = status_projection.get("controls")
@@ -12312,6 +12319,9 @@ def validate_workbench_contract(payload: dict[str, object]) -> dict[str, object]
             item for item in controls
             if not (isinstance(item, dict) and item.get("command") == confirmation_command)
         ] if isinstance(controls, list) else controls
+        # Task 10 owns ProjectView/workbench semantic projection. Until then,
+        # validate the legacy card against the additive Mission status shape.
+        status_projection["semantic_authority"] = None
         mission_validation = validate_mission_status_contract(status_projection)
         errors.extend(f"mission_card: {error}" for error in mission_validation["errors"])
         mission_id = mission_card.get("mission_id")
@@ -16356,7 +16366,6 @@ def workbench_example() -> dict[str, object]:
     for field in (
         "mission_id", "schema_version", "user_message", "status", "stop_reason",
         "blockers", "plan_id", "plan_hash", "workflow_run_id", "current_step",
-        "semantic_authority",
         "step_count", "timeout_seconds", "selected_agents", "created_at", "updated_at",
         "confirmed_at", "completed_at", "can_resume", "status_command", "resume_command",
     ):

@@ -137,7 +137,6 @@ def workbench_mission_card(item: Mapping[str, object], session_name: str) -> dic
         "user_message": item.get("user_message"),
         "plan_id": item.get("plan_id"),
         "plan_hash": item.get("plan_hash"),
-        "semantic_authority": item.get("semantic_authority"),
         "workflow_run_id": item.get("workflow_run_id"),
         "daemon_admission": item.get("daemon_admission"),
         "current_step": item.get("current_step", 0),

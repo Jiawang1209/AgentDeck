@@ -2552,6 +2552,8 @@ def test_workbench_contract_response_includes_example_without_drift(tmp_path: Pa
     from agentdeck.contracts import WORKBENCH_MISSION_CARD_FIELDS
     assert payload["mission_card_fields"] == list(WORKBENCH_MISSION_CARD_FIELDS)
     assert isinstance(example["mission_card"], dict)
+    assert "semantic_authority" not in payload["mission_card_fields"]
+    assert "semantic_authority" not in example["mission_card"]
     assert validate_workbench_contract(example) == {"ok": True, "errors": []}
     lineage_card_fields = [
         "mode",
@@ -6706,6 +6708,18 @@ def test_workbench_contract_allows_null_mission_card() -> None:
     payload["control_registry"] = workbench_control_registry(payload)
 
     assert validate_workbench_contract(payload) == {"ok": True, "errors": []}
+
+
+def test_workbench_contract_rejects_task10_semantic_projection_before_implementation() -> None:
+    payload = workbench_example()
+    payload["mission_card"]["semantic_authority"] = None
+
+    result = validate_workbench_contract(payload)
+
+    assert result["ok"] is False
+    assert "mission_card.semantic_authority is unavailable before Task 10" in result[
+        "errors"
+    ]
 
 
 @pytest.mark.parametrize(

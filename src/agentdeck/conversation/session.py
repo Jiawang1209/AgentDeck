@@ -203,6 +203,10 @@ def _mission_confirmation_facts(
         return base
     if not semantic_plan:
         raise ValueError("semantic confirmation stale")
+    if set(field for field in semantic_fields if field in mission) != set(
+        semantic_fields
+    ):
+        raise ValueError("semantic confirmation stale")
     validated = validated_compiled_semantic_plan(plan)
     authority = validated["semantic_authority"]
     authority_hash = semantic_authority_hash(authority)
@@ -213,10 +217,8 @@ def _mission_confirmation_facts(
     computed_plan_hash = canonical_workflow_plan_hash(plan_record)
     if mission.get("plan_hash") != computed_plan_hash:
         raise ValueError("semantic confirmation stale")
-    if has_semantic_mission and (
-        set(field for field in semantic_fields if field in mission)
-        != set(semantic_fields)
-        or mission.get("semantic_authority_schema_version")
+    if (
+        mission.get("semantic_authority_schema_version")
         != authority["schema_version"]
         or mission.get("semantic_authority_hash") != authority_hash
         or mission.get("compiled_task_hashes") != compiled_task_hashes

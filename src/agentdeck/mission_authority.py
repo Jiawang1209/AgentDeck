@@ -119,6 +119,9 @@ def validated_compiled_semantic_plan(plan: object) -> dict[str, Any]:
                 or semantic.get("step") != position
                 or compatibility.get("agent_id") != semantic.get("agent_id")
                 or compatibility.get("role") != semantic.get("role")
+                or compatibility.get("risk") != semantic.get("risk")
+                or compatibility.get("requires_approval")
+                != semantic.get("requires_approval")
                 or compatibility.get("task") != compile_worker_task(semantic)
             ):
                 raise ValueError

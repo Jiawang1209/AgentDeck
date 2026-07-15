@@ -210,6 +210,46 @@ def test_semantic_preview_binds_exact_ten_execution_facts(tmp_path: Path) -> Non
     )
 
 
+def test_semantic_confirmation_rejects_missing_all_compact_mission_authority(
+    tmp_path: Path,
+) -> None:
+    session, _preview = _semantic_session(tmp_path)
+    executions: list[str] = []
+    session.preview_executor = lambda mission_id: executions.append(mission_id) or {
+        "mission_id": mission_id,
+        "status": "started",
+    }
+    state = session.store.load()
+    binding = state["conversation_preview_bindings"][0]
+    for field in (
+        "semantic_authority_schema_version",
+        "semantic_authority_hash",
+        "compiled_task_hashes",
+        "preview_generation",
+    ):
+        del state["missions"][0][field]
+    session.store.save(state)
+
+    response = session.handle("确认执行当前预览")
+
+    assert response.kind == "blocked"
+    assert executions == []
+    after = session.store.load()
+    pending = session.store._conversation_summary(after)["pending_preview"]
+    assert pending["preview_id"] == binding["preview_id"]
+    mission = after["missions"][0]
+    assert mission["status"] == "pending_confirmation"
+    assert mission["confirmed_at"] is None
+    for collection in (
+        "attempts", "mission_attempts", "permission_requests", "messages", "jobs", "inbox",
+    ):
+        assert after.get(collection, []) == []
+    assert not any(
+        event["event_type"] == "mission_semantic_authority_frozen"
+        for event in session.store.all_events()
+    )
+
+
 @pytest.mark.parametrize(
     ("field", "changed"),
     [

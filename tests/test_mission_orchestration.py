@@ -1601,6 +1601,24 @@ def test_plan_record_rejects_semantic_extra_keys_before_persistence(
         store.build_plan_record(MESSAGE, "fake", config.leader.model, plan)
 
 
+@pytest.mark.parametrize(
+    ("field", "changed"),
+    [
+        ("risk", "compatibility-risk-drift"),
+        ("requires_approval", False),
+    ],
+)
+def test_plan_record_rejects_compatibility_semantic_policy_drift(
+    tmp_path: Path, field: str, changed: object
+) -> None:
+    _root, config, store, _path = project(tmp_path)
+    plan = semantic_plan_fixture(config)
+    plan["steps"][0][field] = changed
+
+    with pytest.raises(ValueError, match="^semantic plan invalid$"):
+        store.build_plan_record(MESSAGE, "fake", config.leader.model, plan)
+
+
 def test_plan_record_rejects_hostile_compatibility_scalar_without_hooks(
     tmp_path: Path,
 ) -> None:
