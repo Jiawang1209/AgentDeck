@@ -4,6 +4,15 @@
 
 ## 2026-07-15
 
+### Record blocked M2c task authority evidence
+
+- **Frozen verification boundary**: froze the evidence authority at commit `1a22618ba083a76f4a21ffc7ebc7a3e513e4aae6` on branch `codex/m2c-probe-readonly`. The non-live focused harness passed `97` tests with `1` explicit live skip; two independent full-suite runs passed `3406` tests with `2` skips in approximately `148.23s` and `146.26s`; compileall passed and the frozen diff was clean.
+- **Ready preflight**: the read-only preflight ran once, exited `0`, and passed `1` test in `16.15s`, reporting `ready=true`, `blockers=[]`, Codex CLI `0.131.0`, Claude CLI `2.1.208`, Claude Agent ACP `0.58.1`, and tmux `3.6a`.
+- **Strictly single live failure**: the only live attempt exited `1` with `1 failed` in `49.50s` and was not retried. It stopped before confirmation with `code=native_schema_task_authority_invalid` and `classification=leader_task_authority_missing`. Of the seven closed `task_authority` fields, only `revision_transition=false`; all other fields are `true`. Leader-generated revision task did not simultaneously preserve both `draft-v1` and `accepted-v2`. The evidence does not identify which token was absent, claim both were absent, or explain why the Leader output lost the required semantic authority.
+- **No downstream effect**: the snapshot contained `plans=1`, `missions=1`, `attempts=0`, `permissions=0`, `replies=0`, and `handoffs=0`. No ACP, permission, Worker, tmux, scheduler, or artifact effect was reached before confirmation, so this result does not justify a permission or ACP repair.
+- **Bounded identity and cleanup evidence**: PTY evidence is only `byte_count=11`, `truncated=false`, and `sha256=066523e516460e23c045358c6736f76f2fecd1022157b11c679ae69715c0c734`; the hash identifies the bounded bytes but does not explain terminal text. The harness failure had no cleanup-failure note, the outer mirror/path was removed, and post-run audits found zero mirror/live-pytest/agentdeck-daemon process matches, zero M2c temp-directory matches, and zero M2c tmux-session matches. No absent `cleanup=complete` or `residual_process_count` payload field is inferred.
+- **Honest verdict and next gate**: M2c remains **BLOCKED**, not a partial PASS, and M3 remains locked. The only next gate is a new brainstorming/spec/plan round for Leader revision task semantic authority, choosing stronger native-schema/prompt semantic constraints or a closed per-token diagnostic. Deterministic RED/GREEN, a new commit, a fresh full suite, and a fresh `ready=true` / `blockers=[]` preflight are required before one new single live attempt; there is no automatic retry.
+
 ### Classify M2c live permission failures safely
 
 - **Strict RED/GREEN**: added static-store and hostile durable-state fixtures first; the focused classification target failed `10` cases (`67` deselected) only because `_live_failure()` had no ledger, then passed all `10` after the minimal projector. The final successful-state matrix additionally covers both `succeeded` and `completed` attempts.

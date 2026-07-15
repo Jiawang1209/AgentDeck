@@ -6,6 +6,54 @@ Date: 2026-07-15
 
 **Deterministic M2 acceptance: PASS. Two-step real transport rehearsal: PASS. Full approved four-stage M2c rehearsal: BLOCKED.**
 
+## Frozen M2c single-live evidence
+
+The latest M2c evidence authority is frozen commit
+`1a22618ba083a76f4a21ffc7ebc7a3e513e4aae6` on branch
+`codex/m2c-probe-readonly`. Before live execution, the complete non-live focused
+harness passed `97` tests with `1` explicit live skip. The full suite passed
+`3406` tests with `2` skips in two independent runs of approximately `148.23s`
+and `146.26s`; compileall passed and the frozen diff was clean.
+
+The read-only preflight ran once, exited `0`, and passed `1` test in `16.15s`.
+Its strict payload reported `ready=true`, `blockers=[]`, Codex CLI `0.131.0`,
+Claude CLI `2.1.208`, Claude Agent ACP `0.58.1`, and tmux `3.6a`.
+
+Exactly one live attempt was then made. It exited `1` with `1 failed` in
+`49.50s`; it was not retried. The fixed failure code was
+`native_schema_task_authority_invalid` and the closed-ledger classification was
+`leader_task_authority_missing`. The closed seven-field `task_authority`
+projection reported `phase_order=true`, `worker_order=true`,
+`artifact_all_steps=true`, `implementation_draft=true`, `review_target=true`,
+`revision_transition=false`, and `acceptance_target=true`. Leader-generated revision task did not simultaneously preserve both `draft-v1` and `accepted-v2`. This evidence does not identify which token was absent, does not
+claim both were absent, and does not explain why the Leader output lost the
+required semantic authority.
+
+The failure snapshot contained `plans=1`, `missions=1`, `attempts=0`,
+`permissions=0`, `replies=0`, and `handoffs=0`. Because the gate failed before
+confirmation, the run did not reach any ACP, permission, Worker, tmux,
+scheduler, or artifact effect. This evidence therefore does not authorize a
+permission or ACP repair direction.
+
+The bounded PTY identity was `byte_count=11`, `truncated=false`, and
+`sha256=066523e516460e23c045358c6736f76f2fecd1022157b11c679ae69715c0c734`.
+That hash is identity evidence only and cannot explain or reconstruct terminal
+text.
+
+The harness failure carried no cleanup-failure note. The outer mirror/path was
+removed. Post-run audits found `0` mirror/live-pytest/agentdeck-daemon process
+matches, `0` M2c temporary-directory matches, and `0` M2c tmux-session matches.
+These observed facts are the cleanup evidence; no unreported
+`cleanup=complete` or `residual_process_count` payload field is inferred.
+
+The approved four-stage M2c rehearsal remains **BLOCKED**, not a partial PASS,
+and M3 remains locked. The only next gate is a new brainstorming/spec/plan
+round for Leader revision task semantic authority, choosing either a stronger
+native-schema/prompt semantic constraint or a closed per-token diagnostic.
+That work must first produce deterministic RED/GREEN evidence, a new commit, a
+fresh full suite, and a fresh `ready=true` / `blockers=[]` preflight before one
+new single live attempt may be authorized. There is no automatic retry.
+
 ## tmux startup/readiness correction
 
 The production daemon acceptance now begins with no pre-created Worker panes.
