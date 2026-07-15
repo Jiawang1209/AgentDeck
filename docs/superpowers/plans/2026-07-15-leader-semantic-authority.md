@@ -348,6 +348,16 @@ atomic transition. Propagate the final explicit target/value into a later
 explicit read-only verification clause only when there is exactly one possible
 target and state; otherwise emit unresolved.
 
+Every recognized clause must be consumed in full by one supported bounded
+grammar. A recognized action/value prefix followed by any unsupported tail is
+not authority and must produce a bounded non-echoing unresolved item. Target
+discovery must capture one whole action-target token and validate it with an
+anchored fullmatch; it must never restart from the middle of a token or reduce
+an unsafe target to a safe prefix/suffix. If semantic generation would exceed
+the authority domain's 64-item unresolved bound, collapse the diagnostics
+deterministically to one bounded summary item that contains no raw clause,
+target, literal, key, or secret.
+
 Generate ids from the canonical requirement body without `requirement_id`,
 using the first 12 lowercase SHA-256 hex characters. Never use timestamps,
 random ids, locale, cwd, file contents, or provider calls.
@@ -363,10 +373,14 @@ conda run -n agentdeck pytest tests/test_semantic_authority.py -q
 
 Expected: all authority tests pass.
 
+The GREEN matrix must include unsupported Chinese/English clause tails,
+whole-token target cases that would be unsafe if matched from the middle, and
+more than 64 ambiguous clauses collapsing to one bounded non-echoing summary.
+
 - [ ] **Step 5: Commit extraction**
 
 ```bash
-git add src/agentdeck/semantic_authority.py tests/test_semantic_authority.py HISTORY.md
+git add src/agentdeck/semantic_authority.py tests/test_semantic_authority.py HISTORY.md docs/superpowers/plans/2026-07-15-leader-semantic-authority.md
 git commit -m "Extract conservative Mission semantics"
 ```
 

@@ -4,6 +4,11 @@
 
 ## 2026-07-15
 
+### Synchronize semantic extraction plan
+
+- Synchronized the Task 2 written constraints with the implemented conservative boundaries: full supported-clause consumption, anchored whole-token target fullmatch without substring downgrade, and deterministic non-echoing collapse above the 64-item unresolved domain bound.
+- Corrected the Task 2 commit recipe to stage the implementation plan with the other three Task 2 files. This documentation-only follow-up changes no code or tests and does not claim final Task 2 approval, an M2c PASS, or Task 3 progress.
+
 ### Protect extracted semantic authority privacy
 
 - Normalized bounded camelCase, dotted, spaced, hyphenated, snake-case, and case-insensitive sensitive assignment keys; raw sensitive values are replaced by one fixed in-memory placeholder before source-message hashing, so secret changes do not affect authority identity and neither raw nor redacted messages are stored.
