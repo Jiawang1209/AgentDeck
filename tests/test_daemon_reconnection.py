@@ -156,6 +156,38 @@ def test_reconnection_summary_requires_no_llm(tmp_path: Path, monkeypatch) -> No
     assert response.payload["decision"]["kind"] == "permission"
 
 
+def test_reconnection_projects_only_compact_semantic_step_hash_provenance(
+    tmp_path: Path,
+) -> None:
+    _config, store = _seed_waiting_permission_mission(tmp_path)
+    state = store.load()
+    step_hashes = [f"sha256:{index:064x}" for index in range(1, 7)]
+    for step, step_hash in zip(
+        state["missions"][0]["execution_snapshot"]["mission"]["steps"],
+        step_hashes,
+    ):
+        step["semantic_step_hash"] = step_hash
+    for attempt in state["mission_attempts"]:
+        position = int(attempt["step_id"].split("_")[1])
+        attempt["semantic_step_hash"] = step_hashes[position - 1]
+    for reply in state["mission_worker_replies"]:
+        attempt = next(
+            item for item in state["mission_attempts"]
+            if item["attempt_id"] == reply["attempt_id"]
+        )
+        reply["semantic_step_hash"] = attempt["semantic_step_hash"]
+    store.save(state)
+
+    payload = StateStore._mission_recovery_summary(store.load())
+
+    assert [item["semantic_step_hash"] for item in payload["recent_results"]] == (
+        step_hashes[:4]
+    )[-3:]
+    serialized = json.dumps(payload, ensure_ascii=False)
+    assert "SECRET raw result" not in serialized
+    assert "semantic_authority" not in serialized
+
+
 def test_bare_cli_renders_same_source_recovery_before_entering_ui(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

@@ -11,6 +11,7 @@ from dataclasses import dataclass
 import inspect
 import json
 from pathlib import Path
+import re
 from typing import Any, Awaitable, Callable, Mapping, Protocol
 
 from acp import schema
@@ -104,6 +105,7 @@ def build_worker_prompt(
     *,
     task: str,
     previous_handoff: dict[str, Any] | None = None,
+    semantic_step_hash: str | None = None,
 ) -> str:
     """Build one canonical prompt from explicit attempt and Agent configuration."""
     if not isinstance(agent, AgentSpec):
@@ -116,14 +118,31 @@ def build_worker_prompt(
         or type(task) is not str
         or not task.strip()
         or (previous_handoff is not None and type(previous_handoff) is not dict)
+        or (
+            semantic_step_hash is not None
+            and (
+                type(semantic_step_hash) is not str
+                or re.fullmatch(r"sha256:[0-9a-f]{64}", semantic_step_hash) is None
+            )
+        )
     ):
         raise WorkerTransportError("Worker prompt authority drift")
-    return build_workflow_prompt(
+    prompt = build_workflow_prompt(
         role=agent.role,
         role_prompt=agent.role_prompt,
         task=task,
         handoff_token=dispatch_key,
         previous_handoff=previous_handoff,
+    )
+    if semantic_step_hash is None:
+        return prompt
+    marker = f"Task: {task}\n"
+    if prompt.count(marker) != 1:
+        raise WorkerTransportError("Worker prompt authority drift")
+    return prompt.replace(
+        marker,
+        marker + f"Semantic step hash: {semantic_step_hash}\n",
+        1,
     )
 
 

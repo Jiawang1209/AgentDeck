@@ -5,10 +5,13 @@ from collections.abc import Awaitable, Callable
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import MappingProxyType, SimpleNamespace
+import hashlib
+import json
 import time
 
 import pytest
 
+from agentdeck.daemon import service as service_module
 from agentdeck.daemon.scheduler import SchedulerDecision, SchedulerFacts
 from agentdeck.daemon.client import (
     CLIENT_METHODS,
@@ -29,6 +32,7 @@ from agentdeck.daemon.supervisor import SubmittedReceipt, TransportResult
 from agentdeck.daemon.transports import AcpWorkerTransport, WorkerTransportError
 from agentdeck.models import AgentSpec, RuntimeConfig
 from agentdeck.state import StateStore
+from agentdeck.semantic_planning import semantic_step_hash
 
 
 MISSION_ID = "mis_0123456789ab"
@@ -443,6 +447,57 @@ def _compact_handoff(token: str, summary: str = "planner compact summary") -> di
         ],
         "trace_ids": ["trace_planner"],
     }
+
+
+def test_semantic_handoff_scope_rejects_unrelated_artifact_without_parsing_prose() -> None:
+    validate_scope = getattr(service_module, "validate_semantic_handoff_scope", None)
+    assert callable(validate_scope)
+    step = {
+        "step": 1,
+        "agent_id": "planner",
+        "phase": "implementation",
+        "required_effects": [
+            {
+                "requirement_id": "req_111111111111",
+                "kind": "create",
+                "target": "artifact.txt",
+                "operation": "create",
+                "literal": "exact bytes\n",
+                "phase": "implementation",
+                "agent_id": "planner",
+                "sensitivity": "ordinary",
+            }
+        ],
+        "proposed_effects": [],
+        "authority_refs": ["req_111111111111"],
+        "role": "planning",
+        "verification": "verify exact artifact bytes",
+        "risk": "low",
+        "requires_approval": True,
+    }
+    step["semantic_step_hash"] = semantic_step_hash(step)
+    handoff = _compact_handoff("dsp_" + "d" * 32)
+    handoff["summary"] = "I also changed unrelated.txt"
+    handoff["artifacts"] = [
+        {"path": "unrelated.txt", "content_hash": "sha256:" + "a" * 64}
+    ]
+
+    assert validate_scope(step, handoff) == "semantic_compilation_drift"
+    handoff["artifacts"][0]["path"] = "artifact.txt"
+    assert validate_scope(step, handoff) is None
+    proposal = {
+        "target": "proposed.txt",
+        "operation": "create",
+        "sensitivity": "ordinary",
+    }
+    proposal_id = "prp_" + hashlib.sha256(
+        json.dumps(proposal, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()[:12]
+    step["proposed_effects"] = [{"proposed_effect_id": proposal_id, **proposal}]
+    del step["semantic_step_hash"]
+    step["semantic_step_hash"] = semantic_step_hash(step)
+    handoff["artifacts"][0]["path"] = "proposed.txt"
+    assert validate_scope(step, handoff) is None
 
 
 class FakeServer:

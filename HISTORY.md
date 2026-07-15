@@ -4,6 +4,14 @@
 
 ## 2026-07-15
 
+### Enforce semantic authority during Worker dispatch
+
+- Revalidated the frozen Mission snapshot, full semantic authority, current semantic step, persisted attempt, current configuration, AgentDeck ownership, and predecessor handoff before constructing either Worker transport. The daemon recompiles only the current Worker task, compares both compact hashes, and closes all drift as `semantic_compilation_drift` before admission.
+- Kept ACP and tmux on one canonical Worker prompt. Semantic prompts add exactly one `semantic_step_hash` provenance line; they receive the current compiled task and compact prior handoff only, never later-step literals, other effects, the full authority, or secret references.
+- Added exact dual-shape durable provenance: legacy attempt/reply/handoff records remain unchanged, while semantic records and their audit trace carry only the matching step hash. Recovery and reconnection validate/project that compact hash without regenerating authority.
+- Bound structured Worker artifact evidence to the frozen current-step required and proposed targets. An unrelated reported artifact is preserved in reply/handoff evidence but stops the Mission before `activate_next`; Worker prose is never parsed into authority.
+- Added idempotent compact `worker_task_compiled` and closed `semantic_authority_drift_detected` audit events containing ids/hashes or ids/code only. RED was `10 failed, 12 passed`; the final semantic target passed `26` cases, the full five-file daemon regression passed `271` cases, and the supplemental frozen-snapshot regression brought the verified total to `370` cases. No provider/network calls, real tmux/ACP execution, Task 12 behavior, or M2c live attempt was performed.
+
 ### Expose compact semantic authority provenance
 
 - Kept `project-view/v1` and added nullable exact eight-field `semantic_authority` provenance to every Plan and Mission item. Legacy records project `null`; valid semantic records project only schema/state/hash/counts and an empty semantic blocker list.

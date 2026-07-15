@@ -1431,6 +1431,9 @@ _MISSION_ATTEMPT_FIELDS = frozenset(
         "terminal_reason",
     }
 )
+_SEMANTIC_MISSION_ATTEMPT_FIELDS = _MISSION_ATTEMPT_FIELDS | {
+    "semantic_step_hash"
+}
 _PROTOCOL_TURN_FIELDS = frozenset(
     {
         "turn_id",
@@ -1678,7 +1681,10 @@ def _recovery_authority_hash(value: object) -> str:
 
 
 def _validate_mission_attempt_record(value: object) -> dict[str, Any]:
-    if type(value) is not dict or set(value) != _MISSION_ATTEMPT_FIELDS:
+    if type(value) is not dict or frozenset(value) not in {
+        _MISSION_ATTEMPT_FIELDS,
+        _SEMANTIC_MISSION_ATTEMPT_FIELDS,
+    }:
         raise ValueError("mission attempt state invalid")
     if (
         type(value.get("attempt_id")) is not str
@@ -1702,6 +1708,15 @@ def _validate_mission_attempt_record(value: object) -> dict[str, Any]:
         or type(value.get("snapshot_hash")) is not str
         or re.fullmatch(r"sha256:[0-9a-f]{64}", value["snapshot_hash"]) is None
         or value.get("state") not in _MISSION_ATTEMPT_STATES
+        or (
+            "semantic_step_hash" in value
+            and (
+                type(value.get("semantic_step_hash")) is not str
+                or re.fullmatch(
+                    r"sha256:[0-9a-f]{64}", value["semantic_step_hash"]
+                ) is None
+            )
+        )
     ):
         raise ValueError("mission attempt state invalid")
     timestamps: list[datetime] = []
@@ -6483,6 +6498,8 @@ class StateStore:
                 "blocker": None,
                 "terminal_reason": None,
             }
+            if "semantic_step_hash" in step:
+                attempt["semantic_step_hash"] = step["semantic_step_hash"]
             attempt = _validate_mission_attempt_record(attempt)
             if attempt["attempt_id"] in set(attempt_ids):
                 raise ValueError("duplicate mission attempt identity")
@@ -6498,6 +6515,11 @@ class StateStore:
                     "mission_id": mission_id,
                     "step_id": step_id,
                     "dispatch_key": attempt["dispatch_key"],
+                    **(
+                        {"semantic_step_hash": attempt["semantic_step_hash"]}
+                        if "semantic_step_hash" in attempt
+                        else {}
+                    ),
                 },
             )
             event_summary = asdict(event)
@@ -6543,6 +6565,97 @@ class StateStore:
                 raise KeyError(attempt_id)
             raise ValueError("duplicate mission attempt identity")
         return matches[0]
+
+    def record_semantic_worker_dispatch_event(
+        self,
+        event_type: str,
+        *,
+        mission_id: str,
+        attempt_id: str,
+        step_id: str,
+        agent_id: str,
+        task_hash: str | None = None,
+        semantic_step_hash: str | None = None,
+        code: str | None = None,
+    ) -> dict[str, Any]:
+        """Append one idempotent compact semantic dispatch audit fact."""
+        if event_type not in {
+            "worker_task_compiled",
+            "semantic_authority_drift_detected",
+        }:
+            raise ValueError("semantic dispatch event is invalid")
+        if (
+            not is_canonical_mission_id(mission_id)
+            or type(attempt_id) is not str
+            or re.fullmatch(r"mat_[0-9a-f]{12}", attempt_id) is None
+            or type(step_id) is not str
+            or re.fullmatch(r"step_[1-9][0-9]*", step_id) is None
+            or type(agent_id) is not str
+            or not agent_id
+        ):
+            raise ValueError("semantic dispatch event is invalid")
+        hash_pattern = r"sha256:[0-9a-f]{64}"
+        if event_type == "worker_task_compiled":
+            if (
+                type(task_hash) is not str
+                or re.fullmatch(hash_pattern, task_hash) is None
+                or type(semantic_step_hash) is not str
+                or re.fullmatch(hash_pattern, semantic_step_hash) is None
+                or code is not None
+            ):
+                raise ValueError("semantic dispatch event is invalid")
+            payload = {
+                "mission_id": mission_id,
+                "attempt_id": attempt_id,
+                "step_id": step_id,
+                "agent_id": agent_id,
+                "task_hash": task_hash,
+                "semantic_step_hash": semantic_step_hash,
+            }
+        else:
+            if (
+                code != "semantic_compilation_drift"
+                or task_hash is not None
+                or semantic_step_hash is not None
+            ):
+                raise ValueError("semantic dispatch event is invalid")
+            payload = {
+                "mission_id": mission_id,
+                "attempt_id": attempt_id,
+                "step_id": step_id,
+                "agent_id": agent_id,
+                "code": code,
+            }
+        with self._protocol_mutation_lock():
+            state = self.load()
+            attempts = state.get("mission_attempts", [])
+            matches = [
+                item for item in attempts
+                if type(item) is dict and item.get("attempt_id") == attempt_id
+            ] if type(attempts) is list else []
+            if (
+                len(matches) != 1
+                or matches[0].get("mission_id") != mission_id
+                or matches[0].get("step_id") != step_id
+                or matches[0].get("agent_id") != agent_id
+            ):
+                raise ValueError("semantic dispatch event authority is invalid")
+            known = [
+                item for item in [*self.all_events(), *state.setdefault("protocol_event_outbox", [])]
+                if type(item) is dict
+                and item.get("event_type") == event_type
+                and type(item.get("payload")) is dict
+                and item["payload"].get("attempt_id") == attempt_id
+            ]
+            if known:
+                if len(known) == 1 and known[0].get("payload") == payload:
+                    return copy.deepcopy(known[0])
+                raise ValueError("semantic dispatch event conflicts")
+            event = asdict(EventRecord.create(event_type, payload))
+            validate_daemon_event_record(event)
+            state["protocol_event_outbox"].append(event)
+            self._atomic_save(state)
+            return copy.deepcopy(event)
 
     def _validated_recovery_snapshot_locked(
         self, state: dict[str, Any]
@@ -6812,6 +6925,12 @@ class StateStore:
             ]
             observed = [event["payload"].get("state") for event in matching]
             if observed != states:
+                raise ValueError("durable recovery evidence audit history is invalid")
+            if any(
+                event["payload"].get("semantic_step_hash")
+                != record.get("semantic_step_hash")
+                for event in matching
+            ):
                 raise ValueError("durable recovery evidence audit history is invalid")
             if "canonical_handoff" in record:
                 expected_hash = canonical_snapshot_hash(record["canonical_handoff"])
@@ -7261,6 +7380,11 @@ class StateStore:
                         "dispatch_key": dispatch_key,
                         "state": "received",
                         "canonical_handoff": canonical_handoff,
+                        **(
+                            {"semantic_step_hash": attempt["semantic_step_hash"]}
+                            if "semantic_step_hash" in attempt
+                            else {}
+                        ),
                     }
                 )
                 records.append(candidate)
@@ -7295,6 +7419,11 @@ class StateStore:
                     "state": candidate["state"],
                     "canonical_handoff_hash": canonical_snapshot_hash(
                         candidate["canonical_handoff"]
+                    ),
+                    **(
+                        {"semantic_step_hash": candidate["semantic_step_hash"]}
+                        if "semantic_step_hash" in candidate
+                        else {}
                     ),
                 },
             )
@@ -7347,6 +7476,11 @@ class StateStore:
                         "reply_id": reply_id,
                         "state": "pending",
                         "canonical_handoff": reply["canonical_handoff"],
+                        **(
+                            {"semantic_step_hash": reply["semantic_step_hash"]}
+                            if "semantic_step_hash" in reply
+                            else {}
+                        ),
                     }
                 )
                 records.append(candidate)
@@ -7383,6 +7517,11 @@ class StateStore:
                     "state": candidate["state"],
                     "canonical_handoff_hash": canonical_snapshot_hash(
                         candidate["canonical_handoff"]
+                    ),
+                    **(
+                        {"semantic_step_hash": candidate["semantic_step_hash"]}
+                        if "semantic_step_hash" in candidate
+                        else {}
                     ),
                 },
             )
@@ -7949,6 +8088,11 @@ class StateStore:
                     "attempt_id": attempt_id,
                     "dispatch_key": dispatch_key,
                     "state": candidate["state"],
+                    **(
+                        {"semantic_step_hash": candidate["semantic_step_hash"]}
+                        if "semantic_step_hash" in candidate
+                        else {}
+                    ),
                 },
             )
             self._atomic_save(state)
@@ -8072,6 +8216,11 @@ class StateStore:
                         "dispatch_key": dispatch_key,
                         "state": "received",
                         "canonical_handoff": canonical,
+                        **(
+                            {"semantic_step_hash": candidate["semantic_step_hash"]}
+                            if "semantic_step_hash" in candidate
+                            else {}
+                        ),
                     }
                 )
 
@@ -8089,6 +8238,11 @@ class StateStore:
                     "attempt_id": attempt_id,
                     "dispatch_key": dispatch_key,
                     "state": candidate["state"],
+                    **(
+                        {"semantic_step_hash": candidate["semantic_step_hash"]}
+                        if "semantic_step_hash" in candidate
+                        else {}
+                    ),
                 },
             )
             if reply is not None:
@@ -8103,6 +8257,11 @@ class StateStore:
                         "state": reply["state"],
                         "canonical_handoff_hash": canonical_snapshot_hash(
                             reply["canonical_handoff"]
+                        ),
+                        **(
+                            {"semantic_step_hash": reply["semantic_step_hash"]}
+                            if "semantic_step_hash" in reply
+                            else {}
                         ),
                     },
                 )
@@ -8213,6 +8372,11 @@ class StateStore:
                         "dispatch_key": dispatch_key,
                         "state": "received",
                         "canonical_handoff": canonical,
+                        **(
+                            {"semantic_step_hash": candidate["semantic_step_hash"]}
+                            if "semantic_step_hash" in candidate
+                            else {}
+                        ),
                     }
                 )
             index = next(
@@ -8228,6 +8392,11 @@ class StateStore:
                     "attempt_id": attempt_id,
                     "dispatch_key": dispatch_key,
                     "state": candidate["state"],
+                    **(
+                        {"semantic_step_hash": candidate["semantic_step_hash"]}
+                        if "semantic_step_hash" in candidate
+                        else {}
+                    ),
                 },
             )
             if reply is not None:
@@ -8242,6 +8411,11 @@ class StateStore:
                         "state": reply["state"],
                         "canonical_handoff_hash": canonical_snapshot_hash(
                             reply["canonical_handoff"]
+                        ),
+                        **(
+                            {"semantic_step_hash": reply["semantic_step_hash"]}
+                            if "semantic_step_hash" in reply
+                            else {}
                         ),
                     },
                 )
@@ -8285,6 +8459,44 @@ class StateStore:
                 != int(attempt["step_id"].split("_")[1])
             ):
                 raise ValueError("Mission handoff advance authority invalid")
+            semantic_hash = attempt.get("semantic_step_hash")
+            if semantic_hash is not None:
+                from .daemon.service import validate_semantic_handoff_scope
+
+                plan = self._unique_plan_record(state, str(mission.get("plan_id") or ""))
+                plan_body = plan.get("plan")
+                semantic_steps = (
+                    plan_body.get("semantic_steps")
+                    if type(plan_body) is dict
+                    else None
+                )
+                position = int(attempt["step_id"].split("_")[1])
+                semantic_step = (
+                    semantic_steps[position - 1]
+                    if type(semantic_steps) is list
+                    and 0 < position <= len(semantic_steps)
+                    else None
+                )
+                blocker = validate_semantic_handoff_scope(
+                    semantic_step, matches[0]["canonical_handoff"]
+                )
+                if blocker is not None:
+                    mission["status"] = "stopped"
+                    mission["stop_reason"] = blocker
+                    mission["updated_at"] = utc_now()
+                    self._append_recovery_audit_locked(
+                        state,
+                        "semantic_authority_drift_detected",
+                        {
+                            "mission_id": mission_id,
+                            "attempt_id": attempt_id,
+                            "step_id": attempt["step_id"],
+                            "agent_id": attempt["agent_id"],
+                            "code": blocker,
+                        },
+                    )
+                    self._atomic_save(state)
+                    return copy.deepcopy(mission)
             mission["current_step"] = int(mission.get("current_step", 0)) + 1
             mission["status"] = "running"
             mission["updated_at"] = utc_now()
@@ -8296,6 +8508,11 @@ class StateStore:
                     "mission_id": mission_id,
                     "attempt_id": attempt_id,
                     "current_step": mission["current_step"],
+                    **(
+                        {"semantic_step_hash": semantic_hash}
+                        if semantic_hash is not None
+                        else {}
+                    ),
                 }
             )
             self._atomic_save(state)
@@ -11053,6 +11270,11 @@ class StateStore:
                         {"verification": verification if isinstance(verification, str) else None}
                     ),
                     "artifact_count": len(artifacts) if isinstance(artifacts, list) else 0,
+                    **(
+                        {"semantic_step_hash": reply["semantic_step_hash"]}
+                        if "semantic_step_hash" in reply
+                        else {}
+                    ),
                 }
             )
         recent_results = recent_results[-3:]

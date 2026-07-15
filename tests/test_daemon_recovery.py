@@ -23,9 +23,11 @@ from agentdeck.daemon.recovery import (
 from agentdeck.daemon.service import scheduler_facts_from_store
 from agentdeck.daemon.service import (
     ProjectDaemonService,
+    ServiceError,
     apply_permission_decision_request,
     authorize_mission_acp_effect,
 )
+from agentdeck import cli
 from agentdeck.cli import _DaemonAcpWorkerSink, _daemon_acp_update_digest
 from agentdeck.config import load_config, write_default_config
 from agentdeck.daemon.transports import AcpWorkerTransport
@@ -795,6 +797,197 @@ def test_real_semantic_first_attempt_accepts_atomic_unflushed_frozen_events(
 
     assert attempt["state"] == "prepared"
     assert attempt["mission_id"] == preview["mission_id"]
+
+
+def test_semantic_dispatch_recompiles_only_current_step_before_transport(
+    tmp_path: Path, monkeypatch
+) -> None:
+    root, store, preview, confirmed = _freeze_real_semantic_mission(
+        tmp_path, monkeypatch
+    )
+    store.admit_mission_execution(
+        preview["mission_id"], snapshot_hash=confirmed["snapshot_hash"]
+    )
+    attempt = store.prepare_mission_attempt(
+        mission_id=preview["mission_id"], step_id="step_1",
+        agent_id="planner", configured_transport="tmux",
+    )
+    captured: dict[str, object] = {}
+    monkeypatch.setattr(
+        StateStore, "project_view",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            agents=[{"agent_id": "planner", "runtime": {"pane_id": "%7"}}]
+        ),
+    )
+    monkeypatch.setattr(
+        cli, "TmuxWorkerTransport",
+        lambda **kwargs: captured.update(kwargs) or SimpleNamespace(),
+    )
+
+    cli._daemon_worker_transport_for(
+        store=store, service=SimpleNamespace(), root=root, attempt=attempt
+    )
+
+    plan = store.plan_by_id(store.mission_by_id(preview["mission_id"])["plan_id"])[
+        "plan"
+    ]
+    current = plan["semantic_steps"][0]
+    prompt = captured["prompt"]
+    assert type(prompt) is str
+    assert f"Task: {plan['steps'][0]['task']}\n" in prompt
+    assert f"Semantic step hash: {current['semantic_step_hash']}\n" in prompt
+    assert plan["semantic_steps"][1]["required_effects"][0]["literal"] not in prompt
+    assert "semantic_authority" not in prompt
+    assert attempt["semantic_step_hash"] == current["semantic_step_hash"]
+    compiled = [
+        item for item in store.load()["protocol_event_outbox"]
+        if item["event_type"] == "worker_task_compiled"
+    ]
+    assert len(compiled) == 1
+    assert set(compiled[0]["payload"]) == {
+        "mission_id", "attempt_id", "step_id", "agent_id",
+        "task_hash", "semantic_step_hash",
+    }
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "stored_task", "semantic_step", "authority_hash", "snapshot_hash",
+        "current_config", "takeover",
+    ],
+)
+def test_semantic_dispatch_drift_is_closed_before_transport_construction(
+    tmp_path: Path, monkeypatch, mutation: str
+) -> None:
+    root, store, preview, confirmed = _freeze_real_semantic_mission(
+        tmp_path, monkeypatch
+    )
+    store.admit_mission_execution(
+        preview["mission_id"], snapshot_hash=confirmed["snapshot_hash"]
+    )
+    attempt = store.prepare_mission_attempt(
+        mission_id=preview["mission_id"], step_id="step_1",
+        agent_id="planner", configured_transport="tmux",
+    )
+    state = store.load()
+    if mutation == "stored_task":
+        state["plans"][0]["plan"]["steps"][0]["task"] = "ATTACKER TASK"
+    elif mutation == "semantic_step":
+        state["plans"][0]["plan"]["semantic_steps"][0]["risk"] = "ATTACKER RISK"
+    elif mutation == "authority_hash":
+        state["missions"][0]["semantic_authority_hash"] = "sha256:" + "f" * 64
+    else:
+        if mutation == "snapshot_hash":
+            snapshot = state["missions"][0]["execution_snapshot"]
+            snapshot["mission"]["steps"][0]["semantic_step_hash"] = (
+                "sha256:" + "e" * 64
+            )
+            _rehash_execution_snapshot(snapshot)
+            state["missions"][0]["snapshot_hash"] = snapshot["execution_hash"]
+            state["missions"][0]["execution_authority_hash"] = snapshot["execution_hash"]
+            attempt["snapshot_hash"] = snapshot["execution_hash"]
+            state["mission_attempts"][0]["snapshot_hash"] = snapshot["execution_hash"]
+    store.save(state)
+    if mutation == "current_config":
+        config_path = root / ".agentdeck" / "config.toml"
+        config_path.write_text(
+            config_path.read_text(encoding="utf-8").replace(
+                'role = "planning"', 'role = "ATTACKER ROLE"', 1
+            ),
+            encoding="utf-8",
+        )
+    if mutation == "takeover":
+        monkeypatch.setattr(cli, "_worker_ownership_state", lambda *_args: "human_owned")
+    calls: list[str] = []
+    monkeypatch.setattr(cli, "TmuxWorkerTransport", lambda **_kwargs: calls.append("tmux"))
+    monkeypatch.setattr(cli, "AcpWorkerTransport", lambda **_kwargs: calls.append("acp"))
+
+    with pytest.raises(ServiceError, match="^semantic_compilation_drift$"):
+        cli._daemon_worker_transport_for(
+            store=store, service=SimpleNamespace(), root=root, attempt=attempt
+        )
+    assert calls == []
+    events = store.load()["protocol_event_outbox"]
+    assert not any(item["event_type"] == "worker_task_compiled" for item in events)
+    drift = [
+        item for item in events
+        if item["event_type"] == "semantic_authority_drift_detected"
+    ]
+    assert len(drift) == 1
+    assert set(drift[0]["payload"]) == {
+        "mission_id", "attempt_id", "step_id", "agent_id", "code",
+    }
+    assert drift[0]["payload"]["code"] == "semantic_compilation_drift"
+
+
+def test_semantic_unrelated_artifact_persists_evidence_but_pauses_before_next(
+    tmp_path: Path, monkeypatch
+) -> None:
+    _root, store, preview, confirmed = _freeze_real_semantic_mission(
+        tmp_path, monkeypatch
+    )
+    store.admit_mission_execution(
+        preview["mission_id"], snapshot_hash=confirmed["snapshot_hash"]
+    )
+    attempt = store.prepare_mission_attempt(
+        mission_id=preview["mission_id"], step_id="step_1",
+        agent_id="planner", configured_transport="tmux",
+    )
+    claim = store.claim_mission_attempt_admission(
+        attempt_id=attempt["attempt_id"], dispatch_key=attempt["dispatch_key"]
+    )
+    store.record_mission_attempt_submitted(
+        attempt_id=attempt["attempt_id"], dispatch_key=attempt["dispatch_key"],
+        expected_claim_id=claim["admission_claim_id"], receipt_summary="submitted",
+    )
+    canonical = {
+        "handoff_token": attempt["dispatch_key"],
+        "status": "completed",
+        "summary": "completed assigned step",
+        "verification": "focused verification passed",
+        "risks": "none",
+        "next_steps": "continue",
+        "artifacts": [
+            {"path": "unrelated.txt", "content_hash": "sha256:" + "a" * 64}
+        ],
+        "trace_ids": ["trace_compact"],
+    }
+    completion = store.record_tmux_mission_attempt_completion(
+        attempt_id=attempt["attempt_id"], dispatch_key=attempt["dispatch_key"],
+        succeeded=True, summary="completed", canonical_handoff=canonical,
+    )
+    reply = store.record_mission_reply_evidence(
+        attempt_id=attempt["attempt_id"], dispatch_key=attempt["dispatch_key"],
+        state="validated", expected_reply_id=completion["reply"]["reply_id"],
+    )
+    pending = store.record_mission_handoff_evidence(
+        attempt_id=attempt["attempt_id"], reply_id=reply["reply_id"], state="pending"
+    )
+    handoff = store.record_mission_handoff_evidence(
+        attempt_id=attempt["attempt_id"], reply_id=reply["reply_id"],
+        state="recorded", expected_handoff_id=pending["handoff_id"],
+    )
+
+    paused = store.advance_mission_after_handoff(
+        preview["mission_id"], attempt_id=attempt["attempt_id"],
+        handoff_id=handoff["handoff_id"],
+    )
+
+    assert paused["status"] == "stopped"
+    assert paused["stop_reason"] == "semantic_compilation_drift"
+    assert paused["current_step"] == 0
+    persisted = store.load()
+    assert persisted["mission_worker_replies"][-1]["semantic_step_hash"] == (
+        attempt["semantic_step_hash"]
+    )
+    assert persisted["mission_handoffs"][-1]["semantic_step_hash"] == (
+        attempt["semantic_step_hash"]
+    )
+    assert not any(
+        item["event_type"] == "mission_step_activated"
+        for item in persisted["protocol_event_outbox"]
+    )
 
 
 @pytest.mark.parametrize("mutation", ["plan_summary", "semantic_shape_downgrade"])

@@ -38,6 +38,36 @@ from ..state import worker_runtime_identity_hash
 from ..workflow import build_canonical_handoff, validate_canonical_handoff
 
 
+def validate_semantic_handoff_scope(
+    semantic_step: object, canonical_handoff: object
+) -> str | None:
+    """Return one closed blocker when structured artifact evidence exceeds a step."""
+    from ..semantic_planning import semantic_step_hash
+
+    try:
+        semantic_step_hash(semantic_step)
+        canonical = validate_canonical_handoff(canonical_handoff).compact()
+        if type(semantic_step) is not dict:
+            raise ValueError
+        effects = semantic_step.get("required_effects")
+        proposals = semantic_step.get("proposed_effects")
+        if (
+            type(effects) is not list
+            or type(proposals) is not list
+            or any(type(item) is not dict for item in [*effects, *proposals])
+        ):
+            raise ValueError
+        targets = {item.get("target") for item in [*effects, *proposals]}
+        if any(type(item) is not str or not item for item in targets):
+            raise ValueError
+        artifacts = canonical["artifacts"]
+        if any(item["path"] not in targets for item in artifacts):
+            return "semantic_compilation_drift"
+    except (KeyError, TypeError, ValueError):
+        return "semantic_compilation_drift"
+    return None
+
+
 class ServiceError(RuntimeError):
     """The daemon service could not preserve its authority boundary."""
 
@@ -163,6 +193,18 @@ def resolve_previous_handoff(
     reply_content = reply.get("canonical_handoff")
     handoff_content = handoffs[0].get("canonical_handoff")
     if reply_content != handoff_content:
+        raise ServiceError("previous Worker handoff content drift")
+    previous_hash = previous_step.get("semantic_step_hash")
+    if previous_hash is not None and (
+        previous_attempt.get("semantic_step_hash") != previous_hash
+        or reply.get("semantic_step_hash") != previous_hash
+        or handoffs[0].get("semantic_step_hash") != previous_hash
+    ):
+        raise ServiceError("semantic_compilation_drift")
+    if previous_hash is None and any(
+        "semantic_step_hash" in item
+        for item in (previous_attempt, reply, handoffs[0])
+    ):
         raise ServiceError("previous Worker handoff content drift")
     try:
         canonical = validate_canonical_handoff(

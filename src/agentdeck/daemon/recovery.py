@@ -448,7 +448,9 @@ def validate_mission_reply_evidence_record(value: object) -> dict[str, object]:
     }
     if (
         type(value) is not dict
-        or set(value) != fields
+        or frozenset(value) not in {
+            frozenset(fields), frozenset(fields | {"semantic_step_hash"})
+        }
         or not is_canonical_mission_id(value.get("mission_id"))
         or type(value.get("attempt_id")) is not str
         or _ATTEMPT_ID.fullmatch(value["attempt_id"]) is None
@@ -457,6 +459,14 @@ def validate_mission_reply_evidence_record(value: object) -> dict[str, object]:
         or type(value.get("dispatch_key")) is not str
         or re.fullmatch(r"dsp_[0-9a-f]{32}", value["dispatch_key"]) is None
         or value.get("state") not in {"received", "validated", "invalid"}
+        or (
+            "semantic_step_hash" in value
+            and (
+                type(value.get("semantic_step_hash")) is not str
+                or re.fullmatch(r"sha256:[0-9a-f]{64}", value["semantic_step_hash"])
+                is None
+            )
+        )
     ):
         raise ValueError("durable recovery reply evidence is invalid")
     try:
@@ -477,7 +487,9 @@ def validate_mission_handoff_evidence_record(value: object) -> dict[str, object]
     }
     if (
         type(value) is not dict
-        or set(value) != fields
+        or frozenset(value) not in {
+            frozenset(fields), frozenset(fields | {"semantic_step_hash"})
+        }
         or not is_canonical_mission_id(value.get("mission_id"))
         or type(value.get("attempt_id")) is not str
         or _ATTEMPT_ID.fullmatch(value["attempt_id"]) is None
@@ -486,6 +498,14 @@ def validate_mission_handoff_evidence_record(value: object) -> dict[str, object]
         or type(value.get("reply_id")) is not str
         or _REPLY_ID.fullmatch(value["reply_id"]) is None
         or value.get("state") not in {"pending", "recorded"}
+        or (
+            "semantic_step_hash" in value
+            and (
+                type(value.get("semantic_step_hash")) is not str
+                or re.fullmatch(r"sha256:[0-9a-f]{64}", value["semantic_step_hash"])
+                is None
+            )
+        )
     ):
         raise ValueError("durable recovery handoff evidence is invalid")
     try:
@@ -598,6 +618,12 @@ def recovery_facts_from_persisted_state(
                 lineage_state = "conflict"
             else:
                 target_agent_id = current_agent_id  # type: ignore[assignment]
+                expected_semantic_hash = matches[0].get("semantic_step_hash")
+                if expected_semantic_hash is None:
+                    if "semantic_step_hash" in current:
+                        lineage_state = "conflict"
+                elif current.get("semantic_step_hash") != expected_semantic_hash:
+                    lineage_state = "conflict"
         workers = {
             item["agent_id"]: item for item in snapshot["workers"]
         }
@@ -623,6 +649,7 @@ def recovery_facts_from_persisted_state(
         current is None
         or reply["mission_id"] != mission_id
         or reply["dispatch_key"] != current.get("dispatch_key")
+        or reply.get("semantic_step_hash") != current.get("semantic_step_hash")
     ):
         raise RecoveryError("durable recovery reply lineage is invalid")
     handoff_records = [
@@ -639,6 +666,7 @@ def recovery_facts_from_persisted_state(
         or handoff["reply_id"] != reply["reply_id"]
         or reply["state"] != "validated"
         or handoff["canonical_handoff"] != reply["canonical_handoff"]
+        or handoff.get("semantic_step_hash") != reply.get("semantic_step_hash")
     ):
         raise RecoveryError("durable recovery handoff reply lineage is invalid")
 

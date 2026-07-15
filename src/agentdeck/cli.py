@@ -171,6 +171,7 @@ from .state import (
     leader_provider_transport,
     migration_preview,
     canonical_snapshot_hash,
+    validate_execution_snapshot,
     worker_runtime_identity_hash,
 )
 from .workflow import authorized_steps, run_sequential_workflow, workflow_plan_hash
@@ -212,11 +213,18 @@ from .daemon.service import (
     resolve_previous_handoff,
     scheduler_facts_from_store,
     validate_confirmed_mission_admission,
+    _worker_ownership_state,
 )
 from .daemon.transports import (
     AcpWorkerTransport,
     TmuxWorkerTransport,
     build_worker_prompt,
+)
+from .semantic_authority import semantic_authority_hash, validate_semantic_authority
+from .semantic_planning import (
+    SemanticPlanningError,
+    compile_worker_task,
+    semantic_step_hash,
 )
 
 
@@ -6950,12 +6958,11 @@ def _daemon_worker_transport_for(
     """Build one Worker transport from freshly reloaded frozen authority."""
     current_config = load_config(root)
     mission = store.mission_by_id(str(attempt["mission_id"]))
-    snapshot = mission.get("execution_snapshot")
-    if not isinstance(snapshot, dict):
-        raise ServiceError("Worker execution snapshot is missing")
-    mission_snapshot = snapshot.get("mission")
-    if not isinstance(mission_snapshot, dict):
-        raise ServiceError("Worker execution snapshot is invalid")
+    try:
+        snapshot = validate_execution_snapshot(mission.get("execution_snapshot"))
+    except (TypeError, ValueError):
+        raise ServiceError("Worker execution snapshot is invalid") from None
+    mission_snapshot = snapshot["mission"]
     step = next(
         (
             item
@@ -6996,9 +7003,91 @@ def _daemon_worker_transport_for(
         ),
         None,
     )
+    semantic_active = "semantic_authority_schema_version" in mission_snapshot
+    persisted_attempt: dict[str, object] | Mapping[str, object] = attempt
+
+    def semantic_drift() -> None:
+        try:
+            store.record_semantic_worker_dispatch_event(
+                "semantic_authority_drift_detected",
+                mission_id=str(attempt.get("mission_id") or ""),
+                attempt_id=str(attempt.get("attempt_id") or ""),
+                step_id=str(attempt.get("step_id") or ""),
+                agent_id=str(attempt.get("agent_id") or ""),
+                code="semantic_compilation_drift",
+            )
+        except Exception:
+            pass
+        raise ServiceError("semantic_compilation_drift")
+
+    if semantic_active:
+        try:
+            persisted_attempt = store.mission_attempt_by_id(
+                str(attempt.get("attempt_id") or "")
+            )
+            if (
+                type(raw_plan) is not dict
+                or set(raw_plan)
+                != {"goal", "summary", "steps", "semantic_authority", "semantic_steps"}
+                or type(raw_plan.get("semantic_steps")) is not list
+                or type(raw_plan.get("steps")) is not list
+                or len(raw_plan["semantic_steps"]) != len(raw_plan["steps"])
+                or mission.get("semantic_authority_hash")
+                != mission_snapshot.get("semantic_authority_hash")
+            ):
+                raise ValueError
+            authority = validate_semantic_authority(raw_plan["semantic_authority"])
+            if (
+                authority["schema_version"]
+                != mission_snapshot.get("semantic_authority_schema_version")
+                or semantic_authority_hash(authority)
+                != mission_snapshot.get("semantic_authority_hash")
+            ):
+                raise ValueError
+            position = step.get("position")
+            if type(position) is not int or position < 1:
+                raise ValueError
+            semantic = raw_plan["semantic_steps"][position - 1]
+            actual_semantic_hash = semantic_step_hash(semantic)
+            compiled_task = compile_worker_task(semantic)
+            actual_task_hash = canonical_snapshot_hash({"task": compiled_task})
+            requirements = {
+                item["requirement_id"]: item for item in authority["requirements"]
+            }
+            if (
+                semantic.get("step") != position
+                or semantic.get("agent_id") != step.get("agent_id")
+                or semantic.get("role") != step.get("role")
+                or [requirements.get(item) for item in semantic.get("authority_refs", [])]
+                != semantic.get("required_effects")
+                or raw_step.get("task") != compiled_task
+                or actual_task_hash != step.get("task_hash")
+                or actual_semantic_hash != step.get("semantic_step_hash")
+                or persisted_attempt.get("semantic_step_hash") != actual_semantic_hash
+                or attempt.get("semantic_step_hash") != actual_semantic_hash
+                or persisted_attempt != attempt
+                or mission.get("snapshot_hash") != snapshot["execution_hash"]
+                or mission.get("execution_authority_hash") != snapshot["execution_hash"]
+                or persisted_attempt.get("snapshot_hash") != snapshot["execution_hash"]
+                or _worker_ownership_state(store.load(), agent.agent_id)
+                != "agentdeck_owned"
+            ):
+                raise ValueError
+        except (
+            AttributeError, IndexError, KeyError, SemanticPlanningError,
+            TypeError, ValueError,
+        ):
+            semantic_drift()
+        task = compiled_task
+        task_hash = actual_task_hash
+        current_semantic_hash: str | None = actual_semantic_hash
+    else:
+        task = raw_step["task"]
+        task_hash = canonical_snapshot_hash({"task": task})
+        current_semantic_hash = None
+
     if (
-        canonical_snapshot_hash({"task": raw_step["task"]})
-        != step.get("task_hash")
+        task_hash != step.get("task_hash")
         or not isinstance(worker, dict)
         or worker.get("configured_transport") != agent.transport
         or any(
@@ -7008,16 +7097,37 @@ def _daemon_worker_transport_for(
         or worker_runtime_identity_hash(agent, current_config.runtime)
         != worker.get("runtime_identity_hash")
     ):
+        if semantic_active:
+            semantic_drift()
         raise ServiceError("Worker execution authority drift")
-    previous_handoff = resolve_previous_handoff(store.load(), attempt)
+    try:
+        previous_handoff = resolve_previous_handoff(store.load(), persisted_attempt)
+    except ServiceError:
+        if semantic_active:
+            semantic_drift()
+        raise
+    if semantic_active:
+        try:
+            store.record_semantic_worker_dispatch_event(
+                "worker_task_compiled",
+                mission_id=str(attempt["mission_id"]),
+                attempt_id=str(attempt["attempt_id"]),
+                step_id=str(attempt["step_id"]),
+                agent_id=str(attempt["agent_id"]),
+                task_hash=task_hash,
+                semantic_step_hash=current_semantic_hash,
+            )
+        except (TypeError, ValueError):
+            semantic_drift()
     effective_agent = replace(
         agent, transport=str(attempt["configured_transport"])
     )
     prompt = build_worker_prompt(
-        attempt,
+        persisted_attempt,
         effective_agent,
-        task=raw_step["task"],
+        task=task,
         previous_handoff=previous_handoff,
+        semantic_step_hash=current_semantic_hash,
     )
     if attempt["configured_transport"] == "acp":
         sink = _DaemonAcpWorkerSink(

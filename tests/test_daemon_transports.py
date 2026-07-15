@@ -23,6 +23,7 @@ from agentdeck.models import AgentSpec, RuntimeConfig
 
 
 DISPATCH_KEY = "dsp_" + "1" * 32
+SEMANTIC_STEP_HASH = "sha256:" + "2" * 64
 
 
 def _attempt(transport: str) -> dict[str, object]:
@@ -90,6 +91,64 @@ def test_build_worker_prompt_binds_exact_attempt_agent_and_handoff() -> None:
     assert "Task: Implement the daemon adapter" in prompt
     assert '"summary": "design approved"' in prompt
     assert f"Use this handoff token exactly: {DISPATCH_KEY}" in prompt
+
+
+def test_build_worker_prompt_adds_only_compact_semantic_step_provenance() -> None:
+    current_task = "Create artifact.txt with exactly current-step-bytes"
+    prompt = build_worker_prompt(
+        _attempt("tmux"),
+        _agent("tmux"),
+        task=current_task,
+        semantic_step_hash=SEMANTIC_STEP_HASH,
+    )
+
+    assert f"Task: {current_task}\n" in prompt
+    assert prompt.count(current_task) == 1
+    assert f"Semantic step hash: {SEMANTIC_STEP_HASH}\n" in prompt
+    assert "later-step-literal" not in prompt
+    assert "other-step-effect" not in prompt
+    assert "semantic_authority" not in prompt
+    assert "secret://" not in prompt
+
+
+@pytest.mark.parametrize("transport", ["acp", "tmux"])
+def test_semantic_worker_prompt_is_transport_independent(
+    transport: str,
+) -> None:
+    prompt = build_worker_prompt(
+        _attempt(transport),
+        _agent(transport, ("adapter",) if transport == "acp" else ()),
+        task="Compile exactly these task bytes",
+        semantic_step_hash=SEMANTIC_STEP_HASH,
+    )
+
+    assert prompt == build_worker_prompt(
+        _attempt("tmux"),
+        _agent("tmux"),
+        task="Compile exactly these task bytes",
+        semantic_step_hash=SEMANTIC_STEP_HASH,
+    )
+
+
+def test_constructed_acp_and_tmux_transports_capture_identical_semantic_prompt(
+    tmp_path: Path,
+) -> None:
+    task = "Compile exactly these task bytes"
+    prompt = build_worker_prompt(
+        _attempt("tmux"), _agent("tmux"), task=task,
+        semantic_step_hash=SEMANTIC_STEP_HASH,
+    )
+    acp = AcpWorkerTransport(
+        argv=("adapter",), workspace=tmp_path, prompt=prompt,
+    )
+    tmux = TmuxWorkerTransport(
+        config=RuntimeConfig(), pane_id="%7", prompt=prompt,
+        backend=RecordingTmuxBackend([]),
+    )
+
+    assert acp._prompt == tmux._prompt == prompt
+    assert f"Task: {task}\n" in acp._prompt
+    assert f"Semantic step hash: {SEMANTIC_STEP_HASH}\n" in tmux._prompt
 
 
 def test_tmux_transport_admits_once_and_completes_from_bounded_correlated_poll() -> None:

@@ -1246,7 +1246,7 @@ git commit -m "Expose compact semantic authority provenance"
 - Modify: `tests/test_daemon_reconnection.py`
 - Modify: `HISTORY.md`
 
-- [ ] **Step 1: Add RED transport and drift tests**
+- [x] **Step 1: Add RED transport and drift tests**
 
 For the same semantic step, capture constructed ACP and tmux prompts and assert
 identical compiled task bytes and `semantic_step_hash`; only transport wrapper
@@ -1262,13 +1262,13 @@ Add a handoff fixture that reports an unrelated file mutation. It must persist
 the reply evidence but pause before `activate_next`; it must not convert the
 reported effect into authority.
 
-- [ ] **Step 2: Run RED daemon targets**
+- [x] **Step 2: Run RED daemon targets**
 
 ```bash
 conda run -n agentdeck pytest tests/test_daemon_transports.py tests/test_daemon_service.py tests/test_daemon_recovery.py tests/test_daemon_reconnection.py -k semantic -q
 ```
 
-- [ ] **Step 3: Verify semantic authority before transport construction**
+- [x] **Step 3: Verify semantic authority before transport construction**
 
 In `_daemon_worker_transport_for()`:
 
@@ -1291,13 +1291,13 @@ and before external admission, with Mission/step ids and hashes only. Append
 ids and closed code only. Neither event may include compiled task or effect
 content.
 
-- [ ] **Step 4: Run daemon GREEN including takeover/reconnect**
+- [x] **Step 4: Run daemon GREEN including takeover/reconnect**
 
 ```bash
 conda run -n agentdeck pytest tests/test_daemon_transports.py tests/test_daemon_service.py tests/test_daemon_recovery.py tests/test_daemon_reconnection.py tests/test_daemon_governance.py -q
 ```
 
-- [ ] **Step 5: Commit dispatch/recovery**
+- [x] **Step 5: Commit dispatch/recovery**
 
 ```bash
 git add src/agentdeck/cli.py src/agentdeck/daemon/transports.py src/agentdeck/daemon/service.py src/agentdeck/daemon/recovery.py src/agentdeck/state.py tests/test_daemon_transports.py tests/test_daemon_service.py tests/test_daemon_recovery.py tests/test_daemon_reconnection.py HISTORY.md
