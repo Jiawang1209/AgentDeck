@@ -1027,6 +1027,9 @@ generation provenance against that draft, derives regeneration audit from the
 validated generation envelope, permits separately validated local proposals,
 and exact-type gates clarification cards, controls, Worker/count identities,
 authority, and compiled plans before copying or comparison hooks can execute.
+The review closure also exact-validates semantic diagnostics before mutation,
+correlates them with the validated one- or two-attempt generation envelope, and
+uses one public regenerable failure-code set across Session, CLI, and API paths.
 
 ## Task 8: Plan/Mission persistence and exact preview confirmation binding
 

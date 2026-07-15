@@ -26,6 +26,7 @@ from ..semantic_authority import (
     validate_semantic_authority,
 )
 from ..providers.plan_schema import validate_leader_generation_provenance
+from ..semantic_planning import SEMANTIC_REGENERABLE_FAILURE_CODES
 from .bindings import execution_digest
 from .leader_gateway import (
     CancellationToken,
@@ -116,6 +117,51 @@ def _semantic_clarification_card(authority: dict[str, object]) -> dict[str, obje
             },
         ],
     }
+
+
+def _validated_semantic_diagnostics(
+    value: object,
+    *,
+    semantic_active: bool,
+    leader_generation: dict[str, object] | None,
+) -> tuple[dict[str, object], ...]:
+    if type(value) is not tuple:
+        raise ValueError("semantic diagnostics invalid")
+    if not semantic_active:
+        if len(value) != 0:
+            raise ValueError("semantic diagnostics invalid")
+        return ()
+    if type(leader_generation) is not dict:
+        raise ValueError("semantic diagnostics invalid")
+    attempt_count = leader_generation["attempt_count"]
+    regeneration_used = leader_generation["regeneration_used"]
+    if attempt_count == 1 and regeneration_used is False:
+        if len(value) != 0:
+            raise ValueError("semantic diagnostics invalid")
+        return ()
+    if attempt_count != 2 or regeneration_used is not True or len(value) != 1:
+        raise ValueError("semantic diagnostics invalid")
+    item = value[0]
+    if type(item) is not dict or set(item) != {
+        "code", "attempt_count", "regeneration_used"
+    }:
+        raise ValueError("semantic diagnostics invalid")
+    if (
+        type(item["code"]) is not str
+        or item["code"] not in SEMANTIC_REGENERABLE_FAILURE_CODES
+        or type(item["attempt_count"]) is not int
+        or item["attempt_count"] != 1
+        or type(item["regeneration_used"]) is not bool
+        or item["regeneration_used"] is not False
+    ):
+        raise ValueError("semantic diagnostics invalid")
+    return (
+        {
+            "code": item["code"],
+            "attempt_count": 1,
+            "regeneration_used": False,
+        },
+    )
 
 
 @dataclass(frozen=True)
@@ -538,6 +584,7 @@ class ConversationSession:
         )
         semantic_event: EventRecord | None = None
         semantic_active = False
+        semantic_diagnostics_invalid = False
         try:
             intent = mission_intent(text, self.config)
             requested_agent_ids = (
@@ -701,6 +748,20 @@ class ConversationSession:
                     "semantic_compilation_drift" if semantic_active else None,
                     attempt_count=1 if semantic_active else 0,
                 )
+            try:
+                safe_semantic_diagnostics = _validated_semantic_diagnostics(
+                    candidate.semantic_diagnostics,
+                    semantic_active=semantic_active,
+                    leader_generation=validated_semantic_generation,
+                )
+            except Exception:
+                semantic_diagnostics_invalid = True
+                raise LeaderGatewayError(
+                    "schema",
+                    "semantic_compilation_drift",
+                    attempt_count=1,
+                    constraint_mode="prompt_only",
+                ) from None
             captured_binding: dict[str, object] = {}
 
             def mutation_factory(payload: dict[str, object]) -> ConversationMutation:
@@ -752,7 +813,7 @@ class ConversationSession:
                                     "attempt_count": diagnostic["attempt_count"],
                                 },
                             )
-                            for diagnostic in candidate.semantic_diagnostics
+                            for diagnostic in safe_semantic_diagnostics
                         ),
                         *(
                             (
@@ -811,6 +872,22 @@ class ConversationSession:
             durable_turn_state = self._durable_turn_state(turn_id)
             if durable_turn_state != "waiting_leader":
                 return self._durable_leader_fail_stop(turn_id, durable_turn_state)
+            semantic_failure_events: list[EventRecord] = []
+            if semantic_event is not None:
+                semantic_failure_events.append(semantic_event)
+            if (
+                error.diagnostic_code is not None
+                and (semantic_event is not None or semantic_diagnostics_invalid)
+            ):
+                semantic_failure_events.append(
+                    EventRecord.create(
+                        "leader_semantic_candidate_rejected",
+                        {
+                            "code": error.diagnostic_code,
+                            "attempt_count": error.attempt_count,
+                        },
+                    )
+                )
             try:
                 self.store.commit_conversation_mutation(
                     ConversationMutation(
@@ -826,26 +903,18 @@ class ConversationSession:
                                 self._transition("conversation", self.conversation_id, "busy", "ready", "leader_turn_terminal"),
                             )
                         },
-                        events=(
-                            (
-                                semantic_event,
-                                EventRecord.create(
-                                    "leader_semantic_candidate_rejected",
-                                    {
-                                        "code": error.diagnostic_code,
-                                        "attempt_count": error.attempt_count,
-                                    },
-                                ),
-                            )
-                            if semantic_event is not None
-                            and error.diagnostic_code is not None
-                            else ((semantic_event,) if semantic_event is not None else ())
-                        ) + (EventRecord.create("conversation_turn_terminal", {
-                            "conversation_id": self.conversation_id,
-                            "turn_id": turn_id,
-                            "state": state,
-                            **diagnostics,
-                        }),),
+                        events=tuple(semantic_failure_events)
+                        + (
+                            EventRecord.create(
+                                "conversation_turn_terminal",
+                                {
+                                    "conversation_id": self.conversation_id,
+                                    "turn_id": turn_id,
+                                    "state": state,
+                                    **diagnostics,
+                                },
+                            ),
+                        ),
                     )
                 )
             except Exception:

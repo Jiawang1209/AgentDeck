@@ -17,6 +17,7 @@ from agentdeck.semantic_authority import (
 )
 from agentdeck.semantic_planning import (
     SEMANTIC_FAILURE_CODES,
+    SEMANTIC_REGENERABLE_FAILURE_CODES,
     SemanticPlanningError,
     compile_semantic_plan,
 )
@@ -35,16 +36,6 @@ from .semantic_plan_schema import (
 )
 
 
-_REGENERABLE_SEMANTIC_CODES = frozenset(
-    {
-        "semantic_candidate_missing_requirement",
-        "semantic_candidate_duplicate_requirement",
-        "semantic_candidate_wrong_phase",
-        "semantic_candidate_wrong_worker",
-        "semantic_transition_incomplete",
-        "semantic_effect_conflict",
-    }
-)
 MAX_API_LEADER_OUTPUT_BYTES = 2 * 1024 * 1024
 _API_READ_CHUNK_BYTES = 64 * 1024
 
@@ -312,7 +303,7 @@ class OpenAICompatibleProvider:
                     step_count=count,
                 )
             except SemanticPlanningError as error:
-                if error.code not in _REGENERABLE_SEMANTIC_CODES or attempt == 2:
+                if error.code not in SEMANTIC_REGENERABLE_FAILURE_CODES or attempt == 2:
                     raise OpenAICompatibleProviderError(
                         "schema", error.code, attempt_count=attempt
                     ) from None

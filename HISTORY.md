@@ -15,6 +15,7 @@
 - Review closure now binds every returned frozen authority back to the exact locally extracted draft after clearing proposals, validates generation provenance against that proposal-free draft, and separately accepts validated project-local proposals through fresh compilation. A Gateway cannot rebase the source hash even when it returns an internally consistent replacement plan and provenance.
 - Regeneration audit truth now comes from validated generation provenance (`attempt_count=2`, `regeneration_used=true`), while the rejected-attempt event retains the real attempt-1 diagnostic. Clarification controls require two exact inspect-safe shapes and reject renamed or disguised confirmation/dispatch commands.
 - Semantic landing validates authority and compiled-plan exact trees before any defensive copy. Hostile mapping subclasses and copy/access hooks are rejected without execution in both landing and conversation-contract validation.
+- Candidate semantic diagnostics now have an exact Session-side contract correlated with validated generation provenance: legacy and one-attempt results require an empty tuple; a regenerated result requires exactly one safe attempt-1 diagnostic from the same public regenerable-code set used by CLI and API providers. Malformed, secret-bearing, subclassed, or attempt-inconsistent diagnostics close as `semantic_compilation_drift`, create no scheduling state, and never reach audit payloads.
 
 ### Apply semantic authority across local and API Leaders
 

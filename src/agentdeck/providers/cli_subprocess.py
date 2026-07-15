@@ -15,7 +15,11 @@ from json import JSONDecodeError
 
 from agentdeck.models import AgentSpec
 from agentdeck.semantic_authority import validate_semantic_authority
-from agentdeck.semantic_planning import SemanticPlanningError, compile_semantic_plan
+from agentdeck.semantic_planning import (
+    SEMANTIC_REGENERABLE_FAILURE_CODES,
+    SemanticPlanningError,
+    compile_semantic_plan,
+)
 
 from .base import (
     LeaderPlanRequest,
@@ -70,16 +74,6 @@ _REGENERABLE_SCHEMA_CODES = frozenset(
         "unknown_agent",
         "role_mismatch",
         "approval_not_required",
-    }
-)
-_REGENERABLE_SEMANTIC_CODES = frozenset(
-    {
-        "semantic_candidate_missing_requirement",
-        "semantic_candidate_duplicate_requirement",
-        "semantic_candidate_wrong_phase",
-        "semantic_candidate_wrong_worker",
-        "semantic_transition_incomplete",
-        "semantic_effect_conflict",
     }
 )
 
@@ -210,7 +204,7 @@ class CliLeaderProviderError(RuntimeError):
             or (
                 stage == "schema"
                 and diagnostic_code
-                in (_REGENERABLE_SCHEMA_CODES | _REGENERABLE_SEMANTIC_CODES)
+                in (_REGENERABLE_SCHEMA_CODES | SEMANTIC_REGENERABLE_FAILURE_CODES)
             )
         ):
             raise ValueError("invalid CLI Leader retryable combination")
@@ -442,7 +436,7 @@ class CliLeaderProvider:
                 raise safe_error from None
             diagnostic = safe_error.diagnostic_code or safe_error.stage
             if request.semantic_authority is not None:
-                if diagnostic not in _REGENERABLE_SEMANTIC_CODES:
+                if diagnostic not in SEMANTIC_REGENERABLE_FAILURE_CODES:
                     raise safe_error.without_retry() from None
                 semantic_diagnostics.append(
                     {
@@ -979,7 +973,7 @@ class CodexCliProvider(CliLeaderProvider):
             raise CliLeaderProviderError(
                 "schema",
                 error.code,
-                retryable=error.code in _REGENERABLE_SEMANTIC_CODES,
+                retryable=error.code in SEMANTIC_REGENERABLE_FAILURE_CODES,
             ) from None
 
 

@@ -467,6 +467,152 @@ def test_regeneration_audit_uses_generation_provenance_not_diagnostic_shape(
     ] == [{"attempt_count": 2}]
 
 
+@pytest.mark.parametrize(
+    "diagnostics",
+    [
+        ({"code": "SECRET_DO_NOT_ECHO", "attempt_count": 1, "regeneration_used": False},),
+        [{"code": "semantic_candidate_missing_requirement", "attempt_count": 1, "regeneration_used": False}],
+        ({"code": "semantic_candidate_missing_requirement", "attempt_count": 2, "regeneration_used": False},),
+        ({"code": "semantic_candidate_missing_requirement", "attempt_count": 1, "regeneration_used": True},),
+        ({"code": "semantic_candidate_schema_invalid", "attempt_count": 1, "regeneration_used": False},),
+    ],
+)
+def test_session_rejects_unvalidated_semantic_diagnostics_without_echo(
+    tmp_path: Path, diagnostics: object,
+) -> None:
+    _config, store = _project(tmp_path)
+    inner = LeaderGateway(provider_factory=lambda _name: FakeLeaderProvider())
+
+    class InjectingGateway:
+        def generate_mission(self, request, cancel):
+            candidate = inner.generate_mission(request, cancel)
+            return replace(candidate, semantic_diagnostics=diagnostics)
+
+    response = ConversationSession(
+        root=tmp_path, leader_gateway=InjectingGateway()
+    ).handle(SEMANTIC_MESSAGE)
+
+    assert response.kind == "failed"
+    state = store.load()
+    assert state["plans"] == state["missions"] == []
+    assert state["conversation_preview_bindings"] == []
+    rejected = [
+        event for event in store.all_events()
+        if event["event_type"] == "leader_semantic_candidate_rejected"
+    ]
+    assert [event["payload"] for event in rejected] == [
+        {"code": "semantic_compilation_drift", "attempt_count": 1}
+    ]
+    assert "SECRET_DO_NOT_ECHO" not in str(rejected)
+
+
+def test_session_rejects_diagnostic_container_subclasses_without_hooks(
+    tmp_path: Path,
+) -> None:
+    _config, store = _project(tmp_path)
+    inner = LeaderGateway(provider_factory=lambda _name: FakeLeaderProvider())
+    touched: list[str] = []
+
+    class HostileTuple(tuple):
+        def __iter__(self):
+            touched.append("iter")
+            raise AssertionError("hostile tuple iterated")
+
+    class HostileDict(dict):
+        def get(self, *_args, **_kwargs):
+            touched.append("get")
+            raise AssertionError("hostile dict accessed")
+
+    malicious_values = (
+        HostileTuple(({"code": "x", "attempt_count": 1, "regeneration_used": False},)),
+        (HostileDict({"code": "x", "attempt_count": 1, "regeneration_used": False}),),
+    )
+    for diagnostics in malicious_values:
+        class InjectingGateway:
+            def generate_mission(self, request, cancel):
+                candidate = inner.generate_mission(request, cancel)
+                return replace(candidate, semantic_diagnostics=diagnostics)
+
+        response = ConversationSession(
+            root=tmp_path, leader_gateway=InjectingGateway()
+        ).handle(SEMANTIC_MESSAGE)
+        assert response.kind == "failed"
+
+    assert touched == []
+    assert store.load()["plans"] == []
+    assert store.load()["missions"] == []
+
+
+def test_session_rejects_legacy_diagnostic_injection_with_safe_audit(
+    tmp_path: Path,
+) -> None:
+    _config, store = _project(tmp_path)
+    inner = LeaderGateway(provider_factory=lambda _name: FakeLeaderProvider())
+
+    class LegacyInjectingGateway:
+        def generate_mission(self, request, cancel):
+            candidate = inner.generate_mission(request, cancel)
+            return replace(
+                candidate,
+                semantic_diagnostics=(
+                    {"code": "SECRET_LEGACY", "attempt_count": 1, "regeneration_used": False},
+                ),
+            )
+
+    response = ConversationSession(
+        root=tmp_path, leader_gateway=LegacyInjectingGateway()
+    ).handle(MESSAGE)
+
+    assert response.kind == "failed"
+    assert store.load()["plans"] == []
+    assert store.load()["missions"] == []
+    rejected = [
+        event for event in store.all_events()
+        if event["event_type"] == "leader_semantic_candidate_rejected"
+    ]
+    assert [event["payload"] for event in rejected] == [
+        {"code": "semantic_compilation_drift", "attempt_count": 1}
+    ]
+    assert "SECRET_LEGACY" not in str(rejected)
+
+
+def test_session_rejects_attempt_two_without_exact_attempt_one_diagnostic(
+    tmp_path: Path,
+) -> None:
+    _config, store = _project(tmp_path)
+    inner = LeaderGateway(provider_factory=lambda _name: FakeLeaderProvider())
+
+    class InconsistentGateway:
+        def generate_mission(self, request, cancel):
+            candidate = inner.generate_mission(request, cancel)
+            provenance = build_leader_generation_provenance(
+                request=LeaderPlanRequest(
+                    task=request.planning_task,
+                    config=request.config,
+                    model=request.config.leader.model,
+                    skill_context=request.skill_context,
+                    selected_agent_ids=request.selected_agent_ids,
+                    step_count=request.step_count,
+                    timeout_seconds=request.timeout_seconds,
+                    semantic_authority=request.semantic_authority,
+                ),
+                provider="fake",
+                constraint_mode="local",
+                attempt_count=2,
+            )
+            return replace(
+                candidate, leader_generation=provenance, semantic_diagnostics=()
+            )
+
+    response = ConversationSession(
+        root=tmp_path, leader_gateway=InconsistentGateway()
+    ).handle(SEMANTIC_MESSAGE)
+
+    assert response.kind == "failed"
+    assert store.load()["plans"] == []
+    assert store.load()["missions"] == []
+
+
 def test_uninitialized_session_and_setup_preview_are_zero_write(tmp_path: Path) -> None:
     session = ConversationSession(root=tmp_path)
 

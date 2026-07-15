@@ -34,6 +34,16 @@ SEMANTIC_FAILURE_CODES = frozenset(
         "semantic_confirmation_stale",
     }
 )
+SEMANTIC_REGENERABLE_FAILURE_CODES = frozenset(
+    {
+        "semantic_candidate_missing_requirement",
+        "semantic_candidate_duplicate_requirement",
+        "semantic_candidate_wrong_phase",
+        "semantic_candidate_wrong_worker",
+        "semantic_transition_incomplete",
+        "semantic_effect_conflict",
+    }
+)
 
 _CANDIDATE_FIELDS = frozenset({"goal", "summary", "steps"})
 _CANDIDATE_STEP_FIELDS = frozenset(

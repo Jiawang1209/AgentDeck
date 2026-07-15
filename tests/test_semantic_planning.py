@@ -8,8 +8,10 @@ import pytest
 
 from agentdeck.semantic_authority import semantic_authority_hash
 import agentdeck.semantic_planning as semantic_planning_module
+from agentdeck.providers import cli_subprocess, openai_compatible
 from agentdeck.semantic_planning import (
     SEMANTIC_FAILURE_CODES,
+    SEMANTIC_REGENERABLE_FAILURE_CODES,
     SemanticPlanningError,
     compile_semantic_plan,
     compile_worker_task,
@@ -17,6 +19,17 @@ from agentdeck.semantic_planning import (
     semantic_step_hash,
     validate_semantic_candidate,
 )
+
+
+def test_provider_retry_and_session_audit_share_regenerable_code_source() -> None:
+    assert (
+        cli_subprocess.SEMANTIC_REGENERABLE_FAILURE_CODES
+        is SEMANTIC_REGENERABLE_FAILURE_CODES
+    )
+    assert (
+        openai_compatible.SEMANTIC_REGENERABLE_FAILURE_CODES
+        is SEMANTIC_REGENERABLE_FAILURE_CODES
+    )
 
 
 def selected_agents() -> tuple[str, ...]:
