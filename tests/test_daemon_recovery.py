@@ -854,7 +854,7 @@ def test_semantic_dispatch_recompiles_only_current_step_before_transport(
     "mutation",
     [
         "stored_task", "semantic_step", "authority_hash", "snapshot_hash",
-        "current_config", "takeover",
+        "current_config", "current_policy", "takeover",
     ],
 )
 def test_semantic_dispatch_drift_is_closed_before_transport_construction(
@@ -894,6 +894,14 @@ def test_semantic_dispatch_drift_is_closed_before_transport_construction(
         config_path.write_text(
             config_path.read_text(encoding="utf-8").replace(
                 'role = "planning"', 'role = "ATTACKER ROLE"', 1
+            ),
+            encoding="utf-8",
+        )
+    if mutation == "current_policy":
+        config_path = root / ".agentdeck" / "config.toml"
+        config_path.write_text(
+            config_path.read_text(encoding="utf-8").replace(
+                'approval_mode = "confirm"', 'approval_mode = "approve"', 1
             ),
             encoding="utf-8",
         )
@@ -988,6 +996,83 @@ def test_semantic_unrelated_artifact_persists_evidence_but_pauses_before_next(
         item["event_type"] == "mission_step_activated"
         for item in persisted["protocol_event_outbox"]
     )
+
+
+def test_semantic_previous_handoff_scope_drift_blocks_next_transport(
+    tmp_path: Path, monkeypatch
+) -> None:
+    root, store, preview, confirmed = _freeze_real_semantic_mission(
+        tmp_path, monkeypatch
+    )
+    store.admit_mission_execution(
+        preview["mission_id"], snapshot_hash=confirmed["snapshot_hash"]
+    )
+    first = store.prepare_mission_attempt(
+        mission_id=preview["mission_id"], step_id="step_1",
+        agent_id="planner", configured_transport="tmux",
+    )
+    claim = store.claim_mission_attempt_admission(
+        attempt_id=first["attempt_id"], dispatch_key=first["dispatch_key"]
+    )
+    store.record_mission_attempt_submitted(
+        attempt_id=first["attempt_id"], dispatch_key=first["dispatch_key"],
+        expected_claim_id=claim["admission_claim_id"], receipt_summary="submitted",
+    )
+    canonical = {
+        "handoff_token": first["dispatch_key"], "status": "completed",
+        "summary": "completed assigned step", "verification": "passed",
+        "risks": "none", "next_steps": "continue",
+        "artifacts": [
+            {"path": "artifact.txt", "content_hash": "sha256:" + "a" * 64}
+        ],
+        "trace_ids": ["trace_compact"],
+    }
+    completed = store.record_tmux_mission_attempt_completion(
+        attempt_id=first["attempt_id"], dispatch_key=first["dispatch_key"],
+        succeeded=True, summary="completed", canonical_handoff=canonical,
+    )
+    reply = store.record_mission_reply_evidence(
+        attempt_id=first["attempt_id"], dispatch_key=first["dispatch_key"],
+        state="validated", expected_reply_id=completed["reply"]["reply_id"],
+    )
+    pending = store.record_mission_handoff_evidence(
+        attempt_id=first["attempt_id"], reply_id=reply["reply_id"], state="pending"
+    )
+    recorded = store.record_mission_handoff_evidence(
+        attempt_id=first["attempt_id"], reply_id=reply["reply_id"],
+        state="recorded", expected_handoff_id=pending["handoff_id"],
+    )
+    advanced = store.advance_mission_after_handoff(
+        preview["mission_id"], attempt_id=first["attempt_id"],
+        handoff_id=recorded["handoff_id"],
+    )
+    assert advanced["current_step"] == 1
+    second = store.prepare_mission_attempt(
+        mission_id=preview["mission_id"], step_id="step_2",
+        agent_id="reviewer", configured_transport="tmux",
+    )
+    state = store.load()
+    changed = deepcopy(state["mission_worker_replies"][0]["canonical_handoff"])
+    changed["artifacts"] = [
+        {"path": "unrelated.txt", "content_hash": "sha256:" + "b" * 64}
+    ]
+    state["mission_worker_replies"][0]["canonical_handoff"] = deepcopy(changed)
+    state["mission_handoffs"][0]["canonical_handoff"] = deepcopy(changed)
+    changed_hash = canonical_snapshot_hash(changed)
+    for event in state["protocol_event_outbox"]:
+        if event["event_type"] in {
+            "mission_reply_evidence_recorded", "mission_handoff_evidence_recorded",
+        } and event["payload"].get("attempt_id") == first["attempt_id"]:
+            event["payload"]["canonical_handoff_hash"] = changed_hash
+    store.save(state)
+    calls: list[str] = []
+    monkeypatch.setattr(cli, "TmuxWorkerTransport", lambda **_kwargs: calls.append("tmux"))
+
+    with pytest.raises(ServiceError, match="^semantic_compilation_drift$"):
+        cli._daemon_worker_transport_for(
+            store=store, service=SimpleNamespace(), root=root, attempt=second
+        )
+    assert calls == []
 
 
 @pytest.mark.parametrize("mutation", ["plan_summary", "semantic_shape_downgrade"])

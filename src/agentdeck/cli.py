@@ -171,6 +171,7 @@ from .state import (
     leader_provider_transport,
     migration_preview,
     canonical_snapshot_hash,
+    execution_policy_snapshot,
     validate_execution_snapshot,
     worker_runtime_identity_hash,
 )
@@ -7037,11 +7038,14 @@ def _daemon_worker_transport_for(
             ):
                 raise ValueError
             authority = validate_semantic_authority(raw_plan["semantic_authority"])
+            current_policy = execution_policy_snapshot(current_config)
             if (
                 authority["schema_version"]
                 != mission_snapshot.get("semantic_authority_schema_version")
                 or semantic_authority_hash(authority)
                 != mission_snapshot.get("semantic_authority_hash")
+                or current_policy != snapshot["policy"]
+                or canonical_snapshot_hash(current_policy) != snapshot["policy_hash"]
             ):
                 raise ValueError
             position = step.get("position")

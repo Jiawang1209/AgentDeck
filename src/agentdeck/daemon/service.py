@@ -201,6 +201,31 @@ def resolve_previous_handoff(
         or handoffs[0].get("semantic_step_hash") != previous_hash
     ):
         raise ServiceError("semantic_compilation_drift")
+    if previous_hash is not None:
+        plan_id = missions[0].get("plan_id")
+        plans = [
+            item for item in state.get("plans", [])
+            if type(item) is dict and item.get("plan_id") == plan_id
+        ]
+        plan_body = plans[0].get("plan") if len(plans) == 1 else None
+        semantic_steps = (
+            plan_body.get("semantic_steps") if type(plan_body) is dict else None
+        )
+        position = previous_step.get("position")
+        semantic_step = (
+            semantic_steps[position - 1]
+            if type(semantic_steps) is list
+            and type(position) is int
+            and 0 < position <= len(semantic_steps)
+            else None
+        )
+        if (
+            type(semantic_step) is not dict
+            or semantic_step.get("semantic_step_hash") != previous_hash
+            or validate_semantic_handoff_scope(semantic_step, handoff_content)
+            is not None
+        ):
+            raise ServiceError("semantic_compilation_drift")
     if previous_hash is None and any(
         "semantic_step_hash" in item
         for item in (previous_attempt, reply, handoffs[0])
