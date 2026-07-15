@@ -4,6 +4,13 @@
 
 ## 2026-07-15
 
+### Protect extracted semantic authority privacy
+
+- Normalized bounded camelCase, dotted, spaced, hyphenated, snake-case, and case-insensitive sensitive assignment keys; raw sensitive values are replaced by one fixed in-memory placeholder before source-message hashing, so secret changes do not affect authority identity and neither raw nor redacted messages are stored.
+- Required full consumption of the supported Chinese/English clause grammar, rejecting unapproved conditional or authorization tails instead of authorizing a recognized prefix.
+- Replaced middle-start target discovery with whole action-target candidates plus one extractor-specific project-relative fullmatch, preventing unsafe prefixes, encoded paths, scoped paths, hidden segments, or whitespace paths from being rewritten as safe suffixes.
+- Deterministically collapses more than 64 unresolved clause diagnostics into one bounded non-echoing summary, and updates the Task 2 plan pseudocode to use the redacting source-hash boundary. This remains pure extraction work: no compiler, provider, conversation, runtime, live, or Task 3 behavior was added.
+
 ### Harden conservative semantic extraction
 
 - Restricted operation extraction to supported ordinal-plus-agent action spans, exact position-bound selected agents, and fail-closed unresolved diagnostics for unknown/wrong agents and negated, conditional, alternative, repeated, or multi-operation clauses; operation words inside filenames or literals remain non-authorizing.

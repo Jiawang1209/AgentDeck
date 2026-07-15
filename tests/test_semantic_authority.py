@@ -10,6 +10,7 @@ import subprocess
 import urllib.request
 
 import pytest
+import agentdeck.semantic_authority as semantic_authority_module
 
 from agentdeck.semantic_authority import (
     SEMANTIC_AUTHORITY_SCHEMA_VERSION,
@@ -403,6 +404,184 @@ def test_extract_does_not_treat_secretary_as_a_sensitive_key_component() -> None
     )
     assert authority["requirements"][0]["literal"] == "secretary:PUBLIC"
     assert authority["unresolved"] == []
+
+
+@pytest.mark.parametrize(
+    "assignment",
+    [
+        "dbPassword:SECRET",
+        "accessToken:SECRET",
+        "db.password=SECRET",
+        "access token:SECRET",
+        "access-token:SECRET",
+        "DB_PASSWORD:SECRET",
+        "APIKey:SECRET",
+        "DBPassword=SECRET",
+    ],
+)
+def test_extract_redacts_sensitive_assignment_key_variants(assignment: str) -> None:
+    message = f"第一轮 claude-worker 创建 artifact.txt 且内容为 {assignment}。"
+    authority = extract_semantic_authority(
+        message,
+        selected_agent_ids=("claude-worker",),
+        step_count=1,
+        phases=("implementation",),
+    )
+    assert authority["requirements"] == []
+    assert [item["kind"] for item in authority["unresolved"]] == [
+        "sensitive_content"
+    ]
+    serialized = json.dumps(authority)
+    assert "SECRET" not in serialized
+    assert assignment not in serialized
+
+
+def test_source_hash_redacts_secret_values_but_preserves_non_sensitive_identity() -> None:
+    def extract(message: str) -> dict[str, object]:
+        return extract_semantic_authority(
+            message,
+            selected_agent_ids=("claude-worker",),
+            step_count=1,
+            phases=("implementation",),
+        )
+
+    first = extract(
+        "第一轮 claude-worker 创建 artifact.txt 且内容为 accessToken:SECRET_ONE。"
+    )
+    second = extract(
+        "第一轮 claude-worker 创建 artifact.txt 且内容为 accessToken:SECRET_TWO。"
+    )
+    assert first["source_message_hash"] == second["source_message_hash"]
+    assert "SECRET" not in json.dumps(first)
+    assert extract("让 agent 改进项目文档 A")["source_message_hash"] != extract(
+        "让 agent 改进项目文档 B"
+    )["source_message_hash"]
+    acronym_first = extract(
+        "第一轮 claude-worker 创建 artifact.txt 且内容为 APIKey:SECRET_ONE。"
+    )
+    acronym_second = extract(
+        "第一轮 claude-worker 创建 artifact.txt 且内容为 APIKey:SECRET_TWO。"
+    )
+    assert acronym_first["source_message_hash"] == acronym_second["source_message_hash"]
+
+
+@pytest.mark.parametrize(
+    "tail",
+    [
+        "without approval",
+        "provided that approved",
+        "but is not authorized",
+    ],
+)
+def test_extract_rejects_unsupported_english_clause_tail(tail: str) -> None:
+    message = (
+        "First, claude-worker creates artifact.txt with content exactly draft newline "
+        f"{tail}"
+    )
+    authority = extract_semantic_authority(
+        message,
+        selected_agent_ids=("claude-worker",),
+        step_count=1,
+        phases=("implementation",),
+    )
+    assert authority["requirements"] == []
+    assert [item["kind"] for item in authority["unresolved"]] == [
+        "unsupported_clause_logic"
+    ]
+
+
+@pytest.mark.parametrize("tail", ["前提是获得批准", "但不得执行"])
+def test_extract_rejects_unsupported_chinese_clause_tail(tail: str) -> None:
+    message = f"第一轮 claude-worker 创建 artifact.txt 且内容为 draft 换行 {tail}。"
+    authority = extract_semantic_authority(
+        message,
+        selected_agent_ids=("claude-worker",),
+        step_count=1,
+        phases=("implementation",),
+    )
+    assert authority["requirements"] == []
+    assert [item["kind"] for item in authority["unresolved"]] == [
+        "unsupported_clause_logic"
+    ]
+
+
+def test_extract_rejects_chinese_clause_tail_without_whitespace() -> None:
+    message = "第一轮 claude-worker 创建 artifact.txt 且内容为 draft换行但不得执行。"
+    authority = extract_semantic_authority(
+        message,
+        selected_agent_ids=("claude-worker",),
+        step_count=1,
+        phases=("implementation",),
+    )
+    assert authority["requirements"] == []
+    assert [item["kind"] for item in authority["unresolved"]] == [
+        "unsupported_clause_logic"
+    ]
+
+
+@pytest.mark.parametrize(
+    "target",
+    [
+        "./artifact.txt",
+        ".hidden/artifact.txt",
+        "$HOME/artifact.txt",
+        "%2e%2e/artifact.txt",
+        "@scope/artifact.txt",
+        "foo bar/artifact.txt",
+    ],
+)
+def test_extract_never_starts_target_matching_from_the_middle(target: str) -> None:
+    message = f"第一轮 claude-worker 创建 {target} 且内容为 draft 换行。"
+    authority = extract_semantic_authority(
+        message,
+        selected_agent_ids=("claude-worker",),
+        step_count=1,
+        phases=("implementation",),
+    )
+    assert authority["requirements"] == []
+    assert authority["unresolved"]
+    assert authority["unresolved"][0]["kind"] == "unsafe_target"
+
+
+def test_extract_validates_each_explicit_target_as_one_whole_token(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    real_pattern = semantic_authority_module._SAFE_TARGET_RE
+
+    class CountingPattern:
+        calls = 0
+
+        def fullmatch(self, value: str):
+            self.calls += 1
+            return real_pattern.fullmatch(value)
+
+    counting = CountingPattern()
+    monkeypatch.setattr(semantic_authority_module, "_SAFE_TARGET_RE", counting)
+    authority = extract_semantic_authority(
+        "第一轮 claude-worker 创建 folder/artifact.txt 且内容为 draft 换行。",
+        selected_agent_ids=("claude-worker",),
+        step_count=1,
+        phases=("implementation",),
+    )
+    assert len(authority["requirements"]) == 1
+    assert counting.calls <= 2
+
+
+def test_extract_collapses_more_than_maximum_unresolved_items() -> None:
+    clauses = [
+        f"claude-worker 创建 artifact-{index}.txt 且内容为 value-{index}"
+        for index in range(65)
+    ]
+    phases = tuple(f"phase-{index}" for index in range(65))
+    authority = extract_semantic_authority(
+        "；".join(clauses),
+        selected_agent_ids=("claude-worker",),
+        step_count=65,
+        phases=phases,
+    )
+    assert authority["requirements"] == []
+    assert len(authority["unresolved"]) == 1
+    assert authority["unresolved"][0]["kind"] == "unresolved_count_exceeded"
 
 
 @pytest.mark.parametrize(

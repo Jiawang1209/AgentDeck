@@ -242,6 +242,7 @@ git commit -m "Add semantic authority domain"
 - Modify: `src/agentdeck/semantic_authority.py`
 - Modify: `tests/test_semantic_authority.py`
 - Modify: `HISTORY.md`
+- Modify: `docs/superpowers/plans/2026-07-15-leader-semantic-authority.md`
 
 - [ ] **Step 1: Add RED fixtures for Chinese/English explicit effects**
 
@@ -315,12 +316,19 @@ def extract_semantic_authority(
     )
     return validate_semantic_authority({
         "schema_version": SEMANTIC_AUTHORITY_SCHEMA_VERSION,
-        "source_message_hash": _sha256_text(normalized.message),
+        "source_message_hash": _source_message_hash(normalized.message),
         "requirements": requirements,
         "proposed_effects": [],
         "unresolved": unresolved,
     })
 ```
+
+`_source_message_hash()` must deterministically replace every recognized raw
+sensitive-assignment value with one fixed placeholder before hashing the
+validated NFC message. The raw secret and the redacted message are never
+stored or returned, and changing only the secret value must not change the
+authority identity. Non-sensitive message changes must still change the
+source hash.
 
 The private pipeline names and return types are fixed as follows:
 
