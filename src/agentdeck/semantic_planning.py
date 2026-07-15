@@ -10,7 +10,7 @@ from typing import Any, NoReturn
 
 from agentdeck.semantic_authority import (
     SEMANTIC_AUTHORITY_SCHEMA_VERSION,
-    SEMANTIC_OPERATIONS,
+    SEMANTIC_PROPOSED_EFFECTS_MAX,
     SemanticAuthorityError,
     semantic_text_contains_sensitive_value,
     validate_semantic_authority,
@@ -50,6 +50,8 @@ _CANDIDATE_STEP_FIELDS = frozenset(
     }
 )
 _PROPOSAL_FIELDS = frozenset({"target", "operation", "sensitivity"})
+_PERSISTED_PROPOSAL_FIELDS = _PROPOSAL_FIELDS | {"proposed_effect_id"}
+_PROPOSAL_VALIDATION_ID = "prp_000000000000"
 _SEMANTIC_STEP_FIELDS = _CANDIDATE_STEP_FIELDS | frozenset(
     {"required_effects", "semantic_step_hash"}
 )
@@ -165,22 +167,44 @@ def _validate_context(
     return selected_agent_ids, roles, step_count
 
 
-def _validate_proposal_shape(value: object, *, step: int) -> dict[str, str]:
-    if not _exact_dict(value) or set(value) != _PROPOSAL_FIELDS:
-        _fail("semantic_candidate_schema_invalid", step=step)
+def _validate_proposal_shape(
+    value: object, *, persisted: bool, step: int | None = None
+) -> dict[str, str]:
+    fields = _PERSISTED_PROPOSAL_FIELDS if persisted else _PROPOSAL_FIELDS
+    schema_code = (
+        "semantic_compilation_failed"
+        if persisted
+        else "semantic_candidate_schema_invalid"
+    )
+    sensitive_code = (
+        "semantic_compilation_failed"
+        if persisted
+        else "semantic_authority_sensitive_value"
+    )
+    scope_code = (
+        "semantic_compilation_failed"
+        if persisted
+        else "semantic_scope_addition_blocked"
+    )
+    if not _exact_dict(value) or set(value) != fields:
+        _fail(schema_code, step=step)
     target = value["target"]
     operation = value["operation"]
     sensitivity = value["sensitivity"]
-    if type(target) is not str or type(operation) is not str or type(sensitivity) is not str:
-        _fail("semantic_candidate_schema_invalid", step=step)
+    if (
+        type(target) is not str
+        or type(operation) is not str
+        or type(sensitivity) is not str
+        or persisted and type(value["proposed_effect_id"]) is not str
+    ):
+        _fail(schema_code, step=step)
     if sensitivity != "ordinary":
-        _fail("semantic_authority_sensitive_value", step=step)
+        _fail(sensitive_code, step=step)
     if semantic_text_contains_sensitive_value(target):
-        _fail("semantic_authority_sensitive_value", step=step)
-    if operation not in SEMANTIC_OPERATIONS:
-        _fail("semantic_scope_addition_blocked", step=step)
+        _fail(sensitive_code, step=step)
     normalized = {"target": target, "operation": operation, "sensitivity": sensitivity}
-    proposal = {"proposed_effect_id": _proposal_id(normalized), **normalized}
+    proposal_id = value["proposed_effect_id"] if persisted else _PROPOSAL_VALIDATION_ID
+    proposal = {"proposed_effect_id": proposal_id, **normalized}
     try:
         validate_semantic_authority(
             {
@@ -192,8 +216,30 @@ def _validate_proposal_shape(value: object, *, step: int) -> dict[str, str]:
             }
         )
     except SemanticAuthorityError:
-        _fail("semantic_scope_addition_blocked", step=step)
+        _fail(scope_code, step=step)
+    if persisted and proposal_id != _proposal_id(normalized):
+        _fail("semantic_compilation_failed", step=step)
     return normalized
+
+
+def _validate_effect_conflicts(
+    required_effects: list[dict[str, Any]],
+    proposed_effects: list[dict[str, str]],
+) -> None:
+    proposed_operations_by_target: dict[str, str] = {}
+    for proposal in proposed_effects:
+        target = proposal["target"]
+        operation = proposal["operation"]
+        previous = proposed_operations_by_target.get(target)
+        if previous is not None:
+            _fail("semantic_effect_conflict")
+        proposed_operations_by_target[target] = operation
+        if any(
+            requirement["target"] == target
+            and requirement["operation"] != operation
+            for requirement in required_effects
+        ):
+            _fail("semantic_effect_conflict")
 
 
 def _looks_like_transition_fragment(reference: str, transition_ids: set[str]) -> bool:
@@ -225,6 +271,16 @@ def validate_semantic_candidate(
     steps = candidate["steps"]
     if not _exact_list(steps) or len(steps) != count:
         _fail("semantic_candidate_schema_invalid")
+    proposal_count = 0
+    for raw_step in steps:
+        if not _exact_dict(raw_step) or set(raw_step) != _CANDIDATE_STEP_FIELDS:
+            _fail("semantic_candidate_schema_invalid")
+        proposals = raw_step["proposed_effects"]
+        if not _exact_list(proposals) or len(proposals) > SEMANTIC_PROPOSED_EFFECTS_MAX:
+            _fail("semantic_candidate_schema_invalid")
+        proposal_count += len(proposals)
+        if proposal_count > SEMANTIC_PROPOSED_EFFECTS_MAX:
+            _fail("semantic_candidate_schema_invalid")
 
     requirements = validated_authority["requirements"]
     by_id = {item["requirement_id"]: item for item in requirements}
@@ -232,6 +288,7 @@ def validate_semantic_candidate(
         item["requirement_id"] for item in requirements if item["kind"] == "state_transition"
     }
     seen: set[str] = set()
+    validated_proposals: list[dict[str, str]] = []
     for index, raw_step in enumerate(steps, start=1):
         if not _exact_dict(raw_step) or set(raw_step) != _CANDIDATE_STEP_FIELDS:
             _fail("semantic_candidate_schema_invalid", step=index)
@@ -272,16 +329,12 @@ def validate_semantic_candidate(
                 _fail("semantic_candidate_wrong_worker", requirement_id=reference, step=index)
             seen.add(reference)
         proposals = raw_step["proposed_effects"]
-        if not _exact_list(proposals) or len(proposals) > _MAX_ITEMS:
+        if not _exact_list(proposals) or len(proposals) > SEMANTIC_PROPOSED_EFFECTS_MAX:
             _fail("semantic_candidate_schema_invalid", step=index)
         for proposal in proposals:
-            normalized = _validate_proposal_shape(proposal, step=index)
-            if any(
-                requirement["target"] == normalized["target"]
-                and requirement["operation"] != normalized["operation"]
-                for requirement in requirements
-            ):
-                _fail("semantic_effect_conflict", step=index)
+            validated_proposals.append(
+                _validate_proposal_shape(proposal, persisted=False, step=index)
+            )
         if not _safe_text(raw_step["verification"]):
             _fail("semantic_candidate_schema_invalid", step=index)
         if type(raw_step["risk"]) is not str or raw_step["risk"] not in _SAFE_RISKS:
@@ -294,6 +347,7 @@ def validate_semantic_candidate(
         _fail("semantic_transition_incomplete")
     if missing:
         _fail("semantic_candidate_missing_requirement")
+    _validate_effect_conflicts(requirements, validated_proposals)
     return deepcopy(candidate)
 
 
@@ -415,26 +469,11 @@ def _validate_semantic_step(
         required_ids.append(effect["requirement_id"])
     if required_ids != body["authority_refs"]:
         _fail("semantic_compilation_failed")
-    for proposal in body["proposed_effects"]:
-        if (
-            not _exact_dict(proposal)
-            or set(proposal) != _PROPOSAL_FIELDS | {"proposed_effect_id"}
-            or type(proposal["proposed_effect_id"]) is not str
-            or type(proposal["target"]) is not str
-            or type(proposal["operation"]) is not str
-            or type(proposal["sensitivity"]) is not str
-        ):
-            _fail("semantic_compilation_failed")
-        if (
-            proposal["sensitivity"] != "ordinary"
-            or semantic_text_contains_sensitive_value(proposal["target"])
-        ):
-            _fail("semantic_compilation_failed")
-        proposal_body = {
-            key: proposal[key] for key in ("target", "operation", "sensitivity")
-        }
-        if proposal["proposed_effect_id"] != _proposal_id(proposal_body):
-            _fail("semantic_compilation_failed")
+    validated_step_proposals = [
+        _validate_proposal_shape(proposal, persisted=True)
+        for proposal in body["proposed_effects"]
+    ]
+    _validate_effect_conflicts([], validated_step_proposals)
     try:
         validated_effects = validate_semantic_authority(
             {
@@ -449,6 +488,9 @@ def _validate_semantic_step(
         _fail("semantic_compilation_failed")
     if _contains_sensitive_authority(validated_effects):
         _fail("semantic_compilation_failed")
+    _validate_effect_conflicts(
+        validated_effects["requirements"], validated_effects["proposed_effects"]
+    )
     if any(
         effect["phase"] != body["phase"]
         or effect["agent_id"] != body["agent_id"]
@@ -558,7 +600,9 @@ def compile_semantic_plan(
     for candidate_step in validated_candidate["steps"]:
         step_proposals = []
         for proposal in candidate_step["proposed_effects"]:
-            normalized = _validate_proposal_shape(proposal, step=candidate_step["step"])
+            normalized = _validate_proposal_shape(
+                proposal, persisted=False, step=candidate_step["step"]
+            )
             compiled = {"proposed_effect_id": _proposal_id(normalized), **normalized}
             step_proposals.append(compiled)
             normalized_proposals.append(compiled)

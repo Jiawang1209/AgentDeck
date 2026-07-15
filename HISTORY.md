@@ -4,6 +4,12 @@
 
 ## 2026-07-15
 
+### Unify semantic proposal conflict validation
+
+- Reused one proposal validator across Leader candidates and persisted semantic steps, ordering exact scalar and sensitive checks before canonical authority target/operation validation with a fixed legal placeholder ID, and computing real proposal IDs only after canonical acceptance.
+- Added one shared effect-conflict boundary for required-versus-proposed effects, duplicate proposal bodies, and proposal-versus-proposal operations on the same target, while preserving valid multi-operation required lifecycles; candidate validation now also enforces the canonical authority-wide 256-proposal limit before per-proposal processing.
+- Added RED/GREEN public hash/compiler conflict and zero-hash invalid-proposal coverage. This remains Task 3 pure validation/compilation and does not add Task 4, provider, conversation, state, runtime, tmux, ACP, live execution, or an M2c PASS claim.
+
 ### Harden semantic planning boundaries
 
 - Exposed one pure exact-type sensitive-text classifier from semantic authority and reused its assignment-key and known-token-prefix decisions across extraction, candidate, authority, and persisted semantic-step validation.

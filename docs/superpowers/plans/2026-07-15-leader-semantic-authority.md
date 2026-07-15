@@ -506,6 +506,22 @@ target validator, including safe extensionless paths such as `README` and
 must have an empty `proposed_effects`; existing proposals fail closed rather
 than being overwritten.
 
+Candidate and persisted-step paths must reuse one proposal validator and one
+effect-conflict helper. Proposal validation orders exact fields and scalar
+types, shared sensitive detection, then canonical authority validation using a
+fixed syntactically valid placeholder ID (or the supplied persisted ID), and
+only then computes the real canonical body ID. Invalid targets or operations
+must never reach proposal hashing. Conflicts include a proposal that disagrees
+with any required effect on the same target and two proposals that assign
+different operations to one target; required effects may still describe a
+valid multi-operation lifecycle among themselves.
+
+The conflict helper must also reject identical duplicate proposal bodies,
+whose canonical IDs would otherwise collide only during frozen-authority
+validation. Before validating, hashing, or comparing any proposal, candidate
+validation must sum proposal counts across all steps and enforce the exported
+`SEMANTIC_PROPOSED_EFFECTS_MAX` authority-wide limit.
+
 - [ ] **Step 2: Run RED**
 
 ```bash

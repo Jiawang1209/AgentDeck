@@ -463,6 +463,198 @@ def _persisted_step(body: dict[str, object]) -> dict[str, object]:
     return body
 
 
+def _proposal(target: str, operation: str) -> dict[str, str]:
+    proposal_body = {
+        "target": target,
+        "operation": operation,
+        "sensitivity": "ordinary",
+    }
+    proposal_id = "prp_" + hashlib.sha256(
+        json.dumps(proposal_body, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()[:12]
+    return {"proposed_effect_id": proposal_id, **proposal_body}
+
+
+def _force_persisted_hash(body: dict[str, object]) -> dict[str, object]:
+    persisted = deepcopy(body)
+    persisted.pop("semantic_step_hash", None)
+    persisted["semantic_step_hash"] = "sha256:" + hashlib.sha256(
+        json.dumps(
+            persisted,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+            allow_nan=False,
+        ).encode("utf-8")
+    ).hexdigest()
+    return persisted
+
+
+@pytest.mark.parametrize("function", [semantic_step_hash, compile_worker_task])
+def test_public_step_rejects_required_proposal_effect_conflict(function) -> None:
+    body = deepcopy(_compile()["semantic_steps"][0])
+    body.pop("semantic_step_hash")
+    body["proposed_effects"] = [_proposal("artifact.txt", "review")]
+    value = body if function is semantic_step_hash else _force_persisted_hash(body)
+    with pytest.raises(SemanticPlanningError) as raised:
+        function(value)
+    _assert_closed(raised.value, "semantic_effect_conflict")
+
+
+@pytest.mark.parametrize("function", [semantic_step_hash, compile_worker_task])
+def test_public_step_rejects_conflicting_proposals_on_same_target(function) -> None:
+    body = deepcopy(_compile()["semantic_steps"][0])
+    body.pop("semantic_step_hash")
+    body["proposed_effects"] = [
+        _proposal("README", "create"),
+        _proposal("README", "review"),
+    ]
+    value = body if function is semantic_step_hash else _force_persisted_hash(body)
+    with pytest.raises(SemanticPlanningError) as raised:
+        function(value)
+    _assert_closed(raised.value, "semantic_effect_conflict")
+
+
+def test_candidate_rejects_conflicting_proposals_on_same_target() -> None:
+    value = candidate()
+    value["steps"][0]["proposed_effects"] = [
+        {"target": "README", "operation": "create", "sensitivity": "ordinary"},
+        {"target": "README", "operation": "review", "sensitivity": "ordinary"},
+    ]
+    with pytest.raises(SemanticPlanningError) as raised:
+        _compile(candidate_value=value)
+    _assert_closed(raised.value, "semantic_effect_conflict")
+
+
+def test_candidate_rejects_identical_duplicate_proposals_before_compilation() -> None:
+    value = candidate()
+    duplicate = {"target": "README", "operation": "create", "sensitivity": "ordinary"}
+    value["steps"][0]["proposed_effects"] = [deepcopy(duplicate), deepcopy(duplicate)]
+    with pytest.raises(SemanticPlanningError) as raised:
+        validate_semantic_candidate(
+            authority(),
+            value,
+            selected_agent_ids=selected_agents(),
+            roles=roles(),
+            step_count=4,
+        )
+    _assert_closed(raised.value, "semantic_effect_conflict")
+
+
+@pytest.mark.parametrize("function", [semantic_step_hash, compile_worker_task])
+def test_public_step_rejects_identical_duplicate_proposals(function) -> None:
+    body = deepcopy(_compile()["semantic_steps"][0])
+    body.pop("semantic_step_hash")
+    duplicate = _proposal("README", "create")
+    body["proposed_effects"] = [deepcopy(duplicate), deepcopy(duplicate)]
+    value = body if function is semantic_step_hash else _force_persisted_hash(body)
+    with pytest.raises(SemanticPlanningError) as raised:
+        function(value)
+    _assert_closed(raised.value, "semantic_effect_conflict")
+
+
+def test_candidate_rejects_more_than_authority_proposal_limit_before_validation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    value = candidate()
+    proposals = [
+        {
+            "target": f"notes/item-{index}",
+            "operation": "create",
+            "sensitivity": "ordinary",
+        }
+        for index in range(257)
+    ]
+    value["steps"][0]["proposed_effects"] = proposals[:65]
+    value["steps"][1]["proposed_effects"] = proposals[65:129]
+    value["steps"][2]["proposed_effects"] = proposals[129:193]
+    value["steps"][3]["proposed_effects"] = proposals[193:]
+
+    def forbidden_processing(*args, **kwargs):
+        raise AssertionError("over-limit proposals reached validation or hashing")
+
+    monkeypatch.setattr(
+        semantic_planning_module, "_validate_proposal_shape", forbidden_processing
+    )
+    monkeypatch.setattr(semantic_planning_module, "_proposal_id", forbidden_processing)
+    monkeypatch.setattr(
+        semantic_planning_module, "_validate_effect_conflicts", forbidden_processing
+    )
+    with pytest.raises(SemanticPlanningError) as raised:
+        validate_semantic_candidate(
+            authority(),
+            value,
+            selected_agent_ids=selected_agents(),
+            roles=roles(),
+            step_count=4,
+        )
+    _assert_closed(raised.value, "semantic_candidate_schema_invalid")
+
+
+@pytest.mark.parametrize(
+    ("target", "operation"),
+    [
+        ("../escape.txt", "create"),
+        ("artifact.txt:escape", "create"),
+        ("README", "delete"),
+    ],
+)
+def test_candidate_invalid_proposal_is_rejected_before_id_hash(
+    target: str, operation: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    value = candidate()
+    value["steps"][0]["proposed_effects"] = [
+        {"target": target, "operation": operation, "sensitivity": "ordinary"}
+    ]
+
+    def forbidden_id(*args, **kwargs):
+        raise AssertionError("invalid proposal reached ID hashing")
+
+    monkeypatch.setattr(semantic_planning_module, "_proposal_id", forbidden_id)
+    with pytest.raises(SemanticPlanningError) as raised:
+        _compile(candidate_value=value)
+    _assert_closed(raised.value, "semantic_scope_addition_blocked")
+
+
+@pytest.mark.parametrize("function", [semantic_step_hash, compile_worker_task])
+@pytest.mark.parametrize(
+    ("target", "operation"),
+    [
+        ("../escape.txt", "create"),
+        ("artifact.txt:escape", "create"),
+        ("README", "delete"),
+    ],
+)
+def test_public_invalid_proposal_is_rejected_before_id_hash(
+    target: str,
+    operation: str,
+    function,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    body = deepcopy(_compile()["semantic_steps"][0])
+    body.pop("semantic_step_hash")
+    body["proposed_effects"] = [
+        {
+            "proposed_effect_id": "prp_000000000000",
+            "target": target,
+            "operation": operation,
+            "sensitivity": "ordinary",
+        }
+    ]
+    value = body if function is semantic_step_hash else {
+        **body,
+        "semantic_step_hash": f"sha256:{'0' * 64}",
+    }
+
+    def forbidden_id(*args, **kwargs):
+        raise AssertionError("invalid proposal reached ID hashing")
+
+    monkeypatch.setattr(semantic_planning_module, "_proposal_id", forbidden_id)
+    with pytest.raises(SemanticPlanningError) as raised:
+        function(value)
+    _assert_closed(raised.value, "semantic_compilation_failed")
+
+
 @pytest.mark.parametrize(
     "mutate",
     [
