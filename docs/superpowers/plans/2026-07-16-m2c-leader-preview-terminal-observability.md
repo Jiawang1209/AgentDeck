@@ -1218,10 +1218,12 @@ If this fails, stop before the designated preflight and report that the code
 and double full suite are complete but the human-selected model id is missing.
 Do not choose `gpt-5.4`, `gpt-5.5`, or any other value on the user's behalf.
 
-- [ ] **Step 8: Run exactly one designated read-only preflight when model input exists**
+- [x] **Step 8: Run exactly one designated read-only preflight when model input exists**
 
-Not run in this cycle: `AGENTDECK_M2C_LEADER_MODEL` was absent. Designated
-preflight invocation count is zero; no model value was guessed.
+After later explicit human selection and authorization, the designated node
+ran exactly once on frozen implementation `9db5b476...` with model `gpt-5.5`.
+It returned `ready=true`, `blockers=[]`, all four tools ready, and
+`1 passed in 4.19s`. It was not rerun.
 
 Only if Step 7 passes, run:
 
@@ -1288,7 +1290,8 @@ Verification evidence for this cycle:
   `9db5b476f885cfcf68a55cbf59673a2d908d3fce`;
 - full suite 1: `4219 passed, 2 skipped in 185.64s`;
 - full suite 2: `4219 passed, 2 skipped in 191.59s`;
-- designated preflight count: `0` (`AGENTDECK_M2C_LEADER_MODEL` missing);
+- designated preflight count: `1` (`gpt-5.5`, `ready=true`, `blockers=[]`,
+  `1 passed in 4.19s`);
 - live attempt count: `0`;
 - residual matching root/process count: `0`;
 - frozen-SHA status after verification: clean.

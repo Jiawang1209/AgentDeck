@@ -396,3 +396,30 @@ next authorized action is for a human to supply the exact audited model id,
 then approve one new designated read-only preflight. Any future live attempt
 still requires separate authorization naming the frozen implementation SHA
 and exact model identity.
+
+## Frozen `9db5b476` explicit-model preflight
+
+The human explicitly selected Codex Leader model `gpt-5.5` and authorized one
+read-only preflight. The harness ran that designated node exactly once from a
+detached checkout of frozen implementation
+`9db5b476f885cfcf68a55cbf59673a2d908d3fce`, with the exact model supplied
+only to that command. It passed with `1 passed in 4.19s` and returned the strict
+`m2c-live-preflight/v2` payload:
+
+- `leader_model={provider: codex-cli, model: gpt-5.5, source: explicit,
+  ready: true}`;
+- `ready=true` and `blockers=[]`;
+- Codex CLI `0.131.0`, Claude CLI `2.1.208 (Claude Code)`, Claude Agent ACP
+  `0.58.1`, and tmux `3.6a`, all ready under the five-second probe bound.
+
+The frozen checkout remained clean and at the exact implementation SHA.
+The detached verification worktree was removed. Post-run audit found zero
+matching live, auth, probe, staged-tool, or preflight roots and zero matching
+preflight/live pytest processes. No provider or model request, ACP session,
+tmux server, Mission, Worker, package install, login, global config/auth change,
+or user tmux inspection occurred.
+
+Preflight invocation count is exactly one; live attempt count remains zero.
+This is readiness evidence, not M2c PASS. M2c remains **BLOCKED** and M3 locked
+until a separate human authorization names frozen SHA `9db5b476...`, model
+`gpt-5.5`, and the unique real four-stage acceptance attempt.

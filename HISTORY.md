@@ -4,6 +4,13 @@
 
 ## 2026-07-16
 
+### Pass the frozen M2c explicit-model preflight
+
+- After explicit human selection of Leader model `gpt-5.5` and authorization for one read-only preflight, ran the designated node exactly once from detached frozen implementation `9db5b476f885cfcf68a55cbf59673a2d908d3fce`.
+- The strict `m2c-live-preflight/v2` result passed with `1 passed in 4.19s`, `ready=true`, `blockers=[]`, and the exact explicit model card ready. Codex CLI `0.131.0`, Claude CLI `2.1.208`, Claude Agent ACP `0.58.1`, and tmux `3.6a` were all ready.
+- Verified the frozen checkout remained clean, removed the detached verification worktree, and found zero matching temporary roots or preflight/live pytest processes. No provider/model call, ACP session, tmux server, Mission, Worker, install, login, global setting, auth change, user tmux inspection, or live attempt occurred.
+- Preflight count is exactly one and live attempt count remains zero. M2c is still **BLOCKED** and M3 locked; the next gate is separate human authorization naming frozen SHA `9db5b476...` and model `gpt-5.5` for the unique real four-stage attempt.
+
 ### Freeze M2c Leader Preview observability at the explicit-model gate
 
 - Froze the implementation authority at `9db5b476f885cfcf68a55cbf59673a2d908d3fce` after final independent review, production Conversation contract regression (`84 passed`), compile/diff checks, and the complete non-live M2c harness (`186 passed, 1 skipped in 42.69s`). No `src/agentdeck/**` file changed.
