@@ -17,12 +17,12 @@ SEMANTIC_OPERATIONS = frozenset({"create", "read", "review", "update", "verify"}
 SEMANTIC_SENSITIVITY = frozenset({"ordinary", "secret_ref"})
 SEMANTIC_INTEGER_MIN = -(2**63)
 SEMANTIC_INTEGER_MAX = 2**63 - 1
-SEMANTIC_FLOAT_ABS_MAX = 1.0e308
 SEMANTIC_REQUIREMENTS_MAX = 256
 SEMANTIC_PROPOSED_EFFECTS_MAX = 256
 SEMANTIC_TARGET_UTF8_BYTES_MAX = 1024
 SEMANTIC_LITERAL_UTF8_BYTES_MAX = 4096
 SEMANTIC_AUTHORITY_CANONICAL_BYTES_MAX = 1_000_000
+SEMANTIC_COMPILED_STEP_COUNT_MAX = 1_000_000
 
 _AUTHORITY_FIELDS = frozenset(
     {
@@ -188,13 +188,13 @@ def _validate_json_scalar(value: object, *, requirement_id: object) -> None:
             _fail("value_constraint_invalid", requirement_id)
         return
     if type(value) is bool:
-        _fail("number_out_of_range", requirement_id)
+        return
     if type(value) is int:
         if not SEMANTIC_INTEGER_MIN <= value <= SEMANTIC_INTEGER_MAX:
             _fail("number_out_of_range", requirement_id)
         return
     if type(value) is float:
-        if not math.isfinite(value) or abs(value) > SEMANTIC_FLOAT_ABS_MAX:
+        if not math.isfinite(value):
             _fail("number_out_of_range", requirement_id)
         return
     _fail("value_constraint_invalid", requirement_id)
@@ -407,7 +407,11 @@ def compact_semantic_authority(
     validated = validate_semantic_authority(authority)
     if type(state) is not str or state not in _COMPACT_STATES:
         _fail("compact_state_invalid")
-    if type(compiled_step_count) is not int or compiled_step_count < 0:
+    if (
+        type(compiled_step_count) is not int
+        or compiled_step_count < 0
+        or compiled_step_count > SEMANTIC_COMPILED_STEP_COUNT_MAX
+    ):
         _fail("compiled_step_count_invalid")
     if not _is_exact_list(blockers) or len(blockers) > _MAX_BLOCKER_COUNT or any(
         type(item) is not str or _BLOCKER_CODE_RE.fullmatch(item) is None

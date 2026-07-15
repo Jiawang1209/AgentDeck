@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+import json
 
 import pytest
 
@@ -578,8 +579,12 @@ def test_lone_surrogate_is_rejected_during_validation_without_echo() -> None:
         (2**63, False),
         (1.0e308, True),
         (-1.0e308, True),
-        (1.1e308, False),
-        (True, False),
+        (1.1e308, True),
+        (1.7976931348623157e308, True),
+        (float("nan"), False),
+        (float("inf"), False),
+        (float("-inf"), False),
+        (True, True),
     ],
 )
 def test_json_number_domain_is_explicit_and_deterministic(
@@ -594,6 +599,29 @@ def test_json_number_domain_is_explicit_and_deterministic(
         with pytest.raises(SemanticAuthorityError) as raised:
             validate_semantic_authority(authority)
         assert raised.value.code == "number_out_of_range"
+
+
+def test_exact_bool_is_supported_in_literal_and_constraint_and_can_be_hashed() -> None:
+    constraint = valid_authority()
+    constraint["requirements"][0]["after"] = {"content_equals": False}
+    validated_constraint = validate_semantic_authority(constraint)
+    assert semantic_authority_hash(validated_constraint).startswith("sha256:")
+
+    literal = valid_authority()
+    literal["requirements"] = [
+        {
+            "requirement_id": "req_0123456789ab",
+            "kind": "create",
+            "target": "artifact.txt",
+            "operation": "create",
+            "literal": True,
+            "phase": "implementation",
+            "agent_id": "claude-worker",
+            "sensitivity": "ordinary",
+        }
+    ]
+    validated_literal = validate_semantic_authority(literal)
+    assert semantic_authority_hash(validated_literal).startswith("sha256:")
 
 
 def test_extremely_large_integer_is_rejected_before_hashing_without_echo() -> None:
@@ -706,3 +734,39 @@ def test_canonical_hash_has_a_fixed_utf8_and_number_golden_vector() -> None:
     assert semantic_authority_hash(authority) == (
         "sha256:9777311c13a31bfbef7856ba1c7aba7d251440129ef8095e8d7e6fb3cd887e7f"
     )
+
+
+@pytest.mark.parametrize(
+    "count",
+    [True, -1, 1_000_001, 10**5000],
+    ids=["bool", "negative", "over-bound", "huge-int"],
+)
+def test_compiled_step_count_is_an_exact_bounded_integer(
+    count: object,
+) -> None:
+    with pytest.raises(SemanticAuthorityError) as raised:
+        compact_semantic_authority(
+            valid_authority(),
+            state="preview",
+            compiled_step_count=count,
+            blockers=[],
+        )
+    assert raised.value.code == "compiled_step_count_invalid"
+    assert str(raised.value) == "compiled_step_count_invalid"
+
+
+def test_compact_output_is_always_json_serializable_at_count_boundary() -> None:
+    compact = compact_semantic_authority(
+        valid_authority(),
+        state="preview",
+        compiled_step_count=1_000_000,
+        blockers=["awaiting_confirmation"],
+    )
+    serialized = json.dumps(
+        compact,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+        allow_nan=False,
+    )
+    assert isinstance(serialized, str)

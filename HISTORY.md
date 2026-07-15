@@ -4,9 +4,16 @@
 
 ## 2026-07-15
 
+### Correct semantic scalar boundaries
+
+- Restored the canonical JSON-scalar contract for ordinary literals and constraints: exact built-in booleans and every finite built-in float validate and hash successfully, while NaN/Infinity and integers outside the signed 64-bit domain still fail closed.
+- Kept bool rejection local to integer-only slots and added a fixed `1,000,000` upper bound for `compiled_step_count`, preventing huge Python integers from escaping into compact payload serialization.
+- Added RED/GREEN coverage for bool literals and constraints, maximum finite floats, integer-only bool rejection, over-bound and 5,000-digit compiled counts, and compact JSON serialization at the supported boundary.
+- This correction remains inside the pure Task 1 domain. It does not add extraction, compilation, provider/runtime integration, live execution, or an M2c PASS claim; M2c remains **BLOCKED** and M3 remains locked.
+
 ### Harden semantic-authority validation
 
-- Made `mission-semantic-authority/v1` validation total across canonical hashing: lone surrogates, non-NFC text, hostile control characters, booleans, integers outside signed 64-bit range, non-finite or over-bound floats, and oversized canonical payloads now fail with closed non-echoing codes during validation.
+- Made `mission-semantic-authority/v1` validation total across canonical hashing: lone surrogates, non-NFC text, hostile control characters, integers outside signed 64-bit range, non-finite floats, and oversized canonical payloads now fail with closed non-echoing codes during validation.
 - Added fixed pre-copy resource bounds for requirements, proposed effects, unresolved items, UTF-8 targets, literal values, blocker lists, and whole-authority canonical bytes so validation, compact projection, sorting, deep copying, and hashing stay bounded.
 - Added deterministic RED/GREEN coverage for 20,000-item inputs, 4 KiB targets, oversized authorities, Unicode and number edge cases, validate-to-hash invariants, and a fixed UTF-8/number canonical SHA-256 golden vector.
 - This hardening commit remains inside the pure Task 1 domain. It does not add extraction, compilation, provider/runtime integration, live execution, or an M2c PASS claim; M2c remains **BLOCKED** and M3 remains locked.
