@@ -39,7 +39,7 @@ from .models import (
     utc_now,
 )
 from .conversation.models import ConversationMutation
-from .orchestration.leader import LeaderOrchestrator
+from .orchestration.leader import LeaderOrchestrator, rebuild_compiled_semantic_plan
 from .providers import LeaderPlanRequest, LeaderProvider
 from .providers.base import validate_provider_plan_schema
 from .providers.plan_schema import (
@@ -205,6 +205,8 @@ class LeaderMissionCandidate:
     selected_agent_ids: tuple[str, ...] | None = None
     step_count: int | None = None
     leader_generation: dict[str, object] | None = None
+    semantic_authority: dict[str, object] | None = None
+    semantic_diagnostics: tuple[dict[str, object], ...] = ()
 
 
 _CHINESE_COUNT_DIGITS = {
@@ -603,6 +605,15 @@ def create_mission_preview_from_candidate(
         raise MissionPreviewError("mission preview candidate authority invalid")
     if candidate.selected_agent_ids is None and candidate.leader_generation is not None:
         raise MissionPreviewError("mission preview generation invalid")
+    plan_is_semantic = (
+        type(candidate.plan) is dict
+        and (
+            "semantic_authority" in candidate.plan
+            or "semantic_steps" in candidate.plan
+        )
+    )
+    if (candidate.semantic_authority is None) != (not plan_is_semantic):
+        raise MissionPreviewError("mission preview plan invalid")
     if candidate.step_count is not None and (
         type(candidate.step_count) is not int
         or candidate.step_count < 2
@@ -640,14 +651,55 @@ def create_mission_preview_from_candidate(
                     selected_agent_ids=candidate.selected_agent_ids,
                     step_count=candidate.step_count,
                     timeout_seconds=candidate.timeout_seconds,
+                    semantic_authority=deepcopy(candidate.semantic_authority),
                 ),
                 provider=provider,
                 provenance=candidate.leader_generation,
             )
         except Exception:
             raise MissionPreviewError("mission preview generation invalid") from None
+        if candidate.semantic_authority is not None:
+            # Task 7 validates semantic generation transiently. Task 8 owns its
+            # durable plan/Mission representation and confirmation binding.
+            leader_generation = None
     try:
         raw_plan = deepcopy(candidate.plan)
+        if candidate.semantic_authority is not None:
+            draft_authority = deepcopy(candidate.semantic_authority)
+            draft_authority["proposed_effects"] = []
+            raw_plan = rebuild_compiled_semantic_plan(
+                LeaderPlanRequest(
+                    task=candidate.user_message,
+                    config=selected_config,
+                    model=candidate.model,
+                    skill_context=skill_context,
+                    selected_agent_ids=candidate.selected_agent_ids,
+                    step_count=candidate.step_count,
+                    timeout_seconds=candidate.timeout_seconds,
+                    semantic_authority=draft_authority,
+                ),
+                raw_plan,
+            )
+            if raw_plan["semantic_authority"] != candidate.semantic_authority:
+                raise ValueError("semantic authority drift")
+            raw_plan = {
+                "goal": raw_plan["goal"],
+                "summary": raw_plan["summary"],
+                "steps": [
+                    {
+                        key: deepcopy(step[key])
+                        for key in (
+                            "step",
+                            "agent_id",
+                            "role",
+                            "task",
+                            "risk",
+                            "requires_approval",
+                        )
+                    }
+                    for step in raw_plan["steps"]
+                ],
+            }
         validate_provider_plan_schema(raw_plan, config=selected_config)
         validate_mission_plan(raw_plan, selected_agent_ids, candidate.timeout_seconds)
         if len(raw_plan["steps"]) != step_count:

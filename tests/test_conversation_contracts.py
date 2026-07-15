@@ -65,6 +65,28 @@ def test_conversation_runtime_rejects_unsafe_or_contradictory_controls() -> None
     assert "conversation_runtime controls cannot enable execute as inspect" in validation["errors"]
 
 
+def test_conversation_runtime_exposes_exact_semantic_clarification_card() -> None:
+    payload = conversation_runtime_example()
+    card = payload["semantic_clarification_card"]
+
+    assert set(card) == {
+        "schema_version", "authority_hash", "unresolved_count", "question", "controls"
+    }
+    assert {control["kind"] for control in card["controls"]} == {"clarify", "inspect"}
+    assert all(control["kind"] not in {"execute", "dispatch", "confirm"} for control in card["controls"])
+    assert validate_conversation_runtime_contract(payload) == {"ok": True, "errors": []}
+
+    unsafe = deepcopy(payload)
+    unsafe["semantic_clarification_card"]["controls"].append(
+        {"kind": "confirm", "label": "Confirm", "command": "yes", "safety": "explicit_user", "enabled": True, "blocker": None}
+    )
+    assert validate_conversation_runtime_contract(unsafe)["ok"] is False
+
+    hostile = deepcopy(payload)
+    hostile["semantic_clarification_card"]["question"] = "\ud800"
+    assert validate_conversation_runtime_contract(hostile)["ok"] is False
+
+
 def test_leader_backend_rejects_ready_backend_with_blockers_and_silent_fallback() -> None:
     payload = leader_backend_example()
     payload["readiness"] = "ready"

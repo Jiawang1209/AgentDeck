@@ -18,6 +18,10 @@ from ..mission_orchestration import (
 from ..mission import mission_intent, select_mission_agents
 from ..models import EventRecord, ProjectConfig, new_id, utc_now
 from ..state import StateStore, migration_preview
+from ..semantic_authority import (
+    extract_semantic_authority,
+    semantic_authority_hash,
+)
 from .bindings import execution_digest
 from .leader_gateway import (
     CancellationToken,
@@ -43,6 +47,71 @@ from .router import (
     confirm_project_setup,
     execute_bound_preview,
 )
+
+
+def _explicit_semantic_phases(text: str, step_count: int) -> tuple[str, ...] | None:
+    phases = ("implementation", "review", "revision", "acceptance")
+    if step_count != len(phases):
+        return None
+    positions = tuple(
+        (
+            match.start()
+            if (
+                match := re.search(
+                    rf"(?<![A-Za-z0-9_]){re.escape(phase)}(?![A-Za-z0-9_])",
+                    text,
+                )
+            )
+            is not None
+            else -1
+        )
+        for phase in phases
+    )
+    if all(position >= 0 for position in positions) and positions == tuple(
+        sorted(positions)
+    ):
+        return phases
+    return None
+
+
+def _semantic_extraction_event(authority: dict[str, object]) -> EventRecord:
+    return EventRecord.create(
+        "semantic_authority_extracted",
+        {
+            "schema_version": authority["schema_version"],
+            "authority_hash": semantic_authority_hash(authority),
+            "requirement_count": len(authority["requirements"]),
+            "unresolved_count": len(authority["unresolved"]),
+        },
+    )
+
+
+def _semantic_clarification_card(authority: dict[str, object]) -> dict[str, object]:
+    unresolved = authority["unresolved"]
+    return {
+        "schema_version": authority["schema_version"],
+        "authority_hash": semantic_authority_hash(authority),
+        "unresolved_count": len(unresolved),
+        "question": "请明确每一步的目标、操作和精确预期值后重新提交任务。",
+        "controls": [
+            {
+                "kind": "clarify",
+                "label": "Provide clarification",
+                "command": "reply with clarified mission requirements",
+                "safety": "inspect",
+                "enabled": True,
+                "blocker": None,
+            },
+            {
+                "kind": "inspect",
+                "label": "Inspect status",
+                "command": "agentdeck status",
+                "safety": "inspect",
+                "enabled": True,
+                "blocker": None,
+            },
+        ],
+    }
 
 
 @dataclass(frozen=True)
@@ -463,6 +532,8 @@ class ConversationSession:
                 events=(EventRecord.create("conversation_turn_started", {"conversation_id": self.conversation_id, "turn_id": turn_id}),),
             )
         )
+        semantic_event: EventRecord | None = None
+        semantic_active = False
         try:
             intent = mission_intent(text, self.config)
             requested_agent_ids = (
@@ -493,6 +564,66 @@ class ConversationSession:
                 step_count = requested_mission_step_count(text, default=2)
             except ValueError:
                 raise LeaderGatewayError("schema", "authority_invalid") from None
+            try:
+                semantic_authority = extract_semantic_authority(
+                    text,
+                    selected_agent_ids=selected,
+                    step_count=step_count,
+                    phases=_explicit_semantic_phases(text, step_count),
+                )
+            except Exception:
+                raise LeaderGatewayError(
+                    "schema",
+                    "authority_invalid",
+                    attempt_count=0,
+                    constraint_mode="prompt_only",
+                ) from None
+            semantic_active = bool(
+                semantic_authority["requirements"]
+                or semantic_authority["unresolved"]
+            )
+            semantic_event = (
+                _semantic_extraction_event(semantic_authority)
+                if semantic_active
+                else None
+            )
+            if semantic_authority["unresolved"]:
+                card = _semantic_clarification_card(semantic_authority)
+                self.store.commit_conversation_mutation(
+                    ConversationMutation(
+                        append_records={
+                            "conversation_state_transitions": (
+                                self._transition(
+                                    "turn", turn_id, "waiting_leader", "completed",
+                                    "semantic_clarification_required",
+                                ),
+                                self._transition(
+                                    "conversation", self.conversation_id, "busy", "ready",
+                                    "leader_turn_terminal",
+                                ),
+                            )
+                        },
+                        events=(
+                            semantic_event,
+                            EventRecord.create(
+                                "conversation_turn_terminal",
+                                {
+                                    "conversation_id": self.conversation_id,
+                                    "turn_id": turn_id,
+                                    "state": "completed",
+                                    "stage": "semantic_clarification",
+                                },
+                            ),
+                        ),
+                    )
+                )
+                return ConversationResponse(
+                    "semantic_clarification",
+                    {
+                        "mode": "semantic_clarification",
+                        "semantic_clarification_card": card,
+                    },
+                )
             planning_task = mission_planning_task(
                 text,
                 selected_agent_ids=selected,
@@ -509,6 +640,9 @@ class ConversationSession:
                     ),
                     selected_agent_ids=selected,
                     step_count=step_count,
+                    semantic_authority=(
+                        semantic_authority if semantic_active else None
+                    ),
                 ),
                 self.cancel_token,
             )
@@ -516,11 +650,27 @@ class ConversationSession:
                 candidate_authority_matches = (
                     candidate.selected_agent_ids == selected
                     and candidate.step_count == step_count
+                    and (
+                        not semantic_active
+                        or candidate.semantic_authority is not None
+                        and semantic_authority_hash(candidate.semantic_authority)
+                        == semantic_authority_hash(
+                            candidate.plan["semantic_authority"]
+                        )
+                    )
                 )
             except Exception:
-                raise LeaderGatewayError("schema") from None
+                raise LeaderGatewayError(
+                    "schema",
+                    "semantic_compilation_drift" if semantic_active else None,
+                    attempt_count=1 if semantic_active else 0,
+                ) from None
             if not candidate_authority_matches:
-                raise LeaderGatewayError("schema")
+                raise LeaderGatewayError(
+                    "schema",
+                    "semantic_compilation_drift" if semantic_active else None,
+                    attempt_count=1 if semantic_active else 0,
+                )
             captured_binding: dict[str, object] = {}
 
             def mutation_factory(payload: dict[str, object]) -> ConversationMutation:
@@ -562,7 +712,40 @@ class ConversationSession:
                             self._transition("preview", str(binding["preview_id"]), None, "pending", "preview_created"),
                         ),
                     },
-                    events=(EventRecord.create("conversation_preview_presented", {"conversation_id": self.conversation_id, "turn_id": turn_id, "preview_id": binding["preview_id"]}),),
+                    events=(
+                        *((semantic_event,) if semantic_event is not None else ()),
+                        *(
+                            EventRecord.create(
+                                "leader_semantic_candidate_rejected",
+                                {
+                                    "code": diagnostic["code"],
+                                    "attempt_count": diagnostic["attempt_count"],
+                                },
+                            )
+                            for diagnostic in candidate.semantic_diagnostics
+                        ),
+                        *(
+                            (
+                                EventRecord.create(
+                                    "leader_semantic_candidate_regenerated",
+                                    {"attempt_count": 2},
+                                ),
+                            )
+                            if any(
+                                diagnostic["regeneration_used"]
+                                for diagnostic in candidate.semantic_diagnostics
+                            )
+                            else ()
+                        ),
+                        EventRecord.create(
+                            "conversation_preview_presented",
+                            {
+                                "conversation_id": self.conversation_id,
+                                "turn_id": turn_id,
+                                "preview_id": binding["preview_id"],
+                            },
+                        ),
+                    ),
                 )
 
             try:
@@ -579,7 +762,11 @@ class ConversationSession:
                     conversation_mutation_factory=mutation_factory,
                 )
             except Exception:
-                raise LeaderGatewayError("schema") from None
+                raise LeaderGatewayError(
+                    "schema",
+                    "semantic_compilation_drift" if semantic_active else None,
+                    attempt_count=1 if semantic_active else 0,
+                ) from None
             payload["preview_binding"] = {
                 "preview_id": captured_binding["preview_id"],
                 "expires_at": captured_binding["expires_at"],
@@ -606,7 +793,21 @@ class ConversationSession:
                                 self._transition("conversation", self.conversation_id, "busy", "ready", "leader_turn_terminal"),
                             )
                         },
-                        events=(EventRecord.create("conversation_turn_terminal", {
+                        events=(
+                            (
+                                semantic_event,
+                                EventRecord.create(
+                                    "leader_semantic_candidate_rejected",
+                                    {
+                                        "code": error.diagnostic_code,
+                                        "attempt_count": error.attempt_count,
+                                    },
+                                ),
+                            )
+                            if semantic_event is not None
+                            and error.diagnostic_code is not None
+                            else ((semantic_event,) if semantic_event is not None else ())
+                        ) + (EventRecord.create("conversation_turn_terminal", {
                             "conversation_id": self.conversation_id,
                             "turn_id": turn_id,
                             "state": state,

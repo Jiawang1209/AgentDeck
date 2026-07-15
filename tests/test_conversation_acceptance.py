@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from agentdeck import cli
-from agentdeck.config import load_config
+from agentdeck.config import load_config, write_default_config
 from agentdeck.contracts import (
     validate_conversation_runtime_contract,
     validate_leader_backend_contract,
@@ -24,7 +24,8 @@ from agentdeck.providers import LeaderPlanRequest
 from agentdeck.providers.plan_schema import build_leader_generation_provenance
 
 
-MISSION_TEXT = "让 planner 和 reviewer 串行完成验收，共2轮，secret=must-not-persist"
+MISSION_TEXT = "让 planner 和 reviewer 串行完成验收，共2轮"
+SENSITIVE_MISSION_TEXT = f"{MISSION_TEXT}，secret=must-not-persist"
 
 
 def _plan() -> dict[str, object]:
@@ -53,7 +54,11 @@ def _plan() -> dict[str, object]:
 
 
 class _FakeLeader:
+    def __init__(self) -> None:
+        self.calls = 0
+
     def generate_mission(self, request, cancel):
+        self.calls += 1
         if cancel.cancelled:
             raise LeaderGatewayError("Leader request cancelled")
         return LeaderMissionCandidate(
@@ -78,6 +83,37 @@ class _FakeLeader:
                 constraint_mode="local",
             ),
         )
+
+
+def test_sensitive_semantic_intake_clarifies_without_leader_or_scheduling_state(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "sensitive"
+    root.mkdir()
+    (root / ".git").mkdir()
+    write_default_config(root)
+    config_path = root / ".agentdeck" / "config.toml"
+    config_text = config_path.read_text(encoding="utf-8")
+    config_text = config_text.replace('provider = "deepseek"', 'provider = "fake"', 1)
+    config_text = config_text.replace('model = "deepseek-chat"', 'model = "acceptance-model"', 1)
+    config_path.write_text(config_text, encoding="utf-8")
+    leader = _FakeLeader()
+    session = ConversationSession(root=root, leader_gateway=leader)
+
+    response = session.handle(SENSITIVE_MISSION_TEXT)
+
+    assert response.kind == "semantic_clarification"
+    assert leader.calls == 0
+    state = session.store.load()
+    for key in (
+        "plans", "missions", "approvals", "messages", "jobs", "inbox",
+        "conversation_preview_bindings",
+    ):
+        assert state.get(key, []) == []
+    persisted = json.dumps(state, ensure_ascii=False)
+    events = json.dumps(session.store.all_events(), ensure_ascii=False)
+    assert SENSITIVE_MISSION_TEXT not in persisted + events
+    assert "must-not-persist" not in persisted + events
 
 
 class _CancelledLeader:
@@ -178,7 +214,6 @@ def test_phase3_m1_foreground_conversation_acceptance(
     state = session.store.load()
     project_view = session.store.project_view(session.config)
     persisted = json.dumps(state, ensure_ascii=False)
-    assert MISSION_TEXT not in persisted
     assert "must-not-persist" not in persisted
     assert len(state["plans"]) == len(state["missions"]) == 1
     assert state["conversation_event_outbox"] == []

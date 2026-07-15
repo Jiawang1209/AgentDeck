@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import dataclass
 import asyncio
 import json
@@ -14,6 +15,7 @@ from ..providers.cli_subprocess import (
     CliLeaderProviderError,
     cli_native_schema_ready,
 )
+from ..providers.openai_compatible import OpenAICompatibleProviderError
 from ..providers.plan_schema import (
     LEADER_CONSTRAINT_MODES,
     LEADER_PLAN_DIAGNOSTIC_CODES,
@@ -25,6 +27,8 @@ from ..providers.plan_schema import (
 from ..runtime.acp import AcpTransport
 from ..runtime.acp_client import AgentDeckAcpClient, PermissionDecision
 from ..runtime.acp_mapping import ensure_turn_within_bounds
+from ..semantic_authority import validate_semantic_authority
+from ..semantic_planning import SemanticPlanningError
 
 
 MAX_LEADER_OUTPUT_BYTES = 2 * 1024 * 1024
@@ -156,6 +160,7 @@ class LeaderRequest:
     skill_context: dict[str, object] | None
     selected_agent_ids: tuple[str, ...] | None = None
     step_count: int | None = None
+    semantic_authority: dict[str, object] | None = None
 
 
 @dataclass(frozen=True)
@@ -325,6 +330,19 @@ class LeaderGateway:
     ) -> LeaderMissionCandidate:
         if cancel.cancelled:
             raise LeaderGatewayError("cancelled")
+        semantic_authority: dict[str, object] | None = None
+        if request.semantic_authority is not None:
+            try:
+                semantic_authority = validate_semantic_authority(
+                    request.semantic_authority
+                )
+            except Exception:
+                raise LeaderGatewayError(
+                    "schema",
+                    "authority_invalid",
+                    attempt_count=0,
+                    constraint_mode="prompt_only",
+                ) from None
         invalid_authority = False
         try:
             leader_plan_authority(
@@ -336,6 +354,7 @@ class LeaderGateway:
                     selected_agent_ids=request.selected_agent_ids,
                     step_count=request.step_count,
                     timeout_seconds=request.timeout_seconds,
+                    semantic_authority=deepcopy(semantic_authority),
                 )
             )
         except ProviderPlanValidationError:
@@ -362,6 +381,7 @@ class LeaderGateway:
                     selected_agent_ids=request.selected_agent_ids,
                     step_count=request.step_count,
                     timeout_seconds=request.timeout_seconds,
+                    semantic_authority=deepcopy(semantic_authority),
                 )
                 plan = validate_provider_plan_schema(
                     plan,
@@ -406,6 +426,7 @@ class LeaderGateway:
                     selected_agent_ids=request.selected_agent_ids,
                     step_count=request.step_count,
                     timeout_seconds=request.timeout_seconds,
+                    semantic_authority=deepcopy(semantic_authority),
                 )
                 plan = result.plan
                 leader_generation = result.leader_generation
@@ -416,6 +437,13 @@ class LeaderGateway:
                     attempt_count=error.attempt_count,
                     constraint_mode=error.constraint_mode or mode,
                 )
+            except OpenAICompatibleProviderError as error:
+                gateway_failure = LeaderGatewayError(
+                    error.stage,
+                    error.diagnostic_code,
+                    attempt_count=error.attempt_count,
+                    constraint_mode=mode,
+                )
             except ProviderPlanValidationError as error:
                 gateway_failure = LeaderGatewayError(
                     "schema",
@@ -424,6 +452,10 @@ class LeaderGateway:
                     constraint_mode=(
                         "prompt_only" if error.code == "authority_invalid" else mode
                     ),
+                )
+            except SemanticPlanningError as error:
+                gateway_failure = LeaderGatewayError(
+                    "schema", error.code, attempt_count=1, constraint_mode=mode
                 )
             except Exception:
                 gateway_failure = LeaderGatewayError(
@@ -439,6 +471,26 @@ class LeaderGateway:
             raise _post_generation_failure("schema", leader_generation) from None
         if len(encoded) > MAX_LEADER_OUTPUT_BYTES:
             raise _post_generation_failure("oversize", leader_generation)
+        frozen_authority: dict[str, object] | None = None
+        if semantic_authority is not None:
+            try:
+                frozen_authority = validate_semantic_authority(
+                    plan["semantic_authority"]
+                )
+                frozen_required = deepcopy(frozen_authority)
+                draft_required = deepcopy(semantic_authority)
+                frozen_required["proposed_effects"] = []
+                draft_required["proposed_effects"] = []
+                if frozen_required != draft_required:
+                    raise ValueError("semantic authority drift")
+            except Exception:
+                failure = _post_generation_failure("schema", leader_generation)
+                raise LeaderGatewayError(
+                    "schema",
+                    "semantic_compilation_drift",
+                    attempt_count=failure.attempt_count,
+                    constraint_mode=failure.constraint_mode,
+                ) from None
         return LeaderMissionCandidate(
             provider=status.provider,
             model=status.model,
@@ -448,4 +500,10 @@ class LeaderGateway:
             selected_agent_ids=request.selected_agent_ids,
             step_count=request.step_count,
             leader_generation=leader_generation,
+            semantic_authority=frozen_authority,
+            semantic_diagnostics=(
+                result.semantic_diagnostics
+                if status.transport != "acp" and semantic_authority is not None
+                else ()
+            ),
         )

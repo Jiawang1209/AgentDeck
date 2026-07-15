@@ -4,6 +4,15 @@
 
 ## 2026-07-15
 
+### Bind foreground conversation planning to semantic authority
+
+- Routed deterministic Mission intake through the semantic extractor after Worker selection, count, and explicit four-phase order are frozen. Extractor output with no requirements and no unresolved facts keeps the exact legacy structured-planning path; any unresolved fact returns a bounded clarification card without invoking a Leader or creating scheduling state.
+- Intentionally upgraded legacy sensitive-intake behavior: a Mission text containing an inline secret assignment now stops at semantic clarification with zero Leader calls and zero scheduling state instead of relying on later provenance redaction. Benign open goals retain the original preview/confirmation flow, and existing redaction remains defense in depth for legacy persisted paths.
+- Added defensive semantic authority to `LeaderRequest` and the transient `LeaderMissionCandidate` tuple. Gateway and Mission landing now reject source-hash, required-byte, Worker-order, step-count, frozen-authority, or freshly compiled compatibility-task drift before preview creation.
+- Reused one public compiled-semantic-plan reconstruction validator across Leader orchestration and conversation landing. Task 7 validates semantic generation provenance transiently but intentionally leaves semantic plan/Mission persistence and confirmation binding to Task 8.
+- Added compact extraction, candidate-rejection, and successful-regeneration audit events containing only schema/hash/count/closed-code facts. Double semantic failure records only the required conversation lifecycle plus safe audit facts and creates no plan, Mission, preview binding, approval, message, job, or inbox.
+- Extended `conversation-runtime/v1` discovery with the exact `semantic_clarification_card` shape and clarify/inspect-only controls. Added RED/GREEN conversation, Gateway mutation, landing drift, regeneration, leakage-negative, and exact live-shaped fake-provider coverage; no real provider, network, tmux, ACP, daemon execution, or live M2c attempt was performed.
+
 ### Apply semantic authority across local and API Leaders
 
 - Added deterministic semantic-candidate construction to the fake Leader and routed it through the same `compile_semantic_plan()` boundary as real providers. Legacy fake plans retain their exact five-field shape and local, schema-free generation provenance.

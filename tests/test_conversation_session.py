@@ -1,20 +1,33 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from copy import deepcopy
 from pathlib import Path
 
 import pytest
 
 from agentdeck.config import load_config, write_default_config
-from agentdeck.conversation.leader_gateway import LeaderGatewayError
+from agentdeck.conversation.leader_gateway import LeaderGateway, LeaderGatewayError
 from agentdeck.conversation.session import ConversationSession
 from agentdeck.mission_orchestration import LeaderMissionCandidate
 from agentdeck.providers import LeaderPlanRequest
+from agentdeck.providers import LeaderPlanResult
+from agentdeck.providers.fake import FakeLeaderProvider
 from agentdeck.providers.plan_schema import build_leader_generation_provenance
 from agentdeck.state import StateStore
+from agentdeck.semantic_authority import extract_semantic_authority
 
 
 MESSAGE = "让 Codex 和 Claude 一人一句接龙百家姓，共2轮"
+SEMANTIC_MESSAGE = (
+    "Have planner and reviewer complete 4 steps strictly sequentially. "
+    "The phases must be exactly implementation, review, revision, acceptance: "
+    "First, planner creates artifact.txt with content exactly draft-v1 newline; "
+    "Second, reviewer performs a read-only review and requires accepted-v2; "
+    "Third, planner updates artifact.txt to exactly accepted-v2 newline; "
+    "Fourth, reviewer performs read-only verification of the exact bytes. "
+    "There are 4 steps.\n"
+)
 
 
 def _generation(request) -> dict[str, object]:
@@ -88,6 +101,252 @@ class _Gateway:
             step_count=request.step_count,
             leader_generation=_generation(request),
         )
+
+
+def test_semantic_clarification_never_calls_leader_or_creates_scheduling_state(
+    tmp_path: Path,
+) -> None:
+    config, store = _project(tmp_path)
+    gateway = _Gateway()
+    session = ConversationSession(root=tmp_path, leader_gateway=gateway)
+
+    response = session.handle(
+        "让 planner 和 reviewer 完成2步：第一轮 planner 创建 artifact.txt；"
+        "第二轮 reviewer 验收 artifact.txt"
+    )
+
+    assert response.kind == "semantic_clarification"
+    card = response.payload["semantic_clarification_card"]
+    assert set(card) == {
+        "schema_version", "authority_hash", "unresolved_count", "question", "controls"
+    }
+    assert card["unresolved_count"] > 0
+    assert 0 < len(card["question"].encode("utf-8")) <= 512
+    assert {item["kind"] for item in card["controls"]} == {"clarify", "inspect"}
+    assert gateway.calls == 0
+    state = store.load()
+    for key in ("plans", "missions", "approvals", "messages", "jobs", "inbox"):
+        assert state.get(key, []) == []
+    assert state["conversation_preview_bindings"] == []
+
+
+def test_exact_live_shaped_request_reaches_one_semantic_preview(tmp_path: Path) -> None:
+    _config, store = _project(tmp_path)
+    session = ConversationSession(root=tmp_path)
+
+    response = session.handle(SEMANTIC_MESSAGE)
+
+    assert response.kind == "mission_preview"
+    state = store.load()
+    assert len(state["plans"]) == len(state["missions"]) == 1
+    assert len(state["conversation_preview_bindings"]) == 1
+    assert any(
+        event["event_type"] == "semantic_authority_extracted"
+        for event in store.all_events()
+    )
+
+
+def test_session_and_gateway_deep_copy_exact_authority_through_provider_request(
+    tmp_path: Path,
+) -> None:
+    _config, _store = _project(tmp_path)
+    expected = extract_semantic_authority(
+        SEMANTIC_MESSAGE,
+        selected_agent_ids=("planner", "reviewer"),
+        step_count=4,
+        phases=("implementation", "review", "revision", "acceptance"),
+    )
+    observations: dict[str, object] = {}
+
+    class RecordingProvider(FakeLeaderProvider):
+        def plan_result(self, request):
+            observations["provider_authority"] = deepcopy(request.semantic_authority)
+            observations["provider_authority_id"] = id(request.semantic_authority)
+            result = super().plan_result(request)
+            request.semantic_authority["requirements"].clear()
+            return result
+
+    inner = LeaderGateway(provider_factory=lambda _name: RecordingProvider())
+
+    class RecordingGateway:
+        def generate_mission(self, request, cancel):
+            observations["leader_request_authority"] = deepcopy(
+                request.semantic_authority
+            )
+            observations["leader_request_authority_id"] = id(
+                request.semantic_authority
+            )
+            candidate = inner.generate_mission(request, cancel)
+            observations["candidate_authority"] = deepcopy(
+                candidate.semantic_authority
+            )
+            observations["candidate_plan"] = deepcopy(candidate.plan)
+            return candidate
+
+    response = ConversationSession(
+        root=tmp_path, leader_gateway=RecordingGateway()
+    ).handle(SEMANTIC_MESSAGE)
+
+    assert response.kind == "mission_preview"
+    assert observations["leader_request_authority"] == expected
+    assert observations["provider_authority"] == expected
+    assert observations["candidate_authority"] == expected
+    assert observations["leader_request_authority_id"] != observations["provider_authority_id"]
+    assert expected["requirements"]
+    state = _store.load()
+    persisted_plan = state["plans"][0]["plan"]
+    assert set(persisted_plan) == {"goal", "summary", "steps"}
+    assert all(
+        set(step) == {
+            "step", "agent_id", "role", "task", "risk", "requires_approval",
+        }
+        for step in persisted_plan["steps"]
+    )
+    assert [step["task"] for step in persisted_plan["steps"]] == [
+        step["task"] for step in observations["candidate_plan"]["steps"]
+    ]
+    rendered_records = str({"plans": state["plans"], "missions": state["missions"]})
+    for semantic_key in ("semantic_authority", "semantic_steps", "semantic_step_hash"):
+        assert semantic_key not in rendered_records
+
+
+def test_double_semantic_failure_writes_only_turn_terminal_and_safe_audit(
+    tmp_path: Path,
+) -> None:
+    _config, store = _project(tmp_path)
+
+    class FailedGateway:
+        calls = 0
+
+        def generate_mission(self, request, _cancel):
+            self.calls += 1
+            assert request.semantic_authority is not None
+            raise LeaderGatewayError(
+                "schema", "semantic_candidate_missing_requirement",
+                attempt_count=2, constraint_mode="local",
+            )
+
+    gateway = FailedGateway()
+    response = ConversationSession(root=tmp_path, leader_gateway=gateway).handle(
+        SEMANTIC_MESSAGE
+    )
+
+    assert response.kind == "failed"
+    assert gateway.calls == 1
+    state = store.load()
+    for key in (
+        "plans", "missions", "approvals", "messages", "jobs", "inbox",
+        "conversation_preview_bindings",
+    ):
+        assert state.get(key, []) == []
+    assert len(state["conversation_sessions"]) == 1
+    assert len(state["conversation_turns"]) == 1
+    turn_id = state["conversation_turns"][0]["turn_id"]
+    turn_transitions = [
+        item for item in state["conversation_state_transitions"]
+        if item["entity_type"] == "turn" and item["entity_id"] == turn_id
+    ]
+    assert [item["to_state"] for item in turn_transitions] == [
+        "created", "routing", "waiting_leader", "failed"
+    ]
+    assert all(
+        item["to_state"] not in {"presenting_preview", "waiting_confirmation"}
+        for item in state["conversation_state_transitions"]
+    )
+    semantic_events = [
+        event for event in store.all_events()
+        if event["event_type"] in {
+            "semantic_authority_extracted", "leader_semantic_candidate_rejected"
+        }
+    ]
+    assert [event["event_type"] for event in semantic_events] == [
+        "semantic_authority_extracted", "leader_semantic_candidate_rejected"
+    ]
+    assert set(semantic_events[0]["payload"]) == {
+        "schema_version", "authority_hash", "requirement_count", "unresolved_count"
+    }
+    assert semantic_events[1]["payload"] == {
+        "code": "semantic_candidate_missing_requirement", "attempt_count": 2
+    }
+    rendered = str([event["payload"] for event in semantic_events])
+    for forbidden in (SEMANTIC_MESSAGE, "artifact.txt", "draft-v1", "prompt", "stdout", "stderr", "/Users/", "secret"):
+        assert forbidden not in rendered
+
+
+def test_successful_semantic_regeneration_emits_compact_audit(tmp_path: Path) -> None:
+    _config, store = _project(tmp_path)
+
+    class RegeneratedProvider(FakeLeaderProvider):
+        def plan_result(self, request):
+            result = super().plan_result(request)
+            return LeaderPlanResult(
+                plan=result.plan,
+                leader_generation=result.leader_generation,
+                semantic_diagnostics=(
+                    {
+                        "code": "semantic_candidate_missing_requirement",
+                        "attempt_count": 2,
+                        "regeneration_used": True,
+                    },
+                ),
+            )
+
+    session = ConversationSession(
+        root=tmp_path,
+        leader_gateway=LeaderGateway(
+            provider_factory=lambda _name: RegeneratedProvider()
+        ),
+    )
+    response = session.handle(SEMANTIC_MESSAGE)
+
+    assert response.kind == "mission_preview"
+    events = store.all_events()
+    assert [
+        event["payload"] for event in events
+        if event["event_type"] == "leader_semantic_candidate_rejected"
+    ] == [{"code": "semantic_candidate_missing_requirement", "attempt_count": 2}]
+    assert [
+        event["payload"] for event in events
+        if event["event_type"] == "leader_semantic_candidate_regenerated"
+    ] == [{"attempt_count": 2}]
+
+
+def test_semantic_landing_rejection_emits_closed_safe_audit_and_zero_scheduling(
+    tmp_path: Path,
+) -> None:
+    _config, store = _project(tmp_path)
+    inner = LeaderGateway(provider_factory=lambda _name: FakeLeaderProvider())
+
+    class TamperingGateway:
+        def generate_mission(self, request, cancel):
+            candidate = inner.generate_mission(request, cancel)
+            plan = deepcopy(candidate.plan)
+            plan["steps"][0]["task"] += " task-tamper-secret"
+            return replace(candidate, plan=plan)
+
+    response = ConversationSession(
+        root=tmp_path, leader_gateway=TamperingGateway()
+    ).handle(SEMANTIC_MESSAGE)
+
+    assert response.kind == "failed"
+    state = store.load()
+    for key in (
+        "plans", "missions", "approvals", "messages", "jobs", "inbox",
+        "conversation_preview_bindings",
+    ):
+        assert state.get(key, []) == []
+    rejected = [
+        event for event in store.all_events()
+        if event["event_type"] == "leader_semantic_candidate_rejected"
+    ]
+    assert [event["payload"] for event in rejected] == [
+        {"code": "semantic_compilation_drift", "attempt_count": 1}
+    ]
+    rendered = str(rejected)
+    for forbidden in (
+        SEMANTIC_MESSAGE, "artifact.txt", "draft-v1", "task-tamper-secret"
+    ):
+        assert forbidden not in rendered
 
 
 def test_uninitialized_session_and_setup_preview_are_zero_write(tmp_path: Path) -> None:

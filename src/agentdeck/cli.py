@@ -2814,6 +2814,7 @@ def _conversation_runtime_card(project_view: dict[str, object]) -> dict[str, obj
             "available": active_turn is not None,
             "scope": "active_turn" if active_turn is not None else None,
         },
+        "semantic_clarification_card": None,
         "controls": [
             _control(
                 kind="inspect",

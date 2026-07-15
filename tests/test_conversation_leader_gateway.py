@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from copy import deepcopy
 import json
 from pathlib import Path
 import sys
@@ -15,6 +16,9 @@ from agentdeck.conversation.leader_gateway import (
     LeaderRequest,
 )
 from agentdeck.orchestration.leader import LeaderOrchestrator
+from agentdeck.providers.fake import FakeLeaderProvider
+from agentdeck.providers.openai_compatible import OpenAICompatibleProviderError
+from agentdeck.semantic_authority import extract_semantic_authority, semantic_authority_hash
 from agentdeck.providers import LeaderPlanRequest, LeaderPlanResult
 from agentdeck.providers.cli_subprocess import CliLeaderProviderError
 from agentdeck.providers.plan_schema import (
@@ -71,6 +75,135 @@ def _config(tmp_path: Path):
     (tmp_path / ".git").mkdir()
     write_default_config(tmp_path)
     return load_config(tmp_path)
+
+
+def _semantic_authority(config) -> dict[str, object]:
+    selected = tuple(agent.agent_id for agent in config.agents)
+    message = (
+        "First, planner creates artifact.txt with content exactly draft-v1 newline; "
+        "Second, reviewer performs read-only verification of the exact bytes. There are 2 steps."
+    )
+    return extract_semantic_authority(
+        message,
+        selected_agent_ids=selected,
+        step_count=2,
+        phases=("implementation", "acceptance"),
+    )
+
+
+def test_gateway_passes_defensive_semantic_authority_and_returns_frozen_tuple(
+    tmp_path: Path,
+) -> None:
+    base = _config(tmp_path)
+    config = replace(
+        base,
+        leader=replace(base.leader, provider="fake", model="fake-plan"),
+        agents=(base.agents[0], base.agents[2]),
+    )
+    authority = _semantic_authority(config)
+    expected_hash = semantic_authority_hash(authority)
+
+    candidate = LeaderGateway(provider_factory=lambda _name: FakeLeaderProvider()).generate_mission(
+        LeaderRequest(
+            config, "semantic mission", "semantic planning", 180, None,
+            selected_agent_ids=tuple(agent.agent_id for agent in config.agents),
+            step_count=2,
+            semantic_authority=authority,
+        ),
+        CancellationToken(),
+    )
+
+    authority["requirements"].clear()
+    assert candidate.semantic_authority is not None
+    assert semantic_authority_hash(candidate.semantic_authority) == expected_hash
+    assert semantic_authority_hash(candidate.plan["semantic_authority"]) == expected_hash
+    assert candidate.semantic_diagnostics == ()
+
+
+@pytest.mark.parametrize("mutation", ["authority_hash", "requirements", "worker_order", "count"])
+def test_gateway_closes_semantic_mutation_at_schema_before_candidate(
+    tmp_path: Path, mutation: str,
+) -> None:
+    base = _config(tmp_path)
+    config = replace(
+        base,
+        leader=replace(base.leader, provider="fake", model="fake-plan"),
+        agents=(base.agents[0], base.agents[2]),
+    )
+    authority = _semantic_authority(config)
+
+    class MutatingProvider(FakeLeaderProvider):
+        def plan_result(self, request):
+            result = super().plan_result(request)
+            plan = deepcopy(result.plan)
+            if mutation == "authority_hash":
+                plan["semantic_authority"]["source_message_hash"] = f"sha256:{'f' * 64}"
+            elif mutation == "requirements":
+                plan["semantic_authority"]["requirements"][0]["literal"] = "changed\n"
+            elif mutation == "worker_order":
+                plan["semantic_steps"][0]["agent_id"] = "reviewer"
+            else:
+                plan["steps"].pop()
+                plan["semantic_steps"].pop()
+            return LeaderPlanResult(
+                plan=plan,
+                leader_generation=result.leader_generation,
+                semantic_diagnostics=result.semantic_diagnostics,
+            )
+
+    gateway = LeaderGateway(provider_factory=lambda _name: MutatingProvider())
+    with pytest.raises(LeaderGatewayError) as raised:
+        gateway.generate_mission(
+            LeaderRequest(
+                config, "semantic mission", "semantic planning", 180, None,
+                selected_agent_ids=("planner", "reviewer"), step_count=2,
+                semantic_authority=authority,
+            ),
+            CancellationToken(),
+        )
+
+    assert raised.value.stage == "schema"
+    assert raised.value.diagnostic_code == "semantic_compilation_drift"
+
+
+def test_gateway_preserves_typed_semantic_api_double_failure_metadata(
+    tmp_path: Path,
+) -> None:
+    base = _config(tmp_path)
+    config = replace(
+        base,
+        leader=replace(
+            base.leader, provider="openai-compatible", model="api-model"
+        ),
+        agents=(base.agents[0], base.agents[2]),
+    )
+    authority = _semantic_authority(config)
+
+    class FailedApiProvider:
+        name = "openai-compatible"
+
+        def plan_result(self, _request):
+            raise OpenAICompatibleProviderError(
+                "schema", "semantic_candidate_missing_requirement",
+                attempt_count=2,
+            )
+
+    with pytest.raises(LeaderGatewayError) as raised:
+        LeaderGateway(provider_factory=lambda _name: FailedApiProvider()).generate_mission(
+            LeaderRequest(
+                config, "semantic mission", "semantic planning", 180, None,
+                selected_agent_ids=("planner", "reviewer"), step_count=2,
+                semantic_authority=authority,
+            ),
+            CancellationToken(),
+        )
+
+    assert (
+        raised.value.stage,
+        raised.value.diagnostic_code,
+        raised.value.attempt_count,
+        raised.value.constraint_mode,
+    ) == ("schema", "semantic_candidate_missing_requirement", 2, "json_object")
 
 
 def test_legacy_leader_config_derives_explicit_backend_identity(tmp_path: Path) -> None:

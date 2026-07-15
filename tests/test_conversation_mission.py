@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, replace
+from copy import deepcopy
 from pathlib import Path
 
 import pytest
@@ -24,6 +25,8 @@ from agentdeck.models import EventRecord
 from agentdeck.providers import LeaderPlanRequest
 from agentdeck.providers.plan_schema import build_leader_generation_provenance
 from agentdeck.state import StateStore
+from agentdeck.semantic_authority import extract_semantic_authority
+from agentdeck.semantic_planning import compile_semantic_plan
 
 
 MESSAGE = "让 Codex 和 Claude 一人一句接龙百家姓，共8轮"
@@ -104,6 +107,108 @@ def test_candidate_path_does_not_call_any_provider(
     assert [event["event_type"] for event in store.all_events()] == [
         "mission_preview_created"
     ]
+
+
+def test_semantic_candidate_landing_rejects_authority_and_compiled_task_drift(
+    tmp_path: Path,
+) -> None:
+    _root, config, store = _project(tmp_path)
+    selected = ("planner", "reviewer")
+    roles = {agent.agent_id: agent.role for agent in config.agents if agent.agent_id in selected}
+    authority = extract_semantic_authority(
+        "First, planner creates artifact.txt with content exactly draft-v1 newline; "
+        "Second, reviewer performs read-only verification of the exact bytes. There are 2 steps.",
+        selected_agent_ids=selected,
+        step_count=2,
+        phases=("implementation", "acceptance"),
+    )
+    refs = [item["requirement_id"] for item in authority["requirements"]]
+    semantic_candidate = {
+        "goal": "Create then verify artifact",
+        "summary": "Two exact steps",
+        "steps": [
+            {"step": 1, "agent_id": selected[0], "role": roles[selected[0]], "phase": "implementation", "authority_refs": [refs[0]], "proposed_effects": [], "verification": "Verify exact effect", "risk": "low", "requires_approval": True},
+            {"step": 2, "agent_id": selected[1], "role": roles[selected[1]], "phase": "acceptance", "authority_refs": [refs[1]], "proposed_effects": [], "verification": "Verify exact effect", "risk": "low", "requires_approval": True},
+        ],
+    }
+    plan = compile_semantic_plan(authority, semantic_candidate, selected_agent_ids=selected, roles=roles, step_count=2)
+    plan["steps"][0]["task"] += " drift"
+    candidate = LeaderMissionCandidate(
+        provider="fake", model="fake-plan", user_message="semantic mission",
+        plan=plan, timeout_seconds=180, selected_agent_ids=selected, step_count=2,
+        semantic_authority=authority,
+        leader_generation=build_leader_generation_provenance(
+            request=LeaderPlanRequest(
+                task="semantic mission", config=config, model="fake-plan",
+                selected_agent_ids=selected, step_count=2, timeout_seconds=180,
+                semantic_authority=authority,
+            ),
+            provider="fake", constraint_mode="local",
+        ),
+    )
+
+    with pytest.raises(MissionPreviewError, match="mission preview plan invalid"):
+        create_mission_preview_from_candidate(config=config, store=store, candidate=candidate)
+    assert store.load()["plans"] == []
+    assert store.load()["missions"] == []
+
+
+@pytest.mark.parametrize(
+    "mutation", ["candidate_without_compiled", "compiled_without_candidate", "hash_mismatch"]
+)
+def test_semantic_candidate_landing_requires_exact_transient_tuple(
+    tmp_path: Path, mutation: str,
+) -> None:
+    _root, config, store = _project(tmp_path)
+    selected = ("planner", "reviewer")
+    roles = {agent.agent_id: agent.role for agent in config.agents if agent.agent_id in selected}
+    authority = extract_semantic_authority(
+        "First, planner creates artifact.txt with content exactly draft-v1 newline; "
+        "Second, reviewer performs read-only verification of the exact bytes. There are 2 steps.",
+        selected_agent_ids=selected, step_count=2,
+        phases=("implementation", "acceptance"),
+    )
+    refs = [item["requirement_id"] for item in authority["requirements"]]
+    plan = compile_semantic_plan(
+        authority,
+        {
+            "goal": "Create then verify artifact", "summary": "Two exact steps",
+            "steps": [
+                {"step": 1, "agent_id": "planner", "role": roles["planner"], "phase": "implementation", "authority_refs": [refs[0]], "proposed_effects": [], "verification": "Verify exact effect", "risk": "low", "requires_approval": True},
+                {"step": 2, "agent_id": "reviewer", "role": roles["reviewer"], "phase": "acceptance", "authority_refs": [refs[1]], "proposed_effects": [], "verification": "Verify exact effect", "risk": "low", "requires_approval": True},
+            ],
+        },
+        selected_agent_ids=selected, roles=roles, step_count=2,
+    )
+    candidate_authority = deepcopy(authority)
+    candidate_plan = plan
+    if mutation == "candidate_without_compiled":
+        candidate_plan = {"goal": plan["goal"], "summary": plan["summary"], "steps": plan["steps"]}
+    elif mutation == "compiled_without_candidate":
+        candidate_authority = None
+    else:
+        candidate_authority["source_message_hash"] = f"sha256:{'f' * 64}"
+    generation = None
+    if candidate_authority is not None:
+        generation = build_leader_generation_provenance(
+            request=LeaderPlanRequest(
+                task="semantic mission", config=config, model="fake-plan",
+                selected_agent_ids=selected, step_count=2, timeout_seconds=180,
+                semantic_authority=candidate_authority,
+            ),
+            provider="fake", constraint_mode="local",
+        )
+    candidate = LeaderMissionCandidate(
+        provider="fake", model="fake-plan", user_message="semantic mission",
+        plan=candidate_plan, timeout_seconds=180, selected_agent_ids=selected,
+        step_count=2, semantic_authority=candidate_authority,
+        leader_generation=generation,
+    )
+
+    with pytest.raises(MissionPreviewError, match="mission preview plan invalid"):
+        create_mission_preview_from_candidate(config=config, store=store, candidate=candidate)
+    assert store.load()["plans"] == []
+    assert store.load()["missions"] == []
 
 
 def test_candidate_frozen_authority_survives_redacted_message_and_excludes_third_worker(

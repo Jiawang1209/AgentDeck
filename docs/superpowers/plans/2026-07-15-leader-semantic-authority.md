@@ -941,7 +941,7 @@ git commit -m "Apply semantic authority across Leader providers"
 - Modify: `docs/contracts/conversation-runtime-schema.md`
 - Modify: `HISTORY.md`
 
-- [ ] **Step 1: Add RED conversation tests**
+- [x] **Step 1: Add RED conversation tests**
 
 Cover these paths:
 
@@ -963,13 +963,13 @@ Assert the conversation contract exposes one bounded
 `schema_version/authority_hash/unresolved_count/question/controls`; controls
 are clarify/inspect affordances only and cannot confirm or dispatch.
 
-- [ ] **Step 2: Run RED conversation targets**
+- [x] **Step 2: Run RED conversation targets**
 
 ```bash
 conda run -n agentdeck pytest tests/test_conversation_leader_gateway.py tests/test_conversation_session.py tests/test_conversation_mission.py -k semantic -q
 ```
 
-- [ ] **Step 3: Wire extraction and authority through the Gateway**
+- [x] **Step 3: Wire extraction and authority through the Gateway**
 
 Preserve all existing fields and defaults. Add this field to `LeaderRequest`:
 
@@ -1008,13 +1008,13 @@ candidate, target, literal, prompt, stdout/stderr, path, or secret.
 Gateway and landing validate the transient tuple exactly before the Conversation
 mutation consumes it; the tuple is not added to plan/Mission records.
 
-- [ ] **Step 4: Run conversation GREEN and legacy regression**
+- [x] **Step 4: Run conversation GREEN and legacy regression**
 
 ```bash
 conda run -n agentdeck pytest tests/test_conversation_leader_gateway.py tests/test_conversation_session.py tests/test_conversation_mission.py tests/test_conversation_acceptance.py tests/test_conversation_contracts.py -q
 ```
 
-- [ ] **Step 5: Commit conversation authority**
+- [x] **Step 5: Commit conversation authority**
 
 ```bash
 git add src/agentdeck/conversation/leader_gateway.py src/agentdeck/conversation/session.py src/agentdeck/mission_orchestration.py src/agentdeck/contracts.py tests/test_conversation_leader_gateway.py tests/test_conversation_session.py tests/test_conversation_mission.py tests/test_conversation_contracts.py docs/contracts/conversation-runtime-schema.md HISTORY.md

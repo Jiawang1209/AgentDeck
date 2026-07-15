@@ -17412,6 +17412,7 @@ CONVERSATION_RUNTIME_RESPONSE_FIELDS = (
     "leader_backend",
     "ownership",
     "cancellation",
+    "semantic_clarification_card",
     "controls",
     "blockers",
 )
@@ -17481,6 +17482,22 @@ def conversation_runtime_example() -> dict[str, object]:
         },
         "ownership": [],
         "cancellation": {"available": True, "scope": "active_turn"},
+        "semantic_clarification_card": {
+            "schema_version": "mission-semantic-authority/v1",
+            "authority_hash": f"sha256:{'0' * 64}",
+            "unresolved_count": 1,
+            "question": "Please clarify the exact target, operation, and expected value.",
+            "controls": [
+                _m1_control(
+                    "clarify", "Provide clarification", "reply with clarified mission requirements",
+                    "inspect", enabled=True, blocker=None,
+                ),
+                _m1_control(
+                    "inspect", "Inspect status", "agentdeck status", "inspect",
+                    enabled=True, blocker=None,
+                ),
+            ],
+        },
         "controls": [
             _m1_control(
                 "cancel_turn",
@@ -17636,6 +17653,52 @@ def validate_conversation_runtime_contract(payload: object) -> dict[str, object]
     if item.get("state") in {"created", "ready", "waiting_confirmation", "closing", "closed"} and active_turn is not None:
         errors.append("conversation_runtime.state is inconsistent with active_turn")
     _validate_m1_controls(errors, item, "conversation_runtime")
+    clarification = item.get("semantic_clarification_card")
+    clarification_fields = {
+        "schema_version", "authority_hash", "unresolved_count", "question", "controls"
+    }
+    if clarification is None:
+        pass
+    elif not isinstance(clarification, dict) or set(clarification) != clarification_fields:
+        errors.append("conversation_runtime semantic clarification card fields are invalid")
+    else:
+        if clarification.get("schema_version") != "mission-semantic-authority/v1":
+            errors.append("conversation_runtime semantic clarification schema is invalid")
+        authority_hash = clarification.get("authority_hash")
+        if (
+            type(authority_hash) is not str
+            or re.fullmatch(r"sha256:[0-9a-f]{64}", authority_hash) is None
+        ):
+            errors.append("conversation_runtime semantic clarification hash is invalid")
+        if (
+            type(clarification.get("unresolved_count")) is not int
+            or clarification["unresolved_count"] < 1
+        ):
+            errors.append("conversation_runtime semantic clarification count is invalid")
+        question = clarification.get("question")
+        try:
+            question_bytes = question.encode("utf-8") if type(question) is str else b""
+        except UnicodeEncodeError:
+            question_bytes = b""
+        if type(question) is not str or not question_bytes or len(question_bytes) > 512:
+            errors.append("conversation_runtime semantic clarification question is invalid")
+        _validate_m1_controls(errors, clarification, "semantic_clarification_card")
+        clarification_controls = clarification.get("controls")
+        if (
+            not isinstance(clarification_controls, list)
+            or len(clarification_controls) != 2
+            or {
+                control.get("kind")
+                for control in clarification_controls
+                if isinstance(control, dict)
+            } != {"clarify", "inspect"}
+            or any(
+                not isinstance(control, dict)
+                or control.get("kind") not in {"clarify", "inspect"}
+                for control in clarification_controls
+            )
+        ):
+            errors.append("conversation_runtime semantic clarification controls are unsafe")
     controls = item.get("controls")
     if isinstance(controls, list) and any(
         isinstance(control, dict)

@@ -73,12 +73,12 @@ def _validate_compiled_semantic_plan(
     request: LeaderPlanRequest, plan: object
 ) -> dict[str, object]:
     try:
-        return _rebuild_compiled_semantic_plan(request, plan)
+        return rebuild_compiled_semantic_plan(request, plan)
     except Exception:
         raise SemanticPlanningError("semantic_compilation_drift") from None
 
 
-def _rebuild_compiled_semantic_plan(
+def rebuild_compiled_semantic_plan(
     request: LeaderPlanRequest, plan: object
 ) -> dict[str, object]:
     if type(plan) is not dict or set(plan) != _COMPILED_SEMANTIC_PLAN_FIELDS:
