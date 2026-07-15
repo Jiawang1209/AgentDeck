@@ -5,6 +5,13 @@ import json
 from typing import TYPE_CHECKING, cast
 
 from agentdeck.models import ProjectConfig
+from agentdeck.semantic_planning import SEMANTIC_FAILURE_CODES
+from .semantic_plan_schema import (
+    SEMANTIC_LEADER_PLAN_SCHEMA_VERSION,
+    SemanticPlanSchemaAuthorityError,
+    build_semantic_leader_plan_schema,
+    semantic_authority_identity,
+)
 
 if TYPE_CHECKING:
     from .base import LeaderPlanRequest
@@ -29,7 +36,7 @@ LEADER_PLAN_DIAGNOSTIC_CODES = frozenset(
         "native_schema_unavailable",
         "authority_invalid",
     }
-)
+) | SEMANTIC_FAILURE_CODES
 PROVIDER_PLAN_REQUIRED_FIELDS = ("goal", "summary", "steps")
 PROVIDER_PLAN_STRING_FIELDS = ("goal", "summary")
 PROVIDER_PLAN_STEP_REQUIRED_FIELDS = ("step", "agent_id", "role", "task", "risk", "requires_approval")
@@ -66,7 +73,34 @@ def leader_plan_authority(request: LeaderPlanRequest) -> tuple[tuple[str, ...], 
     return selected, count
 
 
+def _validate_regeneration_diagnostic(request: LeaderPlanRequest) -> None:
+    diagnostic = request.regeneration_diagnostic
+    if diagnostic is not None and (
+        type(diagnostic) is not str or diagnostic not in SEMANTIC_FAILURE_CODES
+    ):
+        raise ProviderPlanValidationError("authority_invalid")
+
+
 def build_leader_plan_schema(request: LeaderPlanRequest) -> dict[str, object]:
+    _validate_regeneration_diagnostic(request)
+    if request.semantic_authority is not None:
+        if request.selected_agent_ids is None or request.step_count is None:
+            raise ProviderPlanValidationError("authority_invalid")
+        selected_agent_ids, step_count = leader_plan_authority(request)
+        configured_roles = {
+            agent.agent_id: agent.role
+            for agent in request.config.agents
+            if agent.agent_id in selected_agent_ids
+        }
+        try:
+            return build_semantic_leader_plan_schema(
+                semantic_authority=request.semantic_authority,
+                selected_agent_ids=selected_agent_ids,
+                roles=configured_roles,
+                step_count=step_count,
+            )
+        except (SemanticPlanSchemaAuthorityError, TypeError, ValueError):
+            raise ProviderPlanValidationError("authority_invalid") from None
     selected_agent_ids, step_count = leader_plan_authority(request)
     return {
         "$id": LEADER_PLAN_SCHEMA_VERSION,
@@ -106,12 +140,36 @@ def build_leader_plan_schema(request: LeaderPlanRequest) -> dict[str, object]:
 
 
 def _canonical_leader_plan_schema_bytes(schema: dict[str, object]) -> bytes:
-    return json.dumps(
-        schema,
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
-    ).encode("utf-8")
+    if type(schema) is not dict:
+        raise ValueError("leader plan schema is invalid")
+    stack: list[tuple[object, int]] = [(schema, 0)]
+    nodes = 0
+    while stack:
+        value, depth = stack.pop()
+        nodes += 1
+        if nodes > 100_000 or depth > 32:
+            raise ValueError("leader plan schema is invalid")
+        if type(value) is dict:
+            mapping = cast(dict[object, object], value)
+            if len(mapping) > 10_000 or any(type(key) is not str for key in mapping):
+                raise ValueError("leader plan schema is invalid")
+            stack.extend((child, depth + 1) for child in mapping.values())
+        elif type(value) is list:
+            items = cast(list[object], value)
+            if len(items) > 10_000:
+                raise ValueError("leader plan schema is invalid")
+            stack.extend((child, depth + 1) for child in items)
+        elif type(value) not in {str, int, bool, type(None)}:
+            raise ValueError("leader plan schema is invalid")
+    try:
+        return json.dumps(
+            schema,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    except (TypeError, ValueError, UnicodeError, OverflowError):
+        raise ValueError("leader plan schema is invalid") from None
 
 
 def canonical_leader_plan_schema_hash(schema: dict[str, object]) -> str:
@@ -135,31 +193,64 @@ def build_leader_generation_provenance(
     if type(attempt_count) is not int or attempt_count < 1 or attempt_count > 2:
         raise ValueError("leader generation attempt count is invalid")
 
-    selected_agent_ids, step_count = leader_plan_authority(request)
+    try:
+        _validate_regeneration_diagnostic(request)
+    except ProviderPlanValidationError:
+        raise ValueError("leader generation request authority is invalid") from None
+    try:
+        selected_agent_ids, step_count = leader_plan_authority(request)
+    except ProviderPlanValidationError:
+        if request.semantic_authority is not None:
+            raise ValueError("leader generation request authority is invalid") from None
+        raise
+    semantic_expected_schema: dict[str, object] | None = None
+    if request.semantic_authority is not None:
+        try:
+            semantic_expected_schema = build_leader_plan_schema(request)
+        except ProviderPlanValidationError:
+            raise ValueError("leader generation request authority is invalid") from None
+    expected_schema: dict[str, object] | None = None
     if schema is not None:
         try:
             supplied_schema_bytes = _canonical_leader_plan_schema_bytes(schema)
-            expected_schema_bytes = _canonical_leader_plan_schema_bytes(
-                build_leader_plan_schema(request)
-            )
-        except (TypeError, ValueError):
+            expected_schema = semantic_expected_schema or build_leader_plan_schema(request)
+            expected_schema_bytes = _canonical_leader_plan_schema_bytes(expected_schema)
+        except (ProviderPlanValidationError, TypeError, ValueError):
             raise ValueError(
                 "leader generation schema does not match request authority"
             ) from None
         if supplied_schema_bytes != expected_schema_bytes:
             raise ValueError("leader generation schema does not match request authority")
 
-    return {
+    provenance = {
         "provider": provider,
         "model": request.model,
         "constraint_mode": constraint_mode,
-        "schema_version": LEADER_PLAN_SCHEMA_VERSION if schema is not None else None,
-        "schema_hash": canonical_leader_plan_schema_hash(schema) if schema is not None else None,
+        "schema_version": (
+            SEMANTIC_LEADER_PLAN_SCHEMA_VERSION
+            if schema is not None and request.semantic_authority is not None
+            else LEADER_PLAN_SCHEMA_VERSION if schema is not None else None
+        ),
+        "schema_hash": (
+            canonical_leader_plan_schema_hash(expected_schema)
+            if expected_schema is not None
+            else None
+        ),
         "attempt_count": attempt_count,
         "regeneration_used": attempt_count > 1,
         "selected_agent_ids": list(selected_agent_ids),
         "step_count": step_count,
     }
+    if request.semantic_authority is not None:
+        try:
+            authority_version, authority_hash = semantic_authority_identity(
+                request.semantic_authority
+            )
+        except (SemanticPlanSchemaAuthorityError, TypeError, ValueError):
+            raise ValueError("leader generation request authority is invalid") from None
+        provenance["semantic_authority_schema_version"] = authority_version
+        provenance["semantic_authority_hash"] = authority_hash
+    return provenance
 
 
 def _exact_json_value(left: object, right: object) -> bool:
@@ -200,12 +291,12 @@ def validate_leader_generation_provenance(
     attempt_count = candidate.get("attempt_count")
     if type(constraint_mode) is not str or type(attempt_count) is not int:
         raise ValueError("leader generation provenance is invalid")
-    schema = (
-        build_leader_plan_schema(request)
-        if constraint_mode == "native_json_schema"
-        else None
-    )
     try:
+        schema = (
+            build_leader_plan_schema(request)
+            if constraint_mode == "native_json_schema"
+            else None
+        )
         expected = build_leader_generation_provenance(
             request=request,
             provider=provider,

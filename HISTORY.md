@@ -4,6 +4,13 @@
 
 ## 2026-07-15
 
+### Add semantic Leader plan schema
+
+- Added the pure `leader-semantic-plan/v1` native schema builder with exact round-robin Worker and role constants, bounded safe phases, opaque requirement references, ordinary-only proposals, approval-required low-risk steps, and closed nested object schemas without executable `task` text or raw authority values.
+- Extended Leader request/result boundaries with explicit semantic authority, a closed regeneration diagnostic, and defensively copied transient semantic diagnostics; legacy request defaults, plan schema, and generation provenance shape remain unchanged.
+- Added exact semantic generation provenance for native and schema-free modes, rebuilding schema and authority identities from the request and rejecting authority, Worker, role, count, schema, attempt, regeneration, and extra-field drift without echoing hostile values.
+- Added RED/GREEN schema, provenance, diagnostics, mutation, hostile-container, determinism, and legacy regression coverage. This is Task 4 pure request/schema/provenance work only and does not add CLI regeneration, provider I/O, conversation mutation, state persistence, runtime, tmux, ACP, live execution, Task 5, or an M2c PASS claim.
+
 ### Enforce semantic compiler physical lines
 
 - Escaped every Python physical-line separator that JSON may otherwise preserve, asserted one physical line per serialized logical value, and rejected Zl/Zp separators in candidate and persisted verification guidance.

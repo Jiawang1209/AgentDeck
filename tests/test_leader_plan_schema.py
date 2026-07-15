@@ -9,16 +9,19 @@ import re
 import pytest
 
 from agentdeck.models import AgentSpec, LeaderConfig, ProjectConfig, RuntimeConfig
-from agentdeck.providers.base import LeaderPlanRequest
+from agentdeck.providers.base import LeaderPlanRequest, LeaderPlanResult
 from agentdeck.providers.plan_schema import (
     LEADER_PLAN_SCHEMA_VERSION,
+    SEMANTIC_LEADER_PLAN_SCHEMA_VERSION,
     ProviderPlanValidationError,
     build_leader_generation_provenance,
     build_leader_plan_schema,
     canonical_leader_plan_schema_hash,
     leader_plan_authority,
+    validate_leader_generation_provenance,
     validate_provider_plan_schema,
 )
+from agentdeck.providers.semantic_plan_schema import build_semantic_leader_plan_schema
 
 
 def _config(root: str = "/private/project-a") -> ProjectConfig:
@@ -45,10 +48,60 @@ def _request(**changes: object) -> LeaderPlanRequest:
     return replace(request, **changes)
 
 
+def _semantic_authority() -> dict[str, object]:
+    return {
+        "schema_version": "mission-semantic-authority/v1",
+        "source_message_hash": f"sha256:{'a' * 64}",
+        "requirements": [
+            {
+                "requirement_id": "req_111111111111",
+                "kind": "create",
+                "target": "artifact.txt",
+                "operation": "create",
+                "phase": "implementation",
+                "agent_id": "reviewer",
+                "sensitivity": "ordinary",
+                "literal": "draft-v1\n",
+            },
+            {
+                "requirement_id": "req_222222222222",
+                "kind": "review",
+                "target": "artifact.txt",
+                "operation": "review",
+                "phase": "review",
+                "agent_id": "planner",
+                "sensitivity": "ordinary",
+                "literal": "accepted-v2\n",
+            },
+        ],
+        "proposed_effects": [],
+        "unresolved": [],
+    }
+
+
+def _semantic_request(**changes: object) -> LeaderPlanRequest:
+    changes.setdefault("semantic_authority", _semantic_authority())
+    return _request(**changes)
+
+
+def _assert_closed_object_schemas(value: object) -> None:
+    if type(value) is dict:
+        if value.get("type") == "object":
+            assert value.get("additionalProperties") is False
+        for child in value.values():
+            _assert_closed_object_schemas(child)
+    elif type(value) is list:
+        for child in value:
+            _assert_closed_object_schemas(child)
+
+
 def test_schema_freezes_worker_order_step_count_and_approval() -> None:
     schema = build_leader_plan_schema(_request())
 
     assert schema["$id"] == LEADER_PLAN_SCHEMA_VERSION == "leader-plan/v1"
+    assert canonical_leader_plan_schema_hash(schema) == (
+        "sha256:5b43467ee5cbf4f407c1c58b628b90bf03f2c30eaa4fa59cf660cc1aaa7da0a4"
+    )
     assert schema["required"] == ["goal", "summary", "steps"]
     assert schema["additionalProperties"] is False
     steps = schema["properties"]["steps"]
@@ -88,6 +141,184 @@ def test_schema_hash_is_deterministic_and_project_path_free() -> None:
     assert digest == expected
     assert digest == canonical_leader_plan_schema_hash(other_schema)
     assert re.fullmatch(r"sha256:[0-9a-f]{64}", digest)
+
+
+def test_semantic_schema_is_exact_closed_and_contains_only_safe_authority() -> None:
+    schema = build_leader_plan_schema(_semantic_request())
+
+    assert schema["$id"] == SEMANTIC_LEADER_PLAN_SCHEMA_VERSION == "leader-semantic-plan/v1"
+    assert schema["required"] == ["goal", "summary", "steps"]
+    steps = schema["properties"]["steps"]
+    assert steps["minItems"] == steps["maxItems"] == 2
+    assert steps["items"] is False
+    assert len(steps["prefixItems"]) == 2
+    expected_agents = ("reviewer", "planner")
+    expected_roles = ("review", "planning")
+    expected_phases = ("implementation", "review")
+    required_fields = [
+        "step",
+        "agent_id",
+        "role",
+        "phase",
+        "authority_refs",
+        "proposed_effects",
+        "verification",
+        "risk",
+        "requires_approval",
+    ]
+    for index, step_schema in enumerate(steps["prefixItems"], start=1):
+        properties = step_schema["properties"]
+        assert step_schema["required"] == required_fields
+        assert properties["step"] == {"type": "integer", "const": index}
+        assert properties["agent_id"] == {
+            "type": "string",
+            "const": expected_agents[index - 1],
+        }
+        assert properties["role"] == {
+            "type": "string",
+            "const": expected_roles[index - 1],
+        }
+        assert properties["phase"] == {
+            "type": "string",
+            "enum": [expected_phases[index - 1]],
+        }
+        assert properties["authority_refs"]["items"] == {
+            "type": "string",
+            "enum": ["req_111111111111", "req_222222222222"],
+        }
+        assert properties["authority_refs"]["uniqueItems"] is True
+        assert properties["risk"] == {"type": "string", "const": "low"}
+        assert properties["requires_approval"] == {"type": "boolean", "const": True}
+        proposal = properties["proposed_effects"]["items"]
+        assert proposal["required"] == ["target", "operation", "sensitivity"]
+        assert proposal["properties"]["operation"] == {
+            "type": "string",
+            "enum": ["create", "read", "review", "update", "verify"],
+        }
+        assert proposal["properties"]["sensitivity"] == {
+            "type": "string",
+            "const": "ordinary",
+        }
+
+    encoded = json.dumps(schema, ensure_ascii=False, sort_keys=True)
+    assert '"task"' not in encoded
+    for forbidden in ("artifact.txt", "draft-v1", "accepted-v2", "SECRET"):
+        assert forbidden not in encoded
+    _assert_closed_object_schemas(schema)
+
+
+def test_semantic_schema_builder_matches_request_projection() -> None:
+    request = _semantic_request()
+
+    assert build_leader_plan_schema(request) == build_semantic_leader_plan_schema(
+        semantic_authority=request.semantic_authority,
+        selected_agent_ids=("reviewer", "planner"),
+        roles={"reviewer": "review", "planner": "planning"},
+        step_count=2,
+    )
+
+
+def test_open_semantic_authority_rejects_sensitive_configured_agent_id() -> None:
+    authority = _semantic_authority()
+    authority["requirements"] = []
+    config = replace(
+        _config(),
+        agents=(
+            AgentSpec("reviewer", "review", "claude-cli", "claude"),
+            AgentSpec("ghp_DO_NOT_ECHO", "planning", "codex-cli", "codex"),
+        ),
+    )
+    request = LeaderPlanRequest(
+        task="Open semantic task",
+        config=config,
+        selected_agent_ids=("reviewer", "ghp_DO_NOT_ECHO"),
+        step_count=2,
+        semantic_authority=authority,
+    )
+
+    with pytest.raises(ProviderPlanValidationError) as raised:
+        build_leader_plan_schema(request)
+
+    assert raised.value.code == "authority_invalid"
+    assert "DO_NOT_ECHO" not in str(raised.value)
+
+
+def test_semantic_schema_is_deterministic_and_regeneration_diagnostic_free() -> None:
+    request = _semantic_request()
+    retry = replace(
+        request,
+        regeneration_diagnostic="semantic_candidate_missing_requirement",
+    )
+
+    assert build_leader_plan_schema(request) == build_leader_plan_schema(retry)
+    assert canonical_leader_plan_schema_hash(
+        build_leader_plan_schema(request)
+    ) == canonical_leader_plan_schema_hash(build_leader_plan_schema(retry))
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "unresolved",
+        "secret_ref",
+        "draft_proposal",
+        "worker_order",
+        "step_count",
+        "missing_config_agent",
+        "arbitrary_diagnostic",
+    ],
+)
+def test_semantic_schema_rejects_invalid_authority_without_echo(mutation: str) -> None:
+    request = _semantic_request()
+    authority = deepcopy(request.semantic_authority)
+    marker = "SECRET-raw-marker"
+    if mutation == "unresolved":
+        authority["unresolved"] = [
+            {
+                "unresolved_id": "unr_333333333333",
+                "kind": "ambiguous",
+                "phase": "implementation",
+                "agent_id": "reviewer",
+            }
+        ]
+        request = replace(request, semantic_authority=authority)
+    elif mutation == "secret_ref":
+        authority["requirements"][0]["sensitivity"] = "secret_ref"
+        authority["requirements"][0]["literal"] = {"reference": marker}
+        request = replace(request, semantic_authority=authority)
+    elif mutation == "draft_proposal":
+        authority["proposed_effects"] = [
+            {
+                "proposed_effect_id": "prp_333333333333",
+                "target": "extra.txt",
+                "operation": "create",
+                "sensitivity": "ordinary",
+            }
+        ]
+        request = replace(request, semantic_authority=authority)
+    elif mutation == "worker_order":
+        request = replace(request, selected_agent_ids=("planner", "reviewer"))
+    elif mutation == "step_count":
+        request = replace(request, step_count=3)
+    elif mutation == "missing_config_agent":
+        request = replace(
+            request,
+            config=replace(
+                request.config,
+                agents=tuple(
+                    item for item in request.config.agents if item.agent_id != "reviewer"
+                ),
+            ),
+        )
+    else:
+        request = replace(request, regeneration_diagnostic=marker)
+
+    with pytest.raises(ProviderPlanValidationError) as raised:
+        build_leader_plan_schema(request)
+
+    assert raised.value.code == "authority_invalid"
+    assert str(raised.value) == "provider plan authority is invalid"
+    assert marker not in str(raised.value)
 
 
 @pytest.mark.parametrize(
@@ -319,6 +550,175 @@ def test_generation_provenance_supports_schema_free_local_legacy_mode() -> None:
     }
 
 
+def test_semantic_generation_provenance_rebuilds_native_schema_and_authority() -> None:
+    request = _semantic_request(model="semantic-leader-v1")
+    schema = build_leader_plan_schema(request)
+
+    provenance = build_leader_generation_provenance(
+        request=request,
+        provider="codex-cli",
+        constraint_mode="native_json_schema",
+        schema=schema,
+        attempt_count=2,
+    )
+
+    assert provenance == {
+        "provider": "codex-cli",
+        "model": "semantic-leader-v1",
+        "constraint_mode": "native_json_schema",
+        "schema_version": "leader-semantic-plan/v1",
+        "schema_hash": canonical_leader_plan_schema_hash(schema),
+        "attempt_count": 2,
+        "regeneration_used": True,
+        "selected_agent_ids": ["reviewer", "planner"],
+        "step_count": 2,
+        "semantic_authority_schema_version": "mission-semantic-authority/v1",
+        "semantic_authority_hash": (
+            "sha256:a72116d08f27ab829515686c38b68583a94b02f7250fb7304e0663a2ae29e37c"
+        ),
+    }
+    assert validate_leader_generation_provenance(
+        request=request,
+        provider="codex-cli",
+        provenance=provenance,
+    ) == provenance
+
+
+def test_semantic_schema_free_provenance_keeps_authority_without_schema_claim() -> None:
+    request = _semantic_request()
+
+    provenance = build_leader_generation_provenance(
+        request=request,
+        provider="fake",
+        constraint_mode="local",
+    )
+
+    assert provenance["schema_version"] is None
+    assert provenance["schema_hash"] is None
+    assert provenance["semantic_authority_schema_version"] == "mission-semantic-authority/v1"
+    assert re.fullmatch(r"sha256:[0-9a-f]{64}", provenance["semantic_authority_hash"])
+    assert validate_leader_generation_provenance(
+        request=request,
+        provider="fake",
+        provenance=provenance,
+    ) == provenance
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "authority_hash",
+        "authority_requirement",
+        "worker_order",
+        "step_count",
+        "attempt_count",
+        "regeneration_used",
+        "schema_version",
+        "schema_hash",
+        "extra",
+    ],
+)
+def test_semantic_generation_provenance_rejects_mutation_without_echo(
+    mutation: str,
+) -> None:
+    request = _semantic_request()
+    provenance = build_leader_generation_provenance(
+        request=request,
+        provider="codex-cli",
+        constraint_mode="native_json_schema",
+        schema=build_leader_plan_schema(request),
+    )
+    if mutation == "authority_requirement":
+        authority = deepcopy(request.semantic_authority)
+        authority["requirements"][0]["literal"] = "changed-v3\n"
+        request = replace(request, semantic_authority=authority)
+    elif mutation == "worker_order":
+        provenance["selected_agent_ids"] = ["planner", "reviewer"]
+    elif mutation == "step_count":
+        provenance["step_count"] = 3
+    elif mutation == "attempt_count":
+        provenance["attempt_count"] = 2
+    elif mutation == "regeneration_used":
+        provenance["regeneration_used"] = True
+    elif mutation == "schema_version":
+        provenance["schema_version"] = "leader-plan/v1"
+    elif mutation == "schema_hash":
+        provenance["schema_hash"] = f"sha256:{'b' * 64}"
+    elif mutation == "extra":
+        provenance["raw_authority"] = "SECRET-raw-marker"
+    else:
+        provenance["semantic_authority_hash"] = f"sha256:{'b' * 64}"
+
+    with pytest.raises(ValueError) as raised:
+        validate_leader_generation_provenance(
+            request=request,
+            provider="codex-cli",
+            provenance=provenance,
+        )
+
+    assert str(raised.value) == "leader generation provenance is invalid"
+    assert "SECRET" not in str(raised.value)
+
+
+def test_semantic_generation_rejects_supplied_schema_from_changed_role() -> None:
+    request = _semantic_request()
+    schema = build_leader_plan_schema(request)
+    changed = replace(
+        request,
+        config=replace(
+            request.config,
+            agents=tuple(
+                replace(item, role="changed-role")
+                if item.agent_id == "reviewer"
+                else item
+                for item in request.config.agents
+            ),
+        ),
+    )
+
+    with pytest.raises(ValueError) as raised:
+        build_leader_generation_provenance(
+            request=changed,
+            provider="codex-cli",
+            constraint_mode="native_json_schema",
+            schema=schema,
+        )
+
+    assert str(raised.value) == "leader generation schema does not match request authority"
+
+
+@pytest.mark.parametrize(
+    "changed_request",
+    [
+        lambda request: replace(
+            request,
+            selected_agent_ids=("planner", "reviewer"),
+        ),
+        lambda request: replace(request, step_count=3),
+        lambda request: replace(request, regeneration_diagnostic="raw-provider-output"),
+    ],
+)
+def test_semantic_provenance_validation_closes_invalid_request_authority(
+    changed_request,
+) -> None:
+    request = _semantic_request()
+    provenance = build_leader_generation_provenance(
+        request=request,
+        provider="codex-cli",
+        constraint_mode="native_json_schema",
+        schema=build_leader_plan_schema(request),
+    )
+
+    with pytest.raises(ValueError) as raised:
+        validate_leader_generation_provenance(
+            request=changed_request(request),
+            provider="codex-cli",
+            provenance=provenance,
+        )
+
+    assert str(raised.value) == "leader generation provenance is invalid"
+
+
 def test_generation_provenance_records_one_regeneration() -> None:
     request = _four_step_request()
 
@@ -405,3 +805,149 @@ def test_generation_provenance_rejects_noncanonical_schema_types(mutation: str) 
         )
 
     assert str(raised.value) == "leader generation schema does not match request authority"
+
+
+def test_leader_plan_result_semantic_diagnostics_are_exact_and_defensive() -> None:
+    diagnostic = {
+        "code": "semantic_candidate_missing_requirement",
+        "attempt_count": 1,
+        "regeneration_used": False,
+    }
+    result = LeaderPlanResult(
+        plan={"goal": "g"},
+        leader_generation={"provider": "fake"},
+        semantic_diagnostics=(diagnostic,),
+    )
+
+    diagnostic["code"] = "SECRET-raw-marker"
+    assert result.semantic_diagnostics == (
+        {
+            "code": "semantic_candidate_missing_requirement",
+            "attempt_count": 1,
+            "regeneration_used": False,
+        },
+    )
+    assert result.semantic_diagnostics[0] is not diagnostic
+
+
+def test_legacy_leader_plan_result_construction_keeps_empty_diagnostics() -> None:
+    plan = {"goal": "legacy"}
+    provenance = {"provider": "fake"}
+
+    result = LeaderPlanResult(plan=plan, leader_generation=provenance)
+
+    assert result.plan is plan
+    assert result.leader_generation is provenance
+    assert result.semantic_diagnostics == ()
+
+
+@pytest.mark.parametrize(
+    "diagnostics",
+    [
+        [],
+        ({"code": "semantic_candidate_missing_requirement", "attempt_count": 1},),
+        (
+            {
+                "code": "semantic_candidate_missing_requirement",
+                "attempt_count": 1,
+                "regeneration_used": False,
+                "raw": "SECRET-raw-marker",
+            },
+        ),
+        (
+            {
+                "code": "SECRET-raw-marker",
+                "attempt_count": 1,
+                "regeneration_used": False,
+            },
+        ),
+        (
+            {
+                "code": "semantic_candidate_missing_requirement",
+                "attempt_count": True,
+                "regeneration_used": True,
+            },
+        ),
+        (
+            {
+                "code": "semantic_candidate_missing_requirement",
+                "attempt_count": 2,
+                "regeneration_used": False,
+            },
+        ),
+    ],
+)
+def test_leader_plan_result_rejects_invalid_semantic_diagnostics_without_echo(
+    diagnostics: object,
+) -> None:
+    with pytest.raises(ValueError) as raised:
+        LeaderPlanResult(
+            plan={},
+            leader_generation={},
+            semantic_diagnostics=diagnostics,
+        )
+
+    assert str(raised.value) == "leader plan semantic diagnostics are invalid"
+    assert "SECRET" not in str(raised.value)
+
+
+class _ExplosiveDict(dict):
+    def __iter__(self):
+        raise AssertionError("custom iterator must not run")
+
+    def items(self):
+        raise AssertionError("custom items must not run")
+
+    def values(self):
+        raise AssertionError("custom values must not run")
+
+
+class _ExplosiveList(list):
+    def __iter__(self):
+        raise AssertionError("custom iterator must not run")
+
+
+@pytest.mark.parametrize("hostile", [_ExplosiveDict(), _ExplosiveList()])
+def test_semantic_schema_rejects_hostile_authority_containers_without_invoking_them(
+    hostile: object,
+) -> None:
+    request = _semantic_request(semantic_authority=hostile)
+
+    with pytest.raises(ProviderPlanValidationError) as raised:
+        build_leader_plan_schema(request)
+
+    assert raised.value.code == "authority_invalid"
+
+
+def test_semantic_schema_rejects_hostile_nested_container_without_invoking_it() -> None:
+    authority = _semantic_authority()
+    authority["requirements"] = _ExplosiveList(authority["requirements"])
+
+    with pytest.raises(ProviderPlanValidationError) as raised:
+        build_leader_plan_schema(_semantic_request(semantic_authority=authority))
+
+    assert raised.value.code == "authority_invalid"
+
+
+def test_semantic_schema_and_provenance_are_bounded_and_repeatable() -> None:
+    request = _semantic_request()
+    first = build_leader_plan_schema(request)
+    second = build_leader_plan_schema(request)
+    first_provenance = build_leader_generation_provenance(
+        request=request,
+        provider="codex-cli",
+        constraint_mode="native_json_schema",
+        schema=first,
+    )
+    second_provenance = build_leader_generation_provenance(
+        request=request,
+        provider="codex-cli",
+        constraint_mode="native_json_schema",
+        schema=second,
+    )
+
+    assert first == second
+    assert canonical_leader_plan_schema_hash(first) == canonical_leader_plan_schema_hash(second)
+    assert first_provenance == second_provenance
+    assert len(json.dumps(first, separators=(",", ":"))) < 100_000
+    assert len(json.dumps(first_provenance, separators=(",", ":"))) < 2_000

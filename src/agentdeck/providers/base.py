@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import dataclass
 import json
 from typing import Any, Protocol
 
 from agentdeck.models import ProjectConfig
+from agentdeck.semantic_planning import SEMANTIC_FAILURE_CODES
 from .plan_schema import (
     PROVIDER_PLAN_REQUIRED_FIELDS,
     PROVIDER_PLAN_STEP_REQUIRED_FIELDS,
@@ -23,12 +25,42 @@ class LeaderPlanRequest:
     selected_agent_ids: tuple[str, ...] | None = None
     step_count: int | None = None
     timeout_seconds: int | None = None
+    semantic_authority: dict[str, object] | None = None
+    regeneration_diagnostic: str | None = None
 
 
 @dataclass(frozen=True)
 class LeaderPlanResult:
     plan: dict[str, object]
     leader_generation: dict[str, object]
+    semantic_diagnostics: tuple[dict[str, object], ...] = ()
+
+    def __post_init__(self) -> None:
+        diagnostics = self.semantic_diagnostics
+        if type(diagnostics) is not tuple:
+            raise ValueError("leader plan semantic diagnostics are invalid")
+        copied: list[dict[str, object]] = []
+        for item in diagnostics:
+            if (
+                type(item) is not dict
+                or any(type(key) is not str for key in item)
+                or set(item) != {"code", "attempt_count", "regeneration_used"}
+            ):
+                raise ValueError("leader plan semantic diagnostics are invalid")
+            code = item["code"]
+            attempt_count = item["attempt_count"]
+            regeneration_used = item["regeneration_used"]
+            if (
+                type(code) is not str
+                or code not in SEMANTIC_FAILURE_CODES
+                or type(attempt_count) is not int
+                or attempt_count not in {1, 2}
+                or type(regeneration_used) is not bool
+                or regeneration_used is not (attempt_count > 1)
+            ):
+                raise ValueError("leader plan semantic diagnostics are invalid")
+            copied.append(deepcopy(item))
+        object.__setattr__(self, "semantic_diagnostics", tuple(copied))
 
 
 class LeaderProvider(Protocol):
