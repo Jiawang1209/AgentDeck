@@ -4,6 +4,12 @@
 
 ## 2026-07-15
 
+### Scope semantic schema authority references
+
+- Replaced per-step copies of every semantic requirement ID with deterministic top-level `$defs`: opaque IDs are stored once per selected-agent/phase scope, step schemas reuse agent-level conditionals, and wrong-phase or wrong-Worker references are rejected while open authority requires an empty reference list.
+- Added a semantic-specific selected-context resolver that validates selected IDs/count first, collects exactly one safe configured role per selected agent, and ignores unrelated unsafe, duplicate, malformed, sensitive, NFD, or hostile-subclass config entries without invoking their equality/hash methods or changing schema/provenance identity.
+- Hardened open-authority phase schemas with start and invalid-character constraints that reject leading/trailing controls without relying on `$` end-anchor behavior; added RED/GREEN scope, maximum 64-step/256-requirement compactness, deterministic ID occurrence, open-phase, and selected-only provenance tests. This remains Task 4 pure schema/validation work with no Task 5, provider I/O, CLI regeneration, conversation/state/runtime/tmux/ACP/live behavior, or M2c PASS claim.
+
 ### Align semantic schema context validation
 
 - Promoted Task 3 compact semantic text validation to the public pure `semantic_context_text_is_safe()` helper and routed all existing semantic candidate/compiler context checks through that single exact-string implementation.

@@ -96,6 +96,45 @@ def _assert_closed_object_schemas(value: object) -> None:
             _assert_closed_object_schemas(child)
 
 
+def _scoped_authority_ref_ids(
+    schema: dict[str, object], *, step_index: int, phase: str
+) -> tuple[str, ...]:
+    step_schema = schema["properties"]["steps"]["prefixItems"][step_index]
+    scope_ref = step_schema["allOf"][0]["$ref"]
+    scope = schema["$defs"][scope_ref.removeprefix("#/$defs/")]
+    for conditional in scope["allOf"]:
+        if conditional["if"]["properties"]["phase"]["const"] == phase:
+            refs_ref = conditional["then"]["properties"]["authority_refs"]["$ref"]
+            refs_schema = schema["$defs"][refs_ref.removeprefix("#/$defs/")]
+            return tuple(refs_schema["items"]["enum"])
+    return ()
+
+
+def _scoped_authority_refs_accept(
+    schema: dict[str, object], *, step_index: int, phase: str, refs: list[str]
+) -> bool:
+    allowed = set(
+        _scoped_authority_ref_ids(
+            schema,
+            step_index=step_index,
+            phase=phase,
+        )
+    )
+    return len(refs) == len(set(refs)) and all(ref in allowed for ref in refs)
+
+
+def _string_schema_accepts(schema: dict[str, object], value: str) -> bool:
+    if len(value) < schema.get("minLength", 0) or len(value) > schema.get(
+        "maxLength", len(value)
+    ):
+        return False
+    pattern = schema.get("pattern")
+    if pattern is not None and re.search(pattern, value) is None:
+        return False
+    forbidden = schema.get("not", {}).get("pattern")
+    return forbidden is None or re.search(forbidden, value) is None
+
+
 def test_schema_freezes_worker_order_step_count_and_approval() -> None:
     schema = build_leader_plan_schema(_request())
 
@@ -179,13 +218,16 @@ def test_semantic_schema_is_exact_closed_and_contains_only_safe_authority() -> N
             "type": "string",
             "const": expected_roles[index - 1],
         }
-        assert properties["phase"] == {
+        phase_ref = properties["phase"]["$ref"]
+        assert schema["$defs"][phase_ref.removeprefix("#/$defs/")] == {
             "type": "string",
             "enum": [expected_phases[index - 1]],
         }
-        assert properties["authority_refs"]["items"] == {
-            "type": "string",
-            "enum": ["req_111111111111", "req_222222222222"],
+        assert properties["authority_refs"] == {
+            "type": "array",
+            "minItems": 0,
+            "maxItems": 2,
+            "uniqueItems": True,
         }
         assert properties["authority_refs"]["uniqueItems"] is True
         assert properties["risk"] == {"type": "string", "const": "low"}
@@ -205,6 +247,36 @@ def test_semantic_schema_is_exact_closed_and_contains_only_safe_authority() -> N
     assert '"task"' not in encoded
     for forbidden in ("artifact.txt", "draft-v1", "accepted-v2", "SECRET"):
         assert forbidden not in encoded
+    assert encoded.count("req_111111111111") == 1
+    assert encoded.count("req_222222222222") == 1
+    assert _scoped_authority_ref_ids(
+        schema, step_index=0, phase="implementation"
+    ) == ("req_111111111111",)
+    assert _scoped_authority_ref_ids(schema, step_index=0, phase="review") == ()
+    assert _scoped_authority_ref_ids(schema, step_index=1, phase="review") == (
+        "req_222222222222",
+    )
+    assert _scoped_authority_ref_ids(
+        schema, step_index=1, phase="implementation"
+    ) == ()
+    assert _scoped_authority_refs_accept(
+        schema,
+        step_index=0,
+        phase="implementation",
+        refs=["req_111111111111"],
+    )
+    assert not _scoped_authority_refs_accept(
+        schema,
+        step_index=0,
+        phase="implementation",
+        refs=["req_222222222222"],
+    )
+    assert not _scoped_authority_refs_accept(
+        schema,
+        step_index=1,
+        phase="review",
+        refs=["req_111111111111"],
+    )
     _assert_closed_object_schemas(schema)
 
 
@@ -322,6 +394,44 @@ def test_open_semantic_schema_accepts_safe_nfc_roles(role: str) -> None:
     }
 
 
+@pytest.mark.parametrize(
+    ("phase", "accepted"),
+    [
+        ("implementation", True),
+        ("phase_1", True),
+        ("phase:review.v2", True),
+        ("phase\n", False),
+        ("\nphase", False),
+        ("phase\r", False),
+        ("-phase", False),
+        ("phase/extra", False),
+        ("phase ", False),
+    ],
+)
+def test_open_semantic_phase_schema_has_absolute_scalar_boundaries(
+    phase: str, accepted: bool
+) -> None:
+    schema = build_leader_plan_schema(
+        _open_semantic_request_with_context(
+            field="role", value="architecture planning"
+        )
+    )
+    step = schema["properties"]["steps"]["prefixItems"][0]
+    phase_schema = step["properties"]["phase"]
+    refs_schema = schema["$defs"][
+        step["properties"]["authority_refs"]["$ref"].removeprefix("#/$defs/")
+    ]
+
+    assert _string_schema_accepts(phase_schema, phase) is accepted
+    assert refs_schema == {
+        "type": "array",
+        "items": False,
+        "minItems": 0,
+        "maxItems": 0,
+        "uniqueItems": True,
+    }
+
+
 class _HostileContextString(str):
     def __len__(self) -> int:
         raise AssertionError("hostile string length must not run")
@@ -331,6 +441,9 @@ class _HostileContextString(str):
 
     def __hash__(self) -> int:
         raise AssertionError("hostile string hash must not run")
+
+    def __eq__(self, other: object) -> bool:
+        raise AssertionError("hostile string equality must not run")
 
 
 @pytest.mark.parametrize("field", ["agent_id", "role"])
@@ -360,6 +473,63 @@ def test_semantic_provenance_rejects_str_subclass_before_magic(field: str) -> No
     assert str(raised.value) == "leader generation request authority is invalid"
 
 
+def test_unselected_invalid_config_context_does_not_change_semantic_identity() -> None:
+    request = _semantic_request()
+    hostile_id = _HostileContextString("hostile-unselected")
+    hostile_role = _HostileContextString("hostile-role")
+    extras = (
+        AgentSpec("unused", "bad\nrole", "codex-cli", "codex"),
+        AgentSpec("unused", "api_key=SECRET", "codex-cli", "codex"),
+        AgentSpec("bad\nid", hostile_role, "codex-cli", "codex"),
+        AgentSpec(hostile_id, hostile_role, "codex-cli", "codex"),
+        AgentSpec("nfd-unused", "e\u0301", "codex-cli", "codex"),
+    )
+    augmented = replace(
+        request,
+        config=replace(request.config, agents=request.config.agents + extras),
+    )
+    baseline_schema = build_leader_plan_schema(request)
+
+    assert build_leader_plan_schema(augmented) == baseline_schema
+    baseline_provenance = build_leader_generation_provenance(
+        request=request,
+        provider="codex-cli",
+        constraint_mode="native_json_schema",
+        schema=baseline_schema,
+    )
+    assert build_leader_generation_provenance(
+        request=augmented,
+        provider="codex-cli",
+        constraint_mode="native_json_schema",
+        schema=baseline_schema,
+    ) == baseline_provenance
+    assert validate_leader_generation_provenance(
+        request=augmented,
+        provider="codex-cli",
+        provenance=baseline_provenance,
+    ) == baseline_provenance
+
+
+def test_duplicate_selected_config_context_fails_closed() -> None:
+    request = _semantic_request()
+    duplicate = next(
+        item for item in request.config.agents if item.agent_id == "reviewer"
+    )
+    changed = replace(
+        request,
+        config=replace(
+            request.config,
+            agents=request.config.agents + (duplicate,),
+        ),
+    )
+
+    with pytest.raises(ProviderPlanValidationError) as raised:
+        build_leader_plan_schema(changed)
+
+    assert raised.value.code == "authority_invalid"
+    assert str(raised.value) == "provider plan authority is invalid"
+
+
 def test_semantic_schema_is_deterministic_and_regeneration_diagnostic_free() -> None:
     request = _semantic_request()
     retry = replace(
@@ -371,6 +541,62 @@ def test_semantic_schema_is_deterministic_and_regeneration_diagnostic_free() -> 
     assert canonical_leader_plan_schema_hash(
         build_leader_plan_schema(request)
     ) == canonical_leader_plan_schema_hash(build_leader_plan_schema(retry))
+
+
+def test_semantic_schema_maximum_authority_is_compact_and_deterministic() -> None:
+    selected = ("reviewer", "planner")
+    requirements: list[dict[str, object]] = []
+    requirement_ids: list[str] = []
+    for phase_index in range(64):
+        for item_index in range(4):
+            number = phase_index * 4 + item_index
+            requirement_id = f"req_{number:012x}"
+            requirement_ids.append(requirement_id)
+            requirements.append(
+                {
+                    "requirement_id": requirement_id,
+                    "kind": "read",
+                    "target": f"artifact_{number}.txt",
+                    "operation": "read",
+                    "phase": f"phase_{phase_index:02d}",
+                    "agent_id": selected[phase_index % len(selected)],
+                    "sensitivity": "ordinary",
+                    "literal": f"value_{number}",
+                }
+            )
+    authority = {
+        "schema_version": "mission-semantic-authority/v1",
+        "source_message_hash": f"sha256:{'c' * 64}",
+        "requirements": requirements,
+        "proposed_effects": [],
+        "unresolved": [],
+    }
+
+    first = build_semantic_leader_plan_schema(
+        semantic_authority=authority,
+        selected_agent_ids=selected,
+        roles={"reviewer": "review", "planner": "architecture planning"},
+        step_count=64,
+    )
+    second = build_semantic_leader_plan_schema(
+        semantic_authority=authority,
+        selected_agent_ids=selected,
+        roles={"reviewer": "review", "planner": "architecture planning"},
+        step_count=64,
+    )
+    encoded = json.dumps(
+        first,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+
+    assert first == second
+    assert canonical_leader_plan_schema_hash(first) == canonical_leader_plan_schema_hash(
+        second
+    )
+    assert len(encoded.encode("utf-8")) < 150_000
+    assert all(encoded.count(requirement_id) == 1 for requirement_id in requirement_ids)
 
 
 @pytest.mark.parametrize(
