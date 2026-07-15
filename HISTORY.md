@@ -4,6 +4,13 @@
 
 ## 2026-07-15
 
+### Add the canonical semantic-authority domain
+
+- Added the pure `mission-semantic-authority/v1` validator with exact requirement, proposed-effect, and bounded unresolved-item field sets; closed non-echoing error codes; project-relative target boundaries; sensitive-reference enforcement; canonical `requirement_id` / `proposed_effect_id` / `unresolved_id` keys; and defensive copies.
+- Added canonical JSON SHA-256 authority identity and an exact eight-field compact projection that exposes only schema/state/hash/counts, compiled-step count, and bounded redacted blocker codes.
+- Added deterministic RED/GREEN coverage for valid state transitions and literal requirements, canonical key-order independence, hostile mutations, proposal boundaries, secret references, compact leakage prevention, and bool-versus-integer rejection.
+- This domain-only slice does not implement semantic extraction, Leader candidate handling, Worker task compilation, confirmation, dispatch, recovery, or live behavior. It does not rerun or claim an M2c PASS; M2c remains **BLOCKED** and M3 remains locked.
+
 ### Plan Leader semantic authority implementation
 
 - Added `docs/superpowers/plans/2026-07-15-leader-semantic-authority.md`, the human-requested 逐文件、逐测试、逐 commit TDD plan for the approved semantic-authority design.
