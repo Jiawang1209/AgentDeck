@@ -4,6 +4,12 @@
 
 ## 2026-07-15
 
+### Design M2c PATH-first tool discovery
+
+- Approved PATH-first discovery plus canonical-target sealing for the M2c read-only preflight. The current false `claude_unavailable`, `claude_agent_acp_unavailable`, and `tmux_unavailable` blockers come from the harness rejecting ordinary Claude, npm, and Homebrew symlinks after `shutil.which()` succeeds; they are not evidence that the `agentdeck` conda environment lost those installed tools.
+- Kept the correction test-harness-only: production Codex/Claude Leader, ACP adapter/Node, and tmux readiness already discover installed tools from PATH. The design preserves strict canonical inode/content seals, read-only probe isolation, compact path-free evidence, and Task 14 staged-launcher authority; it adds no install, login, global PATH/config mutation, provider call, tmux input, live Mission, or M2c PASS claim.
+- Froze the validation order as deterministic RED/GREEN, complete non-live M2c regression, compile/diff checks, a new implementation commit, two independent full suites on its unchanged SHA, and exactly one new real-tool preflight without manual path overrides. Even `ready=true` / `blockers=[]` must stop for separate human authorization before Task 14.
+
 ### Prepare semantic M2c live acceptance
 
 - First frozen-verification review exposed four deterministic failures outside the Task 13 harness. Registered the Task 12 `record_semantic_worker_dispatch_event` public transitive writer with the authoritative mutation-lock wrapper, and restored the existing direct-confirmation error boundary so semantic snapshot/provenance drift is reported as closed `mission confirmation drift` while the standalone snapshot helper retains `execution snapshot invalid`. The exact four failures now pass, as do focused semantic dispatch and confirmation regressions; the earlier candidate SHA is superseded and frozen verification must restart from the new commit.

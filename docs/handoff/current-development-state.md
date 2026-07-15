@@ -2,6 +2,30 @@
 
 Updated: 2026-07-15
 
+## Active goal — M2c PATH/tool discovery closure
+
+Frozen semantic-authority commit `553b5b7039745a88dcd0cd1bc1da5fdd43bb4da6`
+passed the complete non-live M2c harness (`110 passed, 1 skipped`) and two
+independent full suites (`4143 passed, 2 skipped` each). Its one designated
+read-only preflight found Codex CLI but returned `ready=false` with
+`claude_unavailable`, `claude_agent_acp_unavailable`, and `tmux_unavailable`.
+No live Mission was attempted.
+
+Read-only diagnosis proved that the active shell and `agentdeck` conda
+environment can find all four tools. Claude, Claude Agent ACP, and Homebrew
+tmux are ordinary installed symlinks; the M2c harness calls `shutil.which()`
+and then rejects every symlink inside its strict executable seal. The blocker
+is therefore a harness false negative, not missing production PATH discovery.
+
+The human-approved design is
+`docs/superpowers/specs/2026-07-15-m2c-path-tool-discovery-design.md`. It chooses
+PATH-first discovery plus strict canonical-target sealing for preflight only,
+keeps production AgentDeck behavior and Task 14 staged-launcher authority
+unchanged, and forbids install/login/global PATH changes. The next gate is
+human review of the written spec. Only after approval may writing-plans produce
+the detailed TDD plan; implementation, double full suite, and the one new
+preflight have not started. M2c remains **BLOCKED** and M3 remains locked.
+
 ## Natural-language Mission Phase 0 baseline — accepted
 
 The fresh-project strict two-message Codex/Claude acceptance completed all eight frozen sequential steps as Mission `mis_1d5c2a569173`, plan `pln_c13709530632`, and workflow `wfr_7d309ae9c507`. Mission status, ProjectView status, workbench, and the event ledger agree on `completed/current_step=8`; the audit contains one `mission_confirmed` and eight `workflow_step_completed` events. First-run trust remained an explicit human setup boundary. Two real readiness false negatives were converted to strict regression tests before minimal fixes. Verdict: **PASS**. Durable evidence: `docs/validation/2026-07-11-natural-language-mission-acceptance.md`.
