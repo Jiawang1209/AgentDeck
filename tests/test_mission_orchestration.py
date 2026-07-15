@@ -173,6 +173,56 @@ def test_leader_orchestrator_rejects_compiled_semantic_task_mutation(tmp_path) -
     assert raised.value.code == "semantic_compilation_drift"
 
 
+def test_leader_orchestrator_rejects_semantic_step_count_before_iteration(
+    tmp_path
+) -> None:
+    _root, config, _store, _config_path = project(tmp_path)
+
+    class OversizedStepsProvider(FakeLeaderProvider):
+        def plan_result(self, request: LeaderPlanRequest) -> LeaderPlanResult:
+            result = super().plan_result(request)
+            first = result.plan["semantic_steps"][0]
+            result.plan["semantic_steps"] = [first] * 65
+            return result
+
+    with pytest.raises(SemanticPlanningError) as raised:
+        LeaderOrchestrator(config, OversizedStepsProvider()).plan_result(
+            "semantic task",
+            selected_agent_ids=("planner", "reviewer"),
+            step_count=4,
+            semantic_authority=semantic_authority_fixture(),
+        )
+
+    assert raised.value.code == "semantic_compilation_drift"
+
+
+def test_leader_orchestrator_closes_hostile_semantic_value_before_deepcopy(
+    tmp_path
+) -> None:
+    _root, config, _store, _config_path = project(tmp_path)
+
+    class ExplodingValue:
+        def __deepcopy__(self, memo):
+            raise RuntimeError("RAW_DEEPCOPY_SECRET")
+
+    class HostileValueProvider(FakeLeaderProvider):
+        def plan_result(self, request: LeaderPlanRequest) -> LeaderPlanResult:
+            result = super().plan_result(request)
+            result.plan["semantic_steps"][0]["verification"] = ExplodingValue()
+            return result
+
+    with pytest.raises(SemanticPlanningError) as raised:
+        LeaderOrchestrator(config, HostileValueProvider()).plan_result(
+            "semantic task",
+            selected_agent_ids=("planner", "reviewer"),
+            step_count=4,
+            semantic_authority=semantic_authority_fixture(),
+        )
+
+    assert raised.value.code == "semantic_compilation_drift"
+    assert "RAW_DEEPCOPY_SECRET" not in str(raised.value)
+
+
 def test_leader_orchestrator_snapshots_semantic_authority_before_provider(
     tmp_path
 ) -> None:

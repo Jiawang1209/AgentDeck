@@ -185,7 +185,19 @@ def semantic_cli_request(config) -> LeaderPlanRequest:
 
 class SemanticApiResponse:
     def __init__(self, candidate: dict[str, object]) -> None:
-        self.candidate = candidate
+        self.payload = json.dumps(
+            {
+                "choices": [
+                    {
+                        "message": {
+                            "content": json.dumps(candidate, ensure_ascii=False)
+                        }
+                    }
+                ]
+            },
+            ensure_ascii=False,
+        ).encode("utf-8")
+        self.offset = 0
 
     def __enter__(self) -> "SemanticApiResponse":
         return self
@@ -193,19 +205,11 @@ class SemanticApiResponse:
     def __exit__(self, *_args) -> None:
         return None
 
-    def read(self) -> bytes:
-        return json.dumps(
-            {
-                "choices": [
-                    {
-                        "message": {
-                            "content": json.dumps(self.candidate, ensure_ascii=False)
-                        }
-                    }
-                ]
-            },
-            ensure_ascii=False,
-        ).encode("utf-8")
+    def read(self, size: int = -1) -> bytes:
+        end = len(self.payload) if size < 0 else self.offset + size
+        chunk = self.payload[self.offset:end]
+        self.offset += len(chunk)
+        return chunk
 
 
 def test_fake_semantic_provider_compiles_every_exact_requirement(
@@ -269,7 +273,7 @@ def test_api_semantic_generation_regenerates_once_under_one_deadline(
         semantic_cli_candidate(omit_requirement=True),
         semantic_cli_candidate(),
     ]
-    monotonic_values = iter((100.0, 101.0, 105.0, 106.0, 107.0))
+    monotonic_values = iter(float(value) for value in range(100, 113))
     monkeypatch.setenv("AGENTDECK_LEADER_API_KEY", "test-key")
     monkeypatch.setattr(
         "agentdeck.providers.openai_compatible.time.monotonic",
@@ -328,6 +332,58 @@ def test_api_semantic_generation_regenerates_once_under_one_deadline(
             "regeneration_used": False,
         },
     )
+
+
+def test_api_semantic_generation_freezes_effective_provider_identity(
+    tmp_path, monkeypatch
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    config = cli.load_config(root)
+    request_value = replace(semantic_cli_request(config), model=None)
+    provider = OpenAICompatibleProvider(
+        model="initial-model",
+        base_url="https://initial.example/v1",
+        timeout=30,
+    )
+    provider.name = "initial-provider"
+    calls: list[dict[str, object]] = []
+    candidates = [
+        semantic_cli_candidate(omit_requirement=True),
+        semantic_cli_candidate(),
+    ]
+    monkeypatch.setenv("AGENTDECK_LEADER_API_KEY", "test-key")
+
+    def fake_urlopen(http_request, timeout):
+        calls.append(
+            {
+                "url": http_request.full_url,
+                "body": json.loads(http_request.data.decode("utf-8")),
+            }
+        )
+        if len(calls) == 1:
+            provider.model = "mutated-model"
+            provider.name = "mutated-provider"
+            provider.base_url = "https://mutated.example/v1"
+            provider.constraint_mode = "native_json_schema"
+        return SemanticApiResponse(candidates[len(calls) - 1])
+
+    monkeypatch.setattr(
+        "agentdeck.providers.openai_compatible.request.urlopen", fake_urlopen
+    )
+
+    result = provider.plan_result(request_value)
+
+    assert [call["body"]["model"] for call in calls] == [
+        "initial-model",
+        "initial-model",
+    ]
+    assert [call["url"] for call in calls] == [
+        "https://initial.example/v1/chat/completions",
+        "https://initial.example/v1/chat/completions",
+    ]
+    assert result.leader_generation["provider"] == "initial-provider"
+    assert result.leader_generation["model"] == "initial-model"
+    assert result.leader_generation["constraint_mode"] == "json_object"
 
 
 def test_api_semantic_double_failure_returns_same_closed_code_and_stops_at_two(
@@ -442,13 +498,19 @@ def test_api_semantic_json_parse_failure_is_sanitized_and_not_retried(
     monkeypatch.setenv("AGENTDECK_LEADER_API_KEY", "test-key")
 
     class RawInvalidResponse:
+        def __init__(self) -> None:
+            self.sent = False
+
         def __enter__(self):
             return self
 
         def __exit__(self, *_args):
             return None
 
-        def read(self) -> bytes:
+        def read(self, size: int = -1) -> bytes:
+            if self.sent:
+                return b""
+            self.sent = True
             return b"RAW_PROVIDER_SECRET:not-json"
 
     def fake_urlopen(_http_request, timeout):
@@ -571,6 +633,40 @@ def test_api_semantic_network_failure_is_sanitized_and_not_retried(
     assert "RAW_URL_SECRET" not in str(raised.value)
 
 
+@pytest.mark.parametrize(
+    "failure",
+    [
+        TimeoutError("RAW_TIMEOUT_SECRET"),
+        URLError(TimeoutError("RAW_WRAPPED_TIMEOUT_SECRET")),
+    ],
+)
+def test_api_semantic_timeout_failure_is_sanitized_and_not_retried(
+    tmp_path, monkeypatch, failure: BaseException
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    config = cli.load_config(root)
+    calls = 0
+    monkeypatch.setenv("AGENTDECK_LEADER_API_KEY", "test-key")
+
+    def fake_urlopen(_http_request, timeout):
+        nonlocal calls
+        calls += 1
+        raise failure
+
+    monkeypatch.setattr(
+        "agentdeck.providers.openai_compatible.request.urlopen", fake_urlopen
+    )
+
+    with pytest.raises(OpenAICompatibleProviderError) as raised:
+        OpenAICompatibleProvider().plan_result(semantic_cli_request(config))
+
+    assert calls == 1
+    assert raised.value.stage == "timeout"
+    assert raised.value.diagnostic_code is None
+    assert raised.value.attempt_count == 1
+    assert "RAW_" not in str(raised.value)
+
+
 def test_api_semantic_non_object_http_envelope_is_sanitized(
     tmp_path, monkeypatch
 ) -> None:
@@ -579,13 +675,19 @@ def test_api_semantic_non_object_http_envelope_is_sanitized(
     monkeypatch.setenv("AGENTDECK_LEADER_API_KEY", "test-key")
 
     class ListEnvelopeResponse:
+        def __init__(self) -> None:
+            self.sent = False
+
         def __enter__(self):
             return self
 
         def __exit__(self, *_args):
             return None
 
-        def read(self) -> bytes:
+        def read(self, size: int = -1) -> bytes:
+            if self.sent:
+                return b""
+            self.sent = True
             return b'[{"RAW_ENVELOPE_SECRET":true}]'
 
     monkeypatch.setattr(
@@ -600,6 +702,86 @@ def test_api_semantic_non_object_http_envelope_is_sanitized(
     assert raised.value.diagnostic_code == "semantic_candidate_schema_invalid"
     assert raised.value.attempt_count == 1
     assert "RAW_ENVELOPE_SECRET" not in str(raised.value)
+
+
+def test_api_semantic_oversized_http_response_is_bounded_and_sanitized(
+    tmp_path, monkeypatch
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    config = cli.load_config(root)
+    monkeypatch.setenv("AGENTDECK_LEADER_API_KEY", "test-key")
+    calls = 0
+
+    class OversizedResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def read(self, size: int = -1) -> bytes:
+            assert 0 < size <= 64 * 1024
+            return b"R" * size
+
+    def fake_urlopen(_request, timeout):
+        nonlocal calls
+        calls += 1
+        return OversizedResponse()
+
+    monkeypatch.setattr(
+        "agentdeck.providers.openai_compatible.request.urlopen", fake_urlopen
+    )
+
+    with pytest.raises(OpenAICompatibleProviderError) as raised:
+        OpenAICompatibleProvider().plan_result(semantic_cli_request(config))
+
+    assert calls == 1
+    assert raised.value.stage == "json_parse"
+    assert raised.value.diagnostic_code == "semantic_candidate_schema_invalid"
+    assert raised.value.attempt_count == 1
+    assert "R" * 32 not in str(raised.value)
+
+
+def test_api_semantic_chunk_read_crossing_deadline_is_timeout(
+    tmp_path, monkeypatch
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    config = cli.load_config(root)
+    monkeypatch.setenv("AGENTDECK_LEADER_API_KEY", "test-key")
+    monotonic_values = iter((100.0, 101.0, 102.0, 131.0))
+    monkeypatch.setattr(
+        "agentdeck.providers.openai_compatible.time.monotonic",
+        lambda: next(monotonic_values),
+    )
+    calls = 0
+
+    class ChunkedResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def read(self, size: int = -1) -> bytes:
+            return b'{"RAW_CHUNK_SECRET":'
+
+    def fake_urlopen(_request, timeout):
+        nonlocal calls
+        calls += 1
+        return ChunkedResponse()
+
+    monkeypatch.setattr(
+        "agentdeck.providers.openai_compatible.request.urlopen", fake_urlopen
+    )
+
+    with pytest.raises(OpenAICompatibleProviderError) as raised:
+        OpenAICompatibleProvider(timeout=30).plan_result(semantic_cli_request(config))
+
+    assert calls == 1
+    assert raised.value.stage == "timeout"
+    assert raised.value.diagnostic_code is None
+    assert raised.value.attempt_count == 1
+    assert "RAW_CHUNK_SECRET" not in str(raised.value)
 
 
 class FakeMissionProvider:

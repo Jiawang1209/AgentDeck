@@ -887,6 +887,17 @@ request replacement diagnostic and total monotonic deadline. In
 `LeaderOrchestrator.plan_result()`, require compiled semantic keys whenever the
 request carries authority and reject semantic keys on legacy requests.
 
+Before the first semantic HTTP attempt, freeze and validate the effective model,
+provider name, constraint mode, and base URL; both attempts and provenance must
+consume only those frozen values. Read semantic HTTP responses in chunks of at
+most 64 KiB with a 2 MiB total cap and check the same monotonic deadline before
+and after every chunk. Direct or wrapped socket timeouts are one-attempt timeout
+failures; oversize or malformed envelopes are sanitized nonretryable parse
+failures. Before the orchestrator copies or reconstructs a provider result, it
+must require the exact frozen semantic step count and run every semantic step
+through the Task 3 exact-tree/hash boundary; any hostile value or conversion
+failure collapses to `semantic_compilation_drift` without echo.
+
 Do not advertise `native_json_schema` for HTTP/fake providers. Their provenance
 remains `json_object`/`local` with null schema fields, while the semantic
 authority hash is proven through the compiled plan and later confirmation

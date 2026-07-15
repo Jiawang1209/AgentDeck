@@ -7,6 +7,7 @@ import os
 import time
 from json import JSONDecodeError
 from urllib import request
+from urllib.error import URLError
 
 from agentdeck.models import AgentSpec
 from agentdeck.semantic_authority import (
@@ -44,6 +45,8 @@ _REGENERABLE_SEMANTIC_CODES = frozenset(
         "semantic_effect_conflict",
     }
 )
+MAX_API_LEADER_OUTPUT_BYTES = 2 * 1024 * 1024
+_API_READ_CHUNK_BYTES = 64 * 1024
 
 
 class OpenAICompatibleProviderError(RuntimeError):
@@ -231,7 +234,27 @@ class OpenAICompatibleProvider:
             raise OpenAICompatibleProviderError(
                 "schema", "semantic_compilation_failed", attempt_count=0
             ) from None
-        frozen_request = replace(plan_request, semantic_authority=authority)
+        effective_model = plan_request.model or self.model
+        provider_name = self.name
+        constraint_mode = self.constraint_mode
+        base_url = self.base_url
+        if (
+            type(effective_model) is not str
+            or not effective_model.strip()
+            or type(provider_name) is not str
+            or not provider_name.strip()
+            or constraint_mode != "json_object"
+            or type(base_url) is not str
+            or not base_url.strip()
+        ):
+            raise OpenAICompatibleProviderError(
+                "schema", "semantic_compilation_failed", attempt_count=0
+            )
+        frozen_request = replace(
+            plan_request,
+            model=effective_model,
+            semantic_authority=authority,
+        )
         api_key = os.environ.get(self.api_key_env)
         if not api_key:
             raise RuntimeError(f"{self.api_key_env} is not set")
@@ -262,7 +285,12 @@ class OpenAICompatibleProvider:
                 )
             try:
                 candidate = self._semantic_http_attempt(
-                    attempt_request, api_key=api_key, timeout=remaining
+                    attempt_request,
+                    api_key=api_key,
+                    timeout=remaining,
+                    effective_model=effective_model,
+                    base_url=base_url,
+                    deadline=deadline,
                 )
             except OpenAICompatibleProviderError as error:
                 raise OpenAICompatibleProviderError(
@@ -303,8 +331,8 @@ class OpenAICompatibleProvider:
                 plan=plan,
                 leader_generation=build_leader_generation_provenance(
                     request=frozen_request,
-                    provider=self.name,
-                    constraint_mode=self.constraint_mode,
+                    provider=provider_name,
+                    constraint_mode=constraint_mode,
                     attempt_count=attempt,
                 ),
                 semantic_diagnostics=tuple(diagnostics),
@@ -317,9 +345,12 @@ class OpenAICompatibleProvider:
         *,
         api_key: str,
         timeout: float,
+        effective_model: str,
+        base_url: str,
+        deadline: float,
     ) -> dict[str, object]:
         payload = {
-            "model": plan_request.model or self.model,
+            "model": effective_model,
             "response_format": {"type": "json_object"},
             "messages": [
                 {"role": "system", "content": self._system_prompt(plan_request)},
@@ -330,7 +361,7 @@ class OpenAICompatibleProvider:
             ],
         }
         req = request.Request(
-            f"{self.base_url}/chat/completions",
+            f"{base_url}/chat/completions",
             data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
             headers={
                 "Authorization": f"Bearer {api_key}",
@@ -340,10 +371,19 @@ class OpenAICompatibleProvider:
         )
         try:
             with request.urlopen(req, timeout=timeout) as response:
-                data = json.loads(response.read().decode("utf-8"))
+                payload_bytes = self._read_semantic_response(
+                    response, deadline=deadline
+                )
+                data = json.loads(payload_bytes.decode("utf-8"))
             return self._extract_plan(data)
         except OpenAICompatibleProviderError:
             raise
+        except TimeoutError:
+            raise OpenAICompatibleProviderError("timeout", attempt_count=1) from None
+        except URLError as error:
+            reason = error.reason if type(error) is URLError else None
+            stage = "timeout" if isinstance(reason, TimeoutError) else "nonzero"
+            raise OpenAICompatibleProviderError(stage, attempt_count=1) from None
         except OSError:
             raise OpenAICompatibleProviderError("nonzero", attempt_count=1) from None
         except (
@@ -359,6 +399,49 @@ class OpenAICompatibleProvider:
                 "semantic_candidate_schema_invalid",
                 attempt_count=1,
             ) from None
+
+    @staticmethod
+    def _read_semantic_response(response: object, *, deadline: float) -> bytes:
+        chunks: list[bytes] = []
+        total = 0
+        while True:
+            before = time.monotonic()
+            if not math.isfinite(before) or before >= deadline:
+                raise OpenAICompatibleProviderError(
+                    "timeout", attempt_count=1
+                )
+            read_size = min(
+                _API_READ_CHUNK_BYTES,
+                MAX_API_LEADER_OUTPUT_BYTES + 1 - total,
+            )
+            if read_size <= 0:
+                raise OpenAICompatibleProviderError(
+                    "json_parse",
+                    "semantic_candidate_schema_invalid",
+                    attempt_count=1,
+                )
+            chunk = response.read(read_size)
+            after = time.monotonic()
+            if not math.isfinite(after) or after >= deadline:
+                raise OpenAICompatibleProviderError(
+                    "timeout", attempt_count=1
+                )
+            if type(chunk) is not bytes:
+                raise OpenAICompatibleProviderError(
+                    "json_parse",
+                    "semantic_candidate_schema_invalid",
+                    attempt_count=1,
+                )
+            if not chunk:
+                return b"".join(chunks)
+            total += len(chunk)
+            if total > MAX_API_LEADER_OUTPUT_BYTES:
+                raise OpenAICompatibleProviderError(
+                    "json_parse",
+                    "semantic_candidate_schema_invalid",
+                    attempt_count=1,
+                )
+            chunks.append(chunk)
 
     def _system_prompt(self, request: LeaderPlanRequest) -> str:
         if request.semantic_authority is not None:

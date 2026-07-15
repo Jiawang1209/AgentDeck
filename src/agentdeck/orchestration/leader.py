@@ -18,7 +18,11 @@ from agentdeck.providers.semantic_plan_schema import (
     resolve_semantic_leader_plan_context,
 )
 from agentdeck.semantic_authority import SemanticAuthorityError, validate_semantic_authority
-from agentdeck.semantic_planning import SemanticPlanningError, compile_semantic_plan
+from agentdeck.semantic_planning import (
+    SemanticPlanningError,
+    compile_semantic_plan,
+    semantic_step_hash,
+)
 
 
 _COMPILED_SEMANTIC_PLAN_FIELDS = frozenset(
@@ -68,13 +72,27 @@ def _exact_json_value(left: object, right: object) -> bool:
 def _validate_compiled_semantic_plan(
     request: LeaderPlanRequest, plan: object
 ) -> dict[str, object]:
+    try:
+        return _rebuild_compiled_semantic_plan(request, plan)
+    except Exception:
+        raise SemanticPlanningError("semantic_compilation_drift") from None
+
+
+def _rebuild_compiled_semantic_plan(
+    request: LeaderPlanRequest, plan: object
+) -> dict[str, object]:
     if type(plan) is not dict or set(plan) != _COMPILED_SEMANTIC_PLAN_FIELDS:
         raise SemanticPlanningError("semantic_compilation_drift")
     semantic_steps = plan.get("semantic_steps")
-    if type(semantic_steps) is not list or not semantic_steps:
+    if (
+        type(request.step_count) is not int
+        or type(semantic_steps) is not list
+        or len(semantic_steps) != request.step_count
+    ):
         raise SemanticPlanningError("semantic_compilation_drift")
     candidate_steps: list[dict[str, object]] = []
     for raw_step in semantic_steps:
+        semantic_step_hash(raw_step)
         if type(raw_step) is not dict or set(raw_step) != _COMPILED_SEMANTIC_STEP_FIELDS:
             raise SemanticPlanningError("semantic_compilation_drift")
         proposals = raw_step.get("proposed_effects")
