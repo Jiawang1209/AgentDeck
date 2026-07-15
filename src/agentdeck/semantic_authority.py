@@ -121,16 +121,25 @@ _CHINESE_ORDINAL_RE = re.compile(r"(?:第一轮|第二轮|第三轮|第四轮)")
 _ENGLISH_ORDINAL_RE = re.compile(
     r"\b(?:First|Second|Third|Fourth)\b[:,]?", re.IGNORECASE
 )
+_FILENAME_TOKEN = r"[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)+"
 _TARGET_RE = re.compile(
     r"(?<![A-Za-z0-9_.-])"
     r"(?:"
     r"(?:[A-Za-z]:)?(?:[A-Za-z0-9_-]+[\\])+"
-    r"[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+"
+    rf"{_FILENAME_TOKEN}"
     r"|(?:/|(?:\.\./)+|[A-Za-z]:)?"
-    r"(?:[A-Za-z0-9_-]+/)*[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+"
-    r")"
+    rf"(?:[A-Za-z0-9_-]+/)*{_FILENAME_TOKEN}"
+    r")(?=\s|[；;。.，,]|$)"
 )
-_LITERAL_TOKEN = r"([A-Za-z0-9][A-Za-z0-9._:-]{0,255})"
+_UNSAFE_TARGET_SUFFIX_RE = re.compile(
+    rf"(?<![A-Za-z0-9_.-])(?:[A-Za-z0-9_-]+/)*{_FILENAME_TOKEN}"
+    r"[^A-Za-z0-9_.\-\s；;。.，,][^\s；;。.，,]*"
+)
+_WINDOWS_FORBIDDEN_TARGET_CHARS = frozenset(':?*"<>|')
+_LITERAL_TOKEN = (
+    r"([A-Za-z0-9](?:[A-Za-z0-9._:-]{0,254}[A-Za-z0-9])?)"
+    r"(?=\s*(?:换行|newline|[；;。.，,]|$))"
+)
 _VALUE_PATTERNS = (
     re.compile(rf"内容为\s*{_LITERAL_TOKEN}(\s*换行)?", re.IGNORECASE),
     re.compile(rf"要求\s*{_LITERAL_TOKEN}(\s*换行)?", re.IGNORECASE),
@@ -144,6 +153,66 @@ _VALUE_PATTERNS = (
 )
 _UNSUPPORTED_EXACT_VALUE_RE = re.compile(
     r"内容精确匹配|(?:matches?|matching)\s+exactly", re.IGNORECASE
+)
+_EXPLICIT_VALUE_LEAD_RE = re.compile(
+    r"内容为|要求|精确改为|(?:with\s+)?content\s+(?:is\s+)?exactly"
+    r"|requires?|to\s+exactly",
+    re.IGNORECASE,
+)
+_CLAUSE_COUNT_MISMATCH = "\x00clause_count_mismatch"
+_UNSUPPORTED_LOGIC_RE = re.compile(
+    r"不要|如果|除非|\bdo\s+not\b|\bdon't\b|\bif\b|\bunless\b",
+    re.IGNORECASE,
+)
+_AMBIGUOUS_OPERATION_RE = re.compile(
+    r"创建\s*(?:或|并)\s*更新|\bcreate\s+(?:or|and)\s+update\b",
+    re.IGNORECASE,
+)
+_AGENT_ACTION_TOKEN = r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}"
+_CHINESE_ACTION_PREFIX = rf"^(?:第一轮|第二轮|第三轮|第四轮)\s+{_AGENT_ACTION_TOKEN}\s+"
+_ENGLISH_ACTION_PREFIX = rf"^(?:First|Second|Third|Fourth)\b[:,]?\s+{_AGENT_ACTION_TOKEN}\s+"
+_ACTION_PATTERNS = (
+    ("create", re.compile(rf"{_CHINESE_ACTION_PREFIX}创建\s", re.IGNORECASE)),
+    ("update", re.compile(rf"{_CHINESE_ACTION_PREFIX}将\s+.+?\s+精确改为\s", re.IGNORECASE)),
+    ("review", re.compile(rf"{_CHINESE_ACTION_PREFIX}只读审查", re.IGNORECASE)),
+    ("verify", re.compile(rf"{_CHINESE_ACTION_PREFIX}只读验收", re.IGNORECASE)),
+    ("read", re.compile(rf"{_CHINESE_ACTION_PREFIX}只读读取", re.IGNORECASE)),
+    ("create", re.compile(rf"{_ENGLISH_ACTION_PREFIX}creates?\s", re.IGNORECASE)),
+    ("update", re.compile(rf"{_ENGLISH_ACTION_PREFIX}(?:updates?|changes?)\s", re.IGNORECASE)),
+    (
+        "review",
+        re.compile(
+            rf"{_ENGLISH_ACTION_PREFIX}(?:performs?\s+(?:a\s+)?read-only\s+)?reviews?\b",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "verify",
+        re.compile(
+            rf"{_ENGLISH_ACTION_PREFIX}(?:performs?\s+read-only\s+)?(?:verification|verif(?:y|ies))\b",
+            re.IGNORECASE,
+        ),
+    ),
+    ("read", re.compile(rf"{_ENGLISH_ACTION_PREFIX}reads?\s", re.IGNORECASE)),
+)
+_OPERATION_MENTION_PATTERNS = (
+    ("create", re.compile(r"创建|\bcreates?\b", re.IGNORECASE)),
+    ("update", re.compile(r"精确改为|更新|\b(?:updates?|changes?)\b", re.IGNORECASE)),
+    ("review", re.compile(r"审查|\breviews?\b", re.IGNORECASE)),
+    (
+        "verify",
+        re.compile(r"验收|\b(?:verification|verif(?:y|ies))\b", re.IGNORECASE),
+    ),
+    ("read", re.compile(r"读取|\breads?\b(?!-only)", re.IGNORECASE)),
+)
+_EXPLICIT_ACTION_AGENT_PATTERNS = (
+    re.compile(
+        rf"^(?:第一轮|第二轮|第三轮|第四轮)\s+({_AGENT_ACTION_TOKEN})\s+"
+    ),
+    re.compile(
+        rf"^(?:First|Second|Third|Fourth)\b[:,]?\s+({_AGENT_ACTION_TOKEN})\s+",
+        re.IGNORECASE,
+    ),
 )
 _SENSITIVE_ASSIGNMENT_RE = re.compile(
     r"\b(?:"
@@ -198,7 +267,13 @@ def _has_exact_fields(value: dict[object, object], fields: frozenset[str]) -> bo
 
 
 def _validate_target(value: object, *, requirement_id: object = None) -> None:
-    if type(value) is not str or not value or "\x00" in value or "\\" in value:
+    if (
+        type(value) is not str
+        or not value
+        or "\x00" in value
+        or "\\" in value
+        or any(character in value for character in _WINDOWS_FORBIDDEN_TARGET_CHARS)
+    ):
         _fail("target_invalid", requirement_id)
     if len(value) > SEMANTIC_TARGET_UTF8_BYTES_MAX:
         _fail("target_invalid", requirement_id)
@@ -465,11 +540,14 @@ def _ordered_clauses(message: str, step_count: int) -> tuple[str, ...]:
             .strip(" \t\r\n；;.：:")
             for index, match in enumerate(matches)
         )
-    return tuple(
+    clauses = tuple(
         clause.strip(" \t\r\n；;.：:")
         for clause in re.split(r"[；;\n]+", message)
         if clause.strip(" \t\r\n；;.：:")
     )
+    if len(clauses) > 1 and len(clauses) != step_count:
+        return (_CLAUSE_COUNT_MISMATCH,)
+    return clauses
 
 
 def _explicit_targets(clause: str) -> tuple[str, ...]:
@@ -492,27 +570,43 @@ def _explicit_values(clause: str) -> tuple[str, ...]:
 
 
 def _classify_operation(clause: str) -> str | None:
+    for operation, pattern in _ACTION_PATTERNS:
+        if pattern.search(clause):
+            return operation
+    return None
+
+
+def _masked_semantic_clause(clause: str) -> str:
     masked = list(clause)
     spans = [match.span() for match in _TARGET_RE.finditer(clause)]
     for pattern in _VALUE_PATTERNS:
         spans.extend(match.span(1) for match in pattern.finditer(clause))
     for start, end in spans:
         masked[start:end] = " " * (end - start)
-    verb_text = "".join(masked)
-    if re.search(r"精确改为|\bupdates?\b|\bchanges?\b", verb_text, re.IGNORECASE):
-        return "update"
-    if re.search(
-        r"只读验收|验收|\bverification\b|\bverif(?:y|ies)\b",
-        verb_text,
-        re.IGNORECASE,
-    ):
-        return "verify"
-    if re.search(r"只读审查|审查|\breviews?\b", verb_text, re.IGNORECASE):
-        return "review"
-    if re.search(r"创建|\bcreates?\b", verb_text, re.IGNORECASE):
-        return "create"
-    if re.search(r"只读读取|读取|\breads?\b", verb_text, re.IGNORECASE):
-        return "read"
+    return "".join(masked)
+
+
+def _operation_mentions(clause: str) -> tuple[str, ...]:
+    masked = _masked_semantic_clause(clause)
+    mentions: list[tuple[int, str]] = []
+    for operation, pattern in _OPERATION_MENTION_PATTERNS:
+        mentions.extend((match.start(), operation) for match in pattern.finditer(masked))
+    return tuple(operation for _, operation in sorted(mentions))
+
+
+def _clause_logic_kind(clause: str) -> str | None:
+    if _UNSUPPORTED_LOGIC_RE.search(clause):
+        return "unsupported_clause_logic"
+    if _AMBIGUOUS_OPERATION_RE.search(clause) or len(_operation_mentions(clause)) > 1:
+        return "ambiguous_operation"
+    return None
+
+
+def _explicit_action_agent(clause: str) -> str | None:
+    for pattern in _EXPLICIT_ACTION_AGENT_PATTERNS:
+        match = pattern.search(clause)
+        if match is not None:
+            return match.group(1)
     return None
 
 
@@ -532,6 +626,18 @@ def _requirements_from_clauses(
     selected_agent_ids: tuple[str, ...],
     phases: tuple[str, ...] | None,
 ) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
+    if clauses == (_CLAUSE_COUNT_MISMATCH,):
+        body: dict[str, object] = {
+            "kind": "clause_count_mismatch",
+            "phase": phases[0] if phases is not None else "step-1",
+            "agent_id": (
+                selected_agent_ids[0]
+                if len(selected_agent_ids) == 1
+                else "unassigned"
+            ),
+        }
+        return [], [{"unresolved_id": _opaque_item_id("unr", body), **body}]
+
     analyses: list[dict[str, object]] = []
     safe_global_targets: list[str] = []
     for index, clause in enumerate(clauses):
@@ -540,17 +646,15 @@ def _requirements_from_clauses(
             if phases is not None and index < len(phases)
             else f"step-{index + 1}"
         )
-        clause_agents = tuple(
-            agent_id for agent_id in selected_agent_ids if agent_id in clause
+        expected_agent_id = selected_agent_ids[index % len(selected_agent_ids)]
+        explicit_agent_id = _explicit_action_agent(clause)
+        agent_mismatch = (
+            explicit_agent_id is not None
+            and explicit_agent_id != expected_agent_id
         )
-        agent_id = (
-            clause_agents[0]
-            if len(clause_agents) == 1
-            else selected_agent_ids[0]
-            if len(selected_agent_ids) == 1
-            else "unassigned"
-        )
+        agent_id = expected_agent_id
         operation = _classify_operation(clause)
+        logic_kind = _clause_logic_kind(clause)
         sensitivity = _classify_sensitive(clause)
         if sensitivity != "ordinary":
             analyses.append(
@@ -559,17 +663,20 @@ def _requirements_from_clauses(
                     "phase": phase,
                     "agent_id": agent_id,
                     "operation": operation,
+                    "logic_kind": logic_kind,
+                    "agent_mismatch": agent_mismatch,
                     "sensitivity": sensitivity,
                     "targets": (),
                     "values": (),
                     "unsafe_target": False,
+                    "unsupported_value": False,
                 }
             )
             continue
         targets = _explicit_targets(clause)
         values = _explicit_values(clause)
         safe_targets: list[str] = []
-        unsafe_target = False
+        unsafe_target = _UNSAFE_TARGET_SUFFIX_RE.search(clause) is not None
         for target in targets:
             try:
                 _validate_target(target)
@@ -585,10 +692,15 @@ def _requirements_from_clauses(
                 "phase": phase,
                 "agent_id": agent_id,
                 "operation": operation,
+                "logic_kind": logic_kind,
+                "agent_mismatch": agent_mismatch,
                 "sensitivity": sensitivity,
                 "targets": tuple(safe_targets),
                 "values": values,
                 "unsafe_target": unsafe_target,
+                "unsupported_value": (
+                    _EXPLICIT_VALUE_LEAD_RE.search(clause) is not None and not values
+                ),
             }
         )
 
@@ -624,6 +736,12 @@ def _requirements_from_clauses(
         if analysis["sensitivity"] != "ordinary":
             add_unresolved("sensitive_content", phase, agent_id)
             continue
+        if analysis["agent_mismatch"]:
+            add_unresolved("wrong_or_unknown_agent", phase, agent_id)
+            continue
+        if analysis["logic_kind"] is not None:
+            add_unresolved(analysis["logic_kind"], phase, agent_id)
+            continue
         if analysis["unsafe_target"]:
             add_unresolved("unsafe_target", phase, agent_id)
             continue
@@ -635,6 +753,9 @@ def _requirements_from_clauses(
             continue
         if _UNSUPPORTED_EXACT_VALUE_RE.search(clause) and not values:
             add_unresolved("unsupported_literal", phase, agent_id)
+            continue
+        if analysis["unsupported_value"]:
+            add_unresolved("unsupported_value", phase, agent_id)
             continue
         if operation is None:
             if targets or values:

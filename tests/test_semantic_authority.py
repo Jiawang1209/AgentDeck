@@ -405,6 +405,189 @@ def test_extract_does_not_treat_secretary_as_a_sensitive_key_component() -> None
     assert authority["unresolved"] == []
 
 
+@pytest.mark.parametrize(
+    ("message", "kind"),
+    [
+        (
+            "第一轮 claude-worker 不要创建 artifact.txt 且内容为 draft 换行。",
+            "unsupported_clause_logic",
+        ),
+        (
+            "第一轮 claude-worker 如果需要则创建 artifact.txt 且内容为 draft 换行。",
+            "unsupported_clause_logic",
+        ),
+        (
+            "第一轮 claude-worker 创建或更新 artifact.txt 且内容为 draft 换行。",
+            "ambiguous_operation",
+        ),
+        (
+            "第一轮 claude-worker 创建并更新 artifact.txt 且内容为 draft 换行。",
+            "ambiguous_operation",
+        ),
+        (
+            "第一轮 claude-worker 创建并审查 artifact.txt 且内容为 draft 换行。",
+            "ambiguous_operation",
+        ),
+        (
+            "First, claude-worker do not create artifact.txt with content exactly draft newline",
+            "unsupported_clause_logic",
+        ),
+        (
+            "First, claude-worker if needed create artifact.txt with content exactly draft newline",
+            "unsupported_clause_logic",
+        ),
+        (
+            "First, claude-worker unless approved create artifact.txt with content exactly draft newline",
+            "unsupported_clause_logic",
+        ),
+        (
+            "First, claude-worker create or update artifact.txt with content exactly draft newline",
+            "ambiguous_operation",
+        ),
+        (
+            "First, claude-worker create and update artifact.txt with content exactly draft newline",
+            "ambiguous_operation",
+        ),
+        (
+            "First, claude-worker create and review artifact.txt with content exactly draft newline",
+            "ambiguous_operation",
+        ),
+    ],
+)
+def test_extract_rejects_negated_conditional_or_multi_operation_clauses(
+    message: str,
+    kind: str,
+) -> None:
+    authority = extract_semantic_authority(
+        message,
+        selected_agent_ids=("claude-worker",),
+        step_count=1,
+        phases=("implementation",),
+    )
+    assert authority["requirements"] == []
+    assert [item["kind"] for item in authority["unresolved"]] == [kind]
+    assert set(authority["unresolved"][0]) == {
+        "unresolved_id",
+        "kind",
+        "phase",
+        "agent_id",
+    }
+
+
+def test_extract_never_truncates_unsafe_target_suffix() -> None:
+    message = (
+        r"第一轮 claude-worker 创建 artifact.txt\escape 且内容为 draft 换行。"
+    )
+    authority = extract_semantic_authority(
+        message,
+        selected_agent_ids=("claude-worker",),
+        step_count=1,
+        phases=("implementation",),
+    )
+    assert authority["requirements"] == []
+    assert [item["kind"] for item in authority["unresolved"]] == ["unsafe_target"]
+
+
+@pytest.mark.parametrize("suffix", [":escape", "?escape", "*escape"])
+def test_extract_never_downgrades_forbidden_target_suffix_to_safe_prefix(
+    suffix: str,
+) -> None:
+    message = f"第一轮 claude-worker 创建 artifact.txt{suffix} 且内容为 draft 换行。"
+    authority = extract_semantic_authority(
+        message,
+        selected_agent_ids=("claude-worker",),
+        step_count=1,
+        phases=("implementation",),
+    )
+    assert authority["requirements"] == []
+    assert [item["kind"] for item in authority["unresolved"]] == ["unsafe_target"]
+
+
+def test_extract_rejects_explicit_unknown_agent_without_rebinding() -> None:
+    message = "First, attacker creates artifact.txt with content exactly draft newline"
+    authority = extract_semantic_authority(
+        message,
+        selected_agent_ids=("claude-worker",),
+        step_count=1,
+        phases=("implementation",),
+    )
+    assert authority["requirements"] == []
+    assert [item["kind"] for item in authority["unresolved"]] == [
+        "wrong_or_unknown_agent"
+    ]
+    assert "attacker" not in json.dumps(authority)
+
+
+def test_extract_rejects_selected_agents_in_wrong_step_positions() -> None:
+    message = (
+        "claude-worker and codex-worker. "
+        "First, codex-worker creates a.txt with content exactly a; "
+        "Second, claude-worker creates b.txt with content exactly b"
+    )
+    authority = extract_semantic_authority(
+        message,
+        selected_agent_ids=("claude-worker", "codex-worker"),
+        step_count=2,
+        phases=("implementation", "review"),
+    )
+    assert authority["requirements"] == []
+    assert [item["kind"] for item in authority["unresolved"]] == [
+        "wrong_or_unknown_agent",
+        "wrong_or_unknown_agent",
+    ]
+
+
+def test_extract_captures_complete_multi_extension_target() -> None:
+    message = (
+        "第一轮 claude-worker 创建 artifact.txt.bak 且内容为 draft 换行。"
+    )
+    authority = extract_semantic_authority(
+        message,
+        selected_agent_ids=("claude-worker",),
+        step_count=1,
+        phases=("implementation",),
+    )
+    assert authority["requirements"][0]["target"] == "artifact.txt.bak"
+    assert authority["unresolved"] == []
+
+
+@pytest.mark.parametrize("literal", ["draft/extra", "draft=extra"])
+def test_extract_never_truncates_unsupported_literal_suffix(literal: str) -> None:
+    message = f"第一轮 claude-worker 创建 artifact.txt 且内容为 {literal}。"
+    authority = extract_semantic_authority(
+        message,
+        selected_agent_ids=("claude-worker",),
+        step_count=1,
+        phases=("implementation",),
+    )
+    assert authority["requirements"] == []
+    assert [item["kind"] for item in authority["unresolved"]] == [
+        "unsupported_value"
+    ]
+
+
+def test_extract_rejects_non_ordinal_explicit_clause_count_mismatch() -> None:
+    message = (
+        "claude-worker 创建 a.txt 且内容为 a；"
+        "claude-worker 创建 b.txt 且内容为 b"
+    )
+    authority = extract_semantic_authority(
+        message,
+        selected_agent_ids=("claude-worker",),
+        step_count=1,
+        phases=("implementation",),
+    )
+    assert authority["requirements"] == []
+    assert authority["unresolved"] == [
+        {
+            "unresolved_id": authority["unresolved"][0]["unresolved_id"],
+            "kind": "clause_count_mismatch",
+            "phase": "implementation",
+            "agent_id": "claude-worker",
+        }
+    ]
+
+
 def test_extract_keeps_explicit_operation_when_literal_has_same_word() -> None:
     message = (
         "First, claude-worker create artifact.txt with content exactly create newline"
@@ -766,7 +949,22 @@ def test_hostile_authority_mutations_fail_with_closed_non_echoing_errors(
 
 @pytest.mark.parametrize(
     "target",
-    ["", "a//b", "a/../b", "a\\b", "nul\x00name", ".", "./a"],
+    [
+        "",
+        "a//b",
+        "a/../b",
+        "a\\b",
+        "nul\x00name",
+        ".",
+        "./a",
+        "artifact.txt:escape",
+        "artifact.txt?escape",
+        "artifact.txt*escape",
+        'artifact.txt"escape',
+        "artifact.txt<escape",
+        "artifact.txt>escape",
+        "artifact.txt|escape",
+    ],
 )
 def test_target_rejects_ambiguous_or_escaping_paths(target: str) -> None:
     authority = valid_authority()

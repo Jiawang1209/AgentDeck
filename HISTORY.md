@@ -4,6 +4,13 @@
 
 ## 2026-07-15
 
+### Harden conservative semantic extraction
+
+- Restricted operation extraction to supported ordinal-plus-agent action spans, exact position-bound selected agents, and fail-closed unresolved diagnostics for unknown/wrong agents and negated, conditional, alternative, repeated, or multi-operation clauses; operation words inside filenames or literals remain non-authorizing.
+- Added whole-token terminal boundaries for multi-extension project-relative targets and exact literals, rejecting unsafe path/value suffixes and Windows-forbidden target characters without truncating them into apparently safe requirements.
+- Added a bounded `clause_count_mismatch` unresolved projection when multiple non-ordinal semicolon/newline clauses disagree with the declared step count, without inventing extra phases or agents.
+- Added RED/GREEN regressions for Chinese and English clause logic, target/literal suffix safety, complete `.txt.bak` capture, and non-ordinal clause-count mismatch. This hardening remains pure extraction only and does not add compiler, provider, conversation, runtime, live, or Task 3 behavior.
+
 ### Extract conservative Mission semantics
 
 - Added a pure deterministic `extract_semantic_authority()` boundary for the bounded Chinese and English clause forms covered by this slice, preserving the existing exact semantic-authority domain, canonical source hash, and phase/clause generation order.
