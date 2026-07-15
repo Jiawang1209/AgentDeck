@@ -4,6 +4,12 @@
 
 ## 2026-07-15
 
+### Validate and compile semantic Leader plans
+
+- Added a pure exact-shape semantic candidate validator that freezes round-robin Worker order, configured roles, step phases, complete requirement coverage, atomic state transitions, bounded non-sensitive text, and reviewable project-local proposals behind closed non-echoing failure codes.
+- Added deterministic semantic-step compilation with defensive requirement snapshots, canonical proposal IDs, canonical JSON value escaping, stable step hashes, and compatibility Worker tasks generated only from validated semantic effects rather than Leader-authored task text.
+- Added RED/GREEN mutation, proposal, transition, escaping, aliasing, nested-shape, and byte-determinism coverage. This is Task 3 pure validation/compilation only and does not add provider, conversation, state, runtime, tmux, ACP, live execution, Task 4 integration, or an M2c PASS claim.
+
 ### Recognize fused sensitive key qualifiers
 
 - Added a deterministic whole-key fused grammar for separator-free password/passwd/secret/token/credential markers followed only by bounded hash/value/id/key/digest/ref/reference qualifiers, including arbitrary alphanumeric prefixes such as `DBPASSWORDHASH`.
