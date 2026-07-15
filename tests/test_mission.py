@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
-from dataclasses import FrozenInstanceError
+from dataclasses import FrozenInstanceError, asdict
 import multiprocessing
 from pathlib import Path
 
@@ -31,6 +31,10 @@ from agentdeck.models import (
     RuntimeConfig,
 )
 from agentdeck.state import StateStore, leader_backend_identity
+from agentdeck.mission import workbench_mission_card
+from agentdeck.mission_authority import canonical_workflow_plan_hash
+from agentdeck.orchestration.leader import LeaderOrchestrator
+from agentdeck.providers.fake import FakeLeaderProvider
 
 
 @pytest.mark.parametrize(
@@ -248,6 +252,194 @@ def mission_values() -> dict[str, object]:
         "step_count": 2,
         "timeout_seconds": 180,
     }
+
+
+def _project_view_semantic_authority() -> dict[str, object]:
+    return {
+        "schema_version": "mission-semantic-authority/v1",
+        "source_message_hash": "sha256:" + "a" * 64,
+        "requirements": [
+            {
+                "requirement_id": "req_111111111111",
+                "kind": "create",
+                "target": "artifact.txt",
+                "operation": "create",
+                "literal": "draft-v1\n",
+                "phase": "implementation",
+                "agent_id": "planner",
+                "sensitivity": "ordinary",
+            },
+            {
+                "requirement_id": "req_222222222222",
+                "kind": "review",
+                "target": "artifact.txt",
+                "operation": "review",
+                "literal": "accepted-v2\n",
+                "phase": "review",
+                "agent_id": "reviewer",
+                "sensitivity": "ordinary",
+            },
+            {
+                "requirement_id": "req_333333333333",
+                "kind": "state_transition",
+                "target": "artifact.txt",
+                "operation": "update",
+                "before": {"content_equals": "draft-v1\n"},
+                "after": {"content_equals": "accepted-v2\n"},
+                "phase": "revision",
+                "agent_id": "planner",
+                "sensitivity": "ordinary",
+            },
+            {
+                "requirement_id": "req_444444444444",
+                "kind": "verify",
+                "target": "artifact.txt",
+                "operation": "verify",
+                "literal": "accepted-v2\n",
+                "phase": "acceptance",
+                "agent_id": "reviewer",
+                "sensitivity": "ordinary",
+            },
+        ],
+        "proposed_effects": [],
+        "unresolved": [],
+    }
+
+
+def test_project_view_and_workbench_share_compact_semantic_authority(
+    tmp_path: Path,
+) -> None:
+    project_config = config(
+        agent("planner", "codex-cli"),
+        agent("reviewer", "claude-cli"),
+        leader=LeaderConfig(provider="fake", model="fake-plan"),
+    )
+    store = StateStore(tmp_path)
+    semantic_plan = LeaderOrchestrator(
+        project_config, FakeLeaderProvider()
+    ).plan_result(
+        "raw context only",
+        project_config.leader.model,
+        selected_agent_ids=("planner", "reviewer"),
+        step_count=4,
+        semantic_authority=_project_view_semantic_authority(),
+    ).plan
+    plan = store.build_plan_record(
+        "semantic task", "fake", "fake-plan", semantic_plan
+    )
+    values = mission_values()
+    values.update(
+        plan_id=plan["plan_id"],
+        plan_hash=canonical_workflow_plan_hash(plan),
+        step_count=4,
+    )
+    mission = store.build_mission_record(**values, semantic_plan=semantic_plan)
+    state = store.load()
+    state["plans"] = [plan]
+    state["missions"] = [mission]
+    store.save(state)
+
+    preview = asdict(store.project_view(project_config))
+    plan_card = preview["plans"]["items"][0]["semantic_authority"]
+    mission_card = preview["missions"]["items"][0]["semantic_authority"]
+    assert plan_card == mission_card
+    assert set(plan_card) == {
+        "schema_version", "state", "authority_hash", "requirement_count",
+        "proposed_effect_count", "unresolved_count", "compiled_step_count",
+        "blockers",
+    }
+    assert plan_card["state"] == "preview"
+    assert plan_card["compiled_step_count"] == 4
+    assert plan_card["blockers"] == []
+    rendered = repr(plan_card)
+    for forbidden in (
+        "artifact.txt", "draft-v1", "accepted-v2", "before", "after",
+        "semantic_steps", "semantic_authority", "prompt", "secret_ref",
+    ):
+        assert forbidden not in rendered
+    assert workbench_mission_card(
+        preview["missions"]["items"][0], "agentdeck"
+    )["semantic_authority"] == mission_card
+
+    state = store.load()
+    state["missions"][0]["preview_generation"] = True
+    store.save(state)
+    with pytest.raises(ValueError, match="semantic ProjectView provenance invalid"):
+        store.project_view(project_config)
+
+    state = store.load()
+    state["missions"][0]["preview_generation"] = 1
+    state["missions"][0]["confirmed_at"] = "not-a-timestamp"
+    store.save(state)
+    with pytest.raises(ValueError, match="semantic ProjectView provenance invalid"):
+        store.project_view(project_config)
+
+    state = store.load()
+    state["missions"][0].update(
+        status="preparing",
+        confirmed_at="2026-07-15T00:00:00+00:00",
+        blockers=["project daemon is not running"],
+    )
+    store.save(state)
+    frozen = asdict(store.project_view(project_config))
+    frozen_plan = frozen["plans"]["items"][0]["semantic_authority"]
+    frozen_mission = frozen["missions"]["items"][0]["semantic_authority"]
+    assert frozen_plan == frozen_mission
+    assert frozen_plan["state"] == "frozen"
+    assert frozen_plan["blockers"] == []
+
+    state = store.load()
+    state["plans"].append(deepcopy(state["plans"][0]))
+    store.save(state)
+    from agentdeck.contracts import validate_project_view_contract
+
+    duplicate_view = asdict(store.project_view(project_config))
+    result = validate_project_view_contract(duplicate_view)
+    assert result["ok"] is False
+    assert "plans.items plan_id must be unique" in result["errors"]
+
+
+def test_project_view_legacy_plan_and_mission_project_null_semantic_authority(
+    tmp_path: Path,
+) -> None:
+    project_config = config(
+        agent("planner", "codex-cli"),
+        agent("reviewer", "claude-cli"),
+        leader=LeaderConfig(provider="fake", model="fake-plan"),
+    )
+    store = StateStore(tmp_path)
+    plan_body = {
+        "goal": "legacy",
+        "summary": "legacy",
+        "steps": [
+            {"step": 1, "agent_id": "planner", "role": "planning", "task": "one"},
+            {"step": 2, "agent_id": "reviewer", "role": "review", "task": "two"},
+        ],
+    }
+    plan = store.build_plan_record("legacy", "fake", "fake-plan", plan_body)
+    values = mission_values()
+    values.update(plan_id=plan["plan_id"], plan_hash=canonical_workflow_plan_hash(plan))
+    mission = store.build_mission_record(**values)
+    state = store.load()
+    state["plans"] = [plan]
+    state["missions"] = [mission]
+    store.save(state)
+
+    view = asdict(store.project_view(project_config))
+    assert view["plans"]["items"][0]["semantic_authority"] is None
+    assert view["missions"]["items"][0]["semantic_authority"] is None
+
+    state = store.load()
+    state["missions"] = {"credentials": "RAW_CONTAINER_SECRET"}
+    store.save(state)
+    malformed = asdict(store.project_view(project_config))
+    assert malformed["missions"] == {
+        "count": -1,
+        "by_status": {},
+        "latest_id": None,
+        "items": [],
+    }
+    assert "RAW_CONTAINER_SECRET" not in repr(malformed)
 
 
 def test_state_store_default_and_legacy_state_are_mission_compatible(tmp_path) -> None:

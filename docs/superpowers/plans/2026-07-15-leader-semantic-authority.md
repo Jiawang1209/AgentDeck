@@ -1188,7 +1188,7 @@ git commit -m "Bind daemon snapshots to semantic hashes"
 - Modify: `docs/contracts/project-view-schema.md`
 - Modify: `HISTORY.md`
 
-- [ ] **Step 1: Add RED compact projection and contract tests**
+- [x] **Step 1: Add RED compact projection and contract tests**
 
 Under the repository's documented additive-v1 policy, keep
 `project-view/v1`. Add `semantic_authority` to each plan and Mission item, not a
@@ -1204,13 +1204,13 @@ never project targets, literals, before/after content, full authority,
 Leader candidate, prompt, or secret refs. Workbench Mission card reuses the
 same compact object.
 
-- [ ] **Step 2: Run RED contract targets**
+- [x] **Step 2: Run RED contract targets**
 
 ```bash
 conda run -n agentdeck pytest tests/test_contracts.py tests/test_mission.py tests/test_daemon_contracts.py -k semantic -q
 ```
 
-- [ ] **Step 3: Implement one compact projector and exact validators**
+- [x] **Step 3: Implement one compact projector and exact validators**
 
 Use `compact_semantic_authority()` as the only source for counts/hash/state.
 Add field constants and example fixture updates in `contracts.py`; reject unknown
@@ -1218,13 +1218,13 @@ nested fields and malformed hashes. Update the ProjectView contract document to
 state explicitly that this is an additive-v1 extension and not execution
 authorization.
 
-- [ ] **Step 4: Run full contract/ProjectView regression**
+- [x] **Step 4: Run full contract/ProjectView regression**
 
 ```bash
 conda run -n agentdeck pytest tests/test_contracts.py tests/test_mission.py tests/test_daemon_contracts.py tests/test_leader_cli.py -q
 ```
 
-- [ ] **Step 5: Commit projection**
+- [x] **Step 5: Commit projection**
 
 ```bash
 git add src/agentdeck/models.py src/agentdeck/state.py src/agentdeck/contracts.py src/agentdeck/mission.py tests/test_contracts.py tests/test_mission.py tests/test_daemon_contracts.py docs/contracts/project-view-schema.md HISTORY.md

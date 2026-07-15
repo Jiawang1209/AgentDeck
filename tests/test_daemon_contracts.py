@@ -18,6 +18,8 @@ from agentdeck.contracts import (
     validate_client_session_contract,
     validate_daemon_runtime_contract,
     validate_mission_scheduler_contract,
+    project_view_example,
+    validate_project_view_contract,
 )
 
 
@@ -131,3 +133,73 @@ def test_mission_scheduler_rejects_unknown_transition() -> None:
     payload = mission_scheduler_example()
     payload["next_transition"] = "unbounded_background_magic"
     assert validate_mission_scheduler_contract(payload)["ok"] is False
+
+
+@pytest.mark.parametrize(
+    "surface",
+    ["plans", "missions"],
+)
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        lambda card: card.__setitem__("authority_hash", "sha256:BAD"),
+        lambda card: card.__setitem__("target", "private.txt"),
+        lambda card: card.__setitem__("prompt", "raw prompt"),
+        lambda card: card.__setitem__("secret_ref", "env://TOKEN"),
+    ],
+)
+def test_project_view_semantic_authority_is_exact_and_non_leaking(
+    surface, mutation
+) -> None:
+    payload = project_view_example()
+    card = {
+        "schema_version": "mission-semantic-authority/v1",
+        "state": "preview",
+        "authority_hash": "sha256:" + "a" * 64,
+        "requirement_count": 4,
+        "proposed_effect_count": 0,
+        "unresolved_count": 0,
+        "compiled_step_count": 2,
+        "blockers": [],
+    }
+    payload["plans"]["items"][0]["semantic_authority"] = deepcopy(card)
+    payload["missions"]["items"][0]["semantic_authority"] = deepcopy(card)
+    mutation(payload[surface]["items"][0]["semantic_authority"])
+
+    assert validate_project_view_contract(payload)["ok"] is False
+
+
+def test_project_view_semantic_authority_rejects_hostile_card_without_hooks() -> None:
+    touched: list[str] = []
+
+    class HostileCard(dict):
+        def get(self, _key, _default=None):
+            touched.append("get")
+            raise RuntimeError("RAW_SEMANTIC_SECRET")
+
+        def __eq__(self, _other):
+            touched.append("eq")
+            raise RuntimeError("RAW_SEMANTIC_SECRET")
+
+        def __ne__(self, _other):
+            touched.append("ne")
+            raise RuntimeError("RAW_SEMANTIC_SECRET")
+
+    payload = project_view_example()
+    payload["plans"]["items"][0]["semantic_authority"] = HostileCard()
+    payload["missions"]["items"][0]["semantic_authority"] = HostileCard()
+
+    result = validate_project_view_contract(payload)
+
+    assert result["ok"] is False
+    assert touched == []
+    assert "RAW_SEMANTIC_SECRET" not in repr(result)
+
+
+def test_project_view_bad_missions_shape_returns_contract_error_not_exception() -> None:
+    payload = project_view_example()
+    payload["missions"] = {"count": 1, "by_status": {}, "latest_id": None, "items": None}
+
+    result = validate_project_view_contract(payload)
+
+    assert result["ok"] is False

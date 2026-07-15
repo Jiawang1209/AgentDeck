@@ -8,6 +8,16 @@ from uuid import uuid4
 
 PROJECT_VIEW_SCHEMA_VERSION = "project-view/v1"
 MIGRATION_SCHEMA_VERSION = "migration/v1"
+PROJECT_VIEW_SEMANTIC_AUTHORITY_FIELDS = (
+    "schema_version",
+    "state",
+    "authority_hash",
+    "requirement_count",
+    "proposed_effect_count",
+    "unresolved_count",
+    "compiled_step_count",
+    "blockers",
+)
 
 
 def utc_now() -> str:

@@ -199,7 +199,10 @@ from agentdeck.contracts import (
     validate_workbench_contract,
     workbench_control_registry,
 )
-from agentdeck.models import PROJECT_VIEW_SCHEMA_VERSION
+from agentdeck.models import (
+    PROJECT_VIEW_SCHEMA_VERSION,
+    PROJECT_VIEW_SEMANTIC_AUTHORITY_FIELDS,
+)
 
 
 def test_protocol_runtime_contract_discovery_and_example(tmp_path: Path) -> None:
@@ -1549,6 +1552,9 @@ def test_project_view_contract_payload_is_reusable_without_cli(tmp_path: Path) -
     assert payload["artifact_item_fields"] == list(PROJECT_VIEW_ARTIFACT_ITEM_FIELDS)
     assert payload["missions_fields"] == list(PROJECT_VIEW_MISSIONS_FIELDS)
     assert payload["mission_item_fields"] == list(PROJECT_VIEW_MISSION_ITEM_FIELDS)
+    assert payload["semantic_authority_fields"] == list(
+        PROJECT_VIEW_SEMANTIC_AUTHORITY_FIELDS
+    )
 
 
 def test_artifacts_contract_payload_is_reusable_without_cli(tmp_path: Path) -> None:
@@ -2555,8 +2561,8 @@ def test_workbench_contract_response_includes_example_without_drift(tmp_path: Pa
     from agentdeck.contracts import WORKBENCH_MISSION_CARD_FIELDS
     assert payload["mission_card_fields"] == list(WORKBENCH_MISSION_CARD_FIELDS)
     assert isinstance(example["mission_card"], dict)
-    assert "semantic_authority" not in payload["mission_card_fields"]
-    assert "semantic_authority" not in example["mission_card"]
+    assert "semantic_authority" in payload["mission_card_fields"]
+    assert example["mission_card"]["semantic_authority"] is None
     assert validate_workbench_contract(example) == {"ok": True, "errors": []}
     lineage_card_fields = [
         "mode",
@@ -6741,16 +6747,70 @@ def test_workbench_contract_allows_null_mission_card() -> None:
     assert validate_workbench_contract(payload) == {"ok": True, "errors": []}
 
 
-def test_workbench_contract_rejects_task10_semantic_projection_before_implementation() -> None:
+def test_workbench_contract_reuses_project_view_semantic_projection() -> None:
     payload = workbench_example()
-    payload["mission_card"]["semantic_authority"] = None
+    compact = {
+        "schema_version": "mission-semantic-authority/v1",
+        "state": "frozen",
+        "authority_hash": "sha256:" + "a" * 64,
+        "requirement_count": 4,
+        "proposed_effect_count": 0,
+        "unresolved_count": 0,
+        "compiled_step_count": payload["mission_card"]["step_count"],
+        "blockers": [],
+    }
+    payload["project_view"]["missions"]["items"][0]["semantic_authority"] = compact
+    payload["project_view"]["plans"]["items"][0]["semantic_authority"] = compact
+    payload["project_view"]["plans"]["items"][0]["step_count"] = compact[
+        "compiled_step_count"
+    ]
+    payload["project_view"]["plans"]["items"][0]["leader_generation"][
+        "step_count"
+    ] = compact["compiled_step_count"]
+    payload["mission_card"]["semantic_authority"] = compact
+    payload["control_registry"] = workbench_control_registry(payload)
+
+    result = validate_workbench_contract(payload)
+
+    assert result == {"ok": True, "errors": []}
+
+    payload["mission_card"]["semantic_authority"] = {
+        **compact,
+        "authority_hash": "sha256:" + "b" * 64,
+    }
+    result = validate_workbench_contract(payload)
+    assert result["ok"] is False
+    assert (
+        "mission_card.semantic_authority must match project_view latest Mission"
+        in result["errors"]
+    )
+
+
+def test_workbench_contract_rejects_hostile_semantic_card_without_hooks() -> None:
+    touched: list[str] = []
+
+    class HostileCard(dict):
+        def get(self, _key, _default=None):
+            touched.append("get")
+            raise RuntimeError("RAW_WORKBENCH_SECRET")
+
+        def __eq__(self, _other):
+            touched.append("eq")
+            raise RuntimeError("RAW_WORKBENCH_SECRET")
+
+        def __ne__(self, _other):
+            touched.append("ne")
+            raise RuntimeError("RAW_WORKBENCH_SECRET")
+
+    payload = workbench_example()
+    payload["mission_card"]["semantic_authority"] = HostileCard()
+    payload["control_registry"] = workbench_control_registry(payload)
 
     result = validate_workbench_contract(payload)
 
     assert result["ok"] is False
-    assert "mission_card.semantic_authority is unavailable before Task 10" in result[
-        "errors"
-    ]
+    assert touched == []
+    assert "RAW_WORKBENCH_SECRET" not in repr(result)
 
 
 @pytest.mark.parametrize(

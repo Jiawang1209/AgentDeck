@@ -52,6 +52,7 @@ from .mission_authority import (
 from .models import (
     MIGRATION_SCHEMA_VERSION,
     PROJECT_VIEW_SCHEMA_VERSION,
+    PROJECT_VIEW_SEMANTIC_AUTHORITY_FIELDS,
     AgentRuntimeBinding,
     AgentSpec,
     EventRecord,
@@ -83,6 +84,7 @@ from .runtime.acp_mapping import (
 )
 from .semantic_authority import (
     SEMANTIC_AUTHORITY_SCHEMA_VERSION,
+    compact_semantic_authority,
     semantic_authority_hash,
 )
 
@@ -9916,7 +9918,11 @@ class StateStore:
         }
 
     @staticmethod
-    def _plan_summaries(plans: list[dict[str, Any]]) -> dict[str, Any]:
+    def _plan_summaries(
+        plans: list[dict[str, Any]],
+        semantic_by_plan: Mapping[object, dict[str, Any] | None] | None = None,
+    ) -> dict[str, Any]:
+        semantic_by_plan = semantic_by_plan or {}
         items = []
         for plan in plans:
             body = plan.get("plan", {})
@@ -9946,6 +9952,7 @@ class StateStore:
                         step_count=len(steps) if isinstance(steps, list) else 0,
                         plan=body,
                     ),
+                    "semantic_authority": semantic_by_plan.get(plan.get("plan_id")),
                     "model": plan.get("model"),
                     "dispatch_ready": plan.get("dispatch_ready"),
                     "skill_context": StateStore._plan_skill_context(plan.get("skill_context")),
@@ -9956,7 +9963,11 @@ class StateStore:
         return {"count": len(items), "items": items}
 
     @staticmethod
-    def _mission_summaries(missions: list[dict[str, Any]]) -> dict[str, Any]:
+    def _mission_summaries(
+        missions: list[dict[str, Any]],
+        semantic_by_mission: Mapping[object, dict[str, Any] | None] | None = None,
+    ) -> dict[str, Any]:
+        semantic_by_mission = semantic_by_mission or {}
         items: list[dict[str, Any]] = []
         source_count = len(missions) if isinstance(missions, list) else -1
         if not isinstance(missions, list):
@@ -10055,6 +10066,7 @@ class StateStore:
                     "leader_backend": leader_backend_identity(provider, model),
                     "plan_id": mission.get("plan_id"),
                     "plan_hash": mission.get("plan_hash"),
+                    "semantic_authority": semantic_by_mission.get(mission_id),
                     "workflow_run_id": mission.get("workflow_run_id"),
                     "current_step": current_step,
                     "step_count": step_count,
@@ -10075,6 +10087,105 @@ class StateStore:
             "latest_id": items[-1]["mission_id"] if items else None,
             "items": items,
         }
+
+    @staticmethod
+    def _semantic_authority_projection(
+        plan_record: Mapping[str, object],
+        mission: Mapping[str, object] | None,
+    ) -> dict[str, Any] | None:
+        plan = plan_record.get("plan")
+        semantic_active, semantic_plan, present = semantic_mission_provenance_shape(
+            plan, mission if mission is not None else {}
+        )
+        if not semantic_active:
+            return None
+        if not semantic_plan:
+            raise ValueError("semantic ProjectView provenance invalid")
+        validated = validated_compiled_semantic_plan(plan)
+        authority = validated["semantic_authority"]
+        authority_hash = semantic_authority_hash(authority)
+        task_hashes = [
+            "sha256:" + hashlib.sha256(step["task"].encode("utf-8")).hexdigest()
+            for step in validated["steps"]
+        ]
+        state = "preview"
+        if mission is not None:
+            if (
+                present != SEMANTIC_MISSION_COMPACT_FIELDS
+                or mission.get("semantic_authority_schema_version")
+                != authority["schema_version"]
+                or mission.get("semantic_authority_hash") != authority_hash
+                or mission.get("compiled_task_hashes") != task_hashes
+                or type(mission.get("preview_generation")) is not int
+                or mission.get("preview_generation") != 1
+            ):
+                raise ValueError("semantic ProjectView provenance invalid")
+            confirmed_at = mission.get("confirmed_at")
+            status = mission.get("status")
+            if status == MISSION_STATUSES[0]:
+                if confirmed_at is not None:
+                    raise ValueError("semantic ProjectView provenance invalid")
+            elif status in MISSION_STATUSES[1:]:
+                if type(confirmed_at) is not str or not confirmed_at:
+                    raise ValueError("semantic ProjectView provenance invalid")
+                try:
+                    parsed = datetime.fromisoformat(confirmed_at)
+                except ValueError:
+                    raise ValueError("semantic ProjectView provenance invalid") from None
+                if parsed.tzinfo is None:
+                    raise ValueError("semantic ProjectView provenance invalid")
+                state = "frozen"
+            else:
+                raise ValueError("semantic ProjectView provenance invalid")
+        compact = compact_semantic_authority(
+            authority,
+            state=state,
+            compiled_step_count=len(validated["semantic_steps"]),
+            blockers=[],
+        )
+        if set(compact) != set(PROJECT_VIEW_SEMANTIC_AUTHORITY_FIELDS):
+            raise ValueError("semantic ProjectView provenance invalid")
+        return compact
+
+    @staticmethod
+    def _semantic_authority_projections(
+        plans: object, missions: object
+    ) -> tuple[dict[object, dict[str, Any] | None], dict[object, dict[str, Any] | None]]:
+        if type(plans) is not list:
+            raise ValueError("semantic ProjectView provenance invalid")
+        mission_rows = missions if type(missions) is list else []
+        plans_by_id: dict[object, dict[str, Any]] = {}
+        for plan in plans:
+            if not isinstance(plan, dict) or plan.get("plan_id") is None:
+                continue
+            plan_id = plan.get("plan_id")
+            plans_by_id.setdefault(plan_id, plan)
+        missions_by_plan: dict[object, list[dict[str, Any]]] = {}
+        for mission in mission_rows:
+            if not isinstance(mission, dict):
+                continue
+            plan_id = mission.get("plan_id")
+            missions_by_plan.setdefault(plan_id, []).append(mission)
+        by_plan: dict[object, dict[str, Any] | None] = {}
+        by_mission: dict[object, dict[str, Any] | None] = {}
+        for plan_id, plan in plans_by_id.items():
+            linked_missions = missions_by_plan.get(plan_id, [])
+            mission = linked_missions[0] if linked_missions else None
+            compact = StateStore._semantic_authority_projection(plan, mission)
+            by_plan[plan_id] = compact
+            for mission in linked_missions:
+                by_mission[mission.get("mission_id")] = compact
+        for plan_id, linked_missions in missions_by_plan.items():
+            if plan_id in plans_by_id:
+                continue
+            for mission in linked_missions:
+                _active, _semantic_plan, present = semantic_mission_provenance_shape(
+                    None, mission
+                )
+                if present:
+                    raise ValueError("semantic ProjectView provenance invalid")
+                by_mission[mission.get("mission_id")] = None
+        return by_plan, by_mission
 
     @staticmethod
     def _plan_skill_context(skill_context: Any) -> dict[str, Any]:
@@ -11102,6 +11213,11 @@ class StateStore:
         from .daemon.service import scheduler_summary_from_state
 
         scheduler_summary = scheduler_summary_from_state(state, config)
+        raw_plans = state.get("plans", [])
+        raw_missions = state.get("missions", [])
+        semantic_by_plan, semantic_by_mission = self._semantic_authority_projections(
+            raw_plans, raw_missions
+        )
         return ProjectView(
             schema_version=PROJECT_VIEW_SCHEMA_VERSION,
             project=config.name,
@@ -11110,8 +11226,8 @@ class StateStore:
             leader=leader,
             agents=agents,
             state_path=str(self.state_path),
-            missions=self._mission_summaries(state.get("missions", [])),
-            plans=self._plan_summaries(state.get("plans", [])),
+            missions=self._mission_summaries(raw_missions, semantic_by_mission),
+            plans=self._plan_summaries(raw_plans, semantic_by_plan),
             approvals=self._approval_summaries(state.get("approvals", [])),
             messages=self._message_summaries(state.get("messages", [])),
             jobs=self._job_summaries(state.get("jobs", [])),

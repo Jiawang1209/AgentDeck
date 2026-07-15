@@ -21,7 +21,11 @@ from .mission import (
     workbench_mission_card,
     validate_mission_plan,
 )
-from .models import MIGRATION_SCHEMA_VERSION, PROJECT_VIEW_SCHEMA_VERSION
+from .models import (
+    MIGRATION_SCHEMA_VERSION,
+    PROJECT_VIEW_SCHEMA_VERSION,
+    PROJECT_VIEW_SEMANTIC_AUTHORITY_FIELDS,
+)
 from .daemon.scheduler import DECISION_KINDS
 from .state import leader_backend_identity
 from .runtime.protocol import PROTOCOL_TRANSITION_EDGES, TRANSPORT_KINDS, TransportCapabilities
@@ -535,12 +539,17 @@ PROJECT_VIEW_PLAN_ITEM_FIELDS = (
     "provider_transport",
     "leader_backend",
     "leader_generation",
+    "semantic_authority",
     "model",
     "status",
     "dispatch_ready",
     "skill_context",
     "step_count",
     "created_at",
+)
+
+TRACE_PLAN_FIELDS = tuple(
+    field for field in PROJECT_VIEW_PLAN_ITEM_FIELDS if field != "semantic_authority"
 )
 
 PROJECT_VIEW_LEADER_GENERATION_FIELDS = (
@@ -576,6 +585,7 @@ PROJECT_VIEW_MISSION_ITEM_FIELDS = (
     "leader_backend",
     "plan_id",
     "plan_hash",
+    "semantic_authority",
     "workflow_run_id",
     "current_step",
     "step_count",
@@ -2859,7 +2869,7 @@ MISSION_RUN_HANDOFF_FIELDS = (
     "next_steps", "artifact_paths", "trace_command",
 )
 WORKBENCH_MISSION_CARD_FIELDS = (
-    *(field for field in MISSION_STATUS_RESPONSE_FIELDS if field != "semantic_authority"),
+    *MISSION_STATUS_RESPONSE_FIELDS,
     "confirmation_command",
 )
 MISSION_SELECTED_AGENT_FIELDS = (
@@ -2871,16 +2881,7 @@ MISSION_STARTUP_ACTION_FIELDS = (
 )
 MISSION_PLAN_FIELDS = ("goal", "summary", "steps")
 MISSION_PLAN_STEP_FIELDS = ("step", "agent_id", "role", "task")
-MISSION_SEMANTIC_AUTHORITY_FIELDS = (
-    "schema_version",
-    "state",
-    "authority_hash",
-    "requirement_count",
-    "proposed_effect_count",
-    "unresolved_count",
-    "compiled_step_count",
-    "blockers",
-)
+MISSION_SEMANTIC_AUTHORITY_FIELDS = PROJECT_VIEW_SEMANTIC_AUTHORITY_FIELDS
 MISSION_CONTROL_FIELDS = (
     "kind", "label", "command", "safety", "enabled", "blocker",
 )
@@ -3147,6 +3148,7 @@ def project_view_contract_payload(contract_path: Path) -> dict[str, object]:
         "missions_fields": list(PROJECT_VIEW_MISSIONS_FIELDS),
         "mission_item_fields": list(PROJECT_VIEW_MISSION_ITEM_FIELDS),
         "plan_item_fields": list(PROJECT_VIEW_PLAN_ITEM_FIELDS),
+        "semantic_authority_fields": list(PROJECT_VIEW_SEMANTIC_AUTHORITY_FIELDS),
         "leader_generation_fields": list(PROJECT_VIEW_LEADER_GENERATION_FIELDS),
         "recovery_fields": list(PROJECT_VIEW_RECOVERY_FIELDS),
         "recovery_pending_fields": list(PROJECT_VIEW_RECOVERY_PENDING_FIELDS),
@@ -6007,6 +6009,51 @@ def _validate_mission_semantic_authority(
         errors.append(f"{prefix}.semantic_authority.blockers is invalid")
 
 
+def _validate_project_view_semantic_authority(
+    errors: list[str],
+    *,
+    prefix: str,
+    value: object,
+    step_count: object,
+) -> None:
+    before = len(errors)
+    _validate_mission_semantic_authority(
+        errors, prefix, value, step_count=step_count
+    )
+    if value is None or len(errors) != before or type(value) is not dict:
+        return
+    if value.get("state") not in {"preview", "frozen"}:
+        errors.append(
+            f"{prefix}.semantic_authority.state must be preview or frozen"
+        )
+    if value.get("blockers") != []:
+        errors.append(
+            f"{prefix}.semantic_authority.blockers must be empty; runtime blockers are separate"
+        )
+
+
+def _project_view_semantic_authority_is_comparable(value: object) -> bool:
+    return (
+        value is None
+        or type(value) is dict
+        and set(value) == set(PROJECT_VIEW_SEMANTIC_AUTHORITY_FIELDS)
+        and type(value.get("schema_version")) is str
+        and type(value.get("state")) is str
+        and type(value.get("authority_hash")) is str
+        and all(
+            type(value.get(field)) is int
+            for field in (
+                "requirement_count",
+                "proposed_effect_count",
+                "unresolved_count",
+                "compiled_step_count",
+            )
+        )
+        and type(value.get("blockers")) is list
+        and all(type(item) is str for item in value["blockers"])
+    )
+
+
 def _validate_mission_nonempty_strings(
     errors: list[str], prefix: str, value: dict[str, object], fields: tuple[str, ...]
 ) -> None:
@@ -7205,7 +7252,7 @@ def trace_contract_payload(contract_path: Path) -> dict[str, object]:
         "contract_exists": contract_path.exists(),
         "top_level_fields": list(TRACE_TOP_LEVEL_FIELDS),
         "message_fields": list(TRACE_MESSAGE_FIELDS),
-        "plan_fields": list(PROJECT_VIEW_PLAN_ITEM_FIELDS),
+        "plan_fields": list(TRACE_PLAN_FIELDS),
         "leader_generation_fields": list(PROJECT_VIEW_LEADER_GENERATION_FIELDS),
         "attempt_fields": list(TRACE_ATTEMPT_FIELDS),
         "job_fields": list(TRACE_JOB_FIELDS),
@@ -7977,6 +8024,9 @@ def _validate_project_view_mission_items(
     mission_ids = [item.get("mission_id") for item in items if isinstance(item, dict)]
     if len(mission_ids) != len(set(mission_ids)):
         errors.append("missions.items mission_id must be unique")
+    mission_plan_ids = [item.get("plan_id") for item in items if type(item) is dict]
+    if len(mission_plan_ids) != len(set(mission_plan_ids)):
+        errors.append("missions.items plan_id must be unique")
 
     string_fields = {
         "mission_id",
@@ -8015,7 +8065,7 @@ def _validate_project_view_mission_items(
 
     def forbidden_semantic_paths(value: object, prefix: str) -> list[str]:
         paths: list[str] = []
-        if isinstance(value, dict):
+        if type(value) is dict:
             for raw_key, nested in value.items():
                 key = str(raw_key)
                 path = f"{prefix}.{key}"
@@ -8023,7 +8073,7 @@ def _validate_project_view_mission_items(
                 if normalized in forbidden_fields:
                     paths.append(path)
                 paths.extend(forbidden_semantic_paths(nested, path))
-        elif isinstance(value, list):
+        elif type(value) is list:
             for nested_index, nested in enumerate(value):
                 paths.extend(
                     forbidden_semantic_paths(nested, f"{prefix}[{nested_index}]")
@@ -8236,6 +8286,12 @@ def _validate_project_view_mission_items(
             "blockers"
         ]:
             errors.append(f"missions.items[{index}].can_start requires empty blockers")
+        _validate_project_view_semantic_authority(
+            errors,
+            prefix=f"missions.items[{index}]",
+            value=item.get("semantic_authority"),
+            step_count=item.get("step_count"),
+        )
 
 
 def _validate_project_view_skill_items(errors: list[str], payload: dict[str, object]) -> None:
@@ -8466,11 +8522,15 @@ def _validate_project_view_plan_items(errors: list[str], payload: dict[str, obje
         and type(agent.get("agent_id")) is str
         and bool(agent.get("agent_id"))
     } if isinstance(agents, list) else set()
+    plan_ids = [item.get("plan_id") for item in items if type(item) is dict]
+    if len(plan_ids) != len(set(plan_ids)):
+        errors.append("plans.items plan_id must be unique")
     for index, item in enumerate(items):
         if not isinstance(item, dict):
             errors.append(f"plans.items[{index}] must be an object")
             continue
         prefix = f"project_view.plans.items[{index}]"
+        matching = None
         for field in PROJECT_VIEW_PLAN_ITEM_FIELDS:
             if field not in item:
                 errors.append(f"missing plan item field at index {index}: {field}")
@@ -8488,12 +8548,12 @@ def _validate_project_view_plan_items(errors: list[str], payload: dict[str, obje
                 (
                     mission
                     for mission in missions["items"]
-                    if isinstance(mission, dict)
+                    if type(mission) is dict
                     and mission.get("plan_id") == item.get("plan_id")
                 ),
                 None,
             )
-            if isinstance(matching, dict) and isinstance(matching.get("selected_agents"), list):
+            if type(matching) is dict and isinstance(matching.get("selected_agents"), list):
                 exact_selected_agent_facts = {
                     selected.get("agent_id")
                     for selected in matching["selected_agents"]
@@ -8506,6 +8566,25 @@ def _validate_project_view_plan_items(errors: list[str], payload: dict[str, obje
             exact_selected_agent_facts=exact_selected_agent_facts,
             known_agent_ids=known_agent_ids,
         )
+        _validate_project_view_semantic_authority(
+            errors,
+            prefix=prefix,
+            value=item.get("semantic_authority"),
+            step_count=item.get("step_count"),
+        )
+        plan_semantic = item.get("semantic_authority")
+        mission_semantic = (
+            matching.get("semantic_authority") if type(matching) is dict else None
+        )
+        if (
+            type(matching) is dict
+            and _project_view_semantic_authority_is_comparable(plan_semantic)
+            and _project_view_semantic_authority_is_comparable(mission_semantic)
+            and plan_semantic != mission_semantic
+        ):
+            errors.append(
+                f"{prefix}.semantic_authority must match the linked Mission"
+            )
 
 
 def _validate_project_view_summary_items(
@@ -9113,7 +9192,7 @@ def validate_trace_contract(payload: dict[str, object]) -> dict[str, object]:
         errors.append("message must be an object")
     plan = payload.get("plan")
     if isinstance(plan, dict):
-        for field in PROJECT_VIEW_PLAN_ITEM_FIELDS:
+        for field in TRACE_PLAN_FIELDS:
             if field not in plan:
                 errors.append(f"missing trace plan field: {field}")
         leader_backend = plan.get("leader_backend")
@@ -12304,10 +12383,6 @@ def validate_workbench_contract(payload: dict[str, object]) -> dict[str, object]
         errors.append("leader_card must be an object")
     mission_card = payload.get("mission_card")
     if isinstance(mission_card, dict):
-        if "semantic_authority" in mission_card:
-            errors.append(
-                "mission_card.semantic_authority is unavailable before Task 10"
-            )
         status_projection = dict(mission_card)
         confirmation_command = status_projection.pop("confirmation_command", None)
         controls = status_projection.get("controls")
@@ -12319,9 +12394,6 @@ def validate_workbench_contract(payload: dict[str, object]) -> dict[str, object]
             item for item in controls
             if not (isinstance(item, dict) and item.get("command") == confirmation_command)
         ] if isinstance(controls, list) else controls
-        # Task 10 owns ProjectView/workbench semantic projection. Until then,
-        # validate the legacy card against the additive Mission status shape.
-        status_projection["semantic_authority"] = None
         mission_validation = validate_mission_status_contract(status_projection)
         errors.extend(f"mission_card: {error}" for error in mission_validation["errors"])
         mission_id = mission_card.get("mission_id")
@@ -12374,6 +12446,16 @@ def validate_workbench_contract(payload: dict[str, object]) -> dict[str, object]
         for field in shared_fields:
             if field in latest_mission and field in mission_card and mission_card.get(field) != latest_mission.get(field):
                 errors.append(f"mission_card.{field} must match project_view latest Mission")
+        workbench_semantic = mission_card.get("semantic_authority")
+        project_semantic = latest_mission.get("semantic_authority")
+        if (
+            _project_view_semantic_authority_is_comparable(workbench_semantic)
+            and _project_view_semantic_authority_is_comparable(project_semantic)
+            and workbench_semantic != project_semantic
+        ):
+            errors.append(
+                "mission_card.semantic_authority must match project_view latest Mission"
+            )
     control_mode_card = payload.get("control_mode_card")
     if isinstance(control_mode_card, dict):
         for field in WORKBENCH_CONTROL_MODE_CARD_FIELDS:
@@ -12966,6 +13048,7 @@ def project_view_example() -> dict[str, object]:
                     },
                     "plan_id": "pln_example",
                     "plan_hash": "sha256:plan-example",
+                    "semantic_authority": None,
                     "workflow_run_id": None,
                     "current_step": 0,
                     "step_count": 2,
@@ -13064,6 +13147,7 @@ def project_view_example() -> dict[str, object]:
                         "selected_agent_ids": ["planner", "reviewer"],
                         "step_count": 2,
                     },
+                    "semantic_authority": None,
                     "model": "fake-plan",
                     "status": "planned",
                     "dispatch_ready": False,

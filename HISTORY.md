@@ -4,6 +4,14 @@
 
 ## 2026-07-15
 
+### Expose compact semantic authority provenance
+
+- Kept `project-view/v1` and added nullable exact eight-field `semantic_authority` provenance to every Plan and Mission item. Legacy records project `null`; valid semantic records project only schema/state/hash/counts and an empty semantic blocker list.
+- Joined authoritative Plans and Missions once inside StateStore, revalidated the full compiled semantic plan plus Mission schema/hash/task/generation facts, and used `compact_semantic_authority()` as the only source of projected counts, hash, and `preview`/`frozen` state. Runtime blockers remain separate Mission facts and cannot masquerade as semantic blockers.
+- Made the workbench Mission card reuse the latest ProjectView Mission compact object instead of independently reading or recomputing authority. Added exact ProjectView/workbench validators for unknown nested fields, malformed hashes, Plan/Mission drift, lifecycle/count drift, duplicate Plan/Mission linkage, and hostile mapping subclasses without invoking hooks.
+- Proved compact non-leakage for targets, literals, before/after content, full authority, semantic steps, Leader candidates, prompts, and secret references. Added RED/GREEN legacy-null, preview/frozen, runtime-blocker-separation, tamper, hostile-container, duplicate-id, and contract discovery coverage.
+- Ran the Task 10 semantic target (`42 passed`) and the full contract/ProjectView regression (`902 passed`). No dispatch/handoff changes, provider/network calls, tmux/ACP access, real adapter execution, or M2c live attempt were performed.
+
 ### Bind daemon snapshots to semantic hashes
 
 - Added an exact dual-shape execution snapshot contract. Legacy Mission and step field sets, canonical bytes, and frozen hash fixtures remain unchanged; semantic snapshots add only the authority schema/hash at Mission scope and one `semantic_step_hash` beside each existing `task_hash`.
