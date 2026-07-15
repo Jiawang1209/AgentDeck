@@ -1,6 +1,14 @@
 from __future__ import annotations
 
-from .base import LeaderPlanRequest
+from dataclasses import replace
+
+from agentdeck.models import AgentSpec
+from agentdeck.semantic_authority import validate_semantic_authority
+from agentdeck.semantic_planning import compile_semantic_plan
+
+from .base import LeaderPlanRequest, LeaderPlanResult
+from .plan_schema import build_leader_generation_provenance
+from .semantic_plan_schema import resolve_semantic_leader_plan_context
 
 
 class FakeLeaderProvider:
@@ -8,6 +16,45 @@ class FakeLeaderProvider:
     constraint_mode = "local"
 
     def plan(self, request: LeaderPlanRequest) -> dict[str, object]:
+        if request.semantic_authority is not None:
+            return self.plan_result(request).plan
+        return self._legacy_plan(request)
+
+    def plan_result(self, request: LeaderPlanRequest) -> LeaderPlanResult:
+        if request.semantic_authority is None:
+            plan = self.plan(request)
+        else:
+            authority = validate_semantic_authority(request.semantic_authority)
+            request = replace(request, semantic_authority=authority)
+            selected, roles, count = resolve_semantic_leader_plan_context(
+                selected_agent_ids=request.selected_agent_ids,
+                step_count=request.step_count,
+                configured_context=tuple(
+                    agent for agent in request.config.agents if type(agent) is AgentSpec
+                ),
+            )
+            plan = compile_semantic_plan(
+                authority,
+                self._semantic_candidate(
+                    authority,
+                    selected_agent_ids=selected,
+                    roles=roles,
+                    step_count=count,
+                ),
+                selected_agent_ids=selected,
+                roles=roles,
+                step_count=count,
+            )
+        return LeaderPlanResult(
+            plan=plan,
+            leader_generation=build_leader_generation_provenance(
+                request=request,
+                provider=self.name,
+                constraint_mode=self.constraint_mode,
+            ),
+        )
+
+    def _legacy_plan(self, request: LeaderPlanRequest) -> dict[str, object]:
         steps = []
         for index, agent in enumerate(request.config.agents, start=1):
             steps.append(
@@ -26,6 +73,61 @@ class FakeLeaderProvider:
             "steps": steps,
             "approval_required": True,
             "dispatch_ready": False,
+        }
+
+    @staticmethod
+    def _semantic_candidate(
+        authority: dict[str, object],
+        *,
+        selected_agent_ids: tuple[str, ...],
+        roles: dict[str, str],
+        step_count: int,
+    ) -> dict[str, object]:
+        remaining: list[tuple[str, list[str]]] = []
+        group_index: dict[tuple[str, str], int] = {}
+        for requirement in authority["requirements"]:
+            key = (requirement["agent_id"], requirement["phase"])
+            if key not in group_index:
+                group_index[key] = len(remaining)
+                remaining.append((requirement["phase"], []))
+            remaining[group_index[key]][1].append(requirement["requirement_id"])
+
+        used: set[int] = set()
+        steps: list[dict[str, object]] = []
+        requirement_groups = list(group_index)
+        for index in range(step_count):
+            agent_id = selected_agent_ids[index % len(selected_agent_ids)]
+            group_position = next(
+                (
+                    position
+                    for position, (group_agent, _phase) in enumerate(requirement_groups)
+                    if position not in used and group_agent == agent_id
+                ),
+                None,
+            )
+            if group_position is None:
+                phase = "work"
+                refs: list[str] = []
+            else:
+                used.add(group_position)
+                phase, refs = remaining[group_position]
+            steps.append(
+                {
+                    "step": index + 1,
+                    "agent_id": agent_id,
+                    "role": roles[agent_id],
+                    "phase": phase,
+                    "authority_refs": list(refs),
+                    "proposed_effects": [],
+                    "verification": "Verify every frozen semantic effect exactly",
+                    "risk": "low",
+                    "requires_approval": True,
+                }
+            )
+        return {
+            "goal": "Execute frozen semantic authority",
+            "summary": "Deterministic local semantic planning candidate",
+            "steps": steps,
         }
 
     def _task_for_role(self, task: str, role: str) -> str:

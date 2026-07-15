@@ -24,16 +24,237 @@ from agentdeck.mission_orchestration import (
     MissionRunError,
 )
 from agentdeck.runtime.readiness import WorkerReadiness, WorkerReadinessBatch
-from agentdeck.providers import LeaderPlanRequest
+from agentdeck.providers import LeaderPlanRequest, LeaderPlanResult
+from agentdeck.providers.fake import FakeLeaderProvider
+from agentdeck.orchestration.leader import LeaderOrchestrator
 from agentdeck.providers.plan_schema import (
     build_leader_generation_provenance,
     build_leader_plan_schema,
 )
 from agentdeck.mission_authority import canonical_workflow_plan_hash
+from agentdeck.semantic_planning import SemanticPlanningError
 from agentdeck.state import StateStore
 
 
 MESSAGE = "让 Codex 和 Claude 一人一句接龙百家姓，共8轮"
+
+
+def semantic_authority_fixture() -> dict[str, object]:
+    return {
+        "schema_version": "mission-semantic-authority/v1",
+        "source_message_hash": "sha256:" + "a" * 64,
+        "requirements": [
+            {
+                "requirement_id": "req_111111111111",
+                "kind": "create",
+                "target": "artifact.txt",
+                "operation": "create",
+                "literal": "draft-v1\n",
+                "phase": "implementation",
+                "agent_id": "planner",
+                "sensitivity": "ordinary",
+            },
+            {
+                "requirement_id": "req_222222222222",
+                "kind": "review",
+                "target": "artifact.txt",
+                "operation": "review",
+                "literal": "accepted-v2\n",
+                "phase": "review",
+                "agent_id": "reviewer",
+                "sensitivity": "ordinary",
+            },
+            {
+                "requirement_id": "req_333333333333",
+                "kind": "state_transition",
+                "target": "artifact.txt",
+                "operation": "update",
+                "before": {"content_equals": "draft-v1\n"},
+                "after": {"content_equals": "accepted-v2\n"},
+                "phase": "revision",
+                "agent_id": "planner",
+                "sensitivity": "ordinary",
+            },
+            {
+                "requirement_id": "req_444444444444",
+                "kind": "verify",
+                "target": "artifact.txt",
+                "operation": "verify",
+                "literal": "accepted-v2\n",
+                "phase": "acceptance",
+                "agent_id": "reviewer",
+                "sensitivity": "ordinary",
+            },
+        ],
+        "proposed_effects": [],
+        "unresolved": [],
+    }
+
+
+def test_leader_orchestrator_carries_semantic_authority_and_compiled_result(
+    tmp_path
+) -> None:
+    _root, config, _store, _config_path = project(tmp_path)
+
+    result = LeaderOrchestrator(config, FakeLeaderProvider()).plan_result(
+        "raw task is context only",
+        "semantic-model",
+        selected_agent_ids=("planner", "reviewer"),
+        step_count=4,
+        semantic_authority=semantic_authority_fixture(),
+    )
+
+    assert set(result.plan) == {
+        "goal",
+        "summary",
+        "steps",
+        "semantic_authority",
+        "semantic_steps",
+    }
+    assert len(result.plan["steps"]) == len(result.plan["semantic_steps"]) == 4
+    assert result.leader_generation["constraint_mode"] == "local"
+    assert result.leader_generation["schema_version"] is None
+
+
+def test_leader_orchestrator_preserves_semantic_diagnostics(tmp_path) -> None:
+    _root, config, _store, _config_path = project(tmp_path)
+
+    class DiagnosticProvider(FakeLeaderProvider):
+        def plan_result(self, request: LeaderPlanRequest) -> LeaderPlanResult:
+            result = super().plan_result(request)
+            return LeaderPlanResult(
+                plan=result.plan,
+                leader_generation={
+                    **result.leader_generation,
+                    "attempt_count": 2,
+                    "regeneration_used": True,
+                },
+                semantic_diagnostics=(
+                    {
+                        "code": "semantic_candidate_missing_requirement",
+                        "attempt_count": 1,
+                        "regeneration_used": False,
+                    },
+                ),
+            )
+
+    result = LeaderOrchestrator(config, DiagnosticProvider()).plan_result(
+        "semantic task",
+        selected_agent_ids=("planner", "reviewer"),
+        step_count=4,
+        semantic_authority=semantic_authority_fixture(),
+    )
+
+    assert result.semantic_diagnostics == (
+        {
+            "code": "semantic_candidate_missing_requirement",
+            "attempt_count": 1,
+            "regeneration_used": False,
+        },
+    )
+
+
+def test_leader_orchestrator_rejects_compiled_semantic_task_mutation(tmp_path) -> None:
+    _root, config, _store, _config_path = project(tmp_path)
+
+    class MutatingProvider(FakeLeaderProvider):
+        def plan_result(self, request: LeaderPlanRequest) -> LeaderPlanResult:
+            result = super().plan_result(request)
+            result.plan["steps"][0]["task"] = "provider-authored executable task"
+            return result
+
+    with pytest.raises(SemanticPlanningError) as raised:
+        LeaderOrchestrator(config, MutatingProvider()).plan_result(
+            "semantic task",
+            selected_agent_ids=("planner", "reviewer"),
+            step_count=4,
+            semantic_authority=semantic_authority_fixture(),
+        )
+    assert raised.value.code == "semantic_compilation_drift"
+
+
+def test_leader_orchestrator_snapshots_semantic_authority_before_provider(
+    tmp_path
+) -> None:
+    _root, config, _store, _config_path = project(tmp_path)
+    external = semantic_authority_fixture()
+
+    class CallerMutationProvider(FakeLeaderProvider):
+        def plan_result(self, request: LeaderPlanRequest) -> LeaderPlanResult:
+            external["requirements"][0]["literal"] = "mutated-after-boundary\n"
+            return super().plan_result(request)
+
+    result = LeaderOrchestrator(config, CallerMutationProvider()).plan_result(
+        "semantic task",
+        selected_agent_ids=("planner", "reviewer"),
+        step_count=4,
+        semantic_authority=external,
+    )
+
+    assert result.plan["semantic_authority"]["requirements"][0]["literal"] == "draft-v1\n"
+
+
+def test_leader_orchestrator_rejects_provider_mutation_of_request_snapshot(
+    tmp_path
+) -> None:
+    _root, config, _store, _config_path = project(tmp_path)
+
+    class RequestMutationProvider(FakeLeaderProvider):
+        def plan_result(self, request: LeaderPlanRequest) -> LeaderPlanResult:
+            request.semantic_authority["requirements"][0]["literal"] = "provider-mutated\n"
+            return super().plan_result(request)
+
+    with pytest.raises(SemanticPlanningError) as raised:
+        LeaderOrchestrator(config, RequestMutationProvider()).plan_result(
+            "semantic task",
+            selected_agent_ids=("planner", "reviewer"),
+            step_count=4,
+            semantic_authority=semantic_authority_fixture(),
+        )
+
+    assert raised.value.code == "semantic_compilation_drift"
+
+
+def test_leader_orchestrator_rejects_semantic_keys_on_legacy_request(
+    tmp_path
+) -> None:
+    _root, config, _store, _config_path = project(tmp_path)
+
+    class SmugglingProvider:
+        name = "fake"
+        constraint_mode = "local"
+
+        def plan(self, request: LeaderPlanRequest) -> dict[str, object]:
+            plan = FakeLeaderProvider().plan(request)
+            plan["semantic_authority"] = semantic_authority_fixture()
+            plan["semantic_steps"] = []
+            return plan
+
+    with pytest.raises(SemanticPlanningError) as raised:
+        LeaderOrchestrator(config, SmugglingProvider()).plan_result("legacy task")
+    assert raised.value.code == "semantic_compilation_drift"
+
+
+def test_leader_orchestrator_rejects_legacy_only_plan_for_semantic_request(
+    tmp_path
+) -> None:
+    _root, config, _store, _config_path = project(tmp_path)
+
+    class LegacyOnlyProvider:
+        name = "fake"
+        constraint_mode = "local"
+
+        def plan(self, request: LeaderPlanRequest) -> dict[str, object]:
+            return FakeLeaderProvider()._legacy_plan(request)
+
+    with pytest.raises(SemanticPlanningError) as raised:
+        LeaderOrchestrator(config, LegacyOnlyProvider()).plan_result(
+            "semantic task",
+            selected_agent_ids=("planner", "reviewer"),
+            step_count=4,
+            semantic_authority=semantic_authority_fixture(),
+        )
+    assert raised.value.code == "semantic_compilation_drift"
 
 
 def eight_step_plan() -> dict[str, object]:

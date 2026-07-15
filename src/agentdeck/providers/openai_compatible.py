@@ -1,11 +1,98 @@
 from __future__ import annotations
 
+from dataclasses import replace
 import json
+import math
 import os
+import time
 from json import JSONDecodeError
 from urllib import request
 
-from .base import LeaderPlanRequest, leader_skill_context_prompt_lines, validate_provider_plan_schema
+from agentdeck.models import AgentSpec
+from agentdeck.semantic_authority import (
+    SemanticAuthorityError,
+    semantic_text_contains_sensitive_value,
+    validate_semantic_authority,
+)
+from agentdeck.semantic_planning import (
+    SEMANTIC_FAILURE_CODES,
+    SemanticPlanningError,
+    compile_semantic_plan,
+)
+
+from .base import (
+    LeaderPlanRequest,
+    LeaderPlanResult,
+    leader_skill_context_prompt_lines,
+    validate_provider_plan_schema,
+)
+from .plan_schema import build_leader_generation_provenance
+from .semantic_plan_schema import (
+    SemanticPlanSchemaAuthorityError,
+    resolve_semantic_leader_plan_context,
+    semantic_authority_identity,
+)
+
+
+_REGENERABLE_SEMANTIC_CODES = frozenset(
+    {
+        "semantic_candidate_missing_requirement",
+        "semantic_candidate_duplicate_requirement",
+        "semantic_candidate_wrong_phase",
+        "semantic_candidate_wrong_worker",
+        "semantic_transition_incomplete",
+        "semantic_effect_conflict",
+    }
+)
+
+
+class OpenAICompatibleProviderError(RuntimeError):
+    """Sanitized bounded planning failure for API-backed Leaders."""
+
+    _STAGES = frozenset({"timeout", "nonzero", "json_parse", "schema"})
+    _PREFLIGHT_CODES = frozenset(
+        {
+            "semantic_compilation_failed",
+            "semantic_authority_unresolved",
+            "semantic_authority_sensitive_value",
+        }
+    )
+    _FROZEN_FIELDS = frozenset({"stage", "diagnostic_code", "attempt_count"})
+
+    def __init__(
+        self,
+        stage: str,
+        diagnostic_code: str | None = None,
+        *,
+        attempt_count: int = 0,
+    ) -> None:
+        if type(stage) is not str or stage not in self._STAGES:
+            raise ValueError("invalid API Leader failure stage")
+        if type(attempt_count) is not int or attempt_count < 0 or attempt_count > 2:
+            raise ValueError("invalid API Leader failure attempt count")
+        if stage in {"timeout", "nonzero"}:
+            if diagnostic_code is not None:
+                raise ValueError("invalid API Leader failure diagnostic")
+        elif (
+            type(diagnostic_code) is not str
+            or diagnostic_code not in SEMANTIC_FAILURE_CODES
+        ):
+            raise ValueError("invalid API Leader failure diagnostic")
+        if attempt_count == 0:
+            if stage == "schema" and diagnostic_code in self._PREFLIGHT_CODES:
+                pass
+            elif stage != "timeout":
+                raise ValueError("invalid API Leader failure attempt count")
+        object.__setattr__(self, "stage", stage)
+        object.__setattr__(self, "diagnostic_code", diagnostic_code)
+        object.__setattr__(self, "attempt_count", attempt_count)
+        super().__init__(f"OpenAI-compatible Leader planning failed at stage: {stage}")
+        object.__setattr__(self, "_metadata_frozen", True)
+
+    def __setattr__(self, name: str, value: object) -> None:
+        if getattr(self, "_metadata_frozen", False) and name in self._FROZEN_FIELDS:
+            raise AttributeError("API Leader failure metadata is immutable")
+        super().__setattr__(name, value)
 
 
 class OpenAICompatibleProvider:
@@ -27,6 +114,23 @@ class OpenAICompatibleProvider:
         return False, f"{self.api_key_env} is not set; provider calls are disabled"
 
     def plan(self, plan_request: LeaderPlanRequest) -> dict[str, object]:
+        if plan_request.semantic_authority is not None:
+            return self.plan_result(plan_request).plan
+        return self._legacy_plan(plan_request)
+
+    def plan_result(self, plan_request: LeaderPlanRequest) -> LeaderPlanResult:
+        if plan_request.semantic_authority is None:
+            return LeaderPlanResult(
+                plan=self._legacy_plan(plan_request),
+                leader_generation=build_leader_generation_provenance(
+                    request=plan_request,
+                    provider=self.name,
+                    constraint_mode=self.constraint_mode,
+                ),
+            )
+        return self._semantic_plan_result(plan_request)
+
+    def _legacy_plan(self, plan_request: LeaderPlanRequest) -> dict[str, object]:
         api_key = os.environ.get(self.api_key_env)
         if not api_key:
             raise RuntimeError(f"{self.api_key_env} is not set")
@@ -60,7 +164,196 @@ class OpenAICompatibleProvider:
         self._validate_plan(plan, plan_request)
         return plan
 
+    @staticmethod
+    def _positive_timeout(value: object) -> float:
+        if type(value) not in {int, float}:
+            raise ValueError("API Leader planning timeout must be a positive number")
+        try:
+            timeout = float(value)
+        except (OverflowError, ValueError):
+            raise ValueError("API Leader planning timeout must be a positive number") from None
+        if not math.isfinite(timeout) or timeout <= 0:
+            raise ValueError("API Leader planning timeout must be a positive number")
+        return timeout
+
+    @staticmethod
+    def _contains_sensitive_authority(value: object) -> bool:
+        if type(value) is dict:
+            if value.get("sensitivity") == "secret_ref":
+                return True
+            return any(
+                OpenAICompatibleProvider._contains_sensitive_authority(item)
+                for item in value.values()
+            )
+        if type(value) is list:
+            return any(
+                OpenAICompatibleProvider._contains_sensitive_authority(item)
+                for item in value
+            )
+        return semantic_text_contains_sensitive_value(value)
+
+    @staticmethod
+    def _semantic_context(
+        plan_request: LeaderPlanRequest,
+    ) -> tuple[tuple[str, ...], dict[str, str], int]:
+        return resolve_semantic_leader_plan_context(
+            selected_agent_ids=plan_request.selected_agent_ids,
+            step_count=plan_request.step_count,
+            configured_context=tuple(
+                agent
+                for agent in plan_request.config.agents
+                if type(agent) is AgentSpec
+            ),
+        )
+
+    def _semantic_plan_result(
+        self, plan_request: LeaderPlanRequest
+    ) -> LeaderPlanResult:
+        try:
+            authority = validate_semantic_authority(plan_request.semantic_authority)
+        except (SemanticAuthorityError, TypeError, ValueError):
+            raise OpenAICompatibleProviderError(
+                "schema", "semantic_compilation_failed", attempt_count=0
+            ) from None
+        if authority["unresolved"]:
+            raise OpenAICompatibleProviderError(
+                "schema", "semantic_authority_unresolved", attempt_count=0
+            )
+        if self._contains_sensitive_authority(authority):
+            raise OpenAICompatibleProviderError(
+                "schema", "semantic_authority_sensitive_value", attempt_count=0
+            )
+        try:
+            selected, roles, count = self._semantic_context(plan_request)
+        except (SemanticPlanSchemaAuthorityError, TypeError, ValueError):
+            raise OpenAICompatibleProviderError(
+                "schema", "semantic_compilation_failed", attempt_count=0
+            ) from None
+        frozen_request = replace(plan_request, semantic_authority=authority)
+        api_key = os.environ.get(self.api_key_env)
+        if not api_key:
+            raise RuntimeError(f"{self.api_key_env} is not set")
+        provider_timeout = self._positive_timeout(self.timeout)
+        request_timeout = self._positive_timeout(
+            self.timeout
+            if frozen_request.timeout_seconds is None
+            else frozen_request.timeout_seconds
+        )
+        now = time.monotonic()
+        budget = min(provider_timeout, request_timeout)
+        deadline = now + budget
+        if not math.isfinite(now) or not math.isfinite(deadline):
+            raise ValueError("API Leader planning timeout must be a positive number")
+
+        diagnostics: list[dict[str, object]] = []
+        attempt_request = frozen_request
+        for attempt in (1, 2):
+            attempt_now = time.monotonic()
+            remaining = deadline - attempt_now
+            if (
+                not math.isfinite(attempt_now)
+                or not math.isfinite(remaining)
+                or remaining <= 0
+            ):
+                raise OpenAICompatibleProviderError(
+                    "timeout", attempt_count=attempt - 1
+                )
+            try:
+                candidate = self._semantic_http_attempt(
+                    attempt_request, api_key=api_key, timeout=remaining
+                )
+            except OpenAICompatibleProviderError as error:
+                raise OpenAICompatibleProviderError(
+                    error.stage,
+                    error.diagnostic_code,
+                    attempt_count=attempt,
+                ) from None
+            completed_at = time.monotonic()
+            if not math.isfinite(completed_at) or completed_at >= deadline:
+                raise OpenAICompatibleProviderError(
+                    "timeout", attempt_count=attempt
+                )
+            try:
+                plan = compile_semantic_plan(
+                    authority,
+                    candidate,
+                    selected_agent_ids=selected,
+                    roles=roles,
+                    step_count=count,
+                )
+            except SemanticPlanningError as error:
+                if error.code not in _REGENERABLE_SEMANTIC_CODES or attempt == 2:
+                    raise OpenAICompatibleProviderError(
+                        "schema", error.code, attempt_count=attempt
+                    ) from None
+                diagnostics.append(
+                    {
+                        "code": error.code,
+                        "attempt_count": attempt,
+                        "regeneration_used": False,
+                    }
+                )
+                attempt_request = replace(
+                    frozen_request, regeneration_diagnostic=error.code
+                )
+                continue
+            return LeaderPlanResult(
+                plan=plan,
+                leader_generation=build_leader_generation_provenance(
+                    request=frozen_request,
+                    provider=self.name,
+                    constraint_mode=self.constraint_mode,
+                    attempt_count=attempt,
+                ),
+                semantic_diagnostics=tuple(diagnostics),
+            )
+        raise OpenAICompatibleProviderError("timeout", attempt_count=2)
+
+    def _semantic_http_attempt(
+        self,
+        plan_request: LeaderPlanRequest,
+        *,
+        api_key: str,
+        timeout: float,
+    ) -> dict[str, object]:
+        payload = {
+            "model": plan_request.model or self.model,
+            "response_format": {"type": "json_object"},
+            "messages": [
+                {"role": "system", "content": self._system_prompt(plan_request)},
+                {
+                    "role": "user",
+                    "content": "Generate the complete semantic candidate from the frozen authority.",
+                },
+            ],
+        }
+        req = request.Request(
+            f"{self.base_url}/chat/completions",
+            data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
+            method="POST",
+        )
+        try:
+            with request.urlopen(req, timeout=timeout) as response:
+                data = json.loads(response.read().decode("utf-8"))
+            return self._extract_plan(data)
+        except OpenAICompatibleProviderError:
+            raise
+        except OSError:
+            raise OpenAICompatibleProviderError("nonzero", attempt_count=1) from None
+        except (JSONDecodeError, UnicodeError, RuntimeError, TypeError, ValueError):
+            raise OpenAICompatibleProviderError(
+                "json_parse",
+                "semantic_candidate_schema_invalid",
+                attempt_count=1,
+            ) from None
+
     def _system_prompt(self, request: LeaderPlanRequest) -> str:
+        if request.semantic_authority is not None:
+            return self._semantic_system_prompt(request)
         workers = [
             {
                 "agent_id": agent.agent_id,
@@ -82,6 +375,69 @@ class OpenAICompatibleProvider:
             f"Available workers: {json.dumps(workers, ensure_ascii=False)}",
         ]
         lines.extend(leader_skill_context_prompt_lines(request.skill_context))
+        return "\n".join(lines)
+
+    @staticmethod
+    def _semantic_system_prompt(request: LeaderPlanRequest) -> str:
+        try:
+            schema_version, authority_hash = semantic_authority_identity(
+                request.semantic_authority
+            )
+            selected, roles, step_count = OpenAICompatibleProvider._semantic_context(
+                request
+            )
+            authority = validate_semantic_authority(request.semantic_authority)
+        except (
+            SemanticAuthorityError,
+            SemanticPlanSchemaAuthorityError,
+            TypeError,
+            ValueError,
+        ):
+            raise OpenAICompatibleProviderError(
+                "schema", "semantic_compilation_failed", attempt_count=0
+            ) from None
+        requirements = [
+            {
+                "requirement_id": item["requirement_id"],
+                "kind": item["kind"],
+                "target": item["target"],
+                "operation": item["operation"],
+                "phase": item["phase"],
+                "agent_id": item["agent_id"],
+                "sensitivity": item["sensitivity"],
+            }
+            for item in authority["requirements"]
+        ]
+        compact_authority = {
+            "schema_version": schema_version,
+            "authority_hash": authority_hash,
+            "requirement_count": len(requirements),
+            "requirements": requirements,
+        }
+        workers = [
+            {"agent_id": agent_id, "role": roles[agent_id]}
+            for agent_id in selected
+        ]
+        lines = [
+            "You are the AgentDeck Leader Agent.",
+            "Return only one semantic JSON candidate; do not dispatch or execute work.",
+            "Required top-level fields: goal, summary, steps.",
+            "Never output an executable task field.",
+            "Every step must include step, agent_id, role, phase, authority_refs, proposed_effects, verification, risk, requires_approval.",
+            "Use every required authority reference exactly once and preserve atomic transitions.",
+            "Every step risk must be low and requires_approval must be true.",
+            f"Exact step count: {step_count}",
+            f"Selected workers: {json.dumps(workers, ensure_ascii=False, sort_keys=True, separators=(',', ':'))}",
+            f"Compact semantic authority: {json.dumps(compact_authority, ensure_ascii=False, sort_keys=True, separators=(',', ':'))}",
+        ]
+        if request.regeneration_diagnostic is not None:
+            lines.extend(
+                [
+                    "Regenerate the complete semantic candidate.",
+                    f"Previous attempt diagnostic: {request.regeneration_diagnostic}.",
+                    "Return a complete replacement; do not discuss or reproduce the previous output.",
+                ]
+            )
         return "\n".join(lines)
 
     @staticmethod

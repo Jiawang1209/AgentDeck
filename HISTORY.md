@@ -4,6 +4,14 @@
 
 ## 2026-07-15
 
+### Apply semantic authority across local and API Leaders
+
+- Added deterministic semantic-candidate construction to the fake Leader and routed it through the same `compile_semantic_plan()` boundary as real providers. Legacy fake plans retain their exact five-field shape and local, schema-free generation provenance.
+- Added OpenAI-compatible semantic planning with a defensive authority snapshot, compact authority-only prompts, `json_object` provenance, one closed-diagnostic regeneration, and one monotonic deadline shared by both HTTP attempts. The raw user task and rejected candidate are never copied into the replacement request.
+- Added the closed, immutable `OpenAICompatibleProviderError` surface and explicit preflight, JSON-parse, network, timeout, retryable omission/conflict, and nonretryable semantic failure classification. Invalid or sensitive authority stops before HTTP and failures expose only bounded stage/code/attempt metadata.
+- Extended `LeaderOrchestrator.plan()` / `plan_result()` with optional semantic authority, separated its private validation snapshot from the provider-visible copy, preserved provider-neutral semantic diagnostics, freshly recompiled every returned compatibility task from `semantic_steps`, and rejected missing, mutated, smuggled, or legacy/semantic mixed envelopes.
+- Added RED/GREEN fake/API/orchestrator parity, double-failure, shared-deadline, raw-task exclusion, diagnostic-only replacement, caller/provider mutation, compiled-task drift, missing semantic envelope, legacy byte-shape, and error metadata regressions. This is Task 6 mock-only work: no conversation, state, runtime, tmux, ACP, real provider, or M2c live execution was added.
+
 ### Preserve LeaderPlanResult dataclass compatibility
 
 - Restored `semantic_diagnostics` as the public frozen dataclass field while retaining immutable tuple-of-scalar-pairs physical storage and fresh plain-dict projection on every read.

@@ -18,9 +18,13 @@ from agentdeck.providers.cli_subprocess import (
     CodexCliProvider,
 )
 from agentdeck.providers.fake import FakeLeaderProvider
-from agentdeck.providers.openai_compatible import OpenAICompatibleProvider
+from agentdeck.providers.openai_compatible import (
+    OpenAICompatibleProvider,
+    OpenAICompatibleProviderError,
+)
 from agentdeck.state import StateStore
 from agentdeck.semantic_authority import semantic_authority_hash
+from agentdeck.semantic_planning import compile_worker_task
 
 
 EXPECTED_CONTROL_REGISTRY_ITEM_COUNT = 129
@@ -177,6 +181,392 @@ def semantic_cli_request(config) -> LeaderPlanRequest:
         timeout_seconds=30,
         semantic_authority=semantic_cli_authority(),
     )
+
+
+class SemanticApiResponse:
+    def __init__(self, candidate: dict[str, object]) -> None:
+        self.candidate = candidate
+
+    def __enter__(self) -> "SemanticApiResponse":
+        return self
+
+    def __exit__(self, *_args) -> None:
+        return None
+
+    def read(self) -> bytes:
+        return json.dumps(
+            {
+                "choices": [
+                    {
+                        "message": {
+                            "content": json.dumps(self.candidate, ensure_ascii=False)
+                        }
+                    }
+                ]
+            },
+            ensure_ascii=False,
+        ).encode("utf-8")
+
+
+def test_fake_semantic_provider_compiles_every_exact_requirement(
+    tmp_path, monkeypatch
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    config = cli.load_config(root)
+    request = semantic_cli_request(config)
+
+    result = FakeLeaderProvider().plan_result(request)
+
+    assert set(result.plan) == {
+        "goal",
+        "summary",
+        "steps",
+        "semantic_authority",
+        "semantic_steps",
+    }
+    assert [
+        reference
+        for step in result.plan["semantic_steps"]
+        for reference in step["authority_refs"]
+    ] == [item["requirement_id"] for item in request.semantic_authority["requirements"]]
+    assert [step["task"] for step in result.plan["steps"]] == [
+        compile_worker_task(step) for step in result.plan["semantic_steps"]
+    ]
+    assert result.leader_generation["constraint_mode"] == "local"
+    assert result.leader_generation["schema_version"] is None
+    assert result.leader_generation["schema_hash"] is None
+    assert result.leader_generation["semantic_authority_hash"] == semantic_authority_hash(
+        request.semantic_authority
+    )
+    assert result.semantic_diagnostics == ()
+
+
+def test_fake_legacy_plan_shape_remains_exactly_legacy(tmp_path, monkeypatch) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    config = cli.load_config(root)
+    provider = FakeLeaderProvider()
+
+    plan = provider.plan(LeaderPlanRequest(task="legacy task", config=config))
+
+    assert set(plan) == {
+        "goal",
+        "summary",
+        "steps",
+        "approval_required",
+        "dispatch_ready",
+    }
+    assert all("semantic_authority" not in step and "semantic_steps" not in step for step in plan["steps"])
+
+
+def test_api_semantic_generation_regenerates_once_under_one_deadline(
+    tmp_path, monkeypatch
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    config = cli.load_config(root)
+    request = semantic_cli_request(config)
+    calls: list[dict[str, object]] = []
+    candidates = [
+        semantic_cli_candidate(omit_requirement=True),
+        semantic_cli_candidate(),
+    ]
+    monotonic_values = iter((100.0, 101.0, 105.0, 106.0, 107.0))
+    monkeypatch.setenv("AGENTDECK_LEADER_API_KEY", "test-key")
+    monkeypatch.setattr(
+        "agentdeck.providers.openai_compatible.time.monotonic",
+        lambda: next(monotonic_values),
+    )
+
+    def fake_urlopen(http_request, timeout):
+        calls.append(
+            {
+                "body": json.loads(http_request.data.decode("utf-8")),
+                "timeout": timeout,
+            }
+        )
+        return SemanticApiResponse(candidates[len(calls) - 1])
+
+    monkeypatch.setattr(
+        "agentdeck.providers.openai_compatible.request.urlopen", fake_urlopen
+    )
+
+    result = OpenAICompatibleProvider(timeout=30).plan_result(request)
+
+    assert len(calls) == 2
+    assert [call["body"]["model"] for call in calls] == [
+        "semantic-test-model",
+        "semantic-test-model",
+    ]
+    assert calls[0]["timeout"] > calls[1]["timeout"] > 0
+    first_messages = calls[0]["body"]["messages"]
+    second_messages = calls[1]["body"]["messages"]
+    assert request.task not in json.dumps(calls, ensure_ascii=False)
+    assert "FIRST_RAW_CANDIDATE_MARKER" not in json.dumps(second_messages)
+    assert "semantic_candidate_missing_requirement" not in json.dumps(first_messages)
+    assert "semantic_candidate_missing_requirement" in json.dumps(second_messages)
+    first_authority = next(
+        line
+        for line in first_messages[0]["content"].splitlines()
+        if line.startswith("Compact semantic authority:")
+    )
+    second_authority = next(
+        line
+        for line in second_messages[0]["content"].splitlines()
+        if line.startswith("Compact semantic authority:")
+    )
+    assert first_authority == second_authority
+    assert result.leader_generation["constraint_mode"] == "json_object"
+    assert result.leader_generation["schema_version"] is None
+    assert result.leader_generation["schema_hash"] is None
+    assert result.leader_generation["attempt_count"] == 2
+    assert result.leader_generation["semantic_authority_hash"] == semantic_authority_hash(
+        request.semantic_authority
+    )
+    assert result.semantic_diagnostics == (
+        {
+            "code": "semantic_candidate_missing_requirement",
+            "attempt_count": 1,
+            "regeneration_used": False,
+        },
+    )
+
+
+def test_api_semantic_double_failure_returns_same_closed_code_and_stops_at_two(
+    tmp_path, monkeypatch
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    config = cli.load_config(root)
+    calls = 0
+    monkeypatch.setenv("AGENTDECK_LEADER_API_KEY", "test-key")
+
+    def fake_urlopen(_http_request, timeout):
+        nonlocal calls
+        calls += 1
+        return SemanticApiResponse(semantic_cli_candidate(omit_requirement=True))
+
+    monkeypatch.setattr(
+        "agentdeck.providers.openai_compatible.request.urlopen", fake_urlopen
+    )
+
+    with pytest.raises(OpenAICompatibleProviderError) as raised:
+        OpenAICompatibleProvider().plan_result(semantic_cli_request(config))
+
+    assert calls == 2
+    assert raised.value.stage == "schema"
+    assert raised.value.diagnostic_code == "semantic_candidate_missing_requirement"
+    assert raised.value.attempt_count == 2
+    assert "FIRST_RAW_CANDIDATE_MARKER" not in str(raised.value)
+
+
+@pytest.mark.parametrize("mutation", ["invalid", "sensitive"])
+def test_api_semantic_authority_fails_before_http(
+    tmp_path, monkeypatch, mutation: str
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    config = cli.load_config(root)
+    authority = semantic_cli_authority()
+    if mutation == "invalid":
+        authority["extra"] = "blocked"
+    else:
+        authority["requirements"][0]["sensitivity"] = "secret_ref"
+        authority["requirements"][0]["literal"] = {
+            "reference": "secret:vault-item"
+        }
+    request_value = replace(
+        semantic_cli_request(config), semantic_authority=authority
+    )
+    monkeypatch.setenv("AGENTDECK_LEADER_API_KEY", "test-key")
+
+    def fail_urlopen(*_args, **_kwargs):
+        raise AssertionError("invalid semantic authority must not reach HTTP")
+
+    monkeypatch.setattr(
+        "agentdeck.providers.openai_compatible.request.urlopen", fail_urlopen
+    )
+
+    expected_code = (
+        "semantic_compilation_failed"
+        if mutation == "invalid"
+        else "semantic_authority_sensitive_value"
+    )
+    with pytest.raises(OpenAICompatibleProviderError) as raised:
+        OpenAICompatibleProvider().plan_result(request_value)
+
+    assert raised.value.stage == "schema"
+    assert raised.value.diagnostic_code == expected_code
+    assert raised.value.attempt_count == 0
+    assert "secret://vault/item" not in str(raised.value)
+    assert "blocked" not in str(raised.value)
+
+
+def test_api_semantic_authority_snapshot_survives_caller_mutation_during_http(
+    tmp_path, monkeypatch
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    config = cli.load_config(root)
+    authority = semantic_cli_authority()
+    expected_hash = semantic_authority_hash(authority)
+    request_value = replace(
+        semantic_cli_request(config), semantic_authority=authority
+    )
+    calls: list[dict[str, object]] = []
+    candidates = [
+        semantic_cli_candidate(omit_requirement=True),
+        semantic_cli_candidate(),
+    ]
+    monkeypatch.setenv("AGENTDECK_LEADER_API_KEY", "test-key")
+
+    def fake_urlopen(http_request, timeout):
+        calls.append(json.loads(http_request.data.decode("utf-8")))
+        authority["requirements"][0]["literal"] = "caller-mutated\n"
+        return SemanticApiResponse(candidates[len(calls) - 1])
+
+    monkeypatch.setattr(
+        "agentdeck.providers.openai_compatible.request.urlopen", fake_urlopen
+    )
+
+    result = OpenAICompatibleProvider().plan_result(request_value)
+
+    assert len(calls) == 2
+    assert "caller-mutated" not in json.dumps(calls, ensure_ascii=False)
+    assert result.plan["semantic_authority"]["requirements"][0]["literal"] == "draft-v1\n"
+    assert result.leader_generation["semantic_authority_hash"] == expected_hash
+    assert result.leader_generation["attempt_count"] == 2
+
+
+def test_api_semantic_json_parse_failure_is_sanitized_and_not_retried(
+    tmp_path, monkeypatch
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    config = cli.load_config(root)
+    calls = 0
+    monkeypatch.setenv("AGENTDECK_LEADER_API_KEY", "test-key")
+
+    class RawInvalidResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def read(self) -> bytes:
+            return b"RAW_PROVIDER_SECRET:not-json"
+
+    def fake_urlopen(_http_request, timeout):
+        nonlocal calls
+        calls += 1
+        return RawInvalidResponse()
+
+    monkeypatch.setattr(
+        "agentdeck.providers.openai_compatible.request.urlopen", fake_urlopen
+    )
+
+    with pytest.raises(OpenAICompatibleProviderError) as raised:
+        OpenAICompatibleProvider().plan_result(semantic_cli_request(config))
+
+    assert calls == 1
+    assert raised.value.stage == "json_parse"
+    assert raised.value.diagnostic_code == "semantic_candidate_schema_invalid"
+    assert raised.value.attempt_count == 1
+    assert "RAW_PROVIDER_SECRET" not in str(raised.value)
+
+
+def test_api_semantic_scope_addition_is_nonretryable(tmp_path, monkeypatch) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    config = cli.load_config(root)
+    candidate = semantic_cli_candidate()
+    candidate["steps"][0]["proposed_effects"] = [
+        {
+            "target": "../unapproved.txt",
+            "operation": "create",
+            "sensitivity": "ordinary",
+        }
+    ]
+    calls = 0
+    monkeypatch.setenv("AGENTDECK_LEADER_API_KEY", "test-key")
+
+    def fake_urlopen(_http_request, timeout):
+        nonlocal calls
+        calls += 1
+        return SemanticApiResponse(candidate)
+
+    monkeypatch.setattr(
+        "agentdeck.providers.openai_compatible.request.urlopen", fake_urlopen
+    )
+
+    with pytest.raises(OpenAICompatibleProviderError) as raised:
+        OpenAICompatibleProvider().plan_result(semantic_cli_request(config))
+
+    assert calls == 1
+    assert raised.value.stage == "schema"
+    assert raised.value.diagnostic_code == "semantic_scope_addition_blocked"
+    assert raised.value.attempt_count == 1
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        ("unknown", None, 1),
+        ("schema", "not_closed", 1),
+        ("schema", None, 1),
+        ("timeout", "semantic_compilation_failed", 1),
+        ("json_parse", "semantic_candidate_schema_invalid", 0),
+        ("schema", "semantic_candidate_missing_requirement", True),
+        ("schema", "semantic_candidate_missing_requirement", 3),
+    ],
+)
+def test_api_provider_error_rejects_invalid_public_metadata(args) -> None:
+    stage, diagnostic_code, attempt_count = args
+    with pytest.raises(ValueError):
+        OpenAICompatibleProviderError(
+            stage,
+            diagnostic_code,
+            attempt_count=attempt_count,
+        )
+
+
+def test_api_provider_error_metadata_is_immutable_and_sanitized() -> None:
+    error = OpenAICompatibleProviderError(
+        "schema",
+        "semantic_candidate_missing_requirement",
+        attempt_count=2,
+    )
+
+    assert str(error) == "OpenAI-compatible Leader planning failed at stage: schema"
+    assert "semantic_candidate_missing_requirement" not in repr(error)
+    for field, value in (
+        ("stage", "timeout"),
+        ("diagnostic_code", "semantic_effect_conflict"),
+        ("attempt_count", 1),
+    ):
+        with pytest.raises(AttributeError):
+            setattr(error, field, value)
+
+
+def test_api_semantic_network_failure_is_sanitized_and_not_retried(
+    tmp_path, monkeypatch
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    config = cli.load_config(root)
+    calls = 0
+    monkeypatch.setenv("AGENTDECK_LEADER_API_KEY", "test-key")
+
+    def fake_urlopen(_http_request, timeout):
+        nonlocal calls
+        calls += 1
+        raise URLError("RAW_URL_SECRET")
+
+    monkeypatch.setattr(
+        "agentdeck.providers.openai_compatible.request.urlopen", fake_urlopen
+    )
+
+    with pytest.raises(OpenAICompatibleProviderError) as raised:
+        OpenAICompatibleProvider().plan_result(semantic_cli_request(config))
+
+    assert calls == 1
+    assert raised.value.stage == "nonzero"
+    assert raised.value.diagnostic_code is None
+    assert raised.value.attempt_count == 1
+    assert "RAW_URL_SECRET" not in str(raised.value)
 
 
 class FakeMissionProvider:
