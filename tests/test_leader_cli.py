@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import replace
+import http.client
 import json
 from pathlib import Path
+import socket
 import subprocess
+import time
 from urllib.error import URLError
 
 import pytest
@@ -782,6 +785,34 @@ def test_api_semantic_chunk_read_crossing_deadline_is_timeout(
     assert raised.value.diagnostic_code is None
     assert raised.value.attempt_count == 1
     assert "RAW_CHUNK_SECRET" not in str(raised.value)
+
+
+def test_api_semantic_production_read1_is_interrupted_by_total_deadline() -> None:
+    reader_socket, writer_socket = socket.socketpair()
+    writer_socket.sendall(
+        b"HTTP/1.1 200 OK\r\nContent-Length: 16\r\nConnection: close\r\n\r\n"
+    )
+    response = http.client.HTTPResponse(reader_socket)
+    response.begin()
+    assert callable(response.read1)
+    assert response.fp.raw._sock is reader_socket
+
+    started = time.monotonic()
+    try:
+        with pytest.raises(OpenAICompatibleProviderError) as raised:
+            OpenAICompatibleProvider._read_semantic_response(
+                response,
+                deadline=started + 0.05,
+            )
+    finally:
+        response.close()
+        reader_socket.close()
+        writer_socket.close()
+    elapsed = time.monotonic() - started
+
+    assert raised.value.stage == "timeout"
+    assert raised.value.attempt_count == 1
+    assert 0.01 <= elapsed < 0.5
 
 
 class FakeMissionProvider:

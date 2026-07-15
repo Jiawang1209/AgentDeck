@@ -402,6 +402,46 @@ class OpenAICompatibleProvider:
 
     @staticmethod
     def _read_semantic_response(response: object, *, deadline: float) -> bytes:
+        """Read one bounded receive at a time under the total deadline.
+
+        Real HTTP responses expose ``read1`` and the underlying socket; both are
+        required so every receive gets the current remaining timeout. Minimal
+        test doubles may expose only ``read`` and use the post-read deadline
+        check, but that fallback is not treated as a production interruption
+        guarantee.
+        """
+        try:
+            read1 = getattr(response, "read1", None)
+            if callable(read1):
+                fp = getattr(response, "fp", None)
+                raw = getattr(fp, "raw", None)
+                sock = getattr(raw, "_sock", None)
+                set_socket_timeout = getattr(sock, "settimeout", None)
+                if not callable(set_socket_timeout):
+                    raise OpenAICompatibleProviderError(
+                        "json_parse",
+                        "semantic_candidate_schema_invalid",
+                        attempt_count=1,
+                    )
+                reader = read1
+            else:
+                reader = getattr(response, "read")
+                set_socket_timeout = None
+                if not callable(reader):
+                    raise OpenAICompatibleProviderError(
+                        "json_parse",
+                        "semantic_candidate_schema_invalid",
+                        attempt_count=1,
+                    )
+        except OpenAICompatibleProviderError:
+            raise
+        except Exception:
+            raise OpenAICompatibleProviderError(
+                "json_parse",
+                "semantic_candidate_schema_invalid",
+                attempt_count=1,
+            ) from None
+
         chunks: list[bytes] = []
         total = 0
         while True:
@@ -420,7 +460,20 @@ class OpenAICompatibleProvider:
                     "semantic_candidate_schema_invalid",
                     attempt_count=1,
                 )
-            chunk = response.read(read_size)
+            if set_socket_timeout is not None:
+                remaining = deadline - before
+                try:
+                    set_socket_timeout(remaining)
+                except OSError:
+                    raise OpenAICompatibleProviderError(
+                        "nonzero", attempt_count=1
+                    ) from None
+            try:
+                chunk = reader(read_size)
+            except TimeoutError:
+                raise OpenAICompatibleProviderError(
+                    "timeout", attempt_count=1
+                ) from None
             after = time.monotonic()
             if not math.isfinite(after) or after >= deadline:
                 raise OpenAICompatibleProviderError(

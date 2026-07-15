@@ -154,6 +154,35 @@ def test_leader_orchestrator_preserves_semantic_diagnostics(tmp_path) -> None:
     )
 
 
+def test_leader_orchestrator_freezes_default_model_and_provider_name(
+    tmp_path
+) -> None:
+    _root, config, _store, _config_path = project(tmp_path)
+    seen: dict[str, object] = {}
+
+    class MutableIdentityProvider(FakeLeaderProvider):
+        name = "initial-provider"
+        model = "initial-default-model"
+
+        def plan_result(self, request: LeaderPlanRequest) -> LeaderPlanResult:
+            seen["request_model"] = request.model
+            result = super().plan_result(request)
+            self.name = "mutated-provider"
+            self.model = "mutated-default-model"
+            return result
+
+    result = LeaderOrchestrator(config, MutableIdentityProvider()).plan_result(
+        "semantic task",
+        selected_agent_ids=("planner", "reviewer"),
+        step_count=4,
+        semantic_authority=semantic_authority_fixture(),
+    )
+
+    assert seen["request_model"] == "initial-default-model"
+    assert result.leader_generation["provider"] == "initial-provider"
+    assert result.leader_generation["model"] == "initial-default-model"
+
+
 def test_leader_orchestrator_rejects_compiled_semantic_task_mutation(tmp_path) -> None:
     _root, config, _store, _config_path = project(tmp_path)
 

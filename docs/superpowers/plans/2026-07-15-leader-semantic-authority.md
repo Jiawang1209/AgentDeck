@@ -889,14 +889,24 @@ request carries authority and reject semantic keys on legacy requests.
 
 Before the first semantic HTTP attempt, freeze and validate the effective model,
 provider name, constraint mode, and base URL; both attempts and provenance must
-consume only those frozen values. Read semantic HTTP responses in chunks of at
-most 64 KiB with a 2 MiB total cap and check the same monotonic deadline before
-and after every chunk. Direct or wrapped socket timeouts are one-attempt timeout
-failures; oversize or malformed envelopes are sanitized nonretryable parse
-failures. Before the orchestrator copies or reconstructs a provider result, it
-must require the exact frozen semantic step count and run every semantic step
-through the Task 3 exact-tree/hash boundary; any hostile value or conversion
-failure collapses to `semantic_compilation_drift` without echo.
+consume only those frozen values. The Orchestrator must independently freeze the
+provider reference/name and any exact non-empty default model before invocation,
+then use the same effective request/name for provider execution and provenance
+validation without rereading mutable provider identity. This pre-invocation
+name gate applies to semantic requests; a legacy provider that raises a typed
+failure before returning a plan must preserve that original failure, and its
+frozen name is required only after a successful result needs provenance. Read semantic HTTP
+responses in chunks of at most 64 KiB with a 2 MiB total cap and check the same
+monotonic deadline before and after every chunk. Production `HTTPResponse`
+reads must use `read1()` and set `fp.raw._sock` to the exact remaining timeout
+before every receive, so a blocked body read cannot exceed the total deadline;
+minimal test doubles may use an explicit post-read-only fallback. Direct or
+wrapped socket timeouts are one-attempt timeout failures; oversize or malformed
+envelopes are sanitized nonretryable parse failures. Before the orchestrator
+copies or reconstructs a provider result, it must require the exact frozen
+semantic step count and run every semantic step through the Task 3 exact-tree/hash
+boundary; any hostile value or conversion failure collapses to
+`semantic_compilation_drift` without echo.
 
 Do not advertise `native_json_schema` for HTTP/fake providers. Their provenance
 remains `json_object`/`local` with null schema fields, while the semantic

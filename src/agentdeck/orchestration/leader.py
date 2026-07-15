@@ -207,6 +207,21 @@ class LeaderOrchestrator:
     ) -> LeaderPlanResult:
         if self.provider is None:
             raise RuntimeError("leader provider is not configured")
+        provider_ref = self.provider
+        provider_name = getattr(provider_ref, "name", None)
+        constraint_mode_snapshot = getattr(provider_ref, "constraint_mode", "local")
+        native_plan_result = getattr(provider_ref, "plan_result", None)
+        provider_plan = getattr(provider_ref, "plan", None)
+        provider_name_is_valid = (
+            type(provider_name) is str and bool(provider_name.strip())
+        )
+        if semantic_authority is not None and not provider_name_is_valid:
+            raise _invalid_native_provenance()
+        effective_model = model
+        if semantic_authority is not None and model is None:
+            default_model = getattr(provider_ref, "model", None)
+            if type(default_model) is str and default_model.strip():
+                effective_model = default_model
         authority_snapshot: dict[str, object] | None = None
         if semantic_authority is not None:
             try:
@@ -216,7 +231,7 @@ class LeaderOrchestrator:
         request = LeaderPlanRequest(
             task=task,
             config=self.config,
-            model=model,
+            model=effective_model,
             skill_context=skill_context,
             selected_agent_ids=selected_agent_ids,
             step_count=step_count,
@@ -252,11 +267,12 @@ class LeaderOrchestrator:
                 semantic_authority=deepcopy(authority_snapshot),
                 regeneration_diagnostic=request.regeneration_diagnostic,
             )
-        native_plan_result = getattr(self.provider, "plan_result", None)
         if callable(native_plan_result):
             result = native_plan_result(provider_request)
             if not isinstance(result, LeaderPlanResult):
                 raise TypeError("leader provider plan_result must return LeaderPlanResult")
+            if not provider_name_is_valid:
+                raise _invalid_native_provenance()
             if authority_snapshot is None:
                 if type(result.plan) is dict and (
                     "semantic_authority" in result.plan
@@ -275,7 +291,7 @@ class LeaderOrchestrator:
             try:
                 expected_provenance = validate_leader_generation_provenance(
                     request=request,
-                    provider=self.provider.name,
+                    provider=provider_name,
                     provenance=provenance,
                 )
             except (ProviderPlanValidationError, TypeError, ValueError):
@@ -285,7 +301,11 @@ class LeaderOrchestrator:
                 leader_generation=expected_provenance,
                 semantic_diagnostics=result.semantic_diagnostics,
             )
-        raw_plan = self.provider.plan(provider_request)
+        if not callable(provider_plan):
+            raise TypeError("leader provider plan must be callable")
+        raw_plan = provider_plan(provider_request)
+        if not provider_name_is_valid:
+            raise _invalid_native_provenance()
         if authority_snapshot is None:
             if type(raw_plan) is dict and (
                 "semantic_authority" in raw_plan or "semantic_steps" in raw_plan
@@ -299,7 +319,7 @@ class LeaderOrchestrator:
             )
         else:
             plan = _validate_compiled_semantic_plan(request, raw_plan)
-        constraint_mode = getattr(self.provider, "constraint_mode", "local")
+        constraint_mode = constraint_mode_snapshot
         if type(constraint_mode) is str and constraint_mode == "native_json_schema":
             raise ProviderPlanValidationError(
                 "native_schema_unavailable",
@@ -309,7 +329,7 @@ class LeaderOrchestrator:
             plan=plan,
             leader_generation=build_leader_generation_provenance(
                 request=request,
-                provider=self.provider.name,
+                provider=provider_name,
                 constraint_mode=constraint_mode,
             ),
         )
