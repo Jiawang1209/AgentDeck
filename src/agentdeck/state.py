@@ -99,6 +99,60 @@ _EXECUTION_SNAPSHOT_FIELDS = frozenset(
     }
 )
 
+_SEMANTIC_FROZEN_EVENT_PAYLOAD_FIELDS = frozenset(
+    {
+        "mission_id",
+        "plan_id",
+        "semantic_authority_hash",
+        "compiled_task_hashes",
+        "compiled_step_count",
+        "policy_snapshot_hash",
+        "preview_generation",
+    }
+)
+
+
+def _validate_semantic_frozen_event_payload(value: object) -> dict[str, object]:
+    if type(value) is not dict or set(value) != _SEMANTIC_FROZEN_EVENT_PAYLOAD_FIELDS:
+        raise ValueError("semantic frozen event authority is invalid")
+    task_hashes = value.get("compiled_task_hashes")
+    if (
+        not is_canonical_mission_id(value.get("mission_id"))
+        or type(value.get("plan_id")) is not str
+        or re.fullmatch(r"pln_[0-9a-f]{12}", value["plan_id"]) is None
+        or type(task_hashes) is not list
+        or not task_hashes
+        or len(task_hashes) > 64
+        or any(
+            type(item) is not str
+            or re.fullmatch(r"sha256:[0-9a-f]{64}", item) is None
+            for item in task_hashes
+        )
+        or type(value.get("compiled_step_count")) is not int
+        or value["compiled_step_count"] != len(task_hashes)
+        or type(value.get("preview_generation")) is not int
+        or value["preview_generation"] != 1
+        or any(
+            type(value.get(field)) is not str
+            or re.fullmatch(r"sha256:[0-9a-f]{64}", value[field]) is None
+            for field in ("semantic_authority_hash", "policy_snapshot_hash")
+        )
+    ):
+        raise ValueError("semantic frozen event authority is invalid")
+    return copy.deepcopy(value)
+
+
+def _validate_execution_frozen_event_payload(value: object) -> dict[str, object]:
+    if (
+        type(value) is not dict
+        or set(value) != {"mission_id", "snapshot_hash"}
+        or not is_canonical_mission_id(value.get("mission_id"))
+        or type(value.get("snapshot_hash")) is not str
+        or re.fullmatch(r"sha256:[0-9a-f]{64}", value["snapshot_hash"]) is None
+    ):
+        raise ValueError("execution frozen event authority is invalid")
+    return dict(value)
+
 _DAEMON_ADMISSION_FIELDS = frozenset(
     {"state", "snapshot_hash", "blocker", "recovery_command", "updated_at"}
 )
@@ -6536,6 +6590,42 @@ class StateStore:
             mission_ids.append(raw["mission_id"])
         if len(mission_ids) != len(set(mission_ids)):
             raise ValueError("duplicate mission identity")
+        self._strict_protocol_journal_event_ids()
+        journal_events = self.all_events()
+        _validated_protocol_event_outbox_ids(outbox)
+        frozen_authority_events: dict[str, dict[str, object]] = {}
+        for event in [*journal_events, *outbox]:
+            try:
+                validate_daemon_event_record(event)
+            except LeaseError:
+                raise ValueError("protocol event journal is malformed") from None
+            event_id = str(event["event_id"])
+            existing = frozen_authority_events.get(event_id)
+            if existing is not None:
+                if existing != event:
+                    raise ValueError("frozen Mission event authority is invalid")
+                continue
+            frozen_authority_events[event_id] = event
+        semantic_frozen_events: dict[str, dict[str, object]] = {}
+        execution_frozen_events: dict[str, dict[str, object]] = {}
+        for event in frozen_authority_events.values():
+            event_type = event.get("event_type")
+            if event_type == "mission_semantic_authority_frozen":
+                payload = _validate_semantic_frozen_event_payload(
+                    event.get("payload")
+                )
+                target = semantic_frozen_events
+            elif event_type == "mission_execution_frozen":
+                payload = _validate_execution_frozen_event_payload(
+                    event.get("payload")
+                )
+                target = execution_frozen_events
+            else:
+                continue
+            mission_id = str(payload["mission_id"])
+            if mission_id not in set(mission_ids) or mission_id in target:
+                raise ValueError("frozen Mission event authority is invalid")
+            target[mission_id] = payload
         semantic_recovery_config: ProjectConfig | None = None
         for mission in missions:
             plan_id = mission.get("plan_id")
@@ -6567,11 +6657,14 @@ class StateStore:
                 for field in SEMANTIC_MISSION_COMPACT_FIELDS
                 if field in mission
             )
+            mission_id = str(mission["mission_id"])
+            semantic_anchor = semantic_frozen_events.get(mission_id)
             if (
                 mission["status"] not in {"preparing", "running"}
                 or (
                     not present_semantic
                     and not plan_is_semantic
+                    and semantic_anchor is None
                     and not (
                         type(snapshot_mission) is dict
                         and "semantic_authority_schema_version" in snapshot_mission
@@ -6580,6 +6673,11 @@ class StateStore:
             ):
                 continue
             try:
+                if semantic_anchor is None:
+                    raise ValueError
+                execution_anchor = execution_frozen_events.get(mission_id)
+                if execution_anchor is None:
+                    raise ValueError
                 if type(plan_id) is not str:
                     raise ValueError
                 plan = self._unique_plan_record(state, plan_id)
@@ -6597,13 +6695,26 @@ class StateStore:
                         Path(semantic_recovery_config.root)
                     ),
                 )
-            except (KeyError, OSError, TypeError, ValueError):
+            except Exception:
                 raise ValueError("semantic recovery authority drift") from None
             if (
                 mission.get("snapshot_hash") != persisted_snapshot["execution_hash"]
                 or mission.get("execution_authority_hash")
                 != persisted_snapshot["execution_hash"]
                 or current_snapshot != persisted_snapshot
+                or semantic_anchor.get("plan_id") != plan_id
+                or semantic_anchor.get("semantic_authority_hash")
+                != mission.get("semantic_authority_hash")
+                or semantic_anchor.get("compiled_task_hashes")
+                != mission.get("compiled_task_hashes")
+                or semantic_anchor.get("compiled_step_count")
+                != len(persisted_snapshot["mission"]["steps"])
+                or semantic_anchor.get("policy_snapshot_hash")
+                != current_snapshot["policy_hash"]
+                or semantic_anchor.get("preview_generation")
+                != mission.get("preview_generation")
+                or execution_anchor.get("snapshot_hash")
+                != current_snapshot["execution_hash"]
             ):
                 raise ValueError("semantic recovery authority drift")
         attempts = [_validate_mission_attempt_record(item) for item in attempts_raw]
@@ -6670,13 +6781,6 @@ class StateStore:
         ]
         self._validate_protocol_transition_history(state)
         _validated_protocol_event_outbox_ids(outbox)
-        self._strict_protocol_journal_event_ids()
-        journal_events = self.all_events()
-        for event in journal_events:
-            try:
-                validate_daemon_event_record(event)
-            except LeaseError:
-                raise ValueError("protocol event journal is malformed") from None
         recovery_audit_events = [
             event
             for event in [*journal_events, *outbox]

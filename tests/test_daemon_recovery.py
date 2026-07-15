@@ -4,6 +4,7 @@ from copy import deepcopy
 from dataclasses import FrozenInstanceError
 from datetime import datetime, timezone
 import asyncio
+import hashlib
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -31,9 +32,11 @@ from agentdeck.daemon.transports import AcpWorkerTransport
 from agentdeck.daemon.recovery import RecoveryFacts
 from agentdeck.mission_orchestration import (
     LeaderMissionCandidate,
+    build_execution_snapshot,
     confirm_mission_for_daemon,
     create_mission_preview_from_candidate,
 )
+from agentdeck.mission_authority import canonical_workflow_plan_hash
 from agentdeck.models import AgentSpec
 from agentdeck.orchestration.leader import LeaderOrchestrator
 from agentdeck.providers import FakeLeaderProvider
@@ -42,7 +45,9 @@ from agentdeck.state import (
     StateStore,
     _is_force_stop_terminal_ambiguity,
     canonical_snapshot_hash,
+    execution_policy_snapshot,
 )
+from agentdeck.semantic_authority import semantic_authority_hash
 
 
 MISSION_ID = "mis_aaaaaaaaaaaa"
@@ -133,6 +138,35 @@ def _freeze_real_semantic_mission(tmp_path: Path, monkeypatch):
         config=config, store=store, mission_id=preview["mission_id"]
     )
     return root, store, preview, confirmed
+
+
+def _assert_semantic_restart_rejected(root: Path) -> None:
+    enabled: list[bool] = []
+    with pytest.raises(
+        RecoveryError, match="^durable recovery evidence is invalid$"
+    ) as raised:
+        reconcile_startup(
+            StateStore(root), enable_scheduler=lambda: enabled.append(True)
+        )
+    assert "SECRET" not in str(raised.value)
+    assert "ATTACKER" not in str(raised.value)
+    assert "EVIL-DRAFT" not in str(raised.value)
+    assert enabled == []
+    persisted = StateStore(root).load()
+    assert persisted["mission_attempts"] == []
+    assert persisted["recovery_decisions"] == []
+
+
+def _rehash_execution_snapshot(snapshot: dict[str, object]) -> None:
+    snapshot["mission_hash"] = canonical_snapshot_hash(snapshot["mission"])
+    execution_body = {
+        key: snapshot[key]
+        for key in (
+            "mission", "workers", "policy", "limits", "mission_hash",
+            "policy_hash",
+        )
+    }
+    snapshot["execution_hash"] = canonical_snapshot_hash(execution_body)
 
 
 def test_daemon_acp_update_digest_accepts_full_turn_sized_payload() -> None:
@@ -736,6 +770,33 @@ def test_real_semantic_restart_rebuilds_same_snapshot_before_scheduler_enable(
     ]
 
 
+def test_real_semantic_first_attempt_accepts_atomic_unflushed_frozen_events(
+    tmp_path: Path, monkeypatch
+) -> None:
+    _root, store, preview, _confirmed = _freeze_real_semantic_mission(
+        tmp_path, monkeypatch
+    )
+    assert any(
+        event["event_type"] == "mission_semantic_authority_frozen"
+        for event in store.load()["protocol_event_outbox"]
+    )
+    assert not any(
+        event["event_type"]
+        in {"mission_execution_frozen", "mission_semantic_authority_frozen"}
+        for event in store.all_events()
+    )
+
+    attempt = store.prepare_mission_attempt(
+        mission_id=preview["mission_id"],
+        step_id="step_1",
+        agent_id="planner",
+        configured_transport="tmux",
+    )
+
+    assert attempt["state"] == "prepared"
+    assert attempt["mission_id"] == preview["mission_id"]
+
+
 @pytest.mark.parametrize("mutation", ["plan_summary", "semantic_shape_downgrade"])
 def test_real_semantic_restart_rejects_current_authority_drift_before_scheduler_enable(
     tmp_path: Path, monkeypatch, mutation: str
@@ -760,31 +821,188 @@ def test_real_semantic_restart_rejects_current_authority_drift_before_scheduler_
         del frozen["mission"]["semantic_authority_hash"]
         for step in frozen["mission"]["steps"]:
             del step["semantic_step_hash"]
-        frozen["mission_hash"] = canonical_snapshot_hash(frozen["mission"])
-        execution_body = {
-            key: frozen[key]
-            for key in (
-                "mission", "workers", "policy", "limits", "mission_hash",
-                "policy_hash",
-            )
-        }
-        frozen["execution_hash"] = canonical_snapshot_hash(execution_body)
+        _rehash_execution_snapshot(frozen)
         mission["snapshot_hash"] = frozen["execution_hash"]
         mission["execution_authority_hash"] = frozen["execution_hash"]
     store.save(state)
-    enabled: list[bool] = []
+    _assert_semantic_restart_rejected(root)
 
-    with pytest.raises(
-        RecoveryError, match="^durable recovery evidence is invalid$"
-    ):
-        reconcile_startup(
-            StateStore(root), enable_scheduler=lambda: enabled.append(True)
+
+@pytest.mark.parametrize("section", ["leader", "runtime"])
+def test_real_semantic_restart_bounds_legal_toml_section_shape_errors(
+    tmp_path: Path, monkeypatch, section: str
+) -> None:
+    root, store, _preview, _confirmed = _freeze_real_semantic_mission(
+        tmp_path, monkeypatch
+    )
+    store.flush_protocol_event_outbox()
+    config_path = root / ".agentdeck" / "config.toml"
+    text = config_path.read_text(encoding="utf-8")
+    if section == "leader":
+        prefix, remainder = text.split("[leader]", 1)
+        _leader_body, suffix = remainder.split("[[agents]]", 1)
+        text = (
+            f'leader = "SECRET-{section}-shape"\n'
+            + prefix
+            + "[[agents]]"
+            + suffix
         )
+    else:
+        prefix, _runtime_body = text.split("[runtime]", 1)
+        text = f'runtime = "SECRET-{section}-shape"\n' + prefix
+    config_path.write_text(text, encoding="utf-8")
 
-    assert enabled == []
-    persisted = StateStore(root).load()
-    assert persisted["mission_attempts"] == []
-    assert persisted["recovery_decisions"] == []
+    _assert_semantic_restart_rejected(root)
+
+
+@pytest.mark.parametrize("mutation", ["full_legacy_downgrade", "evil_authority"])
+def test_real_semantic_restart_binds_append_only_frozen_journal_authority(
+    tmp_path: Path, monkeypatch, mutation: str
+) -> None:
+    root, store, preview, _confirmed = _freeze_real_semantic_mission(
+        tmp_path, monkeypatch
+    )
+    store.flush_protocol_event_outbox()
+    state = store.load()
+    mission = state["missions"][0]
+    plan = state["plans"][0]
+    if mutation == "full_legacy_downgrade":
+        del plan["plan"]["semantic_authority"]
+        del plan["plan"]["semantic_steps"]
+        plan["plan"]["steps"][0]["task"] = "ATTACKER TASK"
+        mission["plan_hash"] = canonical_workflow_plan_hash(plan)
+        for field in (
+            "semantic_authority_schema_version",
+            "semantic_authority_hash",
+            "compiled_task_hashes",
+            "preview_generation",
+        ):
+            del mission[field]
+        snapshot = mission["execution_snapshot"]
+        snapshot["mission"]["plan_hash"] = mission["plan_hash"]
+        del snapshot["mission"]["semantic_authority_schema_version"]
+        del snapshot["mission"]["semantic_authority_hash"]
+        for step in snapshot["mission"]["steps"]:
+            del step["semantic_step_hash"]
+        snapshot["mission"]["steps"][0]["task_hash"] = canonical_snapshot_hash(
+            {"task": "ATTACKER TASK"}
+        )
+        _rehash_execution_snapshot(snapshot)
+    else:
+        config = load_config(root)
+        evil_authority = _real_semantic_authority()
+        evil_authority["requirements"][0]["literal"] = "EVIL-DRAFT\n"
+        evil_authority["requirements"][2]["before"] = {
+            "content_equals": "EVIL-DRAFT\n"
+        }
+        evil_result = LeaderOrchestrator(config, FakeLeaderProvider()).plan_result(
+            "evil replacement context",
+            config.leader.model,
+            selected_agent_ids=("planner", "reviewer"),
+            step_count=4,
+            semantic_authority=evil_authority,
+        )
+        plan["plan"] = evil_result.plan
+        mission["plan_hash"] = canonical_workflow_plan_hash(plan)
+        mission["semantic_authority_hash"] = semantic_authority_hash(
+            evil_result.plan["semantic_authority"]
+        )
+        mission["compiled_task_hashes"] = [
+            "sha256:" + hashlib.sha256(step["task"].encode("utf-8")).hexdigest()
+            for step in evil_result.plan["steps"]
+        ]
+        snapshot = build_execution_snapshot(
+            config,
+            mission,
+            plan,
+            execution_policy_snapshot(config),
+        )
+        mission["execution_snapshot"] = snapshot
+    mission["snapshot_hash"] = snapshot["execution_hash"]
+    mission["execution_authority_hash"] = snapshot["execution_hash"]
+    store.save(state)
+
+    assert any(
+        event["event_type"] == "mission_semantic_authority_frozen"
+        and event["payload"]["mission_id"] == preview["mission_id"]
+        for event in store.all_events()
+    )
+    _assert_semantic_restart_rejected(root)
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    ["duplicate_semantic", "malformed_semantic", "conflicting_execution"],
+)
+def test_real_semantic_restart_rejects_ambiguous_frozen_journal_authority(
+    tmp_path: Path, monkeypatch, mutation: str
+) -> None:
+    root, store, _preview, _confirmed = _freeze_real_semantic_mission(
+        tmp_path, monkeypatch
+    )
+    store.flush_protocol_event_outbox()
+    events = store.all_events()
+    event_type = (
+        "mission_execution_frozen"
+        if mutation == "conflicting_execution"
+        else "mission_semantic_authority_frozen"
+    )
+    original = deepcopy(
+        next(event for event in events if event["event_type"] == event_type)
+    )
+    original["event_id"] = "evt_" + (
+        "d" if mutation != "conflicting_execution" else "e"
+    ) * 24
+    if mutation == "malformed_semantic":
+        original["payload"]["raw_authority"] = "SECRET raw authority"
+    elif mutation == "conflicting_execution":
+        original["payload"]["snapshot_hash"] = "sha256:" + "f" * 64
+    journal = root / ".agentdeck" / "state" / "events.jsonl"
+    with journal.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(original, ensure_ascii=False, sort_keys=True) + "\n")
+
+    _assert_semantic_restart_rejected(root)
+
+
+def test_real_semantic_restart_rejects_bool_preview_generation_anchor(
+    tmp_path: Path, monkeypatch
+) -> None:
+    root, store, _preview, _confirmed = _freeze_real_semantic_mission(
+        tmp_path, monkeypatch
+    )
+    state = store.load()
+    frozen = next(
+        event
+        for event in state["protocol_event_outbox"]
+        if event["event_type"] == "mission_semantic_authority_frozen"
+    )
+    frozen["payload"]["preview_generation"] = True
+    store.save(state)
+
+    _assert_semantic_restart_rejected(root)
+
+
+def test_recovery_deduplicates_exact_journal_and_outbox_frozen_event_identity(
+    tmp_path: Path, monkeypatch
+) -> None:
+    root, store, _preview, _confirmed = _freeze_real_semantic_mission(
+        tmp_path, monkeypatch
+    )
+    store.flush_protocol_event_outbox()
+    frozen = deepcopy(
+        next(
+            event
+            for event in store.all_events()
+            if event["event_type"] == "mission_semantic_authority_frozen"
+        )
+    )
+    state = store.load()
+    state["protocol_event_outbox"].append(frozen)
+    store.save(state)
+
+    snapshot, _token = StateStore(root).load_recovery_snapshot()
+
+    assert snapshot["missions"][0]["status"] == "preparing"
 
 
 def test_startup_flushes_outboxes_then_atomically_persists_before_enable(
