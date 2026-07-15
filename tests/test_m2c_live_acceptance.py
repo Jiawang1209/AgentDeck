@@ -824,24 +824,86 @@ def _live_ledger_diagnostic(
     replies = reply_records or []
     handoffs = handoff_records or []
     permissions = permission_records or []
-    mission = missions[-1] if missions else {}
     attempt = attempts[-1] if attempts else {}
-    attempt_id = attempt.get("attempt_id")
 
-    def related_record(records: list[dict[str, object]]) -> dict[str, object]:
-        if type(attempt_id) is str:
-            matches = [
-                item
-                for item in records
-                if type(item.get("attempt_id")) is str
-                and item["attempt_id"] == attempt_id
-            ]
-            if len(matches) == 1:
-                return matches[0]
-        return {}
+    def opaque_identity(value: object) -> str | None:
+        return value if type(value) is str and value else None
 
-    reply = related_record(replies)
-    handoff = related_record(handoffs)
+    mission_id = opaque_identity(attempt.get("mission_id"))
+    attempt_id = opaque_identity(attempt.get("attempt_id"))
+    attempt_matches = (
+        [
+            item
+            for item in attempts
+            if opaque_identity(item.get("mission_id")) == mission_id
+            and opaque_identity(item.get("attempt_id")) == attempt_id
+        ]
+        if mission_id is not None and attempt_id is not None
+        else []
+    )
+    mission_matches = (
+        [
+            item
+            for item in missions
+            if opaque_identity(item.get("mission_id")) == mission_id
+        ]
+        if mission_id is not None
+        else []
+    )
+    mission = mission_matches[0] if len(mission_matches) == 1 else {}
+    reply_matches = (
+        [
+            item
+            for item in replies
+            if opaque_identity(item.get("mission_id")) == mission_id
+            and opaque_identity(item.get("attempt_id")) == attempt_id
+        ]
+        if mission_id is not None and attempt_id is not None
+        else []
+    )
+    reply = reply_matches[0] if len(reply_matches) == 1 else {}
+    dispatch_keys_agree = True
+    if "dispatch_key" in attempt and "dispatch_key" in reply:
+        attempt_dispatch_key = opaque_identity(attempt.get("dispatch_key"))
+        reply_dispatch_key = opaque_identity(reply.get("dispatch_key"))
+        dispatch_keys_agree = (
+            attempt_dispatch_key is not None
+            and reply_dispatch_key is not None
+            and attempt_dispatch_key == reply_dispatch_key
+        )
+    reply_id = opaque_identity(reply.get("reply_id"))
+    handoff_matches = (
+        [
+            item
+            for item in handoffs
+            if opaque_identity(item.get("mission_id")) == mission_id
+            and opaque_identity(item.get("attempt_id")) == attempt_id
+            and opaque_identity(item.get("reply_id")) == reply_id
+        ]
+        if mission_id is not None
+        and attempt_id is not None
+        and reply_id is not None
+        else []
+    )
+    handoff = handoff_matches[0] if len(handoff_matches) == 1 else {}
+    lineage_valid = (
+        mission_records is not None
+        and attempt_records is not None
+        and reply_records is not None
+        and handoff_records is not None
+        and mission_id is not None
+        and attempt_id is not None
+        and len(attempt_matches) == 1
+        and len(mission_matches) == 1
+        and len(reply_matches) == 1
+        and dispatch_keys_agree
+        and reply_id is not None
+        and len(handoff_matches) == 1
+    )
+    if not lineage_valid:
+        mission = {}
+        reply = {}
+        handoff = {}
     canonical_handoff = handoff.get("canonical_handoff")
     if type(canonical_handoff) is not dict:
         canonical_handoff = {}
@@ -870,7 +932,7 @@ def _live_ledger_diagnostic(
         and not all(task_authority.values())
     ):
         classification = "leader_task_authority_missing"
-    elif not collections_valid:
+    elif not collections_valid or not lineage_valid:
         classification = "permission_state_inconsistent"
     elif permissions:
         classification = "permission_state_inconsistent"
@@ -3244,14 +3306,23 @@ def _live_diagnostic_state(
     handoff_status: object = "completed",
     permissions: object = None,
 ) -> dict[str, object]:
+    mission_id = "mis_secret_mission"
     attempt_id = "mat_secret_attempt"
+    reply_id = "mrp_secret_reply"
     dispatch_key = "dsp_secret_dispatch"
     secret = "SECRET model output /Users/private/.credentials"
     return {
         "plans": [{"summary": secret}],
-        "missions": [{"status": mission_status, "goal": secret}],
+        "missions": [
+            {
+                "mission_id": mission_id,
+                "status": mission_status,
+                "goal": secret,
+            }
+        ],
         "mission_attempts": [
             {
+                "mission_id": mission_id,
                 "attempt_id": attempt_id,
                 "step_id": "step_1",
                 "agent_id": "claude-worker",
@@ -3266,7 +3337,10 @@ def _live_diagnostic_state(
         ],
         "mission_worker_replies": [
             {
+                "mission_id": mission_id,
                 "attempt_id": attempt_id,
+                "reply_id": reply_id,
+                "dispatch_key": dispatch_key,
                 "state": reply_state,
                 "summary": secret,
                 "acp_update": secret,
@@ -3276,7 +3350,9 @@ def _live_diagnostic_state(
         ],
         "mission_handoffs": [
             {
+                "mission_id": mission_id,
                 "attempt_id": attempt_id,
+                "reply_id": reply_id,
                 "state": handoff_state,
                 "canonical_handoff": {
                     "status": handoff_status,
@@ -3412,6 +3488,9 @@ def test_live_failure_prioritizes_closed_missing_task_authority() -> None:
         attempt_state="running",
         permissions=[{"status": "pending"}],
     )
+    mission = state["missions"][0]
+    assert type(mission) is dict
+    mission["mission_id"] = "mis_crossed"
 
     diagnostic = json.loads(
         str(
@@ -3502,6 +3581,90 @@ def test_live_failure_rejects_unrelated_reply_and_handoff_evidence() -> None:
 
 
 @pytest.mark.parametrize(
+    "mutation",
+    ("crossed_mission", "reply_cross_mission", "wrong_handoff_reply", "dispatch_drift"),
+)
+def test_live_failure_fails_closed_incomplete_durable_lineage(mutation: str) -> None:
+    state = _live_diagnostic_state(mission_status="completed")
+    mission = state["missions"][0]
+    reply = state["mission_worker_replies"][0]
+    handoff = state["mission_handoffs"][0]
+    assert type(mission) is dict
+    assert type(reply) is dict
+    assert type(handoff) is dict
+    if mutation == "crossed_mission":
+        mission["mission_id"] = "mis_crossed"
+    elif mutation == "reply_cross_mission":
+        reply["mission_id"] = "mis_crossed"
+    elif mutation == "wrong_handoff_reply":
+        handoff["reply_id"] = "mrp_crossed"
+    else:
+        reply["dispatch_key"] = "dsp_crossed"
+
+    rendered = str(
+        _live_failure("first_permission_timeout", store=_StaticLiveStore(state))
+    )
+    diagnostic = json.loads(rendered)
+
+    assert diagnostic["ledger"]["classification"] == "permission_state_inconsistent"
+    assert diagnostic["ledger"]["mission_status"] == "unknown"
+    assert diagnostic["ledger"]["reply_state"] == "unknown"
+    assert diagnostic["ledger"]["handoff_state"] == "unknown"
+    for forbidden in ("mis_", "mat_", "mrp_", "dsp_", "SECRET", "/Users"):
+        assert forbidden not in rendered
+
+
+@pytest.mark.parametrize("attempt_state", ("running", "failed"))
+def test_live_failure_requires_valid_lineage_for_attempt_classification(
+    attempt_state: str,
+) -> None:
+    state = _live_diagnostic_state(attempt_state=attempt_state)
+    mission = state["missions"][0]
+    assert type(mission) is dict
+    mission["mission_id"] = "mis_crossed"
+
+    diagnostic = json.loads(
+        str(_live_failure("first_permission_timeout", store=_StaticLiveStore(state)))
+    )
+
+    assert diagnostic["ledger"]["classification"] == "permission_state_inconsistent"
+    assert diagnostic["ledger"]["mission_status"] == "unknown"
+    assert diagnostic["ledger"]["reply_state"] == "unknown"
+    assert diagnostic["ledger"]["handoff_state"] == "unknown"
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    ("missing_attempt_mission", "duplicate_mission", "missing_reply_id", "duplicate_handoff"),
+)
+def test_live_failure_rejects_missing_or_ambiguous_lineage_identity(
+    mutation: str,
+) -> None:
+    state = _live_diagnostic_state(mission_status="completed")
+    attempt = state["mission_attempts"][0]
+    reply = state["mission_worker_replies"][0]
+    assert type(attempt) is dict
+    assert type(reply) is dict
+    if mutation == "missing_attempt_mission":
+        attempt.pop("mission_id")
+    elif mutation == "duplicate_mission":
+        state["missions"].append(dict(state["missions"][0]))
+    elif mutation == "missing_reply_id":
+        reply.pop("reply_id")
+    else:
+        state["mission_handoffs"].append(dict(state["mission_handoffs"][0]))
+
+    diagnostic = json.loads(
+        str(_live_failure("first_permission_timeout", store=_StaticLiveStore(state)))
+    )
+
+    assert diagnostic["ledger"]["classification"] == "permission_state_inconsistent"
+    assert diagnostic["ledger"]["mission_status"] == "unknown"
+    assert diagnostic["ledger"]["reply_state"] == "unknown"
+    assert diagnostic["ledger"]["handoff_state"] == "unknown"
+
+
+@pytest.mark.parametrize(
     "collection_name",
     (
         "missions",
@@ -3515,7 +3678,9 @@ def test_live_failure_fails_closed_any_malformed_ledger_collection(
     collection_name: str,
 ) -> None:
     state = _live_diagnostic_state(mission_status="completed")
-    state[collection_name] = ["SECRET /Users/private mat_bad dsp_bad summary"]
+    collection = state[collection_name]
+    assert type(collection) is list
+    collection.insert(0, "SECRET /Users/private mat_bad dsp_bad summary")
 
     rendered = str(
         _live_failure("first_permission_timeout", store=_StaticLiveStore(state))
@@ -3527,20 +3692,24 @@ def test_live_failure_fails_closed_any_malformed_ledger_collection(
         -1 if collection_name == "permission_requests" else 0
     )
     assert diagnostic["ledger"]["permission_states"] == []
+    assert diagnostic["cardinalities"][collection_name] == (
+        1 if collection_name == "permission_requests" else 2
+    )
     for forbidden in ("SECRET", "/Users", "mat_", "dsp_", "summary"):
         assert forbidden not in rendered
 
 
 @pytest.mark.parametrize(
-    "malformed_permissions",
+    ("malformed_permissions", "expected_cardinality"),
     (
-        {},
-        "SECRET /Users/private mat_bad dsp_bad summary",
-        ["SECRET /Users/private mat_bad dsp_bad summary"],
+        ({}, 0),
+        ("SECRET /Users/private mat_bad dsp_bad summary", -1),
+        (["SECRET /Users/private mat_bad dsp_bad summary"], 1),
     ),
 )
 def test_live_failure_fails_closed_malformed_permission_collection(
     malformed_permissions: object,
+    expected_cardinality: int,
 ) -> None:
     state = _live_diagnostic_state(mission_status="completed")
     state["permission_requests"] = malformed_permissions
@@ -3557,6 +3726,7 @@ def test_live_failure_fails_closed_malformed_permission_collection(
     assert diagnostic["ledger"]["handoff_status"] == "completed"
     assert diagnostic["ledger"]["permission_count"] == -1
     assert diagnostic["ledger"]["permission_states"] == []
+    assert diagnostic["cardinalities"]["permission_requests"] == expected_cardinality
     for forbidden in ("SECRET", "/Users", "mat_", "dsp_", "summary"):
         assert forbidden not in rendered
 

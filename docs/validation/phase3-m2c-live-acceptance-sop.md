@@ -219,6 +219,17 @@ fixed `permission_count=-1` and `permission_states=[]`; they are never guessed
 to be an empty or populated valid queue. Existing cardinality diagnostics keep
 their independent list/dict counting semantics.
 
+After selecting the current attempt, the ledger follows one complete opaque
+lineage: exactly one Mission, exactly one same-Mission reply for that attempt,
+and exactly one same-Mission handoff bound to that selected reply. When both
+attempt and reply carry a dispatch identity, those identities must agree.
+Opaque identities are used only for equality inside the process and are never
+included in the diagnostic. A missing identity, zero or multiple match,
+cross-Mission record, reply/handoff binding drift, or dispatch drift makes the
+lineage invalid. Invalid lineage projects Mission, reply, and handoff states as
+`unknown` and classifies as `permission_state_inconsistent` before considering
+active, failed, or successful attempt states.
+
 The closed classifications are `leader_task_authority_missing`,
 `worker_effect_not_requested`, `worker_attempt_failed`,
 `worker_attempt_active`, and `permission_state_inconsistent`, guarded by one
@@ -271,5 +282,5 @@ conda run --no-capture-output -n agentdeck \
   pytest tests/test_m2c_live_acceptance.py -q
 ```
 
-Expected portable result: `87 passed, 1 skipped`. A printed `ready=false`
+Expected portable result: `97 passed, 1 skipped`. A printed `ready=false`
 payload remains an honest setup result, not M2c PASS.
