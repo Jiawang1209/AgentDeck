@@ -79,7 +79,6 @@ _ERROR_CODES = frozenset(
         "requirement_fields_invalid",
         "requirement_id_invalid",
         "requirement_ids_not_unique",
-        "requirement_ids_not_ordered",
         "requirement_kind_invalid",
         "requirement_operation_invalid",
         "proposed_effects_invalid",
@@ -88,7 +87,6 @@ _ERROR_CODES = frozenset(
         "proposal_fields_invalid",
         "proposal_id_invalid",
         "proposal_ids_not_unique",
-        "proposal_ids_not_ordered",
         "proposal_operation_invalid",
         "target_invalid",
         "sensitivity_invalid",
@@ -102,7 +100,6 @@ _ERROR_CODES = frozenset(
         "unresolved_fields_invalid",
         "unresolved_id_invalid",
         "unresolved_ids_not_unique",
-        "unresolved_ids_not_ordered",
         "unresolved_kind_invalid",
         "canonicalization_invalid",
         "authority_size_exceeded",
@@ -315,13 +312,9 @@ def _validate_unresolved(value: object) -> str:
     return unresolved_id
 
 
-def _validate_ordered_ids(
-    ids: list[str], *, duplicate_code: str, ordered_code: str
-) -> None:
+def _validate_unique_ids(ids: list[str], *, duplicate_code: str) -> None:
     if len(ids) != len(set(ids)):
         _fail(duplicate_code)
-    if ids != sorted(ids):
-        _fail(ordered_code)
 
 
 def validate_semantic_authority(authority: object) -> dict[str, Any]:
@@ -345,10 +338,9 @@ def validate_semantic_authority(authority: object) -> dict[str, Any]:
     if len(requirements) > SEMANTIC_REQUIREMENTS_MAX:
         _fail("requirements_count_exceeded")
     requirement_ids = [_validate_requirement(item) for item in requirements]
-    _validate_ordered_ids(
+    _validate_unique_ids(
         requirement_ids,
         duplicate_code="requirement_ids_not_unique",
-        ordered_code="requirement_ids_not_ordered",
     )
 
     proposed_effects = authority["proposed_effects"]
@@ -357,20 +349,18 @@ def validate_semantic_authority(authority: object) -> dict[str, Any]:
     if len(proposed_effects) > SEMANTIC_PROPOSED_EFFECTS_MAX:
         _fail("proposed_effects_count_exceeded")
     proposal_ids = [_validate_proposal(item) for item in proposed_effects]
-    _validate_ordered_ids(
+    _validate_unique_ids(
         proposal_ids,
         duplicate_code="proposal_ids_not_unique",
-        ordered_code="proposal_ids_not_ordered",
     )
 
     unresolved = authority["unresolved"]
     if not _is_exact_list(unresolved) or len(unresolved) > _MAX_UNRESOLVED_COUNT:
         _fail("unresolved_invalid")
     unresolved_ids = [_validate_unresolved(item) for item in unresolved]
-    _validate_ordered_ids(
+    _validate_unique_ids(
         unresolved_ids,
         duplicate_code="unresolved_ids_not_unique",
-        ordered_code="unresolved_ids_not_ordered",
     )
     if len(_canonical_bytes(authority)) > SEMANTIC_AUTHORITY_CANONICAL_BYTES_MAX:
         _fail("authority_size_exceeded")

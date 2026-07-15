@@ -159,13 +159,18 @@ def test_compact_semantic_authority_exposes_counts_not_effect_content() -> None:
     assert "draft-v1" not in json.dumps(compact)
 ```
 
-Parametrize hostile mutations: extra top-level key, reordered/duplicate ids,
-unknown kind, absolute/escaping target, wrong operation, missing before/after,
+Parametrize hostile mutations: extra top-level key, duplicate ids, unknown kind,
+absolute/escaping target, wrong operation, missing before/after,
 boolean masquerading as integer, malformed hash, unknown sensitivity, and raw
 secret fields. Validate `proposed_effects` with exact `prp_[0-9a-f]{12}` ids and
 the same target/operation/sensitivity boundary as requirements. Every mutation
 must raise `SemanticAuthorityError` with one
 closed code and must not echo the hostile value.
+
+The `requirements`, `proposed_effects`, and `unresolved` arrays preserve semantic
+generation order. Their opaque ids provide identity and uniqueness only; they do
+not impose lexicographic ordering. Reordering an array is a semantic change and
+therefore changes the canonical authority hash rather than being normalized.
 
 - [ ] **Step 2: Run the RED target**
 
@@ -251,6 +256,11 @@ Use the exact live request and an equivalent English request. Assert both yield:
 - acceptance verify expected value `accepted-v2\n`;
 - no unresolved items;
 - stable ids and authority hash across repeated extraction.
+
+Every extractor-generated `requirement_id` must be `req_` followed by the first
+12 lowercase hexadecimal characters of the SHA-256 digest of that requirement's
+canonical body with `requirement_id` removed. Extraction preserves source
+clause/phase order and must never sort requirements by opaque id.
 
 The public call is fixed as:
 

@@ -86,6 +86,87 @@ def test_valid_authority_helper_returns_fresh_nested_values() -> None:
     assert second["requirements"][0]["before"]["content_equals"] == "draft-v1"
 
 
+def test_unique_requirement_ids_preserve_non_lexicographic_generation_order() -> None:
+    authority = valid_authority()
+    first = deepcopy(authority["requirements"][0])
+    first["requirement_id"] = "req_ffffffffffff"
+    second = deepcopy(authority["requirements"][0])
+    second["requirement_id"] = "req_000000000000"
+    authority["requirements"] = [first, second]
+
+    validated = validate_semantic_authority(authority)
+    assert [item["requirement_id"] for item in validated["requirements"]] == [
+        "req_ffffffffffff",
+        "req_000000000000",
+    ]
+
+
+def test_unique_proposed_effect_ids_preserve_non_lexicographic_generation_order() -> None:
+    authority = valid_authority()
+    first = deepcopy(authority["proposed_effects"][0])
+    first["proposed_effect_id"] = "prp_ffffffffffff"
+    second = deepcopy(authority["proposed_effects"][0])
+    second["proposed_effect_id"] = "prp_000000000000"
+    authority["proposed_effects"] = [first, second]
+
+    validated = validate_semantic_authority(authority)
+    assert [item["proposed_effect_id"] for item in validated["proposed_effects"]] == [
+        "prp_ffffffffffff",
+        "prp_000000000000",
+    ]
+
+
+def test_unique_unresolved_ids_preserve_non_lexicographic_generation_order() -> None:
+    authority = valid_authority()
+    authority["unresolved"] = [
+        {
+            "unresolved_id": "unr_ffffffffffff",
+            "kind": "ambiguous_target",
+            "phase": "revision",
+            "agent_id": "claude-worker",
+        },
+        {
+            "unresolved_id": "unr_000000000000",
+            "kind": "missing_literal",
+            "phase": "implementation",
+            "agent_id": "codex-worker",
+        },
+    ]
+
+    validated = validate_semantic_authority(authority)
+    assert [item["unresolved_id"] for item in validated["unresolved"]] == [
+        "unr_ffffffffffff",
+        "unr_000000000000",
+    ]
+
+
+def test_duplicate_unresolved_ids_still_fail_closed() -> None:
+    authority = valid_authority()
+    item = {
+        "unresolved_id": "unr_0123456789ab",
+        "kind": "ambiguous_target",
+        "phase": "revision",
+        "agent_id": "claude-worker",
+    }
+    authority["unresolved"] = [deepcopy(item), deepcopy(item)]
+    with pytest.raises(SemanticAuthorityError) as raised:
+        validate_semantic_authority(authority)
+    assert raised.value.code == "unresolved_ids_not_unique"
+
+
+def test_reordering_requirement_array_changes_canonical_authority_hash() -> None:
+    authority = valid_authority()
+    first = deepcopy(authority["requirements"][0])
+    first["requirement_id"] = "req_000000000000"
+    second = deepcopy(authority["requirements"][0])
+    second["requirement_id"] = "req_ffffffffffff"
+    authority["requirements"] = [first, second]
+    reordered = deepcopy(authority)
+    reordered["requirements"] = list(reversed(reordered["requirements"]))
+
+    assert semantic_authority_hash(authority) != semantic_authority_hash(reordered)
+
+
 @pytest.mark.parametrize("kind", ["create", "read", "review", "update", "verify"])
 def test_literal_requirement_kinds_use_their_exact_field_set(kind: str) -> None:
     authority = valid_authority()
@@ -176,12 +257,6 @@ def _extra_top_level(authority: dict[str, object]) -> None:
     authority["hostile"] = "DO_NOT_ECHO"
 
 
-def _reordered_ids(authority: dict[str, object]) -> None:
-    second = deepcopy(authority["requirements"][0])
-    second["requirement_id"] = "req_000000000000"
-    authority["requirements"].append(second)
-
-
 def _duplicate_ids(authority: dict[str, object]) -> None:
     authority["requirements"].append(deepcopy(authority["requirements"][0]))
 
@@ -226,7 +301,6 @@ def _raw_secret_field(authority: dict[str, object]) -> None:
     ("mutation", "code"),
     [
         (_extra_top_level, "authority_fields_invalid"),
-        (_reordered_ids, "requirement_ids_not_ordered"),
         (_duplicate_ids, "requirement_ids_not_unique"),
         (_unknown_kind, "requirement_kind_invalid"),
         (_absolute_target, "target_invalid"),
@@ -287,7 +361,7 @@ def test_proposed_effects_enforce_id_target_operation_and_sensitivity(
     assert "DO_NOT_ECHO" not in str(raised.value)
 
 
-def test_proposed_effects_reject_unknown_fields_and_duplicate_or_reordered_ids() -> None:
+def test_proposed_effects_reject_unknown_fields_and_duplicate_ids() -> None:
     authority = valid_authority()
     authority["proposed_effects"][0]["literal"] = "DO_NOT_ECHO"
     with pytest.raises(SemanticAuthorityError) as raised:
@@ -299,15 +373,6 @@ def test_proposed_effects_reject_unknown_fields_and_duplicate_or_reordered_ids()
     with pytest.raises(SemanticAuthorityError) as raised:
         validate_semantic_authority(duplicate)
     assert raised.value.code == "proposal_ids_not_unique"
-
-    reordered = valid_authority()
-    second = deepcopy(reordered["proposed_effects"][0])
-    second["proposed_effect_id"] = "prp_000000000000"
-    reordered["proposed_effects"].append(second)
-    with pytest.raises(SemanticAuthorityError) as raised:
-        validate_semantic_authority(reordered)
-    assert raised.value.code == "proposal_ids_not_ordered"
-
 
 def test_nested_values_are_exact_json_scalars_and_secret_values_are_references() -> None:
     non_scalar = valid_authority()
