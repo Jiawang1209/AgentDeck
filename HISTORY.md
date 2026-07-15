@@ -4,6 +4,12 @@
 
 ## 2026-07-15
 
+### Correct stale M2c active routing
+
+- Reclassified the remaining Task 11 `650d6fc4` / `probe_wrote_files` / zero-live passages in the handoff as historical evidence rather than active instructions.
+- Made both the late-file `Next` guidance and `Current Phase` agree with frozen commit `1a22618ba083a76f4a21ffc7ebc7a3e513e4aae6`: M2c is **BLOCKED**, M3 remains locked, and the only next gate is a new brainstorming/spec/plan round for Leader revision task semantic authority before deterministic RED/GREEN, a new commit, full regression, ready preflight, and any newly authorized single live attempt.
+- This is documentation-only routing correction. It does not change product claims, rerun a test/preflight/live gate, or authorize an automatic retry.
+
 ### Record blocked M2c task authority evidence
 
 - **Frozen verification boundary**: froze the evidence authority at commit `1a22618ba083a76f4a21ffc7ebc7a3e513e4aae6` on branch `codex/m2c-probe-readonly`. The non-live focused harness passed `97` tests with `1` explicit live skip; two independent full-suite runs passed `3406` tests with `2` skips in approximately `148.23s` and `146.26s`; compileall passed and the frozen diff was clean.
