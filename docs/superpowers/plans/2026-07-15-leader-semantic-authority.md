@@ -370,10 +370,20 @@ unique state established by earlier accepted clauses in sequential order;
 later clauses must never provide target authority to an earlier clause.
 The only permitted future lookup is review literal/newline alignment against a
 later update for that already-known target and token. The later clause must be
-a validated action candidate from the same parse/safety pass: full-clause
-consumption, ordinary sensitivity, one safe target, one literal, one supported
-operation, and the expected explicit agent/position must all pass. A rejected
-future clause contributes no alignment state.
+a validated semantic-state candidate from the same parse/safety pass and a
+pure clause-order pre-simulation: full-clause consumption, ordinary
+sensitivity, one safe target, one literal, one supported operation, and the
+expected explicit agent/position must all pass, and an update must consume a
+target established by an earlier validated create. A missing-origin update,
+failed create, future create alone, rejected clause, or non-unique matching
+final-state candidate contributes no alignment authority.
+
+Sensitive assignment keys are canonicalized into acronym/camel/separator
+components plus collapsed lowercase. Any exact password, passwd, secret,
+token, credential, or credentials component is sensitive wherever it occurs;
+approved api/access/private/signing/encryption/ssh/client/secret plus key
+composites are sensitive wherever they occur, including separator-free forms.
+Generic `key` substrings alone never imply sensitivity.
 
 Generate ids from the canonical requirement body without `requirement_id`,
 using the first 12 lowercase SHA-256 hex characters. Never use timestamps,

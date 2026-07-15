@@ -738,12 +738,13 @@ def _sensitive_key_components(key: str) -> tuple[str, ...]:
 def _is_sensitive_assignment_key(key: str) -> bool:
     components = _sensitive_key_components(key)
     collapsed = "".join(components)
+    if any(component in _SENSITIVE_KEY_COMPONENTS for component in components):
+        return True
     if any(collapsed.endswith(suffix) for suffix in _SENSITIVE_KEY_COMPONENTS):
         return True
-    if not collapsed.endswith("key"):
-        return False
-    prefix = collapsed[:-3]
-    return any(prefix.endswith(family) for family in _SENSITIVE_KEY_PREFIXES)
+    return any(
+        f"{family}key" in collapsed for family in _SENSITIVE_KEY_PREFIXES
+    )
 
 
 def _redact_sensitive_assignments(message: str) -> str:
@@ -923,6 +924,21 @@ def _requirements_from_clauses(
             }
         )
 
+    simulated_state_targets: set[str] = set()
+    for analysis in analyses:
+        analysis["semantic_state_candidate"] = False
+        if not analysis["validated_action_candidate"]:
+            continue
+        operation = analysis["operation"]
+        targets = analysis["targets"]
+        assert type(targets) is tuple and len(targets) == 1
+        target = targets[0]
+        assert type(target) is str
+        if operation == "create":
+            simulated_state_targets.add(target)
+        elif operation == "update" and target in simulated_state_targets:
+            analysis["semantic_state_candidate"] = True
+
     requirements: list[dict[str, object]] = []
     unresolved: list[dict[str, object]] = []
     states: dict[str, str] = {}
@@ -970,18 +986,18 @@ def _requirements_from_clauses(
 
         literal = values[0] if values else None
         if operation == "review" and literal is not None and not literal.endswith("\n"):
-            aligned = {
+            aligned = [
                 later["values"][0]
                 for later in analyses[index + 1 :]
-                if later["validated_action_candidate"]
+                if later["semantic_state_candidate"]
                 and later["operation"] == "update"
                 and len(later["targets"]) == 1
                 and later["targets"][0] == target
                 and len(later["values"]) == 1
                 and later["values"][0].removesuffix("\n") == literal
-            }
+            ]
             if len(aligned) == 1:
-                literal = aligned.pop()
+                literal = aligned[0]
         if (
             literal is None
             and operation in {"read", "verify"}

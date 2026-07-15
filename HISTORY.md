@@ -4,6 +4,12 @@
 
 ## 2026-07-15
 
+### Require semantic state for future alignment
+
+- Expanded the shared sensitive-key classifier to detect exact secret components anywhere in canonical tokenized keys and approved API/access/private/signing/encryption/SSH/client key-family composites even when followed by metadata suffixes, while leaving generic strings such as `monkey` ordinary.
+- Added a pure sequential state pre-simulation: only a fully validated update that consumes a target established by an earlier validated create can become a future review-alignment candidate; missing-origin, duplicate, future-create-only, and failed-create paths cannot lend newline authority.
+- Added RED/GREEN matrices for separator/camel/acronym sensitive-key forms, zero-secret hash redaction, and future state-origin boundaries. This remains Task 2 extraction only and does not claim final approval, M2c PASS, live execution, or Task 3 progress.
+
 ### Validate future semantic alignment candidates
 
 - Added a pure static safety result for every parsed clause and limited review newline alignment to later update candidates that pass full-clause consumption, sensitivity, target, operation, agent-position, and ambiguity checks.

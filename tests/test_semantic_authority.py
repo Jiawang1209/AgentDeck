@@ -533,6 +533,21 @@ def test_extract_rejects_chinese_clause_tail_without_whitespace() -> None:
         "ssh_key:SECRET",
         "client_secret:SECRET",
         "refresh_token:SECRET",
+        "password_hash:SECRET",
+        "hash-password:SECRET",
+        "token_value:SECRET",
+        "valueToken:SECRET",
+        "secret_value:SECRET",
+        "value.credential.id:SECRET",
+        "api_key_value:SECRET",
+        "accessKeyId:SECRET",
+        "PRIVATE.KEY.ID:SECRET",
+        "signing-key-id:SECRET",
+        "encryption key value:SECRET",
+        "SSHKeyValue:SECRET",
+        "client_key_id:SECRET",
+        "APIKEYVALUE:SECRET",
+        "PRIVATEKEYID:SECRET",
     ],
 )
 def test_extract_uses_canonical_sensitive_key_family_classifier(
@@ -557,6 +572,17 @@ def test_extract_uses_canonical_sensitive_key_family_classifier(
     ]
     assert first["source_message_hash"] == second["source_message_hash"]
     assert "SECRET" not in json.dumps(first)
+
+
+def test_extract_does_not_treat_generic_key_substring_as_sensitive() -> None:
+    authority = extract_semantic_authority(
+        "第一轮 claude-worker 创建 artifact.txt 且内容为 monkey_value:PUBLIC。",
+        selected_agent_ids=("claude-worker",),
+        step_count=1,
+        phases=("implementation",),
+    )
+    assert authority["unresolved"] == []
+    assert authority["requirements"][0]["literal"] == "monkey_value:PUBLIC"
 
 
 def test_extract_read_requires_complete_clause_consumption() -> None:
@@ -641,6 +667,68 @@ def test_rejected_future_update_never_aligns_review_literal(
     assert [item["kind"] for item in authority["unresolved"]] == [
         unresolved_kind
     ]
+
+
+def test_future_update_without_prior_origin_never_aligns_review_literal() -> None:
+    authority = extract_semantic_authority(
+        "First, worker reviews artifact.txt and requires accepted; "
+        "Second, worker updates artifact.txt to exactly accepted newline",
+        selected_agent_ids=("worker",),
+        step_count=2,
+        phases=("review", "revision"),
+    )
+    reviews = [
+        item for item in authority["requirements"] if item["operation"] == "review"
+    ]
+    assert [item["literal"] for item in reviews] == ["accepted"]
+    assert [item["kind"] for item in authority["unresolved"]] == [
+        "missing_transition_origin"
+    ]
+
+
+@pytest.mark.parametrize(
+    "future_clauses",
+    [
+        "Second, worker creates artifact.txt with content exactly accepted newline",
+        (
+            "Third, worker updates artifact.txt to exactly accepted newline; "
+            "Fourth, worker updates artifact.txt to exactly accepted newline"
+        ),
+        (
+            "Second, worker creates artifact.txt with content exactly draft newline "
+            "without approval; Third, worker updates artifact.txt to exactly accepted "
+            "newline"
+        ),
+    ],
+)
+def test_non_unique_or_unestablished_future_state_never_aligns_review_literal(
+    future_clauses: str,
+) -> None:
+    if future_clauses.startswith("Third"):
+        message = (
+            "First, worker creates artifact.txt with content exactly draft newline; "
+            "Second, worker reviews artifact.txt and requires accepted; "
+            f"{future_clauses}"
+        )
+        step_count = 4
+        phases = ("implementation", "review", "revision", "acceptance")
+    else:
+        message = (
+            "First, worker reviews artifact.txt and requires accepted; "
+            f"{future_clauses}"
+        )
+        step_count = future_clauses.count("; ") + 2
+        phases = tuple(f"step-{index}" for index in range(step_count))
+    authority = extract_semantic_authority(
+        message,
+        selected_agent_ids=("worker",),
+        step_count=step_count,
+        phases=phases,
+    )
+    reviews = [
+        item for item in authority["requirements"] if item["operation"] == "review"
+    ]
+    assert [item["literal"] for item in reviews] == ["accepted"]
 
 
 def test_extractor_has_no_legacy_target_finditer_scanner() -> None:
