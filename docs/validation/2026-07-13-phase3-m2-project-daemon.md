@@ -289,7 +289,60 @@ authentication, or global PATH/config effects. Quality-review closure also
 proves Node replacement before `_bounded_probe` spawn fails with compact
 identity drift and cannot execute the adapter through an unsealed fallback.
 
-No new designated real-tool preflight or live Mission has been run for this
-candidate. M2c remains **BLOCKED** pending two independent full suites on the
-unchanged implementation commit followed by exactly one designated read-only
-preflight with no path overrides. M3 remains locked.
+This candidate was subsequently frozen as commit
+`954b868cafc509a6a767f35930b345bbccbdf887`, passed two independent full
+suites, and passed its one designated read-only preflight. Those later facts
+authorized only the separately approved Task 14 attempt recorded below; they
+do not themselves establish M2c PASS.
+
+## Frozen `954b868c` Task 14 single-live evidence
+
+Frozen commit `954b868cafc509a6a767f35930b345bbccbdf887` passed two
+independent full suites with `4155 passed, 2 skipped` in `195.15s` and
+`185.79s`. Its one designated read-only preflight passed in `3.05s` and emitted
+`ready=true`, `blockers=[]` for Codex CLI `0.131.0`, Claude CLI `2.1.208
+(Claude Code)`, Claude Agent ACP `0.58.1`, and tmux `3.6a`. The SHA was
+unchanged across those gates.
+
+After separate human authorization, the opt-in Task 14 live node ran exactly
+once. It exited `1` with `1 failed` in `198.95s` and was not retried. The first
+unmet gate was the fixed `stage=live_acceptance`,
+`code=mission_preview_timeout`. The single loaded state had exact
+cardinalities `plans=0`, `missions=0`, `mission_attempts=0`,
+`permission_requests=0`, `mission_worker_replies=0`, and
+`mission_handoffs=0`. Its closed ledger projected
+`classification=permission_state_inconsistent`, `permission_count=0`, an
+empty permission-state list, and unknown Mission, attempt, reply, handoff,
+agent, and transport fields.
+
+The PTY evidence was bounded to `byte_count=11`, `truncated=false`, and
+`sha256=066523e516460e23c045358c6736f76f2fecd1022157b11c679ae69715c0c734`.
+The bytes and hash are identity evidence only. They do not reveal terminal
+text, model output, a missing schema field, authentication state, or the cause
+of the timeout, and this report makes no such inference.
+
+Because no Mission preview existed, the run never reached exact preview
+confirmation, daemon admission, ACP or tmux Worker execution, either scoped
+permission decision, disconnect/reconnect, pane observation,
+takeover/return-control, four canonical handoffs, three inter-stage links,
+artifact bytes, or ProjectView/ledger/trace/snapshot completion agreement.
+Every one of those gates remains not reached, not partially passed.
+
+The run used one disposable strict-basename tool mirror and scoped the Python
+module path to the frozen checkout because the conda editable metadata still
+referenced a removed feature worktree. No package was installed or upgraded.
+The harness emitted no cleanup-failure note. The outer audit then removed the
+tool mirror and found zero matching live pytest/AgentDeck/tmux processes, zero
+live temporary roots, and zero remaining staged mirrors. HEAD stayed at the
+frozen SHA; source, tests, and documentation were unchanged by execution; the
+pre-existing user-owned worktree status was byte-identical before and after.
+No login, authentication, global configuration/permission change, user tmux
+inspection, or retry occurred.
+
+The honest M2c verdict is **BLOCKED**, not PASS, and M3 remains locked. Any
+future attempt requires a new brainstorming -> spec -> plan cycle for the
+first unmet `mission_preview_timeout` gate, deterministic RED/GREEN evidence,
+a new frozen commit, fresh full verification, a new `ready=true` /
+`blockers=[]` preflight, and separate human authorization. This result does
+not permit an in-place retry or promotion of the earlier two-step transport
+PASS.

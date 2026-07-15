@@ -2,6 +2,16 @@
 
 本文件记录 AgentDeck 每一次开发内容。约束：每次新增功能、文档规则、项目骨架、运行环境或用户可见行为变化，都必须同步更新本文件，并在同一次 commit 中提交。
 
+## 2026-07-16
+
+### Record the single Task 14 M2c live blocker
+
+- Froze Task 14 authority at `954b868cafc509a6a767f35930b345bbccbdf887` after two independent full suites (`4155 passed, 2 skipped` in `195.15s` and `185.79s`) and one designated read-only preflight (`ready=true`, `blockers=[]`, `1 passed in 3.05s`) for Codex CLI `0.131.0`, Claude CLI `2.1.208`, Claude Agent ACP `0.58.1`, and tmux `3.6a`.
+- After separate human authorization, ran the opt-in implementation -> review -> revision -> acceptance live node exactly once. It exited `1` with `1 failed` in `198.95s` and was not retried. The first unmet gate was fixed `stage=live_acceptance`, `code=mission_preview_timeout`; the one loaded snapshot had zero plans, Missions, attempts, permissions, replies, and handoffs.
+- Recorded only bounded evidence: closed ledger classification `permission_state_inconsistent`, zero permissions, unknown lifecycle fields, and PTY identity `byte_count=11`, `truncated=false`, `sha256=066523e516460e23c045358c6736f76f2fecd1022157b11c679ae69715c0c734`. The hash does not explain terminal or model behavior, and no timeout cause is inferred.
+- The failure occurred before preview confirmation or any daemon admission, ACP/tmux Worker, permission, reconnect, takeover/return-control, handoff, lineage, or artifact effect. Post-run audit found zero matching live processes, live temporary roots, or staged mirrors; the frozen SHA and pre-existing user-owned worktree status were unchanged. No install, login, global setting change, user tmux inspection, or second live attempt occurred.
+- Kept M2c **BLOCKED** and M3 locked. A future attempt now requires a new brainstorming -> spec -> plan cycle for `mission_preview_timeout`, deterministic RED/GREEN closure, a new frozen commit, fresh full verification and read-only preflight, plus separate human authorization.
+
 ## 2026-07-15
 
 ### Design M2c PATH-first tool discovery

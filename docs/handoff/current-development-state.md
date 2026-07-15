@@ -1,36 +1,46 @@
 # AgentDeck Current Development State
 
-Updated: 2026-07-15
+Updated: 2026-07-16
 
-## Active goal — M2c PATH/tool discovery closure
+## Active goal — M2c Mission preview timeout closure
 
-Frozen semantic-authority commit `553b5b7039745a88dcd0cd1bc1da5fdd43bb4da6`
-passed the complete non-live M2c harness (`110 passed, 1 skipped`) and two
-independent full suites (`4143 passed, 2 skipped` each). Its one designated
-read-only preflight found Codex CLI but returned `ready=false` with
-`claude_unavailable`, `claude_agent_acp_unavailable`, and `tmux_unavailable`.
-No live Mission was attempted.
+Frozen commit `954b868cafc509a6a767f35930b345bbccbdf887` passed two
+independent full suites (`4155 passed, 2 skipped` in `195.15s` and `185.79s`).
+Its one designated read-only preflight passed in `3.05s` with `ready=true`,
+`blockers=[]`, Codex CLI `0.131.0`, Claude CLI `2.1.208`, Claude Agent ACP
+`0.58.1`, and tmux `3.6a`. The SHA remained unchanged through verification.
 
-Read-only diagnosis proved that the active shell and `agentdeck` conda
-environment can find all four tools. Claude, Claude Agent ACP, and Homebrew
-tmux are ordinary installed symlinks; the M2c harness calls `shutil.which()`
-and then rejects every symlink inside its strict executable seal. The blocker
-is therefore a harness false negative, not missing production PATH discovery.
+After separate human authorization, Task 14 executed its opt-in live pytest
+node exactly once. It exited `1` with `1 failed` in `198.95s` and was not
+retried. The first unmet gate is `stage=live_acceptance` and
+`code=mission_preview_timeout`. The durable snapshot had `plans=0`,
+`missions=0`, `mission_attempts=0`, `permission_requests=0`,
+`mission_worker_replies=0`, and `mission_handoffs=0`; the closed ledger
+classification was `permission_state_inconsistent` with every lifecycle field
+unknown and permission count zero.
 
-The human-approved design is
-`docs/superpowers/specs/2026-07-15-m2c-path-tool-discovery-design.md`; its
-detailed TDD plan is
-`docs/superpowers/plans/2026-07-15-m2c-path-tool-discovery.md`. They choose
-PATH-first discovery plus strict canonical-target sealing for preflight only,
-keep production AgentDeck behavior and Task 14 staged-launcher authority
-unchanged, and forbid install/login/global PATH changes. The approved spec and
-plan are implemented, including quality-review closure, and the candidate
-revision containing this handoff is committed. The next gate is to record its
-exact SHA, run two independent full suites on the unchanged SHA, and then run
-the designated read-only preflight exactly once with no path overrides. No
-live Mission is authorized. Explicit override values must be raw absolute
-paths; tilde-prefixed and relative values fail closed before expansion. M2c
-remains **BLOCKED** and M3 remains locked.
+The failure happened before Mission preview creation or confirmation. It did
+not reach daemon admission, ACP/tmux Worker execution, either permission
+pause, disconnect/reconnect, takeover/return-control, handoffs, lineage links,
+or artifact effects. The bounded PTY evidence is `byte_count=11`,
+`truncated=false`, and
+`sha256=066523e516460e23c045358c6736f76f2fecd1022157b11c679ae69715c0c734`;
+that hash is identity evidence only and does not explain terminal or model
+behavior.
+
+The harness emitted no cleanup-failure note. Post-run audit found zero matching
+live pytest/AgentDeck/tmux processes, zero `agentdeck-m2c-live-*` roots, and
+zero staged tool mirrors. HEAD remained the frozen SHA, the source/test/docs
+tree was unchanged by the live run, and the pre-existing user-owned `.omc/`
+and untracked `AGENTS.md` status was byte-identical before and after. No
+package install, login, authentication change, global permission/configuration
+change, user tmux inspection, or second live attempt occurred.
+
+M2c therefore remains **BLOCKED**, not partial PASS, and M3 remains locked.
+The next action is a new brainstorming -> spec -> plan cycle scoped to the
+first unmet `mission_preview_timeout` gate. It must establish a deterministic
+reproduction and a new frozen commit plus fresh full verification and
+read-only preflight before any separately authorized future live attempt.
 
 ## Natural-language Mission Phase 0 baseline — accepted
 
@@ -99,7 +109,10 @@ Lane guidance: this supports the **end-to-end golden demo first**. Remote skill 
 
 中文小结：lockfile generate + read-only verify 已实现并提交。`agentdeck skills lock --name <name>` 把某 skill 当前解析出的依赖树冻结成 `.agentdeck/skill-locks/<name>.json`（每依赖 name+content_hash+version），并追加 `skill_locked` 审计事件；不可解析树（缺失/循环/版本不符）会被拒绝且不写任何文件或事件。`agentdeck skills lock-verify --name <name>` 全只读，报告 lockfile 与当前解析的漂移（changed/added/removed/in_sync），不改任何状态或 lockfile。lock 本切片是 advisory，不改变 `deps`/`load` 的解析行为。到此 skill 依赖 lane 的本地确定性约束（hash pin / semver range / lockfile）都做完了。**⏸ 下一步是 remote/C（联网/签名/供应链/registry），必须 STOP + 问你，绝不在 loop 里做**；lockfile enforce 亦是后续独立切片。
 
-## Active Goal
+## M2c development history and prior evidence
+
+The material below records earlier M2c checkpoints and is superseded for
+active routing by the current goal above.
 
 **Task 13 semantic M2c harness conversion is implemented; it becomes frozen evidence authority only after unchanged-SHA verification.**
 The complete non-live harness passes `110` tests with one explicit opt-in live
