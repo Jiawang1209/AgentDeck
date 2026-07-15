@@ -216,6 +216,12 @@ def test_valid_candidate_is_defensively_validated_with_exact_shape() -> None:
         (lambda value: value["steps"][2].update(authority_refs=[]), "semantic_transition_incomplete"),
         (lambda value: value["steps"][2].update(authority_refs=["req_333333333333:before"]), "semantic_transition_incomplete"),
         (lambda value: value["steps"][1].update(authority_refs=["req_111111111111"]), "semantic_candidate_duplicate_requirement"),
+        (
+            lambda value: value["steps"][0].update(
+                authority_refs=["req_111111111111", "req_111111111111"]
+            ),
+            "semantic_candidate_duplicate_requirement",
+        ),
         (lambda value: value["steps"][0].update(phase="revision"), "semantic_candidate_wrong_phase"),
         (lambda value: value["steps"][0].update(agent_id="codex-worker", role="review"), "semantic_candidate_wrong_worker"),
         (lambda value: value["steps"][0].update(authority_refs=["req_999999999999"]), "semantic_candidate_schema_invalid"),

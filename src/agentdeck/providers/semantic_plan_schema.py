@@ -255,7 +255,6 @@ def _semantic_schema_definitions(
             "items": {"type": "string"},
             "minItems": 0,
             "maxItems": 0,
-            "uniqueItems": True,
         },
         "proposed_effects": {
             "type": "array",
@@ -298,7 +297,6 @@ def _semantic_schema_definitions(
             "items": {"type": "string", "enum": requirement_ids},
             "minItems": 0,
             "maxItems": len(requirement_ids),
-            "uniqueItems": True,
         }
 
     branch_names: list[str] = []

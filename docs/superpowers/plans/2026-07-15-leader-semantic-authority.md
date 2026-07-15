@@ -715,15 +715,20 @@ step-object branches; every object declares all fields required and sets
 `allOf`, `not`, `if`/`then`/`else`, `dependentRequired`, or
 `dependentSchemas`; those composition forms are unsupported by the official
 strict-schema surface even though general JSON Schema validators may accept
-them. Keep the maximum 64-step/256-requirement schema within the documented
-nesting, property, aggregate-enum, enum/const/property/definition string, and
-schema-size budgets, with each opaque requirement id stored only once.
+them. Array schemas use only supported `minItems`/`maxItems` constraints and
+must not emit `uniqueItems`; duplicate authority references remain a closed
+`semantic_candidate_duplicate_requirement` decision in
+`validate_semantic_candidate()`. Keep the maximum 64-step/256-requirement
+schema within the documented nesting, property, aggregate-enum,
+enum/const/property/definition string, and schema-size budgets, with each
+opaque requirement id stored only once.
 
 The portable native schema freezes allowed Worker/role/phase/reference
 branches and exact array length, but intentionally does not encode ordinal
 step numbering or round-robin branch position. `validate_semantic_candidate()`
 remains the deterministic authority for exact `step` numbering, round-robin
-Worker order, full requirement coverage, and all cross-field semantic rules.
+Worker order, duplicate references, full requirement coverage, and all
+cross-field semantic rules.
 The semantic-specific request context resolver must collect exactly one safe
 config entry for each selected Worker while ignoring unrelated malformed or
 unsafe config entries without hashing or comparing hostile subclasses.

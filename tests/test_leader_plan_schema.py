@@ -143,7 +143,7 @@ def _scoped_authority_refs_accept(
             phase=phase,
         )
     )
-    return len(refs) == len(set(refs)) and all(ref in allowed for ref in refs)
+    return all(ref in allowed for ref in refs)
 
 
 def _string_schema_accepts(schema: dict[str, object], value: str) -> bool:
@@ -167,19 +167,51 @@ _UNSUPPORTED_STRICT_SCHEMA_KEYS = frozenset(
         "dependentRequired",
         "dependentSchemas",
         "prefixItems",
+        "uniqueItems",
+    }
+)
+_SUPPORTED_STRICT_SCHEMA_KEYS = frozenset(
+    {
+        "$id",
+        "$defs",
+        "$ref",
+        "type",
+        "properties",
+        "required",
+        "additionalProperties",
+        "items",
+        "anyOf",
+        "enum",
+        "const",
+        "pattern",
+        "minLength",
+        "maxLength",
+        "minimum",
+        "maximum",
+        "minItems",
+        "maxItems",
     }
 )
 
 
 def _assert_portable_strict_schema(value: object) -> None:
-    if type(value) is dict:
-        assert not (_UNSUPPORTED_STRICT_SCHEMA_KEYS & set(value))
-        if "items" in value:
-            assert type(value["items"]) is dict
-        for child in value.values():
-            _assert_portable_strict_schema(child)
-    elif type(value) is list:
-        for child in value:
+    assert type(value) is dict
+    assert not (_UNSUPPORTED_STRICT_SCHEMA_KEYS & set(value))
+    assert set(value) <= _SUPPORTED_STRICT_SCHEMA_KEYS
+    for map_key in ("properties", "$defs"):
+        children = value.get(map_key)
+        if children is not None:
+            assert type(children) is dict
+            for child in children.values():
+                _assert_portable_strict_schema(child)
+    items = value.get("items")
+    if items is not None:
+        assert type(items) is dict
+        _assert_portable_strict_schema(items)
+    alternatives = value.get("anyOf")
+    if alternatives is not None:
+        assert type(alternatives) is list
+        for child in alternatives:
             _assert_portable_strict_schema(child)
 
 
@@ -359,7 +391,7 @@ def test_semantic_schema_is_exact_closed_and_contains_only_safe_authority() -> N
             schema,
             properties["authority_refs"]["$ref"],
         )
-        assert refs_schema["uniqueItems"] is True
+        assert refs_schema["maxItems"] == len(refs_schema["items"]["enum"])
         assert properties["risk"] == {"type": "string", "const": "low"}
         assert properties["requires_approval"] == {"type": "boolean", "const": True}
         proposal_array = _resolve_schema_ref(
@@ -563,7 +595,6 @@ def test_open_semantic_phase_schema_has_absolute_scalar_boundaries(
         "items": {"type": "string"},
         "minItems": 0,
         "maxItems": 0,
-        "uniqueItems": True,
     }
 
 

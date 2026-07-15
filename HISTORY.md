@@ -4,6 +4,12 @@
 
 ## 2026-07-15
 
+### Keep semantic arrays inside strict subset
+
+- Removed unsupported `uniqueItems` from empty and phase-scoped semantic authority-reference arrays; emitted array constraints now stay within the documented `minItems`/`maxItems` strict subset.
+- Expanded recursive portability coverage from a composition blacklist to an explicit emitted-keyword allowlist, while retaining maximum-authority limits and ordinary object-schema checks.
+- Added explicit same-step duplicate-reference coverage alongside the existing cross-step case; deterministic Task 3 validation remains authoritative for duplicate refs, ordinal numbering, and round-robin order. This remains Task 4 pure schema/validation work with no provider I/O, Task 5, CLI regeneration, conversation/state/runtime/tmux/ACP/live behavior, or M2c PASS claim.
+
 ### Make semantic Leader schema strict-portable
 
 - Replaced unsupported `prefixItems` and `allOf`/`if`/`then`/`not` composition with a root object whose fixed-length `steps.items` uses nested `anyOf` references to complete exact step-object branches in `$defs`; the schema retains agent/role/phase-scoped opaque references while Task 3 validation remains authoritative for ordinal numbering and round-robin order.
