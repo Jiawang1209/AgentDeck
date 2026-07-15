@@ -35,14 +35,18 @@ Plan ids use `pln_<12 lowercase hex>`. Plan hashes use exactly `sha256:<64 lower
 
 - identity/provenance: `schema_version`, `mission_id`, `user_message`, `provider`, `model`, `leader_backend`, `plan_id`, `plan_hash`
 - result: `ok`, `mode=mission_preview`, `status=pending_confirmation`
-- frozen scope: `plan`, `selected_agents`, `startup_actions`, `step_count`, `timeout_seconds`
+- frozen scope: `plan`, nullable `semantic_authority`, `selected_agents`, `startup_actions`, `step_count`, `timeout_seconds`
 - gate: `can_start`, `blockers`, `confirmation_command`
 - navigation: `status_command`, `workbench_command`, `controls`
 - safety: `safety=inspect`, `requires_explicit_user=true`
 
 The example plan is a fixed serial eight-step sequence. `step_count` must equal `len(plan.steps)`, steps must be numbered 1 through N, only frozen selected agents may appear, and at least two selected agents must participate. Dynamic, parallel, DAG, or cycle metadata is rejected by the shared Mission plan validator. The Leader planning request states that one overall Mission confirmation authorizes the complete fixed sequence and explicitly forbids per-step approval. After provider-schema and Mission-structure validation, AgentDeck replaces provider-authored `goal` and `summary` with deterministic compact strings declaring a fixed sequential N-step Mission, one overall confirmation, and no per-step approval. Only the validated steps are retained. Provider prose is therefore neither execution authorization nor persisted/displayed fact; business approval wording in step tasks remains unchanged.
 
+For a semantic Mission, the authoritative plan record additionally retains the exact validated `semantic_authority` and `semantic_steps`; the Mission record stores only `semantic_authority_schema_version`, `semantic_authority_hash`, `compiled_task_hashes`, and `preview_generation`. The response-level `semantic_authority` is a compact card with exactly `schema_version`, `state`, `authority_hash`, `requirement_count`, `proposed_effect_count`, `unresolved_count`, `compiled_step_count`, and `blockers`. Legacy Mission responses project `null`. Before confirmation the card remains `state=preview` with empty semantic blockers even when top-level runtime/startup blockers make `can_start=false`; runtime blockers are not reclassified as semantic failures. After the exact Mission freeze it becomes `state=frozen`. The card never contains targets, literals, before/after values, task text, or raw blocker text.
+
 `can_start` is true exactly when `blockers` is empty. The confirmation control is enabled exactly when `can_start` is true; a disabled control must carry a compact blocker.
+
+Conversation confirmation binds exactly ten facts: `control_kind`, `project_root`, `leader_provider`, `leader_model`, `action_id`, `action_hash`, `semantic_authority_hash`, `compiled_task_hashes`, `policy_snapshot_hash`, and `preview_generation`. Confirmation reloads the current config, Mission, plan, and policy from disk and recomputes that tuple. Any drift leaves the binding pending and Mission unconfirmed and creates no attempt, permission, message, job, inbox, or frozen-authority event. Legacy previews retain their original six-fact digest unchanged.
 
 ## Selected agent and startup rows
 
@@ -79,7 +83,7 @@ Control `kind`, `label`, `command`, and `safety` are non-empty strings; `enabled
 
 ## Status and run responses
 
-`MISSION_STATUS_RESPONSE_FIELDS` projects the persisted facts: identity, one of the six statuses, plan/workflow ids and hash, the nullable legacy `workflow_run_id`, the nullable compact `daemon_admission`, progress bounds, selected agents, blockers/stop reason, timestamps, resume gate, terminal/workbench commands, controls, and safety metadata. A present `daemon_admission` has the exact five-field ProjectView shape (`state`, `snapshot_hash`, `blocker`, `recovery_command`, `updated_at`); `null` preserves the legacy foreground Mission contract.
+`MISSION_STATUS_RESPONSE_FIELDS` projects the persisted facts: identity, one of the six statuses, plan/workflow ids and hash, the nullable compact `semantic_authority`, the nullable legacy `workflow_run_id`, the nullable compact `daemon_admission`, progress bounds, selected agents, blockers/stop reason, timestamps, resume gate, terminal/workbench commands, controls, and safety metadata. A present `daemon_admission` has the exact five-field ProjectView shape (`state`, `snapshot_hash`, `blocker`, `recovery_command`, `updated_at`); `null` preserves the legacy foreground Mission contract.
 
 Daemon authority is `admitted` only when that record has exactly those five fields, `state=admitted`, null blocker/recovery command, a non-empty timestamp, and the same canonical `sha256:<64 lowercase hex>` value is present in `mission.snapshot_hash`, `execution_snapshot.execution_hash`, and `daemon_admission.snapshot_hash`. Missing or extra admission fields, malformed or unequal hashes, and invalid admitted combinations are `incomplete`; ProjectView/status keep resume disabled and daemon governance refuses them. The daemon RPC acceptance envelope is never substituted for this compact status provenance.
 

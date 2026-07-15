@@ -4,6 +4,15 @@
 
 ## 2026-07-15
 
+### Freeze semantic Mission confirmation authority
+
+- Persisted only exact validated compiled semantic plans: the authoritative plan body retains full non-sensitive `semantic_authority` and `semantic_steps`, while Mission records retain only schema/hash, compiled task hashes, and preview generation. Legacy plan records and their frozen canonical hash bytes remain unchanged.
+- Extended semantic plan identity so either the canonical authority hash or any semantic step hash changes the workflow plan hash. Exact top-level/compatibility shapes and bounded built-in scalar/container types are validated before defensive copying; extra keys and hostile copy hooks fail closed.
+- Bound semantic Conversation previews to exactly ten facts, then reloaded config, Mission, plan, and policy from disk before confirmation. Provider, model, root, action, authority, compiled task, policy, or generation drift leaves the preview pending and Mission unconfirmed with zero scheduling effects.
+- Added atomic `mission_semantic_preview_created` and `mission_semantic_authority_frozen` audit provenance containing only ids, hashes, and counts. A failed Mission freeze writes neither the Mission transition nor the semantic frozen event.
+- Added the nullable exact eight-field semantic authority card to Mission preview/status/run and workbench contracts. Runtime/startup blockers remain top-level Mission facts; the semantic card stays non-leaking `preview` with empty semantic blockers until confirmation freezes it, and legacy cards remain `null`.
+- Added RED/GREEN persistence, legacy-hash, ten-field mutation, disk-config drift, hostile-shape, runtime-blocker separation, atomic rollback, contract, and workbench regressions. No real provider, network, tmux, ACP, Task 9 snapshot work, or live M2c attempt was performed.
+
 ### Bind foreground conversation planning to semantic authority
 
 - Routed deterministic Mission intake through the semantic extractor after Worker selection, count, and explicit four-phase order are frozen. Extractor output with no requirements and no unresolved facts keeps the exact legacy structured-planning path; any unresolved fact returns a bounded clarification card without invoking a Leader or creating scheduling state.

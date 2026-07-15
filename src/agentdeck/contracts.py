@@ -2839,13 +2839,14 @@ WORKFLOW_TURN_FIELDS = (
 MISSION_PREVIEW_RESPONSE_FIELDS = (
     "schema_version", "ok", "mode", "mission_id", "status", "user_message",
     "provider", "model", "leader_backend", "plan_id", "plan_hash", "plan",
+    "semantic_authority",
     "selected_agents", "startup_actions", "step_count", "timeout_seconds",
     "can_start", "blockers", "confirmation_command", "status_command",
     "workbench_command", "controls", "safety", "requires_explicit_user",
 )
 MISSION_STATUS_RESPONSE_FIELDS = (
     "schema_version", "ok", "mode", "mission_id", "status", "user_message",
-    "plan_id", "plan_hash", "workflow_run_id", "daemon_admission", "current_step", "step_count",
+    "plan_id", "plan_hash", "semantic_authority", "workflow_run_id", "daemon_admission", "current_step", "step_count",
     "timeout_seconds", "selected_agents", "blockers", "stop_reason",
     "created_at", "updated_at", "confirmed_at", "completed_at", "can_resume",
     "status_command", "resume_command", "attach_command", "workbench_command",
@@ -2867,6 +2868,16 @@ MISSION_STARTUP_ACTION_FIELDS = (
 )
 MISSION_PLAN_FIELDS = ("goal", "summary", "steps")
 MISSION_PLAN_STEP_FIELDS = ("step", "agent_id", "role", "task")
+MISSION_SEMANTIC_AUTHORITY_FIELDS = (
+    "schema_version",
+    "state",
+    "authority_hash",
+    "requirement_count",
+    "proposed_effect_count",
+    "unresolved_count",
+    "compiled_step_count",
+    "blockers",
+)
 MISSION_CONTROL_FIELDS = (
     "kind", "label", "command", "safety", "enabled", "blocker",
 )
@@ -5771,6 +5782,7 @@ def mission_example(kind: str) -> dict[str, object]:
             "plan_id": "pln_deadbeefcafe",
             "plan_hash": "sha256:" + "a" * 64,
             "plan": plan,
+            "semantic_authority": None,
             "selected_agents": selected_agents,
             "startup_actions": [
                 {
@@ -5820,6 +5832,7 @@ def mission_example(kind: str) -> dict[str, object]:
         "user_message": "让 Codex 和 Claude 一人一句接龙，共8轮",
         "plan_id": "pln_deadbeefcafe",
         "plan_hash": "sha256:" + "a" * 64,
+        "semantic_authority": None,
         "workflow_run_id": "wfr_deadbeefcafe",
         "daemon_admission": None,
         "current_step": 4,
@@ -5942,6 +5955,53 @@ def _mission_valid_plan_id(value: object) -> bool:
 
 def _mission_valid_plan_hash(value: object) -> bool:
     return isinstance(value, str) and re.fullmatch(r"sha256:[0-9a-f]{64}", value) is not None
+
+
+def _validate_mission_semantic_authority(
+    errors: list[str], prefix: str, value: object, *, step_count: object
+) -> None:
+    if value is None:
+        return
+    if type(value) is not dict:
+        errors.append(f"{prefix}.semantic_authority must be an object or null")
+        return
+    _mission_exact_fields(
+        errors,
+        f"{prefix}.semantic_authority",
+        value,
+        MISSION_SEMANTIC_AUTHORITY_FIELDS,
+    )
+    if value.get("schema_version") != "mission-semantic-authority/v1":
+        errors.append(
+            f"{prefix}.semantic_authority.schema_version must be mission-semantic-authority/v1"
+        )
+    if value.get("state") not in {"draft", "blocked", "preview", "frozen"}:
+        errors.append(f"{prefix}.semantic_authority.state is invalid")
+    if not _mission_valid_plan_hash(value.get("authority_hash")):
+        errors.append(f"{prefix}.semantic_authority.authority_hash is invalid")
+    for field in (
+        "requirement_count",
+        "proposed_effect_count",
+        "unresolved_count",
+        "compiled_step_count",
+    ):
+        count = value.get(field)
+        if not _mission_exact_int(count) or count < 0:
+            errors.append(f"{prefix}.semantic_authority.{field} must be non-negative")
+    if (
+        _mission_exact_int(step_count)
+        and value.get("compiled_step_count") != step_count
+    ):
+        errors.append(
+            f"{prefix}.semantic_authority.compiled_step_count must match step_count"
+        )
+    blockers = value.get("blockers")
+    if type(blockers) is not list or any(
+        type(item) is not str
+        or re.fullmatch(r"semantic_[a-z0-9_]+", item) is None
+        for item in blockers
+    ):
+        errors.append(f"{prefix}.semantic_authority.blockers is invalid")
 
 
 def _validate_mission_nonempty_strings(
@@ -6159,6 +6219,22 @@ def validate_mission_preview_contract(payload: object) -> dict[str, object]:
         errors.append("mission_preview.timeout_seconds must be a positive integer")
     if not _mission_exact_int(payload.get("step_count")) or payload.get("step_count", 0) < 2:
         errors.append("mission_preview.step_count must be an integer of at least two")
+    _validate_mission_semantic_authority(
+        errors,
+        "mission_preview",
+        payload.get("semantic_authority"),
+        step_count=payload.get("step_count"),
+    )
+    semantic_card = payload.get("semantic_authority")
+    if isinstance(semantic_card, dict):
+        if semantic_card.get("state") != "preview":
+            errors.append(
+                "mission_preview.semantic_authority.state must be preview"
+            )
+        if semantic_card.get("blockers") != []:
+            errors.append(
+                "mission_preview.semantic_authority.blockers must be empty"
+            )
     selected = _validate_mission_worker_rows(
         errors,
         "mission_preview.selected_agents",
@@ -6387,6 +6463,27 @@ def validate_mission_status_contract(payload: object) -> dict[str, object]:
         errors.append("mission_status.current_step must be between zero and step_count")
     if not _mission_exact_int(payload.get("timeout_seconds")) or payload.get("timeout_seconds", 0) <= 0:
         errors.append("mission_status.timeout_seconds must be a positive integer")
+    _validate_mission_semantic_authority(
+        errors,
+        "mission_status",
+        payload.get("semantic_authority"),
+        step_count=payload.get("step_count"),
+    )
+    semantic_card = payload.get("semantic_authority")
+    if isinstance(semantic_card, dict):
+        expected_semantic_state = (
+            "frozen"
+            if payload.get("confirmed_at") is not None
+            else "preview"
+        )
+        if semantic_card.get("state") != expected_semantic_state:
+            errors.append(
+                "mission_status.semantic_authority.state must match lifecycle"
+            )
+        if semantic_card.get("blockers") != []:
+            errors.append(
+                "mission_status.semantic_authority.blockers must be empty"
+            )
     blockers = _validate_mission_blockers(errors, "mission_status", payload.get("blockers"))
     can_resume = payload.get("can_resume")
     if not isinstance(can_resume, bool):
@@ -16259,6 +16356,7 @@ def workbench_example() -> dict[str, object]:
     for field in (
         "mission_id", "schema_version", "user_message", "status", "stop_reason",
         "blockers", "plan_id", "plan_hash", "workflow_run_id", "current_step",
+        "semantic_authority",
         "step_count", "timeout_seconds", "selected_agents", "created_at", "updated_at",
         "confirmed_at", "completed_at", "can_resume", "status_command", "resume_command",
     ):

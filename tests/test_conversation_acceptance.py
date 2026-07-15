@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, replace
+import hashlib
 import json
 from pathlib import Path
 
@@ -13,6 +14,7 @@ from agentdeck.contracts import (
     validate_leader_backend_contract,
 )
 from agentdeck.conversation.leader_gateway import LeaderGatewayError
+from agentdeck.conversation.bindings import execution_digest
 from agentdeck.conversation.session import ConversationSession
 from agentdeck.conversation.transports import (
     WorkerRuntimeFacts,
@@ -22,10 +24,24 @@ from agentdeck.conversation.transports import (
 from agentdeck.mission_orchestration import LeaderMissionCandidate
 from agentdeck.providers import LeaderPlanRequest
 from agentdeck.providers.plan_schema import build_leader_generation_provenance
+from agentdeck.semantic_authority import (
+    extract_semantic_authority,
+    semantic_authority_hash,
+)
+from agentdeck.state import canonical_snapshot_hash, execution_policy_snapshot
 
 
 MISSION_TEXT = "让 planner 和 reviewer 串行完成验收，共2轮"
 SENSITIVE_MISSION_TEXT = f"{MISSION_TEXT}，secret=must-not-persist"
+SEMANTIC_MISSION_TEXT = (
+    "Have planner and reviewer complete 4 steps strictly sequentially. "
+    "The phases must be exactly implementation, review, revision, acceptance: "
+    "First, planner creates artifact.txt with content exactly draft-v1 newline; "
+    "Second, reviewer performs a read-only review and requires accepted-v2; "
+    "Third, planner updates artifact.txt to exactly accepted-v2 newline; "
+    "Fourth, reviewer performs read-only verification of the exact bytes. "
+    "There are 4 steps.\n"
+)
 
 
 def _plan() -> dict[str, object]:
@@ -136,6 +152,209 @@ def _facts() -> WorkerRuntimeFacts:
             "permission_requests": True,
         },
         tmux_session="agentdeck",
+    )
+
+
+def _semantic_session(tmp_path: Path) -> tuple[ConversationSession, dict[str, object]]:
+    root = tmp_path / "semantic-confirm"
+    root.mkdir()
+    (root / ".git").mkdir()
+    write_default_config(root)
+    config_path = root / ".agentdeck" / "config.toml"
+    config_text = config_path.read_text(encoding="utf-8")
+    config_text = config_text.replace('provider = "deepseek"', 'provider = "fake"', 1)
+    config_text = config_text.replace('model = "deepseek-chat"', 'model = "fake-plan"', 1)
+    config_path.write_text(config_text, encoding="utf-8")
+    session = ConversationSession(root=root)
+    preview = session.handle(SEMANTIC_MISSION_TEXT)
+    assert preview.kind == "mission_preview"
+    return session, preview.payload
+
+
+def _semantic_confirmation_facts(
+    session: ConversationSession, preview: dict[str, object]
+) -> dict[str, object]:
+    assert session.config is not None
+    authority = extract_semantic_authority(
+        SEMANTIC_MISSION_TEXT,
+        selected_agent_ids=("planner", "reviewer"),
+        step_count=4,
+        phases=("implementation", "review", "revision", "acceptance"),
+    )
+    return {
+        "control_kind": "mission_confirm",
+        "project_root": str(session.root),
+        "leader_provider": session.config.leader.provider,
+        "leader_model": session.config.leader.model,
+        "action_id": preview["mission_id"],
+        "action_hash": preview["plan_hash"],
+        "semantic_authority_hash": semantic_authority_hash(authority),
+        "compiled_task_hashes": [
+            "sha256:" + hashlib.sha256(step["task"].encode("utf-8")).hexdigest()
+            for step in preview["plan"]["steps"]
+        ],
+        "policy_snapshot_hash": canonical_snapshot_hash(
+            execution_policy_snapshot(session.config)
+        ),
+        "preview_generation": 1,
+    }
+
+
+def test_semantic_preview_binds_exact_ten_execution_facts(tmp_path: Path) -> None:
+    session, preview = _semantic_session(tmp_path)
+    state = session.store.load()
+    binding = state["conversation_preview_bindings"][0]
+
+    assert binding["execution_digest"] == execution_digest(
+        _semantic_confirmation_facts(session, preview)
+    )
+
+
+@pytest.mark.parametrize(
+    ("field", "changed"),
+    [
+        ("control_kind", "other_control"),
+        ("project_root", "/tmp/other"),
+        ("leader_provider", "other"),
+        ("leader_model", "other-model"),
+        ("action_id", "mis_cafebabefeed"),
+        ("action_hash", "sha256:" + "6" * 64),
+        ("semantic_authority_hash", "sha256:" + "7" * 64),
+        ("compiled_task_hashes", ["sha256:" + "8" * 64]),
+        ("policy_snapshot_hash", "sha256:" + "9" * 64),
+        ("preview_generation", 2),
+    ],
+)
+def test_semantic_confirmation_rejects_each_stale_bound_fact_without_effects(
+    tmp_path: Path, field: str, changed: object
+) -> None:
+    session, preview = _semantic_session(tmp_path)
+    executions: list[str] = []
+    session.preview_executor = lambda mission_id: executions.append(mission_id) or {
+        "mission_id": mission_id,
+        "status": "started",
+    }
+    state = session.store.load()
+    if field == "control_kind":
+        # The control discriminator has no mutable runtime source. Rebind only
+        # this digest and prove confirm recomputes the canonical discriminator.
+        facts = _semantic_confirmation_facts(session, preview)
+        facts[field] = changed
+        state["conversation_preview_bindings"][0]["execution_digest"] = (
+            execution_digest(facts)
+        )
+        session.store.save(state)
+    elif field == "action_id":
+        state["conversation_preview_bindings"][0]["action_id"] = changed
+        session.store.save(state)
+    elif field == "action_hash":
+        state["missions"][0]["plan_hash"] = changed
+        session.store.save(state)
+    elif field == "project_root":
+        session.root = Path(str(changed))
+    elif field == "leader_provider":
+        path = session.root / ".agentdeck" / "config.toml"
+        path.write_text(
+            path.read_text(encoding="utf-8").replace(
+                'provider = "fake"', f'provider = "{changed}"', 1
+            ),
+            encoding="utf-8",
+        )
+    elif field == "leader_model":
+        path = session.root / ".agentdeck" / "config.toml"
+        path.write_text(
+            path.read_text(encoding="utf-8").replace(
+                'model = "fake-plan"', f'model = "{changed}"', 1
+            ),
+            encoding="utf-8",
+        )
+    elif field == "semantic_authority_hash":
+        plan = state["plans"][0]["plan"]
+        authority = plan.get("semantic_authority")
+        if authority is None:
+            authority = extract_semantic_authority(
+                SEMANTIC_MISSION_TEXT,
+                selected_agent_ids=("planner", "reviewer"),
+                step_count=4,
+                phases=("implementation", "review", "revision", "acceptance"),
+            )
+            plan["semantic_authority"] = authority
+        authority["source_message_hash"] = changed
+        session.store.save(state)
+    elif field == "compiled_task_hashes":
+        state["plans"][0]["plan"]["steps"][0]["task"] += "drift"
+        session.store.save(state)
+    elif field == "policy_snapshot_hash":
+        path = session.root / ".agentdeck" / "config.toml"
+        path.write_text(
+            path.read_text(encoding="utf-8").replace(
+                'approval_mode = "confirm"', 'approval_mode = "approve"', 1
+            ),
+            encoding="utf-8",
+        )
+    elif field == "preview_generation":
+        state["missions"][0]["preview_generation"] = changed
+        session.store.save(state)
+    else:  # pragma: no cover - the closed matrix above owns every branch
+        raise AssertionError(field)
+
+    response = session.handle("确认执行当前预览")
+
+    assert response.kind == "blocked"
+    assert executions == []
+    after = session.store.load()
+    pending = session.store._conversation_summary(after)["pending_preview"]
+    assert pending["preview_id"] == state["conversation_preview_bindings"][0]["preview_id"]
+    mission = after["missions"][0]
+    assert mission["status"] == "pending_confirmation"
+    assert mission["confirmed_at"] is None
+    for collection in (
+        "attempts", "mission_attempts", "permission_requests", "messages", "jobs", "inbox",
+    ):
+        assert after.get(collection, []) == []
+    assert not any(
+        event["event_type"] == "mission_semantic_authority_frozen"
+        for event in session.store.all_events()
+    )
+
+
+@pytest.mark.parametrize(
+    ("before", "after"),
+    [
+        ('provider = "fake"', 'provider = "deepseek"'),
+        ('model = "fake-plan"', 'model = "changed-model"'),
+        ('approval_mode = "confirm"', 'approval_mode = "approve"'),
+    ],
+)
+def test_semantic_confirmation_reloads_disk_config_and_blocks_drift(
+    tmp_path: Path, before: str, after: str
+) -> None:
+    session, _preview = _semantic_session(tmp_path)
+    executions: list[str] = []
+    session.preview_executor = lambda mission_id: executions.append(mission_id) or {
+        "mission_id": mission_id,
+        "status": "started",
+    }
+    config_path = session.root / ".agentdeck" / "config.toml"
+    text = config_path.read_text(encoding="utf-8")
+    assert before in text
+    config_path.write_text(text.replace(before, after, 1), encoding="utf-8")
+
+    response = session.handle("确认执行当前预览")
+
+    assert response.kind == "blocked"
+    assert executions == []
+    state = session.store.load()
+    assert state["missions"][0]["status"] == "pending_confirmation"
+    assert state["missions"][0]["confirmed_at"] is None
+    assert session.store._conversation_summary(state)["pending_preview"] is not None
+    for collection in (
+        "attempts", "mission_attempts", "permission_requests", "messages", "jobs", "inbox",
+    ):
+        assert state.get(collection, []) == []
+    assert not any(
+        event["event_type"] == "mission_semantic_authority_frozen"
+        for event in session.store.all_events()
     )
 
 

@@ -5991,6 +5991,65 @@ def test_mission_contract_discovery_and_examples(tmp_path: Path) -> None:
     assert validate_mission_status_contract(payload["example_status"])["ok"] is True
     assert validate_mission_run_contract(payload["example_run"])["ok"] is True
     assert len(payload["example_preview"]["plan"]["steps"]) == 8
+    assert "semantic_authority" in payload["preview_response_fields"]
+    assert "semantic_authority" in payload["status_response_fields"]
+    assert payload["example_preview"]["semantic_authority"] is None
+    assert payload["example_status"]["semantic_authority"] is None
+    assert payload["example_run"]["semantic_authority"] is None
+
+
+def test_mission_semantic_authority_card_is_exact_and_preview_gate_bound() -> None:
+    from agentdeck.contracts import mission_example, validate_mission_preview_contract
+
+    payload = mission_example("preview")
+    payload["semantic_authority"] = {
+        "schema_version": "mission-semantic-authority/v1",
+        "state": "preview",
+        "authority_hash": "sha256:" + "a" * 64,
+        "requirement_count": 4,
+        "proposed_effect_count": 0,
+        "unresolved_count": 0,
+        "compiled_step_count": 8,
+        "blockers": [],
+    }
+    assert validate_mission_preview_contract(payload)["ok"] is True
+
+    payload["can_start"] = False
+    payload["blockers"] = ["worker unavailable"]
+    payload["controls"][0]["enabled"] = False
+    payload["controls"][0]["blocker"] = "worker unavailable"
+    payload["semantic_authority"]["state"] = "preview"
+    payload["semantic_authority"]["blockers"] = []
+    assert validate_mission_preview_contract(payload)["ok"] is True
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        lambda card: card.update(raw_literal="must-not-leak"),
+        lambda card: card.update(blockers=["raw blocker /tmp/private"]),
+        lambda card: card.update(state="draft"),
+    ],
+)
+def test_mission_semantic_authority_card_rejects_extra_raw_or_draft(
+    mutation,
+) -> None:
+    from agentdeck.contracts import mission_example, validate_mission_preview_contract
+
+    payload = mission_example("preview")
+    payload["semantic_authority"] = {
+        "schema_version": "mission-semantic-authority/v1",
+        "state": "preview",
+        "authority_hash": "sha256:" + "a" * 64,
+        "requirement_count": 4,
+        "proposed_effect_count": 0,
+        "unresolved_count": 0,
+        "compiled_step_count": 8,
+        "blockers": [],
+    }
+    mutation(payload["semantic_authority"])
+
+    assert validate_mission_preview_contract(payload)["ok"] is False
 
 
 @pytest.mark.parametrize(

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from dataclasses import asdict, dataclass, replace
+import hashlib
 import re
 import shlex
 import shutil
@@ -30,7 +31,10 @@ from .mission import (
     startup_action_summaries,
     validate_mission_plan,
 )
-from .mission_authority import canonical_workflow_plan_hash
+from .mission_authority import (
+    canonical_workflow_plan_hash,
+    validated_compiled_semantic_plan,
+)
 from .models import (
     AgentRuntimeBinding,
     AgentSpec,
@@ -46,7 +50,11 @@ from .providers.plan_schema import (
     ProviderPlanValidationError,
     validate_leader_generation_provenance,
 )
-from .semantic_authority import validate_semantic_authority
+from .semantic_authority import (
+    compact_semantic_authority,
+    semantic_authority_hash,
+    validate_semantic_authority,
+)
 from .state import StateStore
 from .state import (
     build_execution_snapshot_authority,
@@ -398,6 +406,11 @@ def _mission_preview_payload(
         "plan_id": mission["plan_id"],
         "plan_hash": mission["plan_hash"],
         "plan": _compact_plan(plan_record["plan"]),
+        "semantic_authority": _mission_semantic_authority_card(
+            mission,
+            plan_record,
+            state="preview",
+        ),
         "selected_agents": mission["selected_agents"],
         "startup_actions": mission["startup_actions"],
         "step_count": mission["step_count"],
@@ -430,6 +443,50 @@ def _mission_preview_payload(
     if not validation["ok"]:
         raise ValueError("mission preview contract validation failed")
     return payload
+
+
+def _mission_semantic_authority_card(
+    mission: Mapping[str, object],
+    plan_record: Mapping[str, object],
+    *,
+    state: str,
+) -> dict[str, object] | None:
+    plan = plan_record.get("plan")
+    semantic_plan = type(plan) is dict and (
+        "semantic_authority" in plan or "semantic_steps" in plan
+    )
+    semantic_fields = {
+        "semantic_authority_schema_version",
+        "semantic_authority_hash",
+        "compiled_task_hashes",
+        "preview_generation",
+    }
+    present = {field for field in semantic_fields if field in mission}
+    if not semantic_plan and not present:
+        return None
+    if not semantic_plan or present != semantic_fields:
+        raise ValueError("semantic Mission provenance invalid")
+    validated = validated_compiled_semantic_plan(plan)
+    authority = validated["semantic_authority"]
+    task_hashes = [
+        "sha256:" + hashlib.sha256(step["task"].encode("utf-8")).hexdigest()
+        for step in validated["steps"]
+    ]
+    if (
+        mission.get("semantic_authority_schema_version")
+        != authority["schema_version"]
+        or mission.get("semantic_authority_hash")
+        != semantic_authority_hash(authority)
+        or mission.get("compiled_task_hashes") != task_hashes
+        or mission.get("preview_generation") != 1
+    ):
+        raise ValueError("semantic Mission provenance invalid")
+    return compact_semantic_authority(
+        authority,
+        state=state,
+        compiled_step_count=len(validated["semantic_steps"]),
+        blockers=[],
+    )
 
 
 def _mission_candidate_context(
@@ -675,6 +732,7 @@ def create_mission_preview_from_candidate(
             # Task 7 validates semantic generation transiently. Task 8 owns its
             # durable plan/Mission representation and confirmation binding.
             leader_generation = None
+    semantic_plan: dict[str, object] | None = None
     try:
         raw_plan = candidate.plan
         if validated_candidate_authority is not None:
@@ -695,6 +753,7 @@ def create_mission_preview_from_candidate(
             )
             if raw_plan["semantic_authority"] != validated_candidate_authority:
                 raise ValueError("semantic authority drift")
+            semantic_plan = deepcopy(raw_plan)
             raw_plan = {
                 "goal": raw_plan["goal"],
                 "summary": raw_plan["summary"],
@@ -723,6 +782,11 @@ def create_mission_preview_from_candidate(
         for field in ("declared_tests", "acceptance_criteria"):
             if field in raw_plan:
                 plan[field] = deepcopy(raw_plan[field])
+        if semantic_plan is not None:
+            plan["semantic_authority"] = deepcopy(
+                semantic_plan["semantic_authority"]
+            )
+            plan["semantic_steps"] = deepcopy(semantic_plan["semantic_steps"])
         validate_mission_plan(plan, selected_agent_ids, candidate.timeout_seconds)
     except Exception:
         raise MissionPreviewError("mission preview plan invalid") from None
@@ -780,6 +844,7 @@ def create_mission_preview_from_candidate(
         step_count=len(plan["steps"]),
         can_start=not blockers,
         blockers=blockers,
+        semantic_plan=plan if semantic_plan is not None else None,
     )
     if not blockers:
         try:
@@ -804,6 +869,21 @@ def create_mission_preview_from_candidate(
             "selected_agent_ids": list(selected_agent_ids),
             "step_count": len(plan["steps"]),
         },
+    )
+    semantic_preview_event = (
+        EventRecord.create(
+            "mission_semantic_preview_created",
+            {
+                "mission_id": mission["mission_id"],
+                "plan_id": plan_record["plan_id"],
+                "semantic_authority_hash": mission["semantic_authority_hash"],
+                "compiled_task_hashes": deepcopy(mission["compiled_task_hashes"]),
+                "compiled_step_count": len(mission["compiled_task_hashes"]),
+                "preview_generation": mission["preview_generation"],
+            },
+        )
+        if semantic_plan is not None
+        else None
     )
     if conversation_mutation is not None and conversation_mutation_factory is not None:
         raise MissionPreviewError("conversation mutation source is ambiguous")
@@ -836,7 +916,11 @@ def create_mission_preview_from_candidate(
             "plans": (plan_record,),
             "missions": (mission,),
         },
-        events=(*conversation_events, event),
+        events=(
+            *conversation_events,
+            event,
+            *((semantic_preview_event,) if semantic_preview_event is not None else ()),
+        ),
     )
     try:
         store.commit_conversation_mutation(mutation)
@@ -1009,6 +1093,24 @@ def mission_status_payload(
         else f"mission status is {mission.get('status')}"
     )
     attach = _safe_attach_command(config)
+    semantic_card: dict[str, object] | None = None
+    try:
+        status_plan = store.plan_by_id(str(mission.get("plan_id") or ""))
+    except KeyError:
+        if "semantic_authority_schema_version" in mission:
+            raise MissionRunError("semantic Mission provenance invalid") from None
+    else:
+        semantic_state = (
+            "frozen"
+            if mission.get("confirmed_at") is not None
+            else "preview"
+        )
+        try:
+            semantic_card = _mission_semantic_authority_card(
+                mission, status_plan, state=semantic_state
+            )
+        except (TypeError, ValueError):
+            raise MissionRunError("semantic Mission provenance invalid") from None
     payload: dict[str, object] = {
         "schema_version": MISSION_SCHEMA_VERSION,
         "ok": True,
@@ -1018,6 +1120,7 @@ def mission_status_payload(
         "user_message": mission.get("user_message"),
         "plan_id": mission.get("plan_id"),
         "plan_hash": mission.get("plan_hash"),
+        "semantic_authority": semantic_card,
         "workflow_run_id": mission.get("workflow_run_id"),
         "daemon_admission": daemon_admission,
         "current_step": mission.get("current_step", 0),

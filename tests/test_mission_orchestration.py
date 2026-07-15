@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import replace
 from concurrent.futures import ThreadPoolExecutor
+import hashlib
 import json
 from pathlib import Path
 import subprocess
@@ -17,6 +19,7 @@ from agentdeck.mission_orchestration import (
     MissionPreviewError,
     create_mission_preview,
     create_mission_preview_from_candidate,
+    confirm_mission_for_daemon,
     interrupt_mission,
     mission_status_payload,
     resume_mission,
@@ -32,7 +35,12 @@ from agentdeck.providers.plan_schema import (
     build_leader_plan_schema,
 )
 from agentdeck.mission_authority import canonical_workflow_plan_hash
-from agentdeck.semantic_planning import SemanticPlanningError
+from agentdeck.semantic_authority import semantic_authority_hash
+from agentdeck.semantic_planning import (
+    SemanticPlanningError,
+    compile_worker_task,
+    semantic_step_hash,
+)
 from agentdeck.state import StateStore
 
 
@@ -89,6 +97,38 @@ def semantic_authority_fixture() -> dict[str, object]:
         "proposed_effects": [],
         "unresolved": [],
     }
+
+
+def semantic_plan_fixture(config) -> dict[str, object]:
+    return LeaderOrchestrator(config, FakeLeaderProvider()).plan_result(
+        "raw context only",
+        config.leader.model,
+        selected_agent_ids=("planner", "reviewer"),
+        step_count=4,
+        semantic_authority=semantic_authority_fixture(),
+    ).plan
+
+
+def semantic_candidate_fixture(config) -> LeaderMissionCandidate:
+    authority = semantic_authority_fixture()
+    result = LeaderOrchestrator(config, FakeLeaderProvider()).plan_result(
+        "raw context only",
+        config.leader.model,
+        selected_agent_ids=("planner", "reviewer"),
+        step_count=4,
+        semantic_authority=authority,
+    )
+    return LeaderMissionCandidate(
+        provider="fake",
+        model=config.leader.model,
+        user_message=MESSAGE,
+        plan=result.plan,
+        timeout_seconds=180,
+        selected_agent_ids=("planner", "reviewer"),
+        step_count=4,
+        leader_generation=result.leader_generation,
+        semantic_authority=authority,
+    )
 
 
 def test_leader_orchestrator_carries_semantic_authority_and_compiled_result(
@@ -1346,6 +1386,250 @@ def test_legacy_candidate_and_plan_hash_remain_compatible(
     with_generation["leader_generation"] = _candidate_generation(config)
     assert canonical_workflow_plan_hash(record) == canonical_workflow_plan_hash(
         with_generation
+    )
+
+
+def test_semantic_preview_persists_exact_authority_steps_and_compact_mission(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _root, config, store, _path = project(tmp_path)
+    monkeypatch.setattr(
+        "agentdeck.mission_orchestration.shutil.which",
+        lambda command: f"/bin/{command}",
+    )
+    candidate = semantic_candidate_fixture(config)
+
+    preview = create_mission_preview_from_candidate(
+        config=config,
+        store=store,
+        candidate=candidate,
+    )
+
+    stored_plan = store.plan_by_id(preview["plan_id"])
+    stored_mission = store.mission_by_id(preview["mission_id"])
+    assert stored_plan["plan"]["semantic_authority"] == candidate.plan[
+        "semantic_authority"
+    ]
+    assert stored_plan["plan"]["semantic_steps"] == candidate.plan["semantic_steps"]
+    assert set(stored_plan["plan"]) == {
+        "goal", "summary", "steps", "semantic_authority", "semantic_steps",
+    }
+    expected_task_hashes = [
+        "sha256:" + hashlib.sha256(step["task"].encode("utf-8")).hexdigest()
+        for step in candidate.plan["steps"]
+    ]
+    assert {
+        key: stored_mission[key]
+        for key in (
+            "semantic_authority_schema_version",
+            "semantic_authority_hash",
+            "compiled_task_hashes",
+            "preview_generation",
+        )
+    } == {
+        "semantic_authority_schema_version": "mission-semantic-authority/v1",
+        "semantic_authority_hash": semantic_authority_hash(
+            candidate.plan["semantic_authority"]
+        ),
+        "compiled_task_hashes": expected_task_hashes,
+        "preview_generation": 1,
+    }
+    assert set(preview["semantic_authority"]) == {
+        "schema_version",
+        "state",
+        "authority_hash",
+        "requirement_count",
+        "proposed_effect_count",
+        "unresolved_count",
+        "compiled_step_count",
+        "blockers",
+    }
+    assert preview["semantic_authority"]["state"] == "preview"
+    assert preview["semantic_authority"]["authority_hash"] == stored_mission[
+        "semantic_authority_hash"
+    ]
+    semantic_events = [
+        event for event in store.all_events()
+        if event["event_type"] == "mission_semantic_preview_created"
+    ]
+    assert len(semantic_events) == 1
+    assert set(semantic_events[0]["payload"]) == {
+        "mission_id",
+        "plan_id",
+        "semantic_authority_hash",
+        "compiled_task_hashes",
+        "compiled_step_count",
+        "preview_generation",
+    }
+
+
+def test_semantic_confirmation_freezes_authority_event_in_mission_atomic_save(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _root, config, store, _path = project(tmp_path)
+    monkeypatch.setattr(
+        "agentdeck.mission_orchestration.shutil.which",
+        lambda command: f"/bin/{command}",
+    )
+    preview = create_mission_preview_from_candidate(
+        config=config,
+        store=store,
+        candidate=semantic_candidate_fixture(config),
+    )
+
+    mission = confirm_mission_for_daemon(
+        config=config, store=store, mission_id=preview["mission_id"]
+    )
+
+    assert mission["confirmed_at"] is not None
+    store.flush_protocol_event_outbox()
+    frozen = [
+        event for event in store.all_events()
+        if event["event_type"] == "mission_semantic_authority_frozen"
+    ]
+    assert len(frozen) == 1
+    assert set(frozen[0]["payload"]) == {
+        "mission_id",
+        "plan_id",
+        "semantic_authority_hash",
+        "compiled_task_hashes",
+        "compiled_step_count",
+        "policy_snapshot_hash",
+        "preview_generation",
+    }
+
+
+def test_semantic_blocked_preview_projects_only_sanitized_blocker_code(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _root, config, store, _path = project(tmp_path)
+    monkeypatch.setattr(
+        "agentdeck.mission_orchestration._command_blocker",
+        lambda *_args: "SECRET raw blocker /tmp/private",
+    )
+
+    preview = create_mission_preview_from_candidate(
+        config=config,
+        store=store,
+        candidate=semantic_candidate_fixture(config),
+    )
+
+    card = preview["semantic_authority"]
+    assert preview["can_start"] is False
+    assert preview["blockers"]
+    assert set(preview["blockers"]) == {"SECRET raw blocker /tmp/private"}
+    assert card["state"] == "preview"
+    assert card["blockers"] == []
+    assert "SECRET" not in repr(card)
+    assert "/tmp/private" not in repr(card)
+    status = mission_status_payload(
+        config, store, store.mission_by_id(preview["mission_id"])
+    )
+    assert status["blockers"]
+    assert status["semantic_authority"]["state"] == "preview"
+    assert status["semantic_authority"]["blockers"] == []
+    assert "SECRET" not in repr(status["semantic_authority"])
+
+
+def test_semantic_freeze_event_rolls_back_with_mission_atomic_save_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _root, config, store, _path = project(tmp_path)
+    monkeypatch.setattr(
+        "agentdeck.mission_orchestration.shutil.which",
+        lambda command: f"/bin/{command}",
+    )
+    preview = create_mission_preview_from_candidate(
+        config=config,
+        store=store,
+        candidate=semantic_candidate_fixture(config),
+    )
+    before = store.state_path.read_bytes()
+    monkeypatch.setattr(
+        store,
+        "_atomic_save",
+        lambda _state: (_ for _ in ()).throw(OSError("save failed")),
+    )
+
+    with pytest.raises(OSError, match="save failed"):
+        confirm_mission_for_daemon(
+            config=config, store=store, mission_id=preview["mission_id"]
+        )
+
+    assert store.state_path.read_bytes() == before
+    mission = store.mission_by_id(preview["mission_id"])
+    assert mission["status"] == "pending_confirmation"
+    assert mission["confirmed_at"] is None
+    assert not any(
+        event.get("event_type") == "mission_semantic_authority_frozen"
+        for event in store.load()["protocol_event_outbox"]
+    )
+
+
+def test_semantic_plan_hash_changes_with_authority_or_step_hash(
+    tmp_path: Path,
+) -> None:
+    _root, config, _store, _path = project(tmp_path)
+    plan = semantic_plan_fixture(config)
+    record = {"plan_id": "pln_deadbeefcafe", "plan": plan}
+    authority_changed = deepcopy(record)
+    authority_changed["plan"]["semantic_authority"]["source_message_hash"] = (
+        "sha256:" + "b" * 64
+    )
+    step_changed = deepcopy(record)
+    step_changed["plan"]["semantic_steps"][0]["verification"] = (
+        "verify exact bytes and report deterministic evidence"
+    )
+    semantic_step = step_changed["plan"]["semantic_steps"][0]
+    semantic_step.pop("semantic_step_hash")
+    semantic_step["semantic_step_hash"] = semantic_step_hash(semantic_step)
+    step_changed["plan"]["steps"][0]["task"] = compile_worker_task(semantic_step)
+
+    baseline = canonical_workflow_plan_hash(record)
+    assert canonical_workflow_plan_hash(authority_changed) != baseline
+    assert canonical_workflow_plan_hash(step_changed) != baseline
+
+
+def test_plan_record_rejects_semantic_extra_keys_before_persistence(
+    tmp_path: Path,
+) -> None:
+    _root, config, store, _path = project(tmp_path)
+    plan = semantic_plan_fixture(config)
+    plan["hostile"] = "must-not-persist"
+
+    with pytest.raises(ValueError, match="^semantic plan invalid$"):
+        store.build_plan_record(MESSAGE, "fake", config.leader.model, plan)
+
+
+def test_plan_record_rejects_hostile_compatibility_scalar_without_hooks(
+    tmp_path: Path,
+) -> None:
+    _root, config, store, _path = project(tmp_path)
+    plan = semantic_plan_fixture(config)
+    touched: list[str] = []
+
+    class HostileStr(str):
+        def __deepcopy__(self, _memo):
+            touched.append("deepcopy")
+            raise AssertionError("hostile scalar copied")
+
+    plan["steps"][0]["task"] = HostileStr(plan["steps"][0]["task"])
+
+    with pytest.raises(ValueError, match="^semantic plan invalid$"):
+        store.build_plan_record(MESSAGE, "fake", config.leader.model, plan)
+
+    assert touched == []
+    assert store.load()["plans"] == []
+
+
+def test_legacy_plan_hash_fixture_is_byte_stable() -> None:
+    record = {
+        "plan_id": "pln_deadbeefcafe",
+        "plan": eight_step_plan(),
+    }
+
+    assert canonical_workflow_plan_hash(record) == (
+        "sha256:ccd2443d59f300b22f13d3a31b8c88849f4e763ce15f0ce3795f554dd4efd56f"
     )
 
 

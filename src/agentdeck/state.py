@@ -43,7 +43,10 @@ from .mission import (
     mission_commands,
     mission_status_transition_allowed,
 )
-from .mission_authority import canonical_workflow_plan_hash
+from .mission_authority import (
+    canonical_workflow_plan_hash,
+    validated_compiled_semantic_plan,
+)
 from .models import (
     MIGRATION_SCHEMA_VERSION,
     PROJECT_VIEW_SCHEMA_VERSION,
@@ -76,6 +79,7 @@ from .runtime.acp_mapping import (
     MAX_ACP_UPDATES_PER_TURN,
     MAX_ACP_TERMINAL_UPDATE_BYTES,
 )
+from .semantic_authority import semantic_authority_hash
 
 
 _EXECUTION_SNAPSHOT_FIELDS = frozenset(
@@ -5544,6 +5548,7 @@ class StateStore:
         step_count: int,
         timeout_seconds: int,
         retry_limit: int = 0,
+        semantic_plan: object | None = None,
     ) -> dict[str, Any]:
         if not all(
             isinstance(value, str) and value
@@ -5582,6 +5587,20 @@ class StateStore:
             or selected_ids != action_ids
         ):
             raise ValueError("startable mission requires matching worker and startup summaries")
+        semantic_fields: dict[str, object] = {}
+        if semantic_plan is not None:
+            validated_semantic_plan = validated_compiled_semantic_plan(semantic_plan)
+            authority = validated_semantic_plan["semantic_authority"]
+            semantic_fields = {
+                "semantic_authority_schema_version": authority["schema_version"],
+                "semantic_authority_hash": semantic_authority_hash(authority),
+                "compiled_task_hashes": [
+                    "sha256:"
+                    + hashlib.sha256(step["task"].encode("utf-8")).hexdigest()
+                    for step in validated_semantic_plan["steps"]
+                ],
+                "preview_generation": 1,
+            }
         now = utc_now()
         return {
             "mission_id": new_id("mis"),
@@ -5610,6 +5629,7 @@ class StateStore:
             "completed_at": None,
             "created_at": now,
             "updated_at": now,
+            **semantic_fields,
         }
 
     def mission_by_id(self, mission_id: str) -> dict[str, Any]:
@@ -5721,6 +5741,41 @@ class StateStore:
                     "snapshot_hash": snapshot["execution_hash"],
                 },
             )
+            semantic_frozen_event: EventRecord | None = None
+            if "semantic_authority_schema_version" in mission:
+                validated_semantic = validated_compiled_semantic_plan(
+                    plan.get("plan")
+                )
+                expected_authority_hash = semantic_authority_hash(
+                    validated_semantic["semantic_authority"]
+                )
+                expected_task_hashes = [
+                    "sha256:"
+                    + hashlib.sha256(step["task"].encode("utf-8")).hexdigest()
+                    for step in validated_semantic["steps"]
+                ]
+                if (
+                    mission.get("semantic_authority_schema_version")
+                    != validated_semantic["semantic_authority"]["schema_version"]
+                    or mission.get("semantic_authority_hash")
+                    != expected_authority_hash
+                    or mission.get("compiled_task_hashes")
+                    != expected_task_hashes
+                    or mission.get("preview_generation") != 1
+                ):
+                    raise MissionStateError("execution authority drift")
+                semantic_frozen_event = EventRecord.create(
+                    "mission_semantic_authority_frozen",
+                    {
+                        "mission_id": mission_id,
+                        "plan_id": plan_id,
+                        "semantic_authority_hash": expected_authority_hash,
+                        "compiled_task_hashes": expected_task_hashes,
+                        "compiled_step_count": len(expected_task_hashes),
+                        "policy_snapshot_hash": snapshot["policy_hash"],
+                        "preview_generation": 1,
+                    },
+                )
             mission.update(
                 {
                     "status": "preparing",
@@ -5751,7 +5806,10 @@ class StateStore:
                     }
                 )
             )
-            state.setdefault("protocol_event_outbox", []).append(asdict(event))
+            outbox = state.setdefault("protocol_event_outbox", [])
+            outbox.append(asdict(event))
+            if semantic_frozen_event is not None:
+                outbox.append(asdict(semantic_frozen_event))
             self._atomic_save(state)
             return copy.deepcopy(mission)
 
@@ -8430,6 +8488,11 @@ class StateStore:
         skill_context: dict[str, Any] | None = None,
         leader_generation: dict[str, object] | None = None,
     ) -> dict[str, Any]:
+        persisted_plan = (
+            validated_compiled_semantic_plan(plan)
+            if "semantic_authority" in plan or "semantic_steps" in plan
+            else copy.deepcopy(plan)
+        )
         record = {
             "plan_id": new_id("pln"),
             "task": task,
@@ -8443,7 +8506,7 @@ class StateStore:
             "status": "planned",
             "dispatch_ready": bool(plan.get("dispatch_ready", False)),
             "skill_context": self._plan_skill_context(skill_context),
-            "plan": copy.deepcopy(plan),
+            "plan": persisted_plan,
             "created_at": utc_now(),
         }
         if leader_generation is not None:

@@ -195,7 +195,15 @@ def test_session_and_gateway_deep_copy_exact_authority_through_provider_request(
     assert expected["requirements"]
     state = _store.load()
     persisted_plan = state["plans"][0]["plan"]
-    assert set(persisted_plan) == {"goal", "summary", "steps"}
+    assert set(persisted_plan) == {
+        "goal", "summary", "steps", "semantic_authority", "semantic_steps",
+    }
+    assert persisted_plan["semantic_authority"] == observations["candidate_plan"][
+        "semantic_authority"
+    ]
+    assert persisted_plan["semantic_steps"] == observations["candidate_plan"][
+        "semantic_steps"
+    ]
     assert all(
         set(step) == {
             "step", "agent_id", "role", "task", "risk", "requires_approval",
@@ -205,9 +213,12 @@ def test_session_and_gateway_deep_copy_exact_authority_through_provider_request(
     assert [step["task"] for step in persisted_plan["steps"]] == [
         step["task"] for step in observations["candidate_plan"]["steps"]
     ]
-    rendered_records = str({"plans": state["plans"], "missions": state["missions"]})
-    for semantic_key in ("semantic_authority", "semantic_steps", "semantic_step_hash"):
-        assert semantic_key not in rendered_records
+    persisted_mission = state["missions"][0]
+    assert "semantic_authority" not in persisted_mission
+    assert "semantic_steps" not in persisted_mission
+    assert set(
+        key for key in persisted_mission if key.startswith("semantic_")
+    ) == {"semantic_authority_schema_version", "semantic_authority_hash"}
 
 
 def test_double_semantic_failure_writes_only_turn_terminal_and_safe_audit(

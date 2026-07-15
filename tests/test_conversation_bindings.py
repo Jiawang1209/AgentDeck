@@ -34,6 +34,23 @@ def _facts(**overrides: object) -> dict[str, object]:
     return facts
 
 
+def _semantic_facts(**overrides: object) -> dict[str, object]:
+    facts: dict[str, object] = {
+        "control_kind": "mission_confirm",
+        "project_root": "/tmp/project",
+        "leader_provider": "fake",
+        "leader_model": "deterministic",
+        "action_id": "mis_deadbeefcafe",
+        "action_hash": "sha256:" + "1" * 64,
+        "semantic_authority_hash": "sha256:" + "2" * 64,
+        "compiled_task_hashes": ["sha256:" + "3" * 64, "sha256:" + "4" * 64],
+        "policy_snapshot_hash": "sha256:" + "5" * 64,
+        "preview_generation": 1,
+    }
+    facts.update(overrides)
+    return facts
+
+
 def _binding(*, facts: dict[str, object] | None = None, expires_at: str = "2026-07-13T01:00:00+00:00") -> dict[str, object]:
     execution_facts = facts or _facts()
     binding = build_preview_binding_record(
@@ -64,6 +81,51 @@ def test_validate_preview_accepts_exact_current_facts() -> None:
 
     assert validated["preview_id"] == "p1"
     assert validated["state"] == "pending"
+
+
+def test_semantic_preview_execution_facts_are_exactly_the_ten_bound_fields() -> None:
+    facts = _semantic_facts()
+
+    assert tuple(facts) == (
+        "control_kind",
+        "project_root",
+        "leader_provider",
+        "leader_model",
+        "action_id",
+        "action_hash",
+        "semantic_authority_hash",
+        "compiled_task_hashes",
+        "policy_snapshot_hash",
+        "preview_generation",
+    )
+
+
+@pytest.mark.parametrize(
+    ("field", "changed"),
+    [
+        ("control_kind", "other_control"),
+        ("project_root", "/tmp/other"),
+        ("leader_provider", "other"),
+        ("leader_model", "other-model"),
+        ("action_id", "mis_cafebabefeed"),
+        ("action_hash", "sha256:" + "6" * 64),
+        ("semantic_authority_hash", "sha256:" + "7" * 64),
+        ("compiled_task_hashes", ["sha256:" + "8" * 64]),
+        ("policy_snapshot_hash", "sha256:" + "9" * 64),
+        ("preview_generation", 2),
+    ],
+)
+def test_semantic_preview_binding_rejects_each_changed_fact(
+    field: str, changed: object
+) -> None:
+    binding = _binding(facts=_semantic_facts())
+
+    with pytest.raises(PreviewBindingError, match="preview state drift"):
+        validate_preview_execution(
+            binding,
+            _semantic_facts(**{field: changed}),
+            now=NOW,
+        )
 
 
 @pytest.mark.parametrize(

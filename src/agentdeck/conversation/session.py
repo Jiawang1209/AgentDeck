@@ -17,9 +17,18 @@ from ..mission_orchestration import (
     requested_mission_step_count,
 )
 from ..mission import mission_intent, select_mission_agents
+from ..mission_authority import (
+    canonical_workflow_plan_hash,
+    validated_compiled_semantic_plan,
+)
 from ..models import EventRecord, ProjectConfig, new_id, utc_now
 from ..providers import LeaderPlanRequest
-from ..state import StateStore, migration_preview
+from ..state import (
+    StateStore,
+    canonical_snapshot_hash,
+    execution_policy_snapshot,
+    migration_preview,
+)
 from ..semantic_authority import (
     extract_semantic_authority,
     semantic_authority_hash,
@@ -162,6 +171,69 @@ def _validated_semantic_diagnostics(
             "regeneration_used": False,
         },
     )
+
+
+def _mission_confirmation_facts(
+    *,
+    root: Path,
+    config: ProjectConfig,
+    mission: dict[str, object],
+    plan_record: dict[str, object],
+) -> dict[str, object]:
+    base = {
+        "control_kind": "mission_confirm",
+        "project_root": str(root),
+        "leader_provider": config.leader.provider,
+        "leader_model": config.leader.model,
+        "action_id": mission["mission_id"],
+        "action_hash": mission["plan_hash"],
+    }
+    plan = plan_record.get("plan")
+    semantic_plan = type(plan) is dict and (
+        "semantic_authority" in plan or "semantic_steps" in plan
+    )
+    semantic_fields = (
+        "semantic_authority_schema_version",
+        "semantic_authority_hash",
+        "compiled_task_hashes",
+        "preview_generation",
+    )
+    has_semantic_mission = any(field in mission for field in semantic_fields)
+    if not semantic_plan and not has_semantic_mission:
+        return base
+    if not semantic_plan:
+        raise ValueError("semantic confirmation stale")
+    validated = validated_compiled_semantic_plan(plan)
+    authority = validated["semantic_authority"]
+    authority_hash = semantic_authority_hash(authority)
+    compiled_task_hashes = [
+        "sha256:" + hashlib.sha256(step["task"].encode("utf-8")).hexdigest()
+        for step in validated["steps"]
+    ]
+    computed_plan_hash = canonical_workflow_plan_hash(plan_record)
+    if mission.get("plan_hash") != computed_plan_hash:
+        raise ValueError("semantic confirmation stale")
+    if has_semantic_mission and (
+        set(field for field in semantic_fields if field in mission)
+        != set(semantic_fields)
+        or mission.get("semantic_authority_schema_version")
+        != authority["schema_version"]
+        or mission.get("semantic_authority_hash") != authority_hash
+        or mission.get("compiled_task_hashes") != compiled_task_hashes
+        or type(mission.get("preview_generation")) is not int
+        or mission.get("preview_generation") != 1
+    ):
+        raise ValueError("semantic confirmation stale")
+    return {
+        **base,
+        "action_hash": computed_plan_hash,
+        "semantic_authority_hash": authority_hash,
+        "compiled_task_hashes": compiled_task_hashes,
+        "policy_snapshot_hash": canonical_snapshot_hash(
+            execution_policy_snapshot(config)
+        ),
+        "preview_generation": 1,
+    }
 
 
 @dataclass(frozen=True)
@@ -449,16 +521,20 @@ class ConversationSession:
             return ConversationResponse("blocked", {"blocker": "pending preview invalid"})
         try:
             mission = self.store.mission_by_id(action_id)
+            plan = self.store.plan_by_id(str(mission["plan_id"]))
+            current_config = load_config(self.root)
+            facts = _mission_confirmation_facts(
+                root=self.root,
+                config=current_config,
+                mission=mission,
+                plan_record=plan,
+            )
         except KeyError:
             return ConversationResponse("blocked", {"blocker": "preview target missing"})
-        facts = {
-            "control_kind": "mission_confirm",
-            "project_root": str(self.root),
-            "leader_provider": self.config.leader.provider,
-            "leader_model": self.config.leader.model,
-            "action_id": mission["mission_id"],
-            "action_hash": mission["plan_hash"],
-        }
+        except (OSError, TypeError, ValueError):
+            return ConversationResponse(
+                "blocked", {"blocker": "semantic confirmation stale"}
+            )
 
         def execute(consumed: dict[str, Any]) -> dict[str, object]:
             result = self.preview_executor(action_id)
@@ -773,6 +849,28 @@ class ConversationSession:
                     "action_id": payload["mission_id"],
                     "action_hash": payload["plan_hash"],
                 }
+                if semantic_active:
+                    persisted_semantic = validated_compiled_semantic_plan(
+                        candidate.plan
+                    )
+                    facts.update(
+                        {
+                            "semantic_authority_hash": semantic_authority_hash(
+                                persisted_semantic["semantic_authority"]
+                            ),
+                            "compiled_task_hashes": [
+                                "sha256:"
+                                + hashlib.sha256(
+                                    step["task"].encode("utf-8")
+                                ).hexdigest()
+                                for step in persisted_semantic["steps"]
+                            ],
+                            "policy_snapshot_hash": canonical_snapshot_hash(
+                                execution_policy_snapshot(self.config)
+                            ),
+                            "preview_generation": 1,
+                        }
+                    )
                 now = datetime.now(timezone.utc)
                 binding = build_preview_binding_record(
                     new_id("cpv"),

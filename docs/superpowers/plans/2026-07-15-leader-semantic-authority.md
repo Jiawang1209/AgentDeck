@@ -1046,7 +1046,7 @@ uses one public regenerable failure-code set across Session, CLI, and API paths.
 - Modify: `docs/contracts/mission-schema.md`
 - Modify: `HISTORY.md`
 
-- [ ] **Step 1: Add RED persistence and stale-confirmation tests**
+- [x] **Step 1: Add RED persistence and stale-confirmation tests**
 
 Assert semantic plan records preserve exact validated
 `semantic_authority/semantic_steps`, and `canonical_workflow_plan_hash()`
@@ -1074,13 +1074,13 @@ Mutate each field between preview and confirm. Every case must return blocked,
 leave binding pending, leave Mission unconfirmed, create no attempt/permission/
 message/job/inbox, and append no `mission_semantic_authority_frozen` event.
 
-- [ ] **Step 2: Run RED persistence tests**
+- [x] **Step 2: Run RED persistence tests**
 
 ```bash
 conda run -n agentdeck pytest tests/test_conversation_bindings.py tests/test_conversation_acceptance.py tests/test_mission_orchestration.py -k semantic -q
 ```
 
-- [ ] **Step 3: Persist semantic fields and bind confirmation**
+- [x] **Step 3: Persist semantic fields and bind confirmation**
 
 Add optional semantic arguments to `build_plan_record()` and
 `build_mission_record()` only through validated compiled plan data. Mission
@@ -1107,13 +1107,13 @@ Extend the Mission contract/example with the same compact eight-field
 Update `docs/contracts/mission-schema.md`; clients must not parse compiled task
 text or command strings to discover semantic state.
 
-- [ ] **Step 4: Run GREEN and atomicity regression**
+- [x] **Step 4: Run GREEN and atomicity regression**
 
 ```bash
 conda run -n agentdeck pytest tests/test_conversation_bindings.py tests/test_conversation_acceptance.py tests/test_mission_orchestration.py tests/test_conversation_state.py tests/test_contracts.py -q
 ```
 
-- [ ] **Step 5: Commit persistence/binding**
+- [x] **Step 5: Commit persistence/binding**
 
 ```bash
 git add src/agentdeck/mission_authority.py src/agentdeck/state.py src/agentdeck/conversation/session.py src/agentdeck/contracts.py tests/test_conversation_bindings.py tests/test_conversation_acceptance.py tests/test_mission_orchestration.py tests/test_contracts.py docs/contracts/mission-schema.md HISTORY.md
