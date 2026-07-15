@@ -4,6 +4,13 @@
 
 ## 2026-07-15
 
+### Approve the Leader semantic authority design
+
+- Added the human-approved `docs/superpowers/specs/2026-07-15-leader-semantic-authority-design.md`, grounded in the product north star and frozen single-live evidence at `1a22618ba083a76f4a21ffc7ebc7a3e513e4aae6`.
+- Chose a general semantic-authority control plane instead of M2c-specific token hardcoding: AgentDeck conservatively extracts required user authority, the Leader returns structured references and proposals, AgentDeck validates and deterministically compiles Worker tasks, and one exact preview confirmation freezes the executable scope.
+- Defined versioned authority lifecycle, reviewable-versus-blocked Leader scope additions, sensitive-value boundaries, one same-Leader regeneration, closed diagnostics, confirmation/task hashes, minimum-step dispatch, recovery drift checks, compatibility, five TDD slices, and a separately authorized single-live M2c gate.
+- Explicitly kept ACP, tmux, runtime permission, A2A, remote/global clients, GUI/TUI work, marketplace behavior, new providers, and terminal-emulator scope unchanged. This documentation commit does not implement behavior, rerun preflight, or authorize live execution; M2c remains **BLOCKED** and M3 remains locked.
+
 ### Correct the Claude handoff prompt
 
 - Replaced the stale Claude Code CLI prompt that instructed a new agent to resume the already-complete project-daemon Task 14.
