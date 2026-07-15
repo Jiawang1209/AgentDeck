@@ -64,7 +64,7 @@ model id, and the four sanitized tool versions.
 - Modify: `tests/test_m2c_live_acceptance.py:600-795`
 - Test: `tests/test_m2c_live_acceptance.py:3300-3710`
 
-- [ ] **Step 1: Add RED tests for missing, invalid, and valid model input**
+- [x] **Step 1: Add RED tests for missing, invalid, and valid model input**
 
 Add these tests near the existing preflight tests. The pure input tests must
 not create a project or execute any tool:
@@ -122,7 +122,7 @@ Add missing/invalid preflight cases that assert `model is None`, `ready` is
 false, the exact blocker is present once, the raw value is absent from
 `repr(payload)`, and `_validate_preflight_payload(payload) == []`.
 
-- [ ] **Step 2: Run the focused tests and verify RED**
+- [x] **Step 2: Run the focused tests and verify RED**
 
 Run:
 
@@ -139,7 +139,7 @@ Expected: FAIL because `_LeaderModelSeal` and `_seal_leader_model_input` do not
 exist and the preflight still emits `m2c-live-preflight/v1` without a model
 card.
 
-- [ ] **Step 3: Implement the minimal immutable model seal**
+- [x] **Step 3: Implement the minimal immutable model seal**
 
 Add near the harness constants:
 
@@ -171,7 +171,7 @@ def _leader_model_from_environment(
 Add `leader_model_missing`, `leader_model_invalid`, and `leader_model_drift`
 to `BLOCKER_CODES`.
 
-- [ ] **Step 4: Upgrade `_live_preflight()` and its validator to v2**
+- [x] **Step 4: Upgrade `_live_preflight()` and its validator to v2**
 
 Extend the signature and compute the target seal before tool probing:
 
@@ -217,7 +217,7 @@ and exact model-card keys. It must require `provider == "codex-cli"`,
 consistency between the card and the three model blocker codes. It must never
 stringify an invalid rejected value.
 
-- [ ] **Step 5: Update existing fake preflight tests with explicit model input**
+- [x] **Step 5: Update existing fake preflight tests with explicit model input**
 
 Every fake test that expects `ready=true`, `blockers=[]`, or an exact tool-only
 blocker list must explicitly set:
@@ -230,7 +230,7 @@ Do not add an autouse fixture. The designated read-only preflight must continue
 to observe the real caller-provided environment, and the missing-model test
 must remain meaningful.
 
-- [ ] **Step 6: Run the focused preflight matrix and verify GREEN**
+- [x] **Step 6: Run the focused preflight matrix and verify GREEN**
 
 Run:
 
@@ -252,7 +252,7 @@ Expected: all selected tests PASS; the opt-in live node is not selected.
 - Test: `tests/test_m2c_live_acceptance.py:3715-3860`
 - Test: `tests/test_m2c_live_acceptance.py:5270-5455`
 
-- [ ] **Step 1: Add RED tests for config binding and pre-provider drift**
+- [x] **Step 1: Add RED tests for config binding and pre-provider drift**
 
 Add:
 
@@ -284,7 +284,7 @@ that deletes the environment, replaces `tempfile.mkdtemp` with a function that
 would fail if called, and asserts `_run_live_acceptance()` stops with
 `leader_model_missing` before disposable project creation.
 
-- [ ] **Step 2: Run the new model binding tests and verify RED**
+- [x] **Step 2: Run the new model binding tests and verify RED**
 
 Run:
 
@@ -298,7 +298,7 @@ PYTHONPATH="$PWD/src" conda run --no-capture-output -n agentdeck \
 Expected: FAIL because `_write_live_config()` has no model argument and still
 contains the hardcoded live model.
 
-- [ ] **Step 3: Require the seal in `_write_live_config()`**
+- [x] **Step 3: Require the seal in `_write_live_config()`**
 
 Change the signature and model line only:
 
@@ -323,7 +323,7 @@ Update deterministic semantic fixtures to pass an explicit test seal. A
 fixture may still name `gpt-5.4`; the production live writer itself must have
 no model literal or default.
 
-- [ ] **Step 4: Add exact post-write model verification**
+- [x] **Step 4: Add exact post-write model verification**
 
 Add:
 
@@ -339,7 +339,7 @@ def _verify_live_leader_model(root: Path, seal: _LeaderModelSeal) -> None:
 
 Do not include either observed value in the failure.
 
-- [ ] **Step 5: Thread the immutable seal through the live call graph**
+- [x] **Step 5: Thread the immutable seal through the live call graph**
 
 Change the signatures:
 
@@ -362,14 +362,14 @@ Inside the guarded function:
 Never re-read the environment to choose a model and never substitute another
 model.
 
-- [ ] **Step 6: Update setup/cleanup tests for the explicit signature**
+- [x] **Step 6: Update setup/cleanup tests for the explicit signature**
 
 Every direct call to `_run_live_acceptance_in_project()` or
 `_run_live_acceptance_in_project_guarded()` passes
 `_LeaderModelSeal("gpt-5.5")`. Tests that intentionally mutate setup continue
 to assert the original cleanup code and zero raw-value leakage.
 
-- [ ] **Step 7: Run model binding tests and verify GREEN**
+- [x] **Step 7: Run model binding tests and verify GREEN**
 
 Run the Step 2 command again.
 
@@ -384,7 +384,7 @@ Expected: all selected tests PASS and no provider or live subprocess executes.
 - Modify: `tests/test_m2c_live_acceptance.py:1270-1335` failure projection
 - Test: `tests/test_m2c_live_acceptance.py:4180-4680`
 
-- [ ] **Step 1: Add RED terminal-projection fixtures and tests**
+- [x] **Step 1: Add RED terminal-projection fixtures and tests**
 
 Import production authorities:
 
@@ -432,7 +432,7 @@ cancelled/state mismatch, missing event, duplicate conflicting event,
 malformed journal/outbox collection, extra event/payload field, more than one
 new turn, and a hostile value whose `__str__`/`__repr__` raises.
 
-- [ ] **Step 2: Run the projector matrix and verify RED**
+- [x] **Step 2: Run the projector matrix and verify RED**
 
 Run:
 
@@ -444,7 +444,7 @@ PYTHONPATH="$PWD/src" conda run --no-capture-output -n agentdeck \
 
 Expected: FAIL because the observation types and projector do not exist.
 
-- [ ] **Step 3: Add immutable observation and fixed code map**
+- [x] **Step 3: Add immutable observation and fixed code map**
 
 Add:
 
@@ -468,7 +468,7 @@ class _LeaderTerminalEvidenceInvalid(ValueError):
 Use an explicit literal map instead of the comprehension if a production stage
 needs a different public spelling. Tests lock every production stage.
 
-- [ ] **Step 4: Reconcile logical journal/outbox events without raw projection**
+- [x] **Step 4: Reconcile logical journal/outbox events without raw projection**
 
 Implement a pure helper that:
 
@@ -513,7 +513,7 @@ def _logical_conversation_events(
     return list(logical.values())
 ```
 
-- [ ] **Step 5: Implement `_project_leader_terminal()`**
+- [x] **Step 5: Implement `_project_leader_terminal()`**
 
 The projector must:
 
@@ -611,7 +611,7 @@ The projector still performs exact event and payload shape validation before
 constructing it. A caught `ValueError`, `TypeError`, or lifecycle validation
 error becomes `_LeaderTerminalEvidenceInvalid` with no raw message.
 
-- [ ] **Step 6: Extend `_live_failure()` for snapshot-stable terminal evidence**
+- [x] **Step 6: Extend `_live_failure()` for snapshot-stable terminal evidence**
 
 Add mutually exclusive keyword inputs:
 
@@ -650,7 +650,7 @@ def _closed_leader_terminal(value: object) -> dict[str, object] | None:
     return leader_gateway_diagnostics(error)
 ```
 
-- [ ] **Step 7: Run the terminal projector matrix and verify GREEN**
+- [x] **Step 7: Run the terminal projector matrix and verify GREEN**
 
 Run the Step 2 command again.
 
@@ -663,7 +663,7 @@ Expected: all selected tests PASS.
 - Modify: `tests/test_m2c_live_acceptance.py:1478-1550`
 - Test: `tests/test_m2c_live_acceptance.py` near terminal projector tests
 
-- [ ] **Step 1: Add deterministic fake clock, process, store, and drain**
+- [x] **Step 1: Add deterministic fake clock, process, store, and drain**
 
 Add test-only helpers:
 
@@ -708,7 +708,7 @@ class _PreviewStore:
 The fake store returns already owned exact dictionaries; the production helper
 must not mutate them.
 
-- [ ] **Step 2: Add RED wait tests**
+- [x] **Step 2: Add RED wait tests**
 
 Add tests proving:
 
@@ -731,7 +731,7 @@ the in-memory `_PtyTail`. Parse the rendered JSON and assert none of those
 strings appear; only the PTY digest and exact four-field terminal object may
 appear.
 
-- [ ] **Step 3: Run wait tests and verify RED**
+- [x] **Step 3: Run wait tests and verify RED**
 
 Run:
 
@@ -744,7 +744,7 @@ PYTHONPATH="$PWD/src" conda run --no-capture-output -n agentdeck \
 
 Expected: FAIL because `_wait_for_mission_preview()` does not exist.
 
-- [ ] **Step 4: Implement strict baseline turn-id extraction**
+- [x] **Step 4: Implement strict baseline turn-id extraction**
 
 Add a pure helper that accepts one loaded state, requires exact
 `conversation_turns` list/dicts with non-empty unique string `turn_id`, and
@@ -767,7 +767,7 @@ def _conversation_turn_ids(state: object) -> frozenset[str]:
     return frozenset(identities)
 ```
 
-- [ ] **Step 5: Implement one observation pass**
+- [x] **Step 5: Implement one observation pass**
 
 Add an internal helper or local closure that:
 
@@ -858,7 +858,7 @@ def _observe_mission_preview_or_terminal(
 The broad final `Exception` catch is safe only because it emits one fixed code
 and never includes `str(error)` or `repr(error)`.
 
-- [ ] **Step 6: Implement `_wait_for_mission_preview()`**
+- [x] **Step 6: Implement `_wait_for_mission_preview()`**
 
 Use injectable clock/sleep/drain callables for deterministic tests:
 
@@ -922,7 +922,7 @@ The concrete implementation may remove duplication with a local function, but
 must preserve the order: bounded drain -> durable observation -> process poll
 -> bounded sleep, plus final drain/observation before exit or timeout.
 
-- [ ] **Step 7: Run wait tests and verify GREEN**
+- [x] **Step 7: Run wait tests and verify GREEN**
 
 Run the Step 3 command again.
 
@@ -935,7 +935,7 @@ Expected: all selected tests PASS in well under one second of simulated time.
 - Modify: `tests/test_m2c_live_acceptance.py:2580-2705`
 - Test: `tests/test_m2c_live_acceptance.py:4020-4180`
 
-- [ ] **Step 1: Add RED integration tests for baseline capture and no second state load**
+- [x] **Step 1: Add RED integration tests for baseline capture and no second state load**
 
 Update the existing pre-confirmation real-path test so it monkeypatches
 `_wait_for_mission_preview`, not the first generic `_wait_for_state`. Its fake
@@ -954,7 +954,7 @@ Add a terminal integration case whose store rejects a second load after the
 terminal snapshot. Assert the failure has one terminal object, matching
 cardinalities, and no raw state content.
 
-- [ ] **Step 2: Run integration tests and verify RED**
+- [x] **Step 2: Run integration tests and verify RED**
 
 Run:
 
@@ -968,7 +968,7 @@ PYTHONPATH="$PWD/src" conda run --no-capture-output -n agentdeck \
 Expected: FAIL because `_create_and_confirm_live_mission()` still uses the
 generic Preview wait and does not capture baseline turn ids.
 
-- [ ] **Step 3: Replace only the first generic wait**
+- [x] **Step 3: Replace only the first generic wait**
 
 Immediately before writing the natural-language request:
 
@@ -1000,21 +1000,21 @@ previewed = _wait_for_mission_preview(
 Do not change later confirmation, admission, permission, completion, or generic
 wait behavior.
 
-- [ ] **Step 4: Make final-exit diagnostics snapshot-stable**
+- [x] **Step 4: Make final-exit diagnostics snapshot-stable**
 
 Ensure every branch in the specialized wait passes the already observed state
 snapshot to `_live_failure()`. It must not call `_live_failure(store=store)`
 after terminal selection. Add or update the `reject_second_load=True` test to
 prove this invariant.
 
-- [ ] **Step 5: Run integration tests and verify GREEN**
+- [x] **Step 5: Run integration tests and verify GREEN**
 
 Run the Step 2 command again.
 
 Expected: all selected tests PASS and confirmation bytes remain absent on every
 pre-Preview failure.
 
-- [ ] **Step 6: Run the entire non-live M2c harness**
+- [x] **Step 6: Run the entire non-live M2c harness**
 
 Run:
 
@@ -1036,7 +1036,7 @@ Do not set `AGENTDECK_M2C_LIVE=1`.
 - Modify: `HISTORY.md`
 - Modify: `docs/superpowers/plans/2026-07-16-m2c-leader-preview-terminal-observability.md`
 
-- [ ] **Step 1: Update the SOP preflight command and payload**
+- [x] **Step 1: Update the SOP preflight command and payload**
 
 Add the required model to the read-only command:
 
@@ -1050,7 +1050,7 @@ Document `m2c-live-preflight/v2`, the exact `leader_model` card, the three fixed
 model blockers, and that the preflight validates identity only—it does not call
 the model or prove availability.
 
-- [ ] **Step 2: Update the SOP live command and diagnostic table**
+- [x] **Step 2: Update the SOP live command and diagnostic table**
 
 Add the same explicit model variable to the future live command. Document that
 a different model requires a new preflight and authorization. Add the stable
@@ -1061,7 +1061,7 @@ strict meaning of genuine `mission_preview_timeout`.
 State plainly that no raw PTY, prompt, stdout, stderr, model output, argv,
 environment, or path is retained.
 
-- [ ] **Step 3: Preserve historical validation evidence**
+- [x] **Step 3: Preserve historical validation evidence**
 
 Append a new dated subsection to the M2 validation report. It must say:
 
@@ -1074,7 +1074,7 @@ MCP, network, model, login, schema, or subprocess failure.
 Record focused/non-live results available before the implementation commit and
 say frozen double-full-suite/preflight evidence is pending.
 
-- [ ] **Step 4: Update handoff and HISTORY**
+- [x] **Step 4: Update handoff and HISTORY**
 
 Set the active goal to frozen verification of M2c Leader Preview terminal
 observability. Record:
@@ -1089,7 +1089,7 @@ observability. Record:
 
 Add the same facts and exact test counts to `HISTORY.md`.
 
-- [ ] **Step 5: Check completed plan boxes and documentation consistency**
+- [x] **Step 5: Check completed plan boxes and documentation consistency**
 
 Mark Tasks 1-6 complete only after their commands have run. Search all touched
 documents for stale preflight v1/current hardcoded-live-model instructions:
@@ -1116,7 +1116,7 @@ clearly unrelated to live defaulting.
   `docs/validation/2026-07-13-phase3-m2-project-daemon.md`,
   `docs/handoff/current-development-state.md`, `HISTORY.md`, and this plan
 
-- [ ] **Step 1: Run focused production-contract regressions**
+- [x] **Step 1: Run focused production-contract regressions**
 
 Run:
 
@@ -1132,7 +1132,7 @@ PYTHONPATH="$PWD/src" conda run --no-capture-output -n agentdeck \
 Expected: PASS. These prove the harness is consuming, not redefining, the
 production terminal and outbox contracts.
 
-- [ ] **Step 2: Run syntax and diff verification**
+- [x] **Step 2: Run syntax and diff verification**
 
 Run:
 
@@ -1145,7 +1145,7 @@ git status --short
 
 Expected: compile and diff checks pass; status contains only the planned files.
 
-- [ ] **Step 3: Perform self-review against the written spec**
+- [x] **Step 3: Perform self-review against the written spec**
 
 Verify every spec requirement has a test and implementation:
 

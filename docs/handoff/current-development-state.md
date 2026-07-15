@@ -2,7 +2,7 @@
 
 Updated: 2026-07-16
 
-## Active goal — M2c Mission preview timeout closure
+## Active goal — freeze M2c Leader Preview terminal observability
 
 Frozen commit `954b868cafc509a6a767f35930b345bbccbdf887` passed two
 independent full suites (`4155 passed, 2 skipped` in `195.15s` and `185.79s`).
@@ -26,7 +26,8 @@ or artifact effects. The bounded PTY evidence is `byte_count=11`,
 `truncated=false`, and
 `sha256=066523e516460e23c045358c6736f76f2fecd1022157b11c679ae69715c0c734`;
 that hash is identity evidence only and does not explain terminal or model
-behavior.
+behavior. The historical result remains only `mission_preview_timeout`; no
+new diagnosis is applied retroactively.
 
 The harness emitted no cleanup-failure note. Post-run audit found zero matching
 live pytest/AgentDeck/tmux processes, zero `agentdeck-m2c-live-*` roots, and
@@ -36,11 +37,27 @@ and untracked `AGENTS.md` status was byte-identical before and after. No
 package install, login, authentication change, global permission/configuration
 change, user tmux inspection, or second live attempt occurred.
 
+The approved observability candidate is now implemented inside the M2c test
+harness. A specialized Preview wait prioritizes the exact new conversation
+turn's validated durable failed/cancelled terminal, continuously performs
+bounded PTY drain plus process polling, distinguishes PTY exit from a genuine
+no-terminal timeout, and emits only four closed Leader diagnostic fields. It
+also requires one immutable explicit `AGENTDECK_M2C_LEADER_MODEL`, exposes the
+identity in `m2c-live-preflight/v2`, writes that exact value to disposable
+config, and blocks missing, invalid, or drifted identity with no fallback.
+
+The complete non-live M2c harness passes `186 passed, 1 skipped in 42.69s`;
+the skipped test is the only real four-stage live node. Production provider,
+ConversationSession, MCP, authentication, network, ACP/tmux, daemon,
+permission, Worker, and timeout behavior are unchanged. No designated
+preflight, real provider, tmux server, ACP adapter, or live attempt ran while
+implementing this candidate.
+
 M2c therefore remains **BLOCKED**, not partial PASS, and M3 remains locked.
-The next action is a new brainstorming -> spec -> plan cycle scoped to the
-first unmet `mission_preview_timeout` gate. It must establish a deterministic
-reproduction and a new frozen commit plus fresh full verification and
-read-only preflight before any separately authorized future live attempt.
+The next strict gate is: create the implementation commit, run two independent
+full suites on its unchanged SHA, then—only if a human has supplied an exact
+Leader model id—run one designated read-only preflight. A future live attempt
+still requires separate authorization naming the frozen SHA and model.
 
 ## Natural-language Mission Phase 0 baseline — accepted
 

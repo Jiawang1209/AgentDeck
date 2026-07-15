@@ -346,3 +346,37 @@ a new frozen commit, fresh full verification, a new `ready=true` /
 `blockers=[]` preflight, and separate human authorization. This result does
 not permit an in-place retry or promotion of the earlier two-step transport
 PASS.
+
+## M2c Leader Preview terminal observability candidate
+
+The `954b868c` run remains historically classified only as
+`mission_preview_timeout`. The new harness does not retroactively infer
+timeout, MCP, network, model, login, schema, or subprocess failure. Its bounded
+11-byte PTY identity remains evidence of that historical run, not a diagnosis.
+
+The candidate now gives the first Preview gate a dedicated process-aware wait.
+It repeatedly drains the bounded PTY, projects only the exact new conversation
+turn's validated durable failed/cancelled terminal, polls process exit, and
+uses `mission_preview_timeout` only when no Preview, no durable terminal, and
+no process exit exists by the deadline. Durable diagnostics contain only the
+closed stage, diagnostic code, attempt count, and constraint mode. Journal and
+outbox copies are reconciled by event id, contradictory evidence fails closed,
+and failure cardinalities plus the ledger come from the same state snapshot.
+
+Leader model authority is also explicit. `AGENTDECK_M2C_LEADER_MODEL` is
+validated once, projected in `m2c-live-preflight/v2`, written to disposable
+project config, and verified again before Mission creation. Missing, invalid,
+or changed identity blocks without provider execution or fallback. This
+preflight identity check does not call the model or prove availability.
+
+Deterministic RED/GREEN work completed with the full non-live M2c harness at
+`186 passed, 1 skipped in 42.69s`. The skipped node is the only opt-in real
+four-stage acceptance. Production source, provider timeout, MCP,
+authentication, network, ACP, tmux, daemon, permission, and Worker behavior
+remain unchanged. No real provider, read-only designated preflight, tmux
+server, ACP adapter, or live Mission ran in this candidate slice.
+
+The implementation commit, two unchanged-SHA full suites, and one designated
+explicit-model read-only preflight are still pending. M2c remains **BLOCKED**,
+M3 remains locked, and any future live attempt still requires separate human
+authorization naming the frozen implementation SHA and exact model identity.

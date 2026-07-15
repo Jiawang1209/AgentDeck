@@ -38,6 +38,7 @@ material, or provider transcripts.
 ## 2. Run the read-only portable preflight
 
 ```bash
+AGENTDECK_M2C_LEADER_MODEL="<audited-model-id>" \
 conda run --no-capture-output -n agentdeck \
   pytest tests/test_m2c_live_acceptance.py::test_m2c_live_preflight_is_read_only -q -s
 ```
@@ -46,13 +47,23 @@ The probe has a five-second bound per command. It checks exact native flags
 `--output-schema` and `--output-last-message` for Codex, `--json-schema` plus
 JSON output capability for Claude, and version commands for
 `claude-agent-acp` and tmux. Probe output is bounded and never printed; the
-payload contains only:
+payload uses `schema_version=m2c-live-preflight/v2` and contains only:
 
 - `ready`;
 - fixed allowlisted blocker codes;
+- the exact `leader_model` card
+  `{provider: codex-cli, model: <audited-model-id>, source: explicit,
+  ready: true}` when the input is valid;
 - executable basenames;
 - sanitized version strings;
 - the fixed probe timeout.
+
+The Leader model is a required explicit identity, not a default. Missing,
+invalid, or changed input produces only `leader_model_missing`,
+`leader_model_invalid`, or `leader_model_drift` and forces `ready=false`.
+Rejected raw values are not echoed. Preflight validates and freezes the model
+identity only: it does not invoke the model, access a provider, or prove that
+the model is available to the current account.
 
 Codex CLI initializes per-process arg0 helper aliases even for `--version` and
 `exec --help`. For those two capability probes only, the harness sets
@@ -85,9 +96,18 @@ either. The portable test passes when this contract is honored even if the
 product result is `ready=false`; that result is still a setup blocker, not M2c
 PASS.
 
-## 3. Validate exact executable inputs
+## 3. Validate exact model and executable inputs
 
-The live test requires all four environment variables. Each value must be an
+The preflight and live test require the exact model variable below. The live
+test also requires all four executable variables. A different model value is
+a new execution authority and requires a new read-only preflight plus separate
+human authorization.
+
+```text
+AGENTDECK_M2C_LEADER_MODEL
+```
+
+Each executable value must be an
 absolute, non-symlink, regular executable with the expected basename. Missing,
 relative, directory, non-executable, symlink, or replaced identity evidence
 fails before project initialization. Initial validation seals path, device,
@@ -121,6 +141,7 @@ login commands as part of this SOP.
 
 ```bash
 AGENTDECK_M2C_LIVE=1 \
+AGENTDECK_M2C_LEADER_MODEL="<audited-model-id>" \
 AGENTDECK_M2C_CODEX="$(command -v codex)" \
 AGENTDECK_M2C_CLAUDE="$(command -v claude)" \
 AGENTDECK_M2C_CLAUDE_ACP="$(command -v claude-agent-acp)" \
@@ -198,6 +219,39 @@ Process fingerprints use Linux `/proc/<pid>/stat` start ticks or macOS
 `libproc.proc_pidinfo(PROC_PIDTBSDINFO)` start seconds plus microseconds, bound
 with PID, UID, and PGID; unsupported or unreadable kernel identity fails closed
 without a coarse `ps` timestamp fallback.
+
+Before Mission Preview, the specialized wait continuously performs a bounded
+PTY drain, checks the exact new conversation turn's durable terminal, polls
+the PTY process, and respects one outer deadline. A valid durable Leader
+terminal takes precedence over a later timeout and exposes exactly
+`stage`, `diagnostic_code`, `attempt_count`, and `constraint_mode`. Production
+Leader stages map one-to-one to these stable harness codes:
+
+```text
+leader_cancelled_before_preview
+leader_backend_blocked_before_preview
+leader_backend_failure_before_preview
+leader_timeout_before_preview
+leader_nonzero_before_preview
+leader_json_parse_before_preview
+leader_schema_before_preview
+leader_oversize_before_preview
+leader_acp_incomplete_before_preview
+leader_acp_permission_before_preview
+leader_acp_empty_before_preview
+leader_acp_failure_before_preview
+```
+
+`bare_pty_exited_before_preview` means the PTY process ended after its final
+bounded drain without a Preview or valid durable terminal.
+`leader_terminal_evidence_invalid` means persisted lifecycle evidence was
+malformed or contradictory. `leader_preview_terminal_conflict` means the same
+observation contained both Preview and terminal facts and therefore fails
+closed. `mission_preview_timeout` is reserved for the strict final case where
+the deadline expires while the PTY is still alive and neither Preview nor a
+durable terminal exists. None of these diagnostics retains raw PTY content,
+prompt text, stdout, stderr, model output, argv, environment values, or paths.
+
 Failures with a durable store load that store exactly once and derive both
 state cardinalities and a transcript-free ledger from that same snapshot. The
 ledger has exactly these fields:
@@ -282,5 +336,6 @@ conda run --no-capture-output -n agentdeck \
   pytest tests/test_m2c_live_acceptance.py -q
 ```
 
-Expected portable result: `97 passed, 1 skipped`. A printed `ready=false`
+Expected portable result for this frozen candidate: `186 passed, 1 skipped`.
+A printed `ready=false`
 payload remains an honest setup result, not M2c PASS.

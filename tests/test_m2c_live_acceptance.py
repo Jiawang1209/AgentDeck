@@ -31,6 +31,12 @@ from agentdeck import cli as cli_module
 from agentdeck.config import load_config
 from agentdeck.contracts import validate_trace_contract, validate_workbench_contract
 from agentdeck.conversation.bindings import execution_digest
+from agentdeck.conversation.leader_gateway import (
+    LEADER_FAILURE_STAGES,
+    LeaderGatewayError,
+    leader_gateway_diagnostics,
+)
+from agentdeck.conversation.lifecycle import validate_conversation_history
 from agentdeck.daemon.client import DaemonClient
 from agentdeck.daemon.lifecycle import (
     DaemonIdentityError,
@@ -59,6 +65,8 @@ from agentdeck.state import (
 LIVE = os.environ.get("AGENTDECK_M2C_LIVE") == "1"
 PROBE_TIMEOUT_SECONDS = 5
 PROBE_OUTPUT_LIMIT = 256 * 1024
+LEADER_MODEL_ENV = "AGENTDECK_M2C_LEADER_MODEL"
+LEADER_MODEL_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,95}\Z")
 TOOL_SPECS = (
     ("codex", "AGENTDECK_M2C_CODEX", ("exec", "--help"), ("--version",)),
     ("claude", "AGENTDECK_M2C_CLAUDE", ("--help",), ("--version",)),
@@ -82,6 +90,9 @@ BLOCKER_CODES = frozenset(
         "probe_residual_process",
         "probe_scope_unverified",
         "executable_identity_drift",
+        "leader_model_missing",
+        "leader_model_invalid",
+        "leader_model_drift",
     }
 )
 _LIVE_TASK_AUTHORITY_FIELDS = (
@@ -599,6 +610,21 @@ def _sanitized_version(payload: bytes) -> str | None:
     return line or None
 
 
+def _seal_leader_model_input(
+    raw: object,
+) -> tuple[_LeaderModelSeal | None, str | None]:
+    if raw is None or raw == "":
+        return None, "leader_model_missing"
+    if type(raw) is not str or LEADER_MODEL_PATTERN.fullmatch(raw) is None:
+        return None, "leader_model_invalid"
+    return _LeaderModelSeal(model=raw), None
+
+
+def _leader_model_from_environment(
+) -> tuple[_LeaderModelSeal | None, str | None]:
+    return _seal_leader_model_input(os.environ.get(LEADER_MODEL_ENV))
+
+
 def _resolved_probe_seal(name: str, env_name: str) -> _ExecutableSeal | None:
     configured = os.environ.get(env_name)
     if configured is not None:
@@ -613,10 +639,26 @@ def _live_preflight(
     *,
     require_explicit_paths: bool = False,
     isolation: _ProbeIsolation | None = None,
+    leader_model_seal: _LeaderModelSeal | None = None,
 ) -> dict[str, object]:
     isolation = isolation or _prepare_probe_isolation(project)
     before = _roots_snapshot((project, *isolation.roots))
-    blockers: list[str] = []
+    observed_model, model_blocker = _leader_model_from_environment()
+    target_model = observed_model
+    if leader_model_seal is not None:
+        validated_seal, supplied_blocker = _seal_leader_model_input(
+            leader_model_seal.model
+        )
+        if supplied_blocker is not None or validated_seal != leader_model_seal:
+            target_model = None
+            model_blocker = "leader_model_invalid"
+        else:
+            target_model = leader_model_seal
+        if target_model is not None and observed_model != leader_model_seal:
+            model_blocker = "leader_model_drift"
+    blockers: list[str] = (
+        [model_blocker] if model_blocker is not None else []
+    )
     tools: list[dict[str, object]] = []
     resolved: dict[str, _ExecutableSeal | None] = {}
     for name, env_name, _help_args, _version_args in TOOL_SPECS:
@@ -733,14 +775,32 @@ def _live_preflight(
             }
         )
     time.sleep(0.05)
+    if leader_model_seal is not None and target_model is not None:
+        final_model, _ = _leader_model_from_environment()
+        if final_model != leader_model_seal:
+            blockers.append("leader_model_drift")
     if _roots_snapshot((project, *isolation.roots)) != before:
         blockers.append("probe_wrote_files")
     unique_blockers = list(dict.fromkeys(blockers))
+    model_ready = target_model is not None and not any(
+        blocker in {
+            "leader_model_missing",
+            "leader_model_invalid",
+            "leader_model_drift",
+        }
+        for blocker in unique_blockers
+    )
     return {
-        "schema_version": "m2c-live-preflight/v1",
+        "schema_version": "m2c-live-preflight/v2",
         "mode": "m2c_live_preflight",
         "ready": not unique_blockers,
         "probe_timeout_seconds": PROBE_TIMEOUT_SECONDS,
+        "leader_model": {
+            "provider": "codex-cli",
+            "model": target_model.model if target_model is not None else None,
+            "source": "explicit",
+            "ready": model_ready,
+        },
         "tools": tools,
         "blockers": unique_blockers,
     }
@@ -753,11 +813,12 @@ def _validate_preflight_payload(payload: object) -> list[str]:
         "mode",
         "ready",
         "probe_timeout_seconds",
+        "leader_model",
         "tools",
         "blockers",
     }:
         return ["preflight shape invalid"]
-    if payload["schema_version"] != "m2c-live-preflight/v1":
+    if payload["schema_version"] != "m2c-live-preflight/v2":
         errors.append("schema_version invalid")
     if payload["mode"] != "m2c_live_preflight":
         errors.append("mode invalid")
@@ -772,6 +833,65 @@ def _validate_preflight_payload(payload: object) -> list[str]:
         errors.append("ready invalid")
     if payload["probe_timeout_seconds"] != 5:
         errors.append("timeout invalid")
+    leader_model = payload["leader_model"]
+    model_blockers = {
+        "leader_model_missing",
+        "leader_model_invalid",
+        "leader_model_drift",
+    }
+    if type(leader_model) is not dict or set(leader_model) != {
+        "provider", "model", "source", "ready"
+    }:
+        errors.append("leader model shape invalid")
+    else:
+        model = leader_model["model"]
+        model_ready = leader_model["ready"]
+        model_is_valid = (
+            type(model) is str
+            and LEADER_MODEL_PATTERN.fullmatch(model) is not None
+        )
+        if (
+            leader_model["provider"] != "codex-cli"
+            or leader_model["source"] != "explicit"
+            or type(model_ready) is not bool
+            or (model is not None and not model_is_valid)
+        ):
+            errors.append("leader model invalid")
+        active_model_blockers = (
+            {item for item in blockers if item in model_blockers}
+            if type(blockers) is list
+            else set()
+        )
+        model_card_consistent = (
+            type(model_ready) is bool
+            and (
+                (
+                    model_ready
+                    and model_is_valid
+                    and not active_model_blockers
+                )
+                or (
+                    not model_ready
+                    and (
+                        (
+                            model is None
+                            and active_model_blockers
+                            in (
+                                {"leader_model_missing"},
+                                {"leader_model_invalid"},
+                            )
+                        )
+                        or (
+                            model_is_valid
+                            and active_model_blockers
+                            == {"leader_model_drift"}
+                        )
+                    )
+                )
+            )
+        )
+        if not model_card_consistent:
+            errors.append("leader model readiness invalid")
     tools = payload["tools"]
     if type(tools) is not list or len(tools) != 4:
         errors.append("tools invalid")
@@ -821,6 +941,153 @@ class _PtyTail:
 
 class _LiveHarnessFailure(AssertionError):
     pass
+
+
+@dataclass(frozen=True)
+class _LeaderModelSeal:
+    model: str
+
+
+_LEADER_TERMINAL_CODES = {
+    stage: f"leader_{stage}_before_preview"
+    for stage in LEADER_FAILURE_STAGES
+}
+
+
+@dataclass(frozen=True)
+class _LeaderTerminalObservation:
+    code: str
+    diagnostics: dict[str, object]
+
+
+class _LeaderTerminalEvidenceInvalid(ValueError):
+    pass
+
+
+def _logical_conversation_events(
+    state: object, journal_events: object
+) -> list[dict[str, object]]:
+    if type(state) is not dict or type(journal_events) is not list:
+        raise _LeaderTerminalEvidenceInvalid
+    outbox = state.get("conversation_event_outbox")
+    if type(outbox) is not list:
+        raise _LeaderTerminalEvidenceInvalid
+    logical: dict[str, dict[str, object]] = {}
+    for collection in (journal_events, outbox):
+        for item in collection:
+            if (
+                type(item) is not dict
+                or set(item)
+                != {"event_id", "event_type", "created_at", "payload"}
+                or type(item["event_id"]) is not str
+                or not item["event_id"]
+                or type(item["event_type"]) is not str
+                or not item["event_type"]
+                or type(item["created_at"]) is not str
+                or not item["created_at"]
+                or type(item["payload"]) is not dict
+            ):
+                raise _LeaderTerminalEvidenceInvalid
+            prior = logical.get(item["event_id"])
+            if prior is not None and prior != item:
+                raise _LeaderTerminalEvidenceInvalid
+            logical[item["event_id"]] = item
+    return list(logical.values())
+
+
+def _project_leader_terminal(
+    state: object,
+    journal_events: object,
+    baseline_turn_ids: frozenset[str],
+) -> _LeaderTerminalObservation | None:
+    try:
+        if type(state) is not dict or type(baseline_turn_ids) is not frozenset:
+            raise _LeaderTerminalEvidenceInvalid
+        if any(type(item) is not str or not item for item in baseline_turn_ids):
+            raise _LeaderTerminalEvidenceInvalid
+        base_records: dict[str, list[dict[str, object]]] = {}
+        for key in (
+            "conversation_sessions",
+            "conversation_turns",
+            "conversation_preview_bindings",
+        ):
+            collection = state.get(key)
+            if type(collection) is not list or any(
+                type(item) is not dict for item in collection
+            ):
+                raise _LeaderTerminalEvidenceInvalid
+            base_records[key] = collection
+        transitions = state.get("conversation_state_transitions")
+        if type(transitions) is not list or any(
+            type(item) is not dict for item in transitions
+        ):
+            raise _LeaderTerminalEvidenceInvalid
+        projected = validate_conversation_history(base_records, transitions)
+        new_turns = [
+            item
+            for item in base_records["conversation_turns"]
+            if item.get("turn_id") not in baseline_turn_ids
+        ]
+        if not new_turns:
+            return None
+        if len(new_turns) != 1:
+            raise _LeaderTerminalEvidenceInvalid
+        turn = new_turns[0]
+        turn_id = turn.get("turn_id")
+        conversation_id = turn.get("conversation_id")
+        if type(turn_id) is not str or type(conversation_id) is not str:
+            raise _LeaderTerminalEvidenceInvalid
+        terminal_state = projected["turn_states"].get(turn_id)
+        events = _logical_conversation_events(state, journal_events)
+        matching = [
+            item
+            for item in events
+            if item["event_type"] == "conversation_turn_terminal"
+            and item["payload"].get("turn_id") == turn_id
+        ]
+        if terminal_state not in {"failed", "cancelled"}:
+            if matching:
+                raise _LeaderTerminalEvidenceInvalid
+            return None
+        if len(matching) != 1:
+            raise _LeaderTerminalEvidenceInvalid
+        payload = matching[0]["payload"]
+        if set(payload) != {
+            "conversation_id",
+            "turn_id",
+            "state",
+            "stage",
+            "diagnostic_code",
+            "attempt_count",
+            "constraint_mode",
+        }:
+            raise _LeaderTerminalEvidenceInvalid
+        if (
+            type(payload["stage"]) is not str
+            or payload["stage"] not in LEADER_FAILURE_STAGES
+        ):
+            raise _LeaderTerminalEvidenceInvalid
+        if (
+            payload["conversation_id"] != conversation_id
+            or payload["state"] != terminal_state
+            or (terminal_state == "cancelled")
+            != (payload["stage"] == "cancelled")
+        ):
+            raise _LeaderTerminalEvidenceInvalid
+        error = LeaderGatewayError(
+            payload["stage"],
+            payload["diagnostic_code"],
+            attempt_count=payload["attempt_count"],
+            constraint_mode=payload["constraint_mode"],
+        )
+        return _LeaderTerminalObservation(
+            code=_LEADER_TERMINAL_CODES[error.stage],
+            diagnostics=leader_gateway_diagnostics(error),
+        )
+    except _LeaderTerminalEvidenceInvalid:
+        raise
+    except (KeyError, TypeError, ValueError):
+        raise _LeaderTerminalEvidenceInvalid from None
 
 
 @dataclass(frozen=True)
@@ -1289,20 +1556,48 @@ def _closed_task_authority(value: object) -> dict[str, bool] | None:
     return {field: value[field] for field in _LIVE_TASK_AUTHORITY_FIELDS}
 
 
+def _closed_leader_terminal(value: object) -> dict[str, object] | None:
+    fields = (
+        "stage",
+        "diagnostic_code",
+        "attempt_count",
+        "constraint_mode",
+    )
+    if type(value) is not dict or tuple(value) != fields:
+        return None
+    try:
+        error = LeaderGatewayError(
+            value["stage"],
+            value["diagnostic_code"],
+            attempt_count=value["attempt_count"],
+            constraint_mode=value["constraint_mode"],
+        )
+    except (TypeError, ValueError):
+        return None
+    return leader_gateway_diagnostics(error)
+
+
 def _live_failure(
     code: str,
     *,
     store: StateStore | None = None,
+    state_snapshot: dict[str, object] | None = None,
     capture: _PtyTail | None = None,
     output: bytes | None = None,
     task_authority: object = None,
     frozen_authority: object = None,
+    leader_terminal: object = None,
 ) -> _LiveHarnessFailure:
+    if store is not None and state_snapshot is not None:
+        raise ValueError("live failure state source is ambiguous")
     diagnostic: dict[str, object] = {"stage": "live_acceptance", "code": code}
     closed_task_authority = _closed_task_authority(task_authority)
     closed_frozen_authority = _closed_frozen_authority(frozen_authority)
-    if store is not None:
-        state = store.load()
+    closed_terminal = _closed_leader_terminal(leader_terminal)
+    state = store.load() if store is not None else state_snapshot
+    if state is not None:
+        if type(state) is not dict:
+            raise ValueError("live failure state snapshot is invalid")
         diagnostic["cardinalities"] = _state_cardinalities_from_state(state)
         diagnostic["ledger"] = _live_ledger_diagnostic(
             state,
@@ -1322,6 +1617,8 @@ def _live_failure(
         diagnostic["task_authority"] = closed_task_authority
     if closed_frozen_authority is not None:
         diagnostic["frozen_authority"] = closed_frozen_authority
+    if closed_terminal is not None:
+        diagnostic["leader_terminal"] = closed_terminal
     return _LiveHarnessFailure(json.dumps(diagnostic, sort_keys=True))
 
 
@@ -1526,6 +1823,253 @@ def _drain_pty(
         capture.add(chunk)
         drained += len(chunk)
         chunks += 1
+
+
+def _conversation_turn_ids(state: object) -> frozenset[str]:
+    if type(state) is not dict:
+        raise _LeaderTerminalEvidenceInvalid
+    turns = state.get("conversation_turns")
+    if type(turns) is not list or any(type(item) is not dict for item in turns):
+        raise _LeaderTerminalEvidenceInvalid
+    identities = [item.get("turn_id") for item in turns]
+    if (
+        any(type(item) is not str or not item for item in identities)
+        or len(identities) != len(set(identities))
+    ):
+        raise _LeaderTerminalEvidenceInvalid
+    return frozenset(identities)
+
+
+def _mission_preview_status(
+    state: dict[str, object], baseline_turn_ids: frozenset[str]
+) -> str:
+    if (
+        type(state) is not dict
+        or type(baseline_turn_ids) is not frozenset
+    ):
+        return "invalid"
+    missions = state.get("missions")
+    plans = state.get("plans")
+    bindings = state.get("conversation_preview_bindings")
+    turns = state.get("conversation_turns")
+    if (
+        type(turns) is not list
+        or any(type(item) is not dict for item in turns)
+        or type(bindings) is not list
+        or any(type(item) is not dict for item in bindings)
+    ):
+        return "invalid"
+    new_turns = [
+        item
+        for item in turns
+        if item.get("turn_id") not in baseline_turn_ids
+    ]
+    if len(new_turns) == 0:
+        return "absent"
+    if len(new_turns) != 1:
+        return "invalid"
+    turn = new_turns[0]
+    turn_id = turn.get("turn_id")
+    conversation_id = turn.get("conversation_id")
+    if (
+        type(turn_id) is not str
+        or not turn_id
+        or type(conversation_id) is not str
+        or not conversation_id
+    ):
+        return "invalid"
+    matching_bindings = [
+        item for item in bindings if item.get("turn_id") == turn_id
+    ]
+    if not matching_bindings:
+        return (
+            "absent"
+            if type(missions) is list
+            and not missions
+            and type(plans) is list
+            and not plans
+            else "invalid"
+        )
+    if (
+        len(matching_bindings) != 1
+        or type(missions) is not list
+        or len(missions) != 1
+        or type(missions[0]) is not dict
+        or type(plans) is not list
+        or len(plans) != 1
+        or type(plans[0]) is not dict
+    ):
+        return "invalid"
+    binding = matching_bindings[0]
+    mission = missions[0]
+    plan = plans[0]
+    preview_id = binding.get("preview_id")
+    mission_id = mission.get("mission_id")
+    plan_id = plan.get("plan_id")
+    plan_hash = mission.get("plan_hash")
+    if (
+        type(preview_id) is not str
+        or not preview_id
+        or type(mission_id) is not str
+        or not mission_id
+        or type(plan_id) is not str
+        or not plan_id
+        or type(plan_hash) is not str
+        or not plan_hash
+        or binding.get("conversation_id") != conversation_id
+        or binding.get("preview_kind") != "mission_confirm"
+        or binding.get("action_id") != mission_id
+        or binding.get("action_hash") != plan_hash
+        or mission.get("plan_id") != plan_id
+    ):
+        return "invalid"
+    try:
+        projection = validate_conversation_history(
+            {
+                key: state[key]
+                for key in (
+                    "conversation_sessions",
+                    "conversation_turns",
+                    "conversation_preview_bindings",
+                )
+            },
+            state["conversation_state_transitions"],
+        )
+    except (KeyError, TypeError, ValueError):
+        return "invalid"
+    if (
+        projection["preview_states"].get(preview_id) != "pending"
+        or projection["pending_preview_by_conversation"].get(conversation_id)
+        != preview_id
+    ):
+        return "invalid"
+    turn_state = projection["turn_states"].get(turn_id)
+    if turn_state == "completed":
+        return "ready"
+    if turn_state in {"failed", "cancelled"}:
+        return "pending_terminal"
+    return "invalid"
+
+
+def _mission_preview_ready(
+    state: dict[str, object], baseline_turn_ids: frozenset[str]
+) -> bool:
+    return _mission_preview_status(state, baseline_turn_ids) == "ready"
+
+
+def _observe_mission_preview_or_terminal(
+    store: StateStore,
+    capture: _PtyTail,
+    *,
+    baseline_turn_ids: frozenset[str],
+) -> tuple[dict[str, object] | None, dict[str, object]]:
+    state: object = None
+    try:
+        state = store.load()
+        if type(state) is not dict:
+            raise _LeaderTerminalEvidenceInvalid
+        journal_events = store.all_events()
+        terminal = _project_leader_terminal(
+            state, journal_events, baseline_turn_ids
+        )
+        preview_status = _mission_preview_status(state, baseline_turn_ids)
+    except _LeaderTerminalEvidenceInvalid:
+        raise _live_failure(
+            "leader_terminal_evidence_invalid",
+            state_snapshot=state if type(state) is dict else None,
+            capture=capture,
+        ) from None
+    except Exception:
+        raise _live_failure(
+            "leader_terminal_evidence_invalid",
+            state_snapshot=state if type(state) is dict else None,
+            capture=capture,
+        ) from None
+    if preview_status == "invalid":
+        raise _live_failure(
+            "leader_terminal_evidence_invalid",
+            state_snapshot=state,
+            capture=capture,
+        )
+    if preview_status in {"ready", "pending_terminal"} and terminal is not None:
+        raise _live_failure(
+            "leader_preview_terminal_conflict",
+            state_snapshot=state,
+            capture=capture,
+        )
+    if terminal is not None:
+        raise _live_failure(
+            terminal.code,
+            state_snapshot=state,
+            capture=capture,
+            leader_terminal=terminal.diagnostics,
+        )
+    if preview_status == "pending_terminal":
+        raise _live_failure(
+            "leader_terminal_evidence_invalid",
+            state_snapshot=state,
+            capture=capture,
+        )
+    return (state if preview_status == "ready" else None), state
+
+
+def _wait_for_mission_preview(
+    store: StateStore,
+    process: subprocess.Popen[bytes],
+    master: int,
+    capture: _PtyTail,
+    *,
+    baseline_turn_ids: frozenset[str],
+    timeout_seconds: float = 180,
+    monotonic: Any = time.monotonic,
+    sleep: Any = time.sleep,
+    drain: Any = _drain_pty,
+) -> dict[str, object]:
+    deadline = monotonic() + timeout_seconds
+
+    def observe() -> tuple[dict[str, object] | None, dict[str, object]]:
+        return _observe_mission_preview_or_terminal(
+            store,
+            capture,
+            baseline_turn_ids=baseline_turn_ids,
+        )
+
+    while True:
+        drain(master, capture, deadline=deadline)
+        preview, last_state = observe()
+        if preview is not None:
+            return preview
+        if process.poll() is not None:
+            drain(master, capture)
+            preview, last_state = observe()
+            if preview is not None:
+                return preview
+            raise _live_failure(
+                "bare_pty_exited_before_preview",
+                state_snapshot=last_state,
+                capture=capture,
+            )
+        if monotonic() >= deadline:
+            drain(master, capture)
+            preview, last_state = observe()
+            if preview is not None:
+                return preview
+            if process.poll() is not None:
+                drain(master, capture)
+                preview, last_state = observe()
+                if preview is not None:
+                    return preview
+                raise _live_failure(
+                    "bare_pty_exited_before_preview",
+                    state_snapshot=last_state,
+                    capture=capture,
+                )
+            raise _live_failure(
+                "mission_preview_timeout",
+                state_snapshot=last_state,
+                capture=capture,
+            )
+        sleep(min(0.1, max(0.0, deadline - monotonic())))
 
 
 def _wait_for_pty_prompt(
@@ -2522,15 +3066,24 @@ def _toml_string(value: str) -> str:
 
 
 def _write_live_config(
-    root: Path, paths: dict[str, _ExecutableSeal], *, session_name: str
+    root: Path,
+    paths: dict[str, _ExecutableSeal],
+    *,
+    session_name: str,
+    leader_model: _LeaderModelSeal,
 ) -> None:
+    if (
+        type(leader_model) is not _LeaderModelSeal
+        or _seal_leader_model_input(leader_model.model)[0] != leader_model
+    ):
+        raise _live_failure("leader_model_invalid")
     config = f'''[project]
 name = "m2c-live"
 
 [leader]
 agent_id = "leader"
 provider = "codex-cli"
-model = "gpt-5.4"
+model = {_toml_string(leader_model.model)}
 approval_mode = "confirm"
 
 [[agents]]
@@ -2564,6 +3117,15 @@ controller_ttl_seconds = 3600
 max_frame_bytes = 1048576
 '''
     (root / ".agentdeck" / "config.toml").write_text(config, encoding="utf-8")
+
+
+def _verify_live_leader_model(root: Path, seal: _LeaderModelSeal) -> None:
+    try:
+        leader = load_config(root).leader
+    except Exception:
+        raise _live_failure("leader_model_drift") from None
+    if leader.provider != "codex-cli" or leader.model != seal.model:
+        raise _live_failure("leader_model_drift")
 
 
 def _explicit_live_paths() -> dict[str, _ExecutableSeal]:
@@ -2634,14 +3196,24 @@ def _create_and_confirm_live_mission(
             "第三轮 claude-worker 将 artifact.txt 精确改为 accepted-v2 换行；"
             "第四轮 codex-worker 只读验收精确字节。共4轮。\n"
         )
+        baseline_state = store.load()
+        try:
+            baseline_turn_ids = _conversation_turn_ids(baseline_state)
+        except (TypeError, ValueError):
+            raise _live_failure(
+                "leader_terminal_evidence_invalid",
+                state_snapshot=(
+                    baseline_state if type(baseline_state) is dict else None
+                ),
+                capture=capture,
+            ) from None
         os.write(master, request.encode("utf-8"))
-        previewed = _wait_for_state(
+        previewed = _wait_for_mission_preview(
             store,
-            lambda state: len(state.get("missions", [])) == 1
-            and len(state.get("plans", [])) == 1
-            and bool(state.get("conversation_preview_bindings")),
-            code="mission_preview_timeout",
-            capture=capture,
+            process,
+            master,
+            capture,
+            baseline_turn_ids=baseline_turn_ids,
         )
         mission = previewed["missions"][0]
         mission_id = str(mission["mission_id"])
@@ -2919,13 +3491,16 @@ def _live_resource_guard(
 
 
 def _run_live_acceptance() -> dict[str, object]:
+    leader_model, model_blocker = _leader_model_from_environment()
+    if model_blocker is not None or leader_model is None:
+        raise _live_failure(model_blocker or "leader_model_invalid")
     parent: Path | None = None
     try:
         paths = _explicit_live_paths()
         parent = Path(
             tempfile.mkdtemp(prefix="agentdeck-m2c-live-", dir="/tmp")
         ).resolve()
-        return _run_live_acceptance_in_project(paths, parent)
+        return _run_live_acceptance_in_project(paths, parent, leader_model)
     except _LiveHarnessFailure:
         raise
     except Exception:
@@ -2950,10 +3525,14 @@ def _remove_live_setup_parent(parent: Path) -> bool:
 
 
 def _run_live_acceptance_in_project(
-    paths: dict[str, _ExecutableSeal], parent: Path
+    paths: dict[str, _ExecutableSeal],
+    parent: Path,
+    leader_model: _LeaderModelSeal,
 ) -> dict[str, object]:
     try:
-        return _run_live_acceptance_in_project_guarded(paths, parent)
+        return _run_live_acceptance_in_project_guarded(
+            paths, parent, leader_model
+        )
     except BaseException as exc:
         cleanup_failed = _remove_live_setup_parent(parent)
         if isinstance(exc, _LiveHarnessFailure) or not isinstance(exc, Exception):
@@ -2974,7 +3553,9 @@ def _run_live_acceptance_in_project(
 
 
 def _run_live_acceptance_in_project_guarded(
-    paths: dict[str, _ExecutableSeal], parent: Path
+    paths: dict[str, _ExecutableSeal],
+    parent: Path,
+    leader_model: _LeaderModelSeal,
 ) -> dict[str, object]:
     source_paths = paths
     root = parent / "repo"
@@ -3017,7 +3598,11 @@ def _run_live_acceptance_in_project_guarded(
     ) as cleanup_audit:
         _verify_all_executable_seals(all_seals)
         preflight_before = _tree_snapshot(root)
-        preflight = _live_preflight(root, require_explicit_paths=True)
+        preflight = _live_preflight(
+            root,
+            require_explicit_paths=True,
+            leader_model_seal=leader_model,
+        )
         _require_live(_tree_snapshot(root) == preflight_before, "preflight_wrote_project")
         _require_live(preflight["ready"] is True, "preflight_blocked")
         checkout = Path(__file__).resolve().parents[1]
@@ -3043,9 +3628,16 @@ def _run_live_acceptance_in_project_guarded(
         )
         _require_live(code == 0, "project_init_failed")
         _verify_all_executable_seals(all_seals)
-        _write_live_config(root, paths, session_name=session_name)
+        _write_live_config(
+            root,
+            paths,
+            session_name=session_name,
+            leader_model=leader_model,
+        )
+        _verify_live_leader_model(root, leader_model)
         _verify_all_executable_seals(all_seals)
         store = StateStore(root)
+        _verify_live_leader_model(root, leader_model)
         mission_id, capture, admitted = _create_and_confirm_live_mission(
             root,
             store,
@@ -3280,6 +3872,7 @@ def _run_live_acceptance_in_project_guarded(
         evidence = {
             "result": "PASS",
             "frozen_agentdeck_commit": frozen_commit,
+            "leader_model": preflight["leader_model"],
             "tools": preflight["tools"],
             "attempt_count": len(attempts),
             "canonical_handoff_count": len(handoffs),
@@ -3316,6 +3909,161 @@ def _write_fake_capability_tool(path: Path, name: str) -> None:
     }
     path.write_text("#!/bin/sh\n" + responses[name], encoding="utf-8")
     path.chmod(0o700)
+
+
+@pytest.mark.parametrize(
+    ("raw", "blocker"),
+    [
+        (None, "leader_model_missing"),
+        ("", "leader_model_missing"),
+        (" gpt-5.5", "leader_model_invalid"),
+        ("gpt-5.5 ", "leader_model_invalid"),
+        ("/tmp/model", "leader_model_invalid"),
+        ("openai/gpt-5.5", "leader_model_invalid"),
+        ("gpt-5.5\nSECRET", "leader_model_invalid"),
+        ("x" * 97, "leader_model_invalid"),
+    ],
+)
+def test_leader_model_input_fails_closed(raw, blocker) -> None:
+    seal, actual = _seal_leader_model_input(raw)
+
+    assert seal is None
+    assert actual == blocker
+    assert "SECRET" not in repr((seal, actual))
+    assert "/tmp/model" not in repr((seal, actual))
+
+
+def test_leader_model_input_accepts_exact_conservative_identity() -> None:
+    seal, blocker = _seal_leader_model_input("gpt-5.5-codex:high")
+
+    assert blocker is None
+    assert seal == _LeaderModelSeal(model="gpt-5.5-codex:high")
+
+
+@pytest.mark.parametrize(
+    ("model", "blockers"),
+    [
+        (None, ["leader_model_missing", "leader_model_invalid"]),
+        (
+            "gpt-5.5",
+            ["leader_model_missing", "leader_model_drift"],
+        ),
+    ],
+)
+def test_preflight_validator_rejects_multiple_model_blockers(
+    model, blockers
+) -> None:
+    payload = {
+        "schema_version": "m2c-live-preflight/v2",
+        "mode": "m2c_live_preflight",
+        "ready": False,
+        "probe_timeout_seconds": 5,
+        "leader_model": {
+            "provider": "codex-cli",
+            "model": model,
+            "source": "explicit",
+            "ready": False,
+        },
+        "tools": [
+            {
+                "name": name,
+                "executable_basename": name,
+                "version": None,
+                "ready": False,
+            }
+            for name, _env, _help, _version in TOOL_SPECS
+        ],
+        "blockers": blockers,
+    }
+
+    assert "leader model readiness invalid" in _validate_preflight_payload(
+        payload
+    )
+
+
+def test_preflight_model_blocker_does_not_echo_invalid_value(
+    tmp_path, monkeypatch
+) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    monkeypatch.setenv(
+        "AGENTDECK_M2C_LEADER_MODEL",
+        "invalid model SECRET /Users/private/model",
+    )
+
+    payload = _live_preflight(project)
+
+    assert payload["schema_version"] == "m2c-live-preflight/v2"
+    assert payload["leader_model"] == {
+        "provider": "codex-cli",
+        "model": None,
+        "source": "explicit",
+        "ready": False,
+    }
+    assert "leader_model_invalid" in payload["blockers"]
+    assert "SECRET" not in repr(payload)
+    assert "/Users/private/model" not in repr(payload)
+    assert _validate_preflight_payload(payload) == []
+
+
+def test_preflight_rejects_model_drift_without_echoing_observed_value(
+    tmp_path, monkeypatch
+) -> None:
+    project = tmp_path / "project"
+    fake_bin = tmp_path / "bin"
+    project.mkdir()
+    fake_bin.mkdir()
+    for name, env_name, _help, _version in TOOL_SPECS:
+        executable = fake_bin / name
+        _write_fake_capability_tool(executable, name)
+        monkeypatch.setenv(env_name, str(executable))
+    node = fake_bin / "node"
+    node.write_text("#!/bin/sh\necho 0.58.1\n", encoding="utf-8")
+    node.chmod(0o700)
+    monkeypatch.setenv("PATH", str(fake_bin))
+    monkeypatch.setenv(LEADER_MODEL_ENV, "gpt-5.5-observed-SECRET")
+
+    payload = _live_preflight(
+        project,
+        require_explicit_paths=True,
+        leader_model_seal=_LeaderModelSeal("gpt-5.5-authorized"),
+    )
+
+    assert payload["leader_model"] == {
+        "provider": "codex-cli",
+        "model": "gpt-5.5-authorized",
+        "source": "explicit",
+        "ready": False,
+    }
+    assert "leader_model_drift" in payload["blockers"]
+    assert "observed-SECRET" not in repr(payload)
+    assert _validate_preflight_payload(payload) == []
+
+
+def test_preflight_rejects_invalid_supplied_model_seal_without_echo(
+    tmp_path, monkeypatch
+) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    monkeypatch.setenv(LEADER_MODEL_ENV, "gpt-5.5")
+
+    payload = _live_preflight(
+        project,
+        leader_model_seal=_LeaderModelSeal(
+            "invalid model SECRET /Users/private"
+        ),
+    )
+
+    assert payload["leader_model"] == {
+        "provider": "codex-cli",
+        "model": None,
+        "source": "explicit",
+        "ready": False,
+    }
+    assert "leader_model_invalid" in payload["blockers"]
+    assert "SECRET" not in repr(payload)
+    assert "/Users/private" not in repr(payload)
+    assert _validate_preflight_payload(payload) == []
 
 
 def test_preflight_candidate_rejects_expanduser_failure(monkeypatch) -> None:
@@ -3420,10 +4168,18 @@ def test_preflight_resolves_path_symlinks_to_canonical_targets(
     (fake_bin / "node").symlink_to(node)
     for _name, env_name, _help_args, _version_args in TOOL_SPECS:
         monkeypatch.delenv(env_name, raising=False)
+    monkeypatch.setenv("AGENTDECK_M2C_LEADER_MODEL", "gpt-5.5")
     monkeypatch.setenv("PATH", str(fake_bin))
 
     payload = _live_preflight(project)
 
+    assert payload["schema_version"] == "m2c-live-preflight/v2"
+    assert payload["leader_model"] == {
+        "provider": "codex-cli",
+        "model": "gpt-5.5",
+        "source": "explicit",
+        "ready": True,
+    }
     assert payload["ready"] is True, json.dumps(payload, sort_keys=True)
     assert payload["blockers"] == []
     assert {
@@ -3472,6 +4228,7 @@ def test_preflight_invokes_canonical_node_for_acp_adapter(
     node.write_text("#!/bin/sh\necho 0.58.1\n", encoding="utf-8")
     node.chmod(0o700)
     (fake_bin / "node").symlink_to(node)
+    monkeypatch.setenv(LEADER_MODEL_ENV, "gpt-5.5")
     monkeypatch.setenv("PATH", str(fake_bin))
 
     payload = _live_preflight(project)
@@ -3518,6 +4275,7 @@ def test_acp_probe_uses_node_seal_as_primary_executable(
     node_target.write_text("#!/bin/sh\necho 0.58.1\n", encoding="utf-8")
     node_target.chmod(0o700)
     (fake_bin / "node").symlink_to(node_target)
+    monkeypatch.setenv(LEADER_MODEL_ENV, "gpt-5.5")
     monkeypatch.setenv("PATH", str(fake_bin))
     real_bounded_probe = _bounded_probe
     seen_node_primary = False
@@ -3589,6 +4347,7 @@ def test_preflight_does_not_execute_acp_without_sealed_path_node(
             _write_fake_capability_tool(target, name)
         (fake_bin / name).symlink_to(target)
         monkeypatch.delenv(env_name, raising=False)
+    monkeypatch.setenv(LEADER_MODEL_ENV, "gpt-5.5")
     monkeypatch.setenv("PATH", str(fake_bin))
 
     payload = _live_preflight(project)
@@ -3641,6 +4400,7 @@ def test_preflight_resolves_explicit_absolute_symlink(
     node.write_text("#!/bin/sh\necho 0.58.1\n", encoding="utf-8")
     node.chmod(0o700)
     (empty_path / "node").symlink_to(node)
+    monkeypatch.setenv(LEADER_MODEL_ENV, "gpt-5.5")
     monkeypatch.setenv("PATH", str(empty_path))
 
     payload = _live_preflight(project, require_explicit_paths=True)
@@ -3677,6 +4437,7 @@ def test_m2c_live_preflight_is_read_only(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("AGENTDECK_M2C_CLAUDE", str(unsafe_link))
     monkeypatch.delenv("AGENTDECK_M2C_CLAUDE_ACP", raising=False)
     monkeypatch.delenv("AGENTDECK_M2C_TMUX", raising=False)
+    monkeypatch.setenv(LEADER_MODEL_ENV, "gpt-5.5")
     rejected = _live_preflight(project, require_explicit_paths=True)
     assert rejected["ready"] is False
     assert rejected["blockers"] == [
@@ -3687,6 +4448,121 @@ def test_m2c_live_preflight_is_read_only(tmp_path, monkeypatch) -> None:
     ]
     assert _validate_preflight_payload(rejected) == []
     assert _tree_snapshot(project) == before
+
+
+def test_live_config_uses_only_explicit_model_seal(tmp_path) -> None:
+    @dataclass(frozen=True)
+    class PathOnly:
+        path: Path
+
+    paths = {
+        name: PathOnly(Path("/bin/true"))
+        for name, _env, _help, _version in TOOL_SPECS
+    }
+    observed: list[str] = []
+    for index, model in enumerate(("gpt-5.5", "gpt-5.5-codex:high"), start=1):
+        root = tmp_path / f"project-{index}"
+        (root / ".agentdeck").mkdir(parents=True)
+
+        _write_live_config(
+            root,
+            paths,
+            session_name=f"m2c-model-{index}",
+            leader_model=_LeaderModelSeal(model),
+        )
+
+        config = load_config(root)
+        assert config.leader.provider == "codex-cli"
+        observed.append(config.leader.model)
+    assert observed == ["gpt-5.5", "gpt-5.5-codex:high"]
+
+
+def test_live_config_rejects_unvalidated_model_seal_before_write(
+    tmp_path,
+) -> None:
+    @dataclass(frozen=True)
+    class PathOnly:
+        path: Path
+
+    root = tmp_path / "project"
+    (root / ".agentdeck").mkdir(parents=True)
+    paths = {
+        name: PathOnly(Path("/bin/true"))
+        for name, _env, _help, _version in TOOL_SPECS
+    }
+
+    with pytest.raises(_LiveHarnessFailure) as raised:
+        _write_live_config(
+            root,
+            paths,
+            session_name="m2c-invalid-model",
+            leader_model=_LeaderModelSeal("gpt-5.5\nSECRET"),
+        )
+
+    assert json.loads(str(raised.value)) == {
+        "stage": "live_acceptance",
+        "code": "leader_model_invalid",
+    }
+    assert not (root / ".agentdeck" / "config.toml").exists()
+    assert "SECRET" not in str(raised.value)
+
+
+def test_live_model_drift_is_compact_and_pre_provider(tmp_path) -> None:
+    @dataclass(frozen=True)
+    class PathOnly:
+        path: Path
+
+    root = tmp_path / "project"
+    (root / ".agentdeck").mkdir(parents=True)
+    paths = {
+        name: PathOnly(Path("/bin/true"))
+        for name, _env, _help, _version in TOOL_SPECS
+    }
+    _write_live_config(
+        root,
+        paths,
+        session_name="m2c-model-drift",
+        leader_model=_LeaderModelSeal("gpt-5.5"),
+    )
+
+    with pytest.raises(_LiveHarnessFailure) as raised:
+        _verify_live_leader_model(
+            root, _LeaderModelSeal("gpt-5.5-codex:SECRET")
+        )
+
+    diagnostic = json.loads(str(raised.value))
+    assert diagnostic == {
+        "stage": "live_acceptance",
+        "code": "leader_model_drift",
+    }
+    assert "SECRET" not in str(raised.value)
+    assert str(root) not in str(raised.value)
+
+
+def test_live_entry_requires_model_before_paths_or_project(
+    monkeypatch,
+) -> None:
+    monkeypatch.delenv(LEADER_MODEL_ENV, raising=False)
+    monkeypatch.setattr(
+        sys.modules[__name__],
+        "_explicit_live_paths",
+        lambda: (_ for _ in ()).throw(AssertionError("path discovery called")),
+    )
+    monkeypatch.setattr(
+        tempfile,
+        "mkdtemp",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("project created")
+        ),
+    )
+
+    with pytest.raises(_LiveHarnessFailure) as raised:
+        _run_live_acceptance()
+
+    assert json.loads(str(raised.value)) == {
+        "stage": "live_acceptance",
+        "code": "leader_model_missing",
+    }
 
 
 def test_live_task_authority_accepts_only_exact_fixed_scenario() -> None:
@@ -3712,7 +4588,12 @@ def _semantic_live_authority_fixture(
         "claude-agent-acp": _PathOnly(Path("/bin/true")),
         "tmux": _PathOnly(Path("/bin/true")),
     }
-    _write_live_config(root, paths, session_name="m2c-semantic-fixture")
+    _write_live_config(
+        root,
+        paths,
+        session_name="m2c-semantic-fixture",
+        leader_model=_LeaderModelSeal("gpt-5.4"),
+    )
     config = load_config(root)
     requirements: list[dict[str, object]] = []
     rows = (
@@ -4101,9 +4982,25 @@ def test_live_mission_frozen_authority_blocks_real_confirmation_path(
     class FakeProcess:
         pid = 987654
 
-    def fake_wait_for_state(_store, predicate, **_kwargs):
-        assert predicate(previewed)
+    fake_process = FakeProcess()
+
+    def fake_wait_for_preview(
+        _store,
+        process,
+        master,
+        capture,
+        *,
+        baseline_turn_ids,
+        **_kwargs,
+    ):
+        assert process is fake_process
+        assert master == read_fd
+        assert isinstance(capture, _PtyTail)
+        assert baseline_turn_ids == frozenset()
         return previewed
+
+    def reject_generic_wait(*_args, **_kwargs):
+        raise AssertionError("generic Preview wait used")
 
     def fake_wait_for_prompt(_process, _master, _capture, prompt_number):
         prompt_numbers.append(prompt_number)
@@ -4118,7 +5015,10 @@ def test_live_mission_frozen_authority_blocks_real_confirmation_path(
 
     read_fd, write_fd = os.pipe()
     module = sys.modules[__name__]
-    monkeypatch.setattr(module, "_wait_for_state", fake_wait_for_state)
+    monkeypatch.setattr(module, "_wait_for_state", reject_generic_wait)
+    monkeypatch.setattr(
+        module, "_wait_for_mission_preview", fake_wait_for_preview
+    )
     monkeypatch.setattr(module, "_wait_for_pty_prompt", fake_wait_for_prompt)
     monkeypatch.setattr(module, "_stop_pty", fake_stop_pty)
     monkeypatch.setattr(os, "write", fake_write)
@@ -4129,7 +5029,7 @@ def test_live_mission_frozen_authority_blocks_real_confirmation_path(
             store,
             env={},
             openpty_factory=lambda: (read_fd, write_fd),
-            popen_factory=lambda *_args, **_kwargs: FakeProcess(),
+            popen_factory=lambda *_args, **_kwargs: fake_process,
             scope_sealer=lambda _pid: _ProcessGroupScope(
                 pgid=987654,
                 leader=_ProcessIdentity(
@@ -4206,6 +5106,727 @@ def test_closed_task_authority_requires_exact_key_order_and_bools() -> None:
     assert _closed_task_authority(accepted) == accepted
     assert _closed_task_authority(reordered) is None
     assert _closed_task_authority(integer_value) is None
+
+
+def _leader_terminal_fixture(
+    *,
+    stage: object = "timeout",
+    state: object = "failed",
+    diagnostic_code: object = None,
+    attempt_count: object = 1,
+    constraint_mode: object = "native_json_schema",
+) -> tuple[dict[str, object], list[dict[str, object]], frozenset[str]]:
+    conversation_id = "cvs_terminal_test"
+    turn_id = "cvt_terminal_test"
+    created_at = "2026-07-16T00:00:00+00:00"
+
+    def transition(
+        identity: str,
+        entity_type: str,
+        entity_id: str,
+        from_state: str | None,
+        to_state: str,
+    ) -> dict[str, object]:
+        return {
+            "transition_id": identity,
+            "conversation_id": conversation_id,
+            "entity_type": entity_type,
+            "entity_id": entity_id,
+            "from_state": from_state,
+            "to_state": to_state,
+            "reason": "test",
+            "created_at": created_at,
+        }
+
+    durable = {
+        "plans": [],
+        "missions": [],
+        "mission_attempts": [],
+        "mission_worker_replies": [],
+        "mission_handoffs": [],
+        "permission_requests": [],
+        "conversation_sessions": [
+            {"conversation_id": conversation_id, "created_at": created_at}
+        ],
+        "conversation_turns": [
+            {
+                "turn_id": turn_id,
+                "conversation_id": conversation_id,
+                "created_at": created_at,
+            }
+        ],
+        "conversation_preview_bindings": [],
+        "conversation_state_transitions": [
+            transition("trn_con_created", "conversation", conversation_id, None, "created"),
+            transition("trn_turn_created", "turn", turn_id, None, "created"),
+            transition("trn_turn_routing", "turn", turn_id, "created", "routing"),
+            transition(
+                "trn_turn_waiting",
+                "turn",
+                turn_id,
+                "routing",
+                "waiting_leader",
+            ),
+            transition(
+                "trn_turn_terminal",
+                "turn",
+                turn_id,
+                "waiting_leader",
+                state,
+            ),
+        ],
+        "conversation_event_outbox": [],
+    }
+    event = {
+        "event_id": "evt_terminal_test",
+        "event_type": "conversation_turn_terminal",
+        "created_at": created_at,
+        "payload": {
+            "conversation_id": conversation_id,
+            "turn_id": turn_id,
+            "state": state,
+            "stage": stage,
+            "diagnostic_code": diagnostic_code,
+            "attempt_count": attempt_count,
+            "constraint_mode": constraint_mode,
+        },
+    }
+    return durable, [event], frozenset()
+
+
+def test_terminal_code_map_covers_all_production_stages() -> None:
+    assert set(_LEADER_TERMINAL_CODES) == set(LEADER_FAILURE_STAGES)
+    assert _LEADER_TERMINAL_CODES == {
+        stage: f"leader_{stage}_before_preview"
+        for stage in LEADER_FAILURE_STAGES
+    }
+
+
+@pytest.mark.parametrize(
+    ("stage", "state", "expected_code"),
+    [
+        ("timeout", "failed", "leader_timeout_before_preview"),
+        ("nonzero", "failed", "leader_nonzero_before_preview"),
+        ("schema", "failed", "leader_schema_before_preview"),
+        ("cancelled", "cancelled", "leader_cancelled_before_preview"),
+        ("oversize", "failed", "leader_oversize_before_preview"),
+    ],
+)
+def test_closed_leader_terminal_preserves_stage(
+    stage, state, expected_code
+) -> None:
+    durable, events, baseline = _leader_terminal_fixture(
+        stage=stage, state=state
+    )
+
+    observation = _project_leader_terminal(durable, events, baseline)
+
+    assert observation is not None
+    assert observation.code == expected_code
+    assert observation.diagnostics == {
+        "stage": stage,
+        "diagnostic_code": None,
+        "attempt_count": 1,
+        "constraint_mode": "native_json_schema",
+    }
+
+
+@pytest.mark.parametrize(
+    ("stage", "diagnostic_code"),
+    [
+        ("json_parse", "invalid_output_envelope"),
+        ("schema", "semantic_candidate_missing_requirement"),
+    ],
+)
+def test_closed_leader_terminal_preserves_allowlisted_diagnostic(
+    stage, diagnostic_code
+) -> None:
+    durable, events, baseline = _leader_terminal_fixture(
+        stage=stage,
+        diagnostic_code=diagnostic_code,
+        attempt_count=2,
+        constraint_mode="local",
+    )
+
+    observation = _project_leader_terminal(durable, events, baseline)
+
+    assert observation is not None
+    assert observation.diagnostics == {
+        "stage": stage,
+        "diagnostic_code": diagnostic_code,
+        "attempt_count": 2,
+        "constraint_mode": "local",
+    }
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "missing_event",
+        "conflicting_duplicate",
+        "unknown_stage",
+        "legacy_stage_alias",
+        "invalid_attempt",
+        "invalid_constraint",
+        "cancelled_state_mismatch",
+        "extra_payload_field",
+        "multiple_new_turns",
+    ],
+)
+def test_leader_terminal_evidence_fails_closed(mutation) -> None:
+    durable, events, baseline = _leader_terminal_fixture()
+    if mutation == "missing_event":
+        events.clear()
+    elif mutation == "conflicting_duplicate":
+        duplicate = copy.deepcopy(events[0])
+        duplicate["payload"]["attempt_count"] = 2
+        durable["conversation_event_outbox"] = [duplicate]
+    elif mutation == "unknown_stage":
+        events[0]["payload"]["stage"] = "SECRET /Users/private raw stderr"
+    elif mutation == "legacy_stage_alias":
+        events[0]["payload"]["stage"] = "Leader backend failed"
+    elif mutation == "invalid_attempt":
+        events[0]["payload"]["attempt_count"] = True
+    elif mutation == "invalid_constraint":
+        events[0]["payload"]["constraint_mode"] = "SECRET"
+    elif mutation == "cancelled_state_mismatch":
+        events[0]["payload"]["stage"] = "cancelled"
+    elif mutation == "extra_payload_field":
+        events[0]["payload"]["raw_output"] = "SECRET"
+    else:
+        duplicate_turn = copy.deepcopy(durable["conversation_turns"][0])
+        duplicate_turn["turn_id"] = "cvt_second"
+        durable["conversation_turns"].append(duplicate_turn)
+        durable["conversation_state_transitions"].extend(
+            [
+                {
+                    **copy.deepcopy(durable["conversation_state_transitions"][1]),
+                    "transition_id": "trn_second_created",
+                    "entity_id": "cvt_second",
+                },
+                {
+                    **copy.deepcopy(durable["conversation_state_transitions"][2]),
+                    "transition_id": "trn_second_routing",
+                    "entity_id": "cvt_second",
+                },
+            ]
+        )
+
+    with pytest.raises(_LeaderTerminalEvidenceInvalid) as raised:
+        _project_leader_terminal(durable, events, baseline)
+
+    assert str(raised.value) == ""
+    assert "SECRET" not in repr(raised.value)
+    assert "/Users/private" not in repr(raised.value)
+
+
+def test_leader_terminal_rejects_event_transition_disagreement() -> None:
+    waiting = _leader_waiting_fixture()
+    _terminal, events, baseline = _leader_terminal_fixture(stage="timeout")
+
+    with pytest.raises(_LeaderTerminalEvidenceInvalid):
+        _project_leader_terminal(waiting, events, baseline)
+
+
+def test_leader_terminal_deduplicates_identical_journal_and_outbox() -> None:
+    durable, events, baseline = _leader_terminal_fixture(stage="timeout")
+    durable["conversation_event_outbox"] = [copy.deepcopy(events[0])]
+
+    observation = _project_leader_terminal(durable, events, baseline)
+
+    assert observation is not None
+    assert observation.code == "leader_timeout_before_preview"
+
+
+class _FakeClock:
+    def __init__(self) -> None:
+        self.now = 0.0
+
+    def monotonic(self) -> float:
+        return self.now
+
+    def sleep(self, seconds: float) -> None:
+        self.now += seconds
+
+
+class _PreviewProcess:
+    def __init__(self, returncodes: list[int | None]) -> None:
+        self.returncodes = list(returncodes)
+
+    def poll(self) -> int | None:
+        if len(self.returncodes) > 1:
+            return self.returncodes.pop(0)
+        return self.returncodes[0]
+
+
+class _PreviewStore:
+    def __init__(self, states, events) -> None:
+        self.states = list(states)
+        self.events = list(events)
+
+    def load(self):
+        if len(self.states) > 1:
+            return self.states.pop(0)
+        return self.states[0]
+
+    def all_events(self):
+        if len(self.events) > 1:
+            return self.events.pop(0)
+        return self.events[0]
+
+
+def _leader_waiting_fixture() -> dict[str, object]:
+    durable, _events, _baseline = _leader_terminal_fixture()
+    durable["conversation_state_transitions"] = durable[
+        "conversation_state_transitions"
+    ][:-1]
+    return durable
+
+
+def _leader_preview_fixture() -> dict[str, object]:
+    durable = _leader_waiting_fixture()
+    conversation_id = durable["conversation_sessions"][0]["conversation_id"]
+    turn_id = durable["conversation_turns"][0]["turn_id"]
+    created_at = "2026-07-16T00:00:01+00:00"
+    preview_id = "prv_preview"
+    plan_id = "pln_preview"
+    mission_id = "mis_preview"
+    plan_hash = "sha256:" + "a" * 64
+    durable["plans"] = [{"plan_id": plan_id}]
+    durable["missions"] = [
+        {
+            "mission_id": mission_id,
+            "plan_id": plan_id,
+            "plan_hash": plan_hash,
+        }
+    ]
+    durable["conversation_preview_bindings"] = [
+        {
+            "preview_id": preview_id,
+            "conversation_id": conversation_id,
+            "turn_id": turn_id,
+            "preview_kind": "mission_confirm",
+            "action_id": mission_id,
+            "action_hash": plan_hash,
+        }
+    ]
+    durable["conversation_state_transitions"].extend(
+        [
+            {
+                "transition_id": "trn_turn_presenting",
+                "conversation_id": conversation_id,
+                "entity_type": "turn",
+                "entity_id": turn_id,
+                "from_state": "waiting_leader",
+                "to_state": "presenting_preview",
+                "reason": "preview_ready",
+                "created_at": created_at,
+            },
+            {
+                "transition_id": "trn_turn_completed",
+                "conversation_id": conversation_id,
+                "entity_type": "turn",
+                "entity_id": turn_id,
+                "from_state": "presenting_preview",
+                "to_state": "completed",
+                "reason": "preview_presented",
+                "created_at": created_at,
+            },
+            {
+                "transition_id": "trn_preview_pending",
+                "conversation_id": conversation_id,
+                "entity_type": "preview",
+                "entity_id": preview_id,
+                "from_state": None,
+                "to_state": "pending",
+                "reason": "preview_created",
+                "created_at": created_at,
+            },
+        ]
+    )
+    return durable
+
+
+@pytest.mark.parametrize(
+    ("stage", "state", "expected_code"),
+    [
+        ("timeout", "failed", "leader_timeout_before_preview"),
+        ("nonzero", "failed", "leader_nonzero_before_preview"),
+        ("schema", "failed", "leader_schema_before_preview"),
+        ("cancelled", "cancelled", "leader_cancelled_before_preview"),
+        ("oversize", "failed", "leader_oversize_before_preview"),
+    ],
+)
+def test_wait_for_mission_preview_stops_on_durable_terminal(
+    stage, state, expected_code
+) -> None:
+    durable, events, baseline = _leader_terminal_fixture(
+        stage=stage, state=state
+    )
+    clock = _FakeClock()
+
+    with pytest.raises(_LiveHarnessFailure) as raised:
+        _wait_for_mission_preview(
+            _PreviewStore([durable], [events]),
+            _PreviewProcess([None]),
+            -1,
+            _PtyTail(),
+            baseline_turn_ids=baseline,
+            timeout_seconds=180,
+            monotonic=clock.monotonic,
+            sleep=clock.sleep,
+            drain=lambda *_args, **_kwargs: None,
+        )
+
+    diagnostic = json.loads(str(raised.value))
+    assert diagnostic["code"] == expected_code
+    assert diagnostic["leader_terminal"]["stage"] == stage
+    assert set(diagnostic["leader_terminal"]) == {
+        "stage",
+        "diagnostic_code",
+        "attempt_count",
+        "constraint_mode",
+    }
+    assert clock.now < 120
+
+
+def test_wait_for_mission_preview_returns_exact_preview_state() -> None:
+    preview = _leader_preview_fixture()
+
+    observed = _wait_for_mission_preview(
+        _PreviewStore([preview], [[]]),
+        _PreviewProcess([None]),
+        -1,
+        _PtyTail(),
+        baseline_turn_ids=frozenset(),
+        monotonic=lambda: 0.0,
+        sleep=lambda _seconds: None,
+        drain=lambda *_args, **_kwargs: None,
+    )
+
+    assert observed is preview
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "turn_not_completed",
+        "preview_not_pending",
+        "wrong_preview_kind",
+        "binding_mission_drift",
+        "mission_plan_drift",
+        "binding_hash_drift",
+    ],
+)
+def test_mission_preview_predicate_requires_pending_lifecycle_and_lineage(
+    mutation,
+) -> None:
+    preview = _leader_preview_fixture()
+    if mutation == "turn_not_completed":
+        preview["conversation_state_transitions"] = [
+            item
+            for item in preview["conversation_state_transitions"]
+            if item["transition_id"] != "trn_turn_completed"
+        ]
+    elif mutation == "preview_not_pending":
+        preview["conversation_state_transitions"] = [
+            item
+            for item in preview["conversation_state_transitions"]
+            if item["transition_id"] != "trn_preview_pending"
+        ]
+    elif mutation == "wrong_preview_kind":
+        preview["conversation_preview_bindings"][0]["preview_kind"] = (
+            "approval_confirm"
+        )
+    elif mutation == "binding_mission_drift":
+        preview["conversation_preview_bindings"][0]["action_id"] = (
+            "mis_other"
+        )
+    elif mutation == "mission_plan_drift":
+        preview["missions"][0]["plan_id"] = "pln_other"
+    else:
+        preview["conversation_preview_bindings"][0]["action_hash"] = (
+            "sha256:" + "b" * 64
+        )
+
+    assert _mission_preview_ready(preview, frozenset()) is False
+
+
+def test_mission_preview_predicate_rejects_hostile_state_without_access() -> None:
+    class HostileState(dict):
+        def get(self, *_args, **_kwargs):
+            raise AssertionError("hostile state accessed")
+
+    assert _mission_preview_ready(HostileState(), frozenset()) is False
+
+
+def test_wait_for_mission_preview_fails_closed_on_partial_preview() -> None:
+    preview = _leader_preview_fixture()
+    preview["conversation_state_transitions"] = [
+        item
+        for item in preview["conversation_state_transitions"]
+        if item["transition_id"] != "trn_preview_pending"
+    ]
+
+    with pytest.raises(_LiveHarnessFailure) as raised:
+        _wait_for_mission_preview(
+            _PreviewStore([preview], [[]]),
+            _PreviewProcess([None]),
+            -1,
+            _PtyTail(),
+            baseline_turn_ids=frozenset(),
+            monotonic=lambda: 0.0,
+            sleep=lambda _seconds: None,
+            drain=lambda *_args, **_kwargs: None,
+        )
+
+    assert json.loads(str(raised.value))["code"] == (
+        "leader_terminal_evidence_invalid"
+    )
+
+
+@pytest.mark.parametrize("malformed", [False, True])
+def test_mission_preview_rejects_persisted_plan_without_binding(
+    malformed,
+) -> None:
+    preview = _leader_preview_fixture()
+    preview["conversation_preview_bindings"] = []
+    preview["conversation_state_transitions"] = [
+        item
+        for item in preview["conversation_state_transitions"]
+        if item["transition_id"] == "trn_con_created"
+        or item["transition_id"].startswith("trn_turn_")
+        and item["transition_id"] not in {
+            "trn_turn_presenting",
+            "trn_turn_completed",
+        }
+    ]
+    if malformed:
+        preview["missions"] = {"SECRET": "not a list"}
+
+    assert _mission_preview_status(preview, frozenset()) == "invalid"
+
+
+def test_wait_for_mission_preview_ignores_historical_preview() -> None:
+    preview = _leader_preview_fixture()
+    historical_turn_id = preview["conversation_turns"][0]["turn_id"]
+    clock = _FakeClock()
+
+    with pytest.raises(_LiveHarnessFailure) as raised:
+        _wait_for_mission_preview(
+            _PreviewStore([preview], [[]]),
+            _PreviewProcess([None]),
+            -1,
+            _PtyTail(),
+            baseline_turn_ids=frozenset({historical_turn_id}),
+            timeout_seconds=0.1,
+            monotonic=clock.monotonic,
+            sleep=clock.sleep,
+            drain=lambda *_args, **_kwargs: None,
+        )
+
+    assert json.loads(str(raised.value))["code"] == "mission_preview_timeout"
+
+
+def test_wait_for_mission_preview_rejects_preview_terminal_conflict() -> None:
+    durable, events, baseline = _leader_terminal_fixture(stage="timeout")
+    preview = _leader_preview_fixture()
+    durable["plans"] = preview["plans"]
+    durable["missions"] = preview["missions"]
+    durable["conversation_preview_bindings"] = preview[
+        "conversation_preview_bindings"
+    ]
+    durable["conversation_state_transitions"].append(
+        next(
+            copy.deepcopy(item)
+            for item in preview["conversation_state_transitions"]
+            if item["transition_id"] == "trn_preview_pending"
+        )
+    )
+
+    with pytest.raises(_LiveHarnessFailure) as raised:
+        _wait_for_mission_preview(
+            _PreviewStore([durable], [events]),
+            _PreviewProcess([None]),
+            -1,
+            _PtyTail(),
+            baseline_turn_ids=baseline,
+            monotonic=lambda: 0.0,
+            sleep=lambda _seconds: None,
+            drain=lambda *_args, **_kwargs: None,
+        )
+
+    diagnostic = json.loads(str(raised.value))
+    assert diagnostic["code"] == "leader_preview_terminal_conflict"
+    assert "leader_terminal" not in diagnostic
+
+
+def test_wait_for_mission_preview_final_drain_finds_terminal_after_exit() -> None:
+    waiting = _leader_waiting_fixture()
+    terminal, events, baseline = _leader_terminal_fixture(stage="nonzero")
+    drains: list[int] = []
+
+    with pytest.raises(_LiveHarnessFailure) as raised:
+        _wait_for_mission_preview(
+            _PreviewStore([waiting, terminal], [[], events]),
+            _PreviewProcess([0]),
+            -1,
+            _PtyTail(),
+            baseline_turn_ids=baseline,
+            monotonic=lambda: 0.0,
+            sleep=lambda _seconds: None,
+            drain=lambda *_args, **_kwargs: drains.append(1),
+        )
+
+    assert json.loads(str(raised.value))["code"] == "leader_nonzero_before_preview"
+    assert len(drains) == 2
+
+
+def test_wait_for_mission_preview_reconciles_again_when_deadline_poll_finds_exit(
+) -> None:
+    waiting = _leader_waiting_fixture()
+    terminal, events, baseline = _leader_terminal_fixture(stage="timeout")
+    clock = _FakeClock()
+    drains: list[int] = []
+
+    with pytest.raises(_LiveHarnessFailure) as raised:
+        _wait_for_mission_preview(
+            _PreviewStore(
+                [waiting, waiting, waiting, terminal],
+                [[], [], [], events],
+            ),
+            _PreviewProcess([None, None, 0]),
+            -1,
+            _PtyTail(),
+            baseline_turn_ids=baseline,
+            timeout_seconds=0.1,
+            monotonic=clock.monotonic,
+            sleep=clock.sleep,
+            drain=lambda *_args, **_kwargs: drains.append(1),
+        )
+
+    assert json.loads(str(raised.value))["code"] == (
+        "leader_timeout_before_preview"
+    )
+    assert len(drains) == 4
+
+
+def test_wait_for_mission_preview_distinguishes_process_exit() -> None:
+    waiting = _leader_waiting_fixture()
+
+    with pytest.raises(_LiveHarnessFailure) as raised:
+        _wait_for_mission_preview(
+            _PreviewStore([waiting], [[]]),
+            _PreviewProcess([0]),
+            -1,
+            _PtyTail(),
+            baseline_turn_ids=frozenset(),
+            monotonic=lambda: 0.0,
+            sleep=lambda _seconds: None,
+            drain=lambda *_args, **_kwargs: None,
+        )
+
+    diagnostic = json.loads(str(raised.value))
+    assert diagnostic["code"] == "bare_pty_exited_before_preview"
+    assert "leader_terminal" not in diagnostic
+
+
+def test_wait_for_mission_preview_uses_timeout_only_without_terminal_or_exit() -> None:
+    waiting = _leader_waiting_fixture()
+    clock = _FakeClock()
+    drains: list[int] = []
+
+    with pytest.raises(_LiveHarnessFailure) as raised:
+        _wait_for_mission_preview(
+            _PreviewStore([waiting], [[]]),
+            _PreviewProcess([None]),
+            -1,
+            _PtyTail(),
+            baseline_turn_ids=frozenset(),
+            timeout_seconds=0.2,
+            monotonic=clock.monotonic,
+            sleep=clock.sleep,
+            drain=lambda *_args, **_kwargs: drains.append(1),
+        )
+
+    diagnostic = json.loads(str(raised.value))
+    assert diagnostic["code"] == "mission_preview_timeout"
+    assert "leader_terminal" not in diagnostic
+    assert clock.now == pytest.approx(0.2)
+    assert len(drains) >= 3
+
+
+def test_wait_for_mission_preview_final_drain_is_not_clipped_by_outer_deadline(
+) -> None:
+    waiting = _leader_waiting_fixture()
+    clock = _FakeClock()
+    drain_deadlines: list[float | None] = []
+
+    with pytest.raises(_LiveHarnessFailure) as raised:
+        _wait_for_mission_preview(
+            _PreviewStore([waiting], [[]]),
+            _PreviewProcess([None]),
+            -1,
+            _PtyTail(),
+            baseline_turn_ids=frozenset(),
+            timeout_seconds=0.1,
+            monotonic=clock.monotonic,
+            sleep=clock.sleep,
+            drain=lambda *_args, **kwargs: drain_deadlines.append(
+                kwargs.get("deadline")
+            ),
+        )
+
+    assert json.loads(str(raised.value))["code"] == "mission_preview_timeout"
+    assert drain_deadlines[-1] is None
+
+
+def test_wait_for_mission_preview_does_not_leak_terminal_or_pty_text() -> None:
+    durable, events, baseline = _leader_terminal_fixture(stage="schema")
+    durable["unrelated"] = "SECRET prompt /Users/private raw stderr model output"
+    capture = _PtyTail()
+    capture.add(b"SECRET prompt /Users/private raw stderr model output")
+
+    with pytest.raises(_LiveHarnessFailure) as raised:
+        _wait_for_mission_preview(
+            _PreviewStore([durable], [events]),
+            _PreviewProcess([None]),
+            -1,
+            capture,
+            baseline_turn_ids=baseline,
+            monotonic=lambda: 0.0,
+            sleep=lambda _seconds: None,
+            drain=lambda *_args, **_kwargs: None,
+        )
+
+    rendered = str(raised.value)
+    diagnostic = json.loads(rendered)
+    assert diagnostic["code"] == "leader_schema_before_preview"
+    assert set(diagnostic["pty"]) == {"byte_count", "truncated", "sha256"}
+    assert "SECRET" not in rendered
+    assert "/Users/private" not in rendered
+    assert "raw stderr" not in rendered
+
+
+def test_wait_for_mission_preview_ignores_historical_terminal() -> None:
+    durable, events, _baseline = _leader_terminal_fixture(stage="timeout")
+    turn_id = durable["conversation_turns"][0]["turn_id"]
+    clock = _FakeClock()
+
+    with pytest.raises(_LiveHarnessFailure) as raised:
+        _wait_for_mission_preview(
+            _PreviewStore([durable], [events]),
+            _PreviewProcess([None]),
+            -1,
+            _PtyTail(),
+            baseline_turn_ids=frozenset({turn_id}),
+            timeout_seconds=0.1,
+            monotonic=clock.monotonic,
+            sleep=clock.sleep,
+            drain=lambda *_args, **_kwargs: None,
+        )
+
+    assert json.loads(str(raised.value))["code"] == "mission_preview_timeout"
 
 
 class _StaticLiveStore:
@@ -4668,6 +6289,58 @@ def test_live_failure_uses_one_state_snapshot_for_cardinalities_and_ledger() -> 
     assert diagnostic["ledger"]["mission_status"] == "stopped"
 
 
+def test_live_failure_projects_closed_terminal_from_same_snapshot() -> None:
+    state = _live_diagnostic_state(
+        mission_status="stopped", attempt_state="failed"
+    )
+    terminal = {
+        "stage": "timeout",
+        "diagnostic_code": None,
+        "attempt_count": 1,
+        "constraint_mode": "native_json_schema",
+    }
+
+    diagnostic = json.loads(
+        str(
+            _live_failure(
+                "leader_timeout_before_preview",
+                state_snapshot=state,
+                capture=_PtyTail(),
+                leader_terminal=terminal,
+            )
+        )
+    )
+
+    assert diagnostic["leader_terminal"] == terminal
+    assert diagnostic["cardinalities"]["mission_attempts"] == 1
+    assert diagnostic["ledger"]["attempt_state"] == "failed"
+    rendered = json.dumps(diagnostic, sort_keys=True)
+    assert "SECRET" not in rendered
+    assert "/Users/private" not in rendered
+
+
+def test_live_failure_does_not_stringify_invalid_terminal() -> None:
+    class RejectedValue:
+        def __str__(self) -> str:
+            raise AssertionError("terminal value stringified")
+
+        def __repr__(self) -> str:
+            raise AssertionError("terminal value stringified")
+
+    rejected = {
+        "stage": RejectedValue(),
+        "diagnostic_code": None,
+        "attempt_count": 1,
+        "constraint_mode": "native_json_schema",
+    }
+
+    diagnostic = json.loads(
+        str(_live_failure("leader_terminal_evidence_invalid", leader_terminal=rejected))
+    )
+
+    assert "leader_terminal" not in diagnostic
+
+
 def test_preflight_isolates_probe_writes_from_real_home(
     tmp_path, monkeypatch,
 ) -> None:
@@ -4695,6 +6368,7 @@ def test_preflight_isolates_probe_writes_from_real_home(
     node = fake_bin / "node"
     node.write_text("#!/bin/sh\necho 0.58.1\n", encoding="utf-8")
     node.chmod(0o700)
+    monkeypatch.setenv(LEADER_MODEL_ENV, "gpt-5.5")
     monkeypatch.setenv("PATH", str(fake_bin))
     isolation = _prepare_probe_isolation(project)
     before = _roots_snapshot((project, *isolation.roots))
@@ -4750,6 +6424,7 @@ def test_codex_probe_uses_temporary_guarded_home_without_writes(
     node = fake_bin / "node"
     node.write_text("#!/bin/sh\necho 0.58.1\n", encoding="utf-8")
     node.chmod(0o700)
+    monkeypatch.setenv(LEADER_MODEL_ENV, "gpt-5.5")
     monkeypatch.setenv("PATH", str(fake_bin))
     isolation = _prepare_probe_isolation(project)
     before = _roots_snapshot((project, *isolation.roots))
@@ -5306,6 +6981,7 @@ def test_successful_probe_reaps_same_group_children(tmp_path, monkeypatch) -> No
         node = fake_bin / "node"
         node.write_text("#!/bin/sh\necho 0.58.1\n", encoding="utf-8")
         node.chmod(0o700)
+        monkeypatch.setenv(LEADER_MODEL_ENV, "gpt-5.5")
         monkeypatch.setenv("PATH", str(fake_bin))
         payload = _live_preflight(project, require_explicit_paths=True)
         children = [
@@ -5411,6 +7087,7 @@ def test_post_preflight_executable_replacement_blocks_project_init(
     node = fake_bin / "node"
     node.write_text("#!/bin/sh\necho 0.58.1\n", encoding="utf-8")
     node.chmod(0o700)
+    monkeypatch.setenv(LEADER_MODEL_ENV, "gpt-5.5")
     monkeypatch.setenv("PATH", str(fake_bin))
     seals = _explicit_live_paths()
     payload = _live_preflight(project, require_explicit_paths=True)
@@ -5670,7 +7347,9 @@ def test_live_setup_launcher_failure_removes_entire_parent(
     )
 
     with pytest.raises(_LiveHarnessFailure) as error:
-        _run_live_acceptance_in_project(paths, parent)
+        _run_live_acceptance_in_project(
+            paths, parent, _LeaderModelSeal("gpt-5.5")
+        )
 
     assert "launcher_setup_blocked" in str(error.value)
     assert not parent.exists()
@@ -5703,6 +7382,7 @@ def test_live_setup_cleanup_failure_keeps_original_blocker_compact(
         _run_live_acceptance_in_project(
             {name: seal for name, _env, _help, _version in TOOL_SPECS},
             parent,
+            _LeaderModelSeal("gpt-5.5"),
         )
 
     assert "launcher_setup_blocked" in str(error.value)
@@ -5761,7 +7441,9 @@ def test_live_setup_interrupt_removes_parent_and_reraises_same_object(
     )
 
     with pytest.raises(interrupt_type) as raised:
-        _run_live_acceptance_in_project(paths, parent)
+        _run_live_acceptance_in_project(
+            paths, parent, _LeaderModelSeal("gpt-5.5")
+        )
 
     assert raised.value is interruption
     assert not parent.exists()
@@ -5804,6 +7486,7 @@ def test_live_setup_interrupt_cleanup_failure_adds_only_compact_note(
         _run_live_acceptance_in_project(
             {name: seal for name, _env, _help, _version in TOOL_SPECS},
             parent,
+            _LeaderModelSeal("gpt-5.5"),
         )
 
     assert raised.value is interruption
@@ -5818,6 +7501,12 @@ def test_live_setup_interrupt_cleanup_failure_adds_only_compact_note(
 def test_real_four_stage_m2c_acceptance() -> None:
     evidence = _run_live_acceptance()
     assert evidence["result"] == "PASS"
+    assert evidence["leader_model"] == {
+        "provider": "codex-cli",
+        "model": os.environ[LEADER_MODEL_ENV],
+        "source": "explicit",
+        "ready": True,
+    }
     assert evidence["attempt_count"] == 4
     assert evidence["canonical_handoff_count"] == 4
     assert evidence["inter_stage_link_count"] == 3
