@@ -4,6 +4,12 @@
 
 ## 2026-07-15
 
+### Plan first live permission blocker closure
+
+- **Reviewed TDD plan**: add a fixed-scenario, pre-confirmation task-authority gate for phase/Worker order plus `artifact.txt` / `draft-v1` / `accepted-v2`, followed by a same-snapshot closed ledger projector for `leader_task_authority_missing`, `worker_effect_not_requested`, failed/active attempts, and permission-state inconsistency.
+- **Commit boundaries**: separate authority RED/GREEN from transcript-free classification RED/GREEN, then require focused/full regression, compileall, residual audit, a newly frozen commit, `ready=true` / `blockers=[]` preflight, and at most one new real four-stage attempt.
+- **Safety**: the plan changes only the opt-in M2c harness and its documentation before live evidence. It forbids model text, prompts, ACP updates, credentials, IDs, and paths in diagnostics; it does not modify production permission, scheduler, transport, or provider behavior.
+
 ### Design transcript-free closure for the first live permission blocker
 
 - **Verified boundary**: frozen commit `ced9a50e` passed the real-tool read-only preflight with `ready=true` and `blockers=[]`, then its single real four-stage run stopped at `first_permission_timeout` with one Mission/plan/attempt/reply/handoff and zero permission requests. M2c remains blocked; M3 stays closed.
