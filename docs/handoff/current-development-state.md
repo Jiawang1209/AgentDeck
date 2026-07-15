@@ -23,10 +23,14 @@ detailed TDD plan is
 `docs/superpowers/plans/2026-07-15-m2c-path-tool-discovery.md`. They choose
 PATH-first discovery plus strict canonical-target sealing for preflight only,
 keep production AgentDeck behavior and Task 14 staged-launcher authority
-unchanged, and forbid install/login/global PATH changes. The next gate is
-execution-mode selection and task-by-task RED/GREEN implementation. No
-implementation, double full suite, or new preflight has started. M2c remains
-**BLOCKED** and M3 remains locked.
+unchanged, and forbid install/login/global PATH changes. The approved spec and
+plan are implemented, including quality-review closure, and the candidate
+revision containing this handoff is committed. The next gate is to record its
+exact SHA, run two independent full suites on the unchanged SHA, and then run
+the designated read-only preflight exactly once with no path overrides. No
+live Mission is authorized. Explicit override values must be raw absolute
+paths; tilde-prefixed and relative values fail closed before expansion. M2c
+remains **BLOCKED** and M3 remains locked.
 
 ## Natural-language Mission Phase 0 baseline — accepted
 

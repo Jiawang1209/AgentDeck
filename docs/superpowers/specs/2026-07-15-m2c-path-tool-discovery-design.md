@@ -2,7 +2,7 @@
 
 **Date:** 2026-07-15
 
-**Status:** Human-approved design; implementation pending
+**Status:** Human-approved design; quality-review closure implemented in candidate
 
 **Milestone:** Phase 3 M2c preflight closure
 
@@ -106,12 +106,15 @@ For each of `codex`, `claude`, `claude-agent-acp`, and `tmux`:
 1. if the corresponding explicit `AGENTDECK_M2C_*` value is configured for a
    preflight, use that value as the candidate;
 2. otherwise call `shutil.which(logical_name)` in the active pytest process;
-3. require an explicit override to remain an absolute path, preserving the
-   existing fail-closed contract for relative overrides;
+3. require the raw explicit override value itself to be an absolute path before
+   any tilde expansion, preserving the existing fail-closed contract for
+   tilde-prefixed and relative overrides;
 4. resolve the candidate with `Path.resolve(strict=True)`;
 5. pass the resolved regular executable to the existing no-follow seal logic;
 6. retain only the canonical path inside `_ExecutableSeal`;
-7. execute only that canonical path;
+7. execute ordinary tools only through that canonical path; execute ACP by
+   using the separately sealed canonical Node target as the primary executable
+   and passing the canonical adapter path as its first argument;
 8. verify the same seal immediately before every probe and at existing later
    authority boundaries.
 
@@ -138,16 +141,20 @@ platform- and installation-specific.
 Probe subprocesses continue to receive an isolated HOME, XDG roots, temporary
 directory, locale, and a bounded PATH rather than the whole user environment.
 That bounded PATH is assembled only from already discovered executable
-locations plus `/usr/bin` and `/bin`.
+locations plus `/usr/bin` and `/bin`, but it is not interpreter authority for
+the ACP probe.
 
-Claude Agent ACP is an executable script with an `/usr/bin/env node` shebang.
-The harness therefore resolves the already installed `node` command from the
-active pytest PATH using the same canonical-target rule and makes its canonical
-directory available to the ACP capability probe. Node is a probe dependency,
+Claude Agent ACP is normally an executable script with an `/usr/bin/env node`
+shebang. The harness resolves the already installed `node` command from the
+active pytest PATH using the same canonical-target rule, then makes that Node
+seal `_bounded_probe`'s primary executable and supplies the canonical adapter
+path as the first argument. `_bounded_probe` therefore verifies Node
+immediately before spawn and after exit, with no second `/usr/bin/env` lookup,
+PATH fallback, or canonical-basename requirement. The adapter seal is verified
+separately before and after the call. Node remains an internal probe dependency,
 not a fifth public tool item, so `m2c-live-preflight/v1` retains its existing
-four-tool response shape. A missing or unusable interpreter leaves the ACP
-tool unready through existing bounded probe failure classification; it never
-triggers installation or a PATH mutation.
+four-tool response shape. A missing or unusable interpreter leaves ACP unready
+without executing the adapter and never triggers installation or PATH mutation.
 
 ## 7. Evidence and privacy contract
 
@@ -183,17 +190,22 @@ The focused matrix must prove:
 2. a valid PATH symlink first exposes the old false negative, then resolves to
    and seals its executable target;
 3. a valid explicit absolute symlink follows the same preflight behavior;
-4. a relative explicit override remains rejected;
+4. tilde-prefixed and relative explicit overrides remain rejected from their
+   raw values before expansion;
 5. broken links, cycles, directories, and non-executable targets are rejected;
 6. replacement or content mutation of the canonical target after sealing still
    raises the fixed `executable_identity_drift` boundary before use;
 7. the logical tool basename stays stable when the canonical target has a
    version-style filename;
-8. a fake ACP entry with `/usr/bin/env node` finds only the fake Node discovered
-   from the test PATH and completes without accessing the real HOME;
+8. a fake ACP entry is passed directly to the sealed fake Node discovered from
+   the test PATH, including when Node's canonical target is version-named, and
+   completes without shebang lookup or real-HOME access;
 9. valid probes leave the project and all isolation roots byte-identical;
 10. hostile probes that write under an isolation root still return
-    `probe_wrote_files`.
+    `probe_wrote_files`;
+11. replacement of the sealed Node target at the `_bounded_probe` boundary
+    returns `executable_identity_drift` before spawn and never executes the
+    adapter through an unsealed fallback.
 
 After focused GREEN, run the complete non-live M2c harness, compileall, and
 `git diff --check`. None of these commands is the designated real-tool
@@ -246,14 +258,28 @@ current harness implementation.
   AgentDeck does not become an installer or a path-configuration wizard.
 - **Scope:** the change corrects a test-harness false negative and introduces
   no new production surface.
-- **Security:** PATH selects; strict canonical file facts authorize. Existing
-  target drift, cleanup, isolation, and Task 14 launcher checks remain.
+- **Security:** PATH selects; strict canonical file facts authorize. ACP uses
+  sealed Node as the primary executable with the canonical adapter as an
+  argument, so no env-based interpreter fallback exists. Existing target
+  drift, cleanup, isolation, and Task 14 launcher checks remain.
 - **Read-only boundary:** no probe allowance is spent during TDD, and the final
   preflight cannot install, authenticate, dispatch, or write state.
 - **Evidence honesty:** passing tests do not imply readiness; a ready preflight
   does not imply M2c live PASS.
 - **Human authority:** any real four-stage Mission remains a separately
   approved action.
+
+Quality review closed the initial candidate's verify-then-env-lookup gap and
+its accidental `canonical_basename == "node"` restriction. The closure changed
+only test-harness ACP probe construction, added deterministic pre-spawn Node
+replacement coverage, and isolated every fake ACP-ready fixture from the
+machine Node. It did not consume the designated real-tool preflight.
+
+Final review also closed the explicit-path ordering gap: the raw override now
+passes the absolute-path gate before `expanduser()`, so `~/tool` cannot become
+authorized merely because HOME expansion produces an absolute path. PATH
+discovery keeps its non-explicit canonicalization behavior, and expanduser
+failure remains closed.
 
 No unresolved design fork remains. Implementation must stop and ask the human
 if it would require changing production CLI discovery, weakening Task 14

@@ -333,6 +333,22 @@ def _seal_executable(value: str | None) -> _ExecutableSeal | None:
     )
 
 
+def _seal_preflight_candidate(
+    value: str | None, *, require_absolute: bool
+) -> _ExecutableSeal | None:
+    if not value:
+        return None
+    raw_candidate = Path(value)
+    if require_absolute and not raw_candidate.is_absolute():
+        return None
+    try:
+        candidate = raw_candidate.expanduser()
+        canonical = candidate.resolve(strict=True)
+    except (OSError, RuntimeError):
+        return None
+    return _seal_executable(str(canonical))
+
+
 def _verify_executable_seal(seal: _ExecutableSeal) -> None:
     current = _seal_executable(str(seal.path))
     if current != seal:
@@ -586,8 +602,10 @@ def _sanitized_version(payload: bytes) -> str | None:
 def _resolved_probe_seal(name: str, env_name: str) -> _ExecutableSeal | None:
     configured = os.environ.get(env_name)
     if configured is not None:
-        return _seal_executable(configured)
-    return _seal_executable(shutil.which(name))
+        return _seal_preflight_candidate(configured, require_absolute=True)
+    return _seal_preflight_candidate(
+        shutil.which(name), require_absolute=False
+    )
 
 
 def _live_preflight(
@@ -604,13 +622,24 @@ def _live_preflight(
     for name, env_name, _help_args, _version_args in TOOL_SPECS:
         configured = os.environ.get(env_name)
         resolved[name] = (
-            _seal_executable(configured)
+            _seal_preflight_candidate(configured, require_absolute=True)
             if require_explicit_paths
             else _resolved_probe_seal(name, env_name)
         )
+    node_seal = (
+        _seal_preflight_candidate(
+            shutil.which("node"), require_absolute=False
+        )
+        if resolved.get("claude-agent-acp") is not None
+        else None
+    )
     probe_env = _probe_environment(
         isolation,
-        tuple(seal.path for seal in resolved.values() if seal is not None),
+        tuple(
+            seal.path
+            for seal in (node_seal, *resolved.values())
+            if seal is not None
+        ),
     )
     for name, env_name, help_args, version_args in TOOL_SPECS:
         executable = resolved[name]
@@ -619,15 +648,55 @@ def _live_preflight(
         version: str | None = None
         if executable is None:
             blockers.append(unavailable)
+        elif name == "claude-agent-acp" and node_seal is None:
+            blockers.append(unavailable)
+            tools.append(
+                {
+                    "name": name,
+                    "executable_basename": name,
+                    "version": None,
+                    "ready": False,
+                }
+            )
+            continue
         else:
             tool_probe_env = dict(probe_env)
             if name == "codex":
                 tool_probe_env["CODEX_HOME"] = str(
                     isolation.temporary / "codex-home"
                 )
-            version_probe = _bounded_probe(
-                executable, version_args, cwd=project, env=tool_probe_env
-            )
+            if name == "claude-agent-acp" and node_seal is not None:
+                try:
+                    _verify_executable_seal(executable)
+                except _LiveHarnessFailure:
+                    blockers.append("executable_identity_drift")
+                    tools.append(
+                        {
+                            "name": name,
+                            "executable_basename": name,
+                            "version": None,
+                            "ready": False,
+                        }
+                    )
+                    continue
+            if name == "claude-agent-acp" and node_seal is not None:
+                version_probe = _bounded_probe(
+                    node_seal,
+                    (str(executable.path), *version_args),
+                    cwd=project,
+                    env=tool_probe_env,
+                )
+                try:
+                    _verify_executable_seal(executable)
+                except _LiveHarnessFailure:
+                    blockers.append("executable_identity_drift")
+                    version_probe = _ProbeOutcome(
+                        False, b"", "executable_identity_drift"
+                    )
+            else:
+                version_probe = _bounded_probe(
+                    executable, version_args, cwd=project, env=tool_probe_env
+                )
             if version_probe.blocker is not None:
                 blockers.append(version_probe.blocker)
             version = (
@@ -658,9 +727,7 @@ def _live_preflight(
         tools.append(
             {
                 "name": name,
-                "executable_basename": (
-                    executable.path.name if executable is not None else name
-                ),
+                "executable_basename": name,
                 "version": version,
                 "ready": tool_ready,
             }
@@ -3230,6 +3297,367 @@ def _run_live_acceptance_in_project_guarded(
         return evidence
 
 
+def _write_fake_capability_tool(path: Path, name: str) -> None:
+    responses = {
+        "codex": (
+            "case \"$1\" in\n"
+            "  exec) echo --output-schema --output-last-message;;\n"
+            "  *) echo codex-cli 0.131.0;;\n"
+            "esac\n"
+        ),
+        "claude": (
+            "case \"$1\" in\n"
+            "  --help) echo --json-schema --output-format;;\n"
+            "  *) echo claude 2.1.208;;\n"
+            "esac\n"
+        ),
+        "claude-agent-acp": "echo 0.58.1\n",
+        "tmux": "echo tmux 3.6a\n",
+    }
+    path.write_text("#!/bin/sh\n" + responses[name], encoding="utf-8")
+    path.chmod(0o700)
+
+
+def test_preflight_candidate_rejects_expanduser_failure(monkeypatch) -> None:
+    candidate = Path("~missing-user/m2c-tool")
+    original_expanduser = Path.expanduser
+
+    def fail_for_candidate(path: Path) -> Path:
+        if path == candidate:
+            raise RuntimeError("deterministic expanduser failure")
+        return original_expanduser(path)
+
+    monkeypatch.setattr(Path, "expanduser", fail_for_candidate)
+
+    assert (
+        _seal_preflight_candidate(str(candidate), require_absolute=False)
+        is None
+    )
+
+
+def test_preflight_candidate_rejects_tilde_explicit_override(
+    tmp_path, monkeypatch
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    tool = home / "tool"
+    tool.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    tool.chmod(0o700)
+    monkeypatch.setenv("HOME", str(home))
+
+    assert _seal_preflight_candidate("~/tool", require_absolute=True) is None
+    assert _seal_preflight_candidate("tool", require_absolute=True) is None
+
+
+@pytest.mark.parametrize(
+    "candidate_kind", ["broken", "cycle", "directory", "non_executable"]
+)
+def test_preflight_candidate_rejects_unsafe_canonical_target(
+    tmp_path, candidate_kind,
+) -> None:
+    candidate = tmp_path / "candidate"
+    if candidate_kind == "broken":
+        candidate.symlink_to(tmp_path / "missing-target")
+    elif candidate_kind == "cycle":
+        other = tmp_path / "other"
+        candidate.symlink_to(other)
+        other.symlink_to(candidate)
+    elif candidate_kind == "directory":
+        candidate.mkdir()
+    else:
+        candidate.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        candidate.chmod(0o600)
+
+    assert (
+        _seal_preflight_candidate(str(candidate), require_absolute=True)
+        is None
+    )
+
+
+def test_preflight_symlink_seal_rejects_canonical_target_replacement(
+    tmp_path,
+) -> None:
+    target = tmp_path / "target"
+    target.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    target.chmod(0o700)
+    link = tmp_path / "link"
+    link.symlink_to(target)
+    seal = _seal_preflight_candidate(str(link), require_absolute=True)
+    assert seal is not None
+    replacement = tmp_path / "replacement"
+    replacement.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
+    replacement.chmod(0o700)
+    replacement.replace(target)
+
+    with pytest.raises(
+        _LiveHarnessFailure, match="executable_identity_drift"
+    ):
+        _verify_executable_seal(seal)
+
+
+def test_preflight_resolves_path_symlinks_to_canonical_targets(
+    tmp_path, monkeypatch
+) -> None:
+    project = tmp_path / "project"
+    targets = tmp_path / "targets"
+    fake_bin = tmp_path / "bin"
+    project.mkdir()
+    targets.mkdir()
+    fake_bin.mkdir()
+    target_names = {
+        "codex": "codex-real",
+        "claude": "2.1.208",
+        "claude-agent-acp": "index.js",
+        "tmux": "tmux-real",
+    }
+    for logical_name, target_name in target_names.items():
+        target = targets / target_name
+        _write_fake_capability_tool(target, logical_name)
+        (fake_bin / logical_name).symlink_to(target)
+    node = targets / "node-22.23.0"
+    node.write_text("#!/bin/sh\necho 0.58.1\n", encoding="utf-8")
+    node.chmod(0o700)
+    (fake_bin / "node").symlink_to(node)
+    for _name, env_name, _help_args, _version_args in TOOL_SPECS:
+        monkeypatch.delenv(env_name, raising=False)
+    monkeypatch.setenv("PATH", str(fake_bin))
+
+    payload = _live_preflight(project)
+
+    assert payload["ready"] is True, json.dumps(payload, sort_keys=True)
+    assert payload["blockers"] == []
+    assert {
+        tool["name"]: tool["executable_basename"] for tool in payload["tools"]
+    } == {
+        "codex": "codex",
+        "claude": "claude",
+        "claude-agent-acp": "claude-agent-acp",
+        "tmux": "tmux",
+    }
+    assert _validate_preflight_payload(payload) == []
+
+
+def test_preflight_invokes_canonical_node_for_acp_adapter(
+    tmp_path, monkeypatch
+) -> None:
+    project = tmp_path / "project"
+    fake_bin = tmp_path / "bin"
+    targets = tmp_path / "targets"
+    project.mkdir()
+    fake_bin.mkdir()
+    targets.mkdir()
+    for name, env_name, _help_args, _version_args in TOOL_SPECS:
+        target_dir = targets / name
+        target_dir.mkdir()
+        target = target_dir / "tool"
+        if name == "claude-agent-acp":
+            target.write_text(
+                "#!/usr/bin/env node\n"
+                "process.stdout.write('unsealed-runtime-9.9.9\\n')\n",
+                encoding="utf-8",
+            )
+            target.chmod(0o700)
+        else:
+            _write_fake_capability_tool(target, name)
+        if name == "codex":
+            shadow_node = target_dir / "node"
+            shadow_node.write_text(
+                "#!/bin/sh\necho shadow-node-8.8.8\n",
+                encoding="utf-8",
+            )
+            shadow_node.chmod(0o700)
+        (fake_bin / name).symlink_to(target)
+        monkeypatch.delenv(env_name, raising=False)
+    node = targets / "node-22.23.0"
+    node.write_text("#!/bin/sh\necho 0.58.1\n", encoding="utf-8")
+    node.chmod(0o700)
+    (fake_bin / "node").symlink_to(node)
+    monkeypatch.setenv("PATH", str(fake_bin))
+
+    payload = _live_preflight(project)
+    acp_tool = next(
+        tool for tool in payload["tools"]
+        if tool["name"] == "claude-agent-acp"
+    )
+
+    assert acp_tool == {
+        "name": "claude-agent-acp",
+        "executable_basename": "claude-agent-acp",
+        "version": "0.58.1",
+        "ready": True,
+    }, json.dumps(payload, sort_keys=True)
+    assert payload["ready"] is True
+    assert payload["blockers"] == []
+
+
+def test_acp_probe_uses_node_seal_as_primary_executable(
+    tmp_path, monkeypatch
+) -> None:
+    project = tmp_path / "project"
+    fake_bin = tmp_path / "bin"
+    targets = tmp_path / "targets"
+    fallback_marker = tmp_path / "fallback-executed"
+    project.mkdir()
+    fake_bin.mkdir()
+    targets.mkdir()
+    for name, env_name, _help_args, _version_args in TOOL_SPECS:
+        target = targets / f"{name}-target"
+        if name == "claude-agent-acp":
+            target.write_text(
+                "#!/bin/sh\n"
+                f"printf executed > {str(fallback_marker)!r}\n"
+                "printf 'fallback-acp-7.7.7\\n'\n",
+                encoding="utf-8",
+            )
+            target.chmod(0o700)
+        else:
+            _write_fake_capability_tool(target, name)
+        (fake_bin / name).symlink_to(target)
+        monkeypatch.delenv(env_name, raising=False)
+    node_target = targets / "node-22.23.0"
+    node_target.write_text("#!/bin/sh\necho 0.58.1\n", encoding="utf-8")
+    node_target.chmod(0o700)
+    (fake_bin / "node").symlink_to(node_target)
+    monkeypatch.setenv("PATH", str(fake_bin))
+    real_bounded_probe = _bounded_probe
+    seen_node_primary = False
+    seen_canonical_adapter_arg = False
+
+    def replace_node_before_probe(seal, args, **kwargs):
+        nonlocal seen_canonical_adapter_arg, seen_node_primary
+        if seal.path == node_target:
+            seen_node_primary = True
+            seen_canonical_adapter_arg = bool(args) and args[0] == str(
+                targets / "claude-agent-acp-target"
+            )
+            replacement = targets / "replacement-node"
+            replacement.write_text(
+                "#!/bin/sh\n"
+                f"printf executed > {str(fallback_marker)!r}\n",
+                encoding="utf-8",
+            )
+            replacement.chmod(0o700)
+            replacement.replace(node_target)
+        return real_bounded_probe(seal, args, **kwargs)
+
+    monkeypatch.setattr(
+        sys.modules[__name__], "_bounded_probe", replace_node_before_probe
+    )
+
+    payload = _live_preflight(project)
+    acp_tool = next(
+        tool for tool in payload["tools"]
+        if tool["name"] == "claude-agent-acp"
+    )
+
+    assert seen_node_primary is True
+    assert seen_canonical_adapter_arg is True
+    assert not fallback_marker.exists(), json.dumps(payload, sort_keys=True)
+    assert acp_tool == {
+        "name": "claude-agent-acp",
+        "executable_basename": "claude-agent-acp",
+        "version": None,
+        "ready": False,
+    }
+    assert "executable_identity_drift" in payload["blockers"]
+    assert "claude_agent_acp_unavailable" in payload["blockers"]
+
+
+def test_preflight_does_not_execute_acp_without_sealed_path_node(
+    tmp_path, monkeypatch
+) -> None:
+    project = tmp_path / "project"
+    fake_bin = tmp_path / "bin"
+    targets = tmp_path / "targets"
+    marker = tmp_path / "acp-executed"
+    project.mkdir()
+    fake_bin.mkdir()
+    targets.mkdir()
+    for name, env_name, _help_args, _version_args in TOOL_SPECS:
+        target_dir = targets / name
+        target_dir.mkdir()
+        target = target_dir / "tool"
+        if name == "claude-agent-acp":
+            target.write_text(
+                "#!/bin/sh\n"
+                f"printf executed > {str(marker)!r}\n"
+                "printf 'unsafe-acp-7.7.7\\n'\n",
+                encoding="utf-8",
+            )
+            target.chmod(0o700)
+        else:
+            _write_fake_capability_tool(target, name)
+        (fake_bin / name).symlink_to(target)
+        monkeypatch.delenv(env_name, raising=False)
+    monkeypatch.setenv("PATH", str(fake_bin))
+
+    payload = _live_preflight(project)
+    acp_tool = next(
+        tool for tool in payload["tools"]
+        if tool["name"] == "claude-agent-acp"
+    )
+
+    assert not marker.exists(), json.dumps(payload, sort_keys=True)
+    assert acp_tool == {
+        "name": "claude-agent-acp",
+        "executable_basename": "claude-agent-acp",
+        "version": None,
+        "ready": False,
+    }
+    assert "claude_agent_acp_unavailable" in payload["blockers"]
+    assert all(
+        tool["ready"] is True for tool in payload["tools"]
+        if tool["name"] != "claude-agent-acp"
+    )
+
+
+def test_preflight_resolves_explicit_absolute_symlink(
+    tmp_path, monkeypatch
+) -> None:
+    project = tmp_path / "project"
+    targets = tmp_path / "targets"
+    links = tmp_path / "links"
+    empty_path = tmp_path / "empty-path"
+    project.mkdir()
+    targets.mkdir()
+    links.mkdir()
+    empty_path.mkdir()
+    target_names = {
+        "codex": "codex-real",
+        "claude": "2.1.208",
+        "claude-agent-acp": "index.js",
+        "tmux": "tmux-real",
+    }
+    for logical_name, target_name in target_names.items():
+        target = targets / target_name
+        _write_fake_capability_tool(target, logical_name)
+        link = links / logical_name
+        link.symlink_to(target)
+        env_name = next(
+            item[1] for item in TOOL_SPECS if item[0] == logical_name
+        )
+        monkeypatch.setenv(env_name, str(link))
+    node = targets / "node"
+    node.write_text("#!/bin/sh\necho 0.58.1\n", encoding="utf-8")
+    node.chmod(0o700)
+    (empty_path / "node").symlink_to(node)
+    monkeypatch.setenv("PATH", str(empty_path))
+
+    payload = _live_preflight(project, require_explicit_paths=True)
+
+    assert payload["ready"] is True, json.dumps(payload, sort_keys=True)
+    assert payload["blockers"] == []
+    assert {
+        tool["name"]: tool["executable_basename"] for tool in payload["tools"]
+    } == {
+        "codex": "codex",
+        "claude": "claude",
+        "claude-agent-acp": "claude-agent-acp",
+        "tmux": "tmux",
+    }
+    assert _validate_preflight_payload(payload) == []
+
+
 def test_m2c_live_preflight_is_read_only(tmp_path, monkeypatch) -> None:
     project = tmp_path / "preflight-project"
     project.mkdir()
@@ -3243,11 +3671,8 @@ def test_m2c_live_preflight_is_read_only(tmp_path, monkeypatch) -> None:
     assert "AGENTDECK_M2C_" not in repr(payload)
     assert str(os.path.expanduser("~")) not in repr(payload)
 
-    unsafe_target = tmp_path / "unsafe-target"
-    unsafe_target.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
-    unsafe_target.chmod(0o700)
     unsafe_link = tmp_path / "claude"
-    unsafe_link.symlink_to(unsafe_target)
+    unsafe_link.symlink_to(tmp_path / "missing-claude-target")
     monkeypatch.setenv("AGENTDECK_M2C_CODEX", "relative-codex")
     monkeypatch.setenv("AGENTDECK_M2C_CLAUDE", str(unsafe_link))
     monkeypatch.delenv("AGENTDECK_M2C_CLAUDE_ACP", raising=False)
@@ -4267,6 +4692,10 @@ def test_preflight_isolates_probe_writes_from_real_home(
         executable.write_text(script, encoding="utf-8")
         executable.chmod(0o700)
         monkeypatch.setenv(env_name, str(executable))
+    node = fake_bin / "node"
+    node.write_text("#!/bin/sh\necho 0.58.1\n", encoding="utf-8")
+    node.chmod(0o700)
+    monkeypatch.setenv("PATH", str(fake_bin))
     isolation = _prepare_probe_isolation(project)
     before = _roots_snapshot((project, *isolation.roots))
 
@@ -4318,6 +4747,10 @@ def test_codex_probe_uses_temporary_guarded_home_without_writes(
         )
         executable.chmod(0o700)
         monkeypatch.setenv(env_name, str(executable))
+    node = fake_bin / "node"
+    node.write_text("#!/bin/sh\necho 0.58.1\n", encoding="utf-8")
+    node.chmod(0o700)
+    monkeypatch.setenv("PATH", str(fake_bin))
     isolation = _prepare_probe_isolation(project)
     before = _roots_snapshot((project, *isolation.roots))
 
@@ -4870,6 +5303,10 @@ def test_successful_probe_reaps_same_group_children(tmp_path, monkeypatch) -> No
             executable.write_text(script, encoding="utf-8")
             executable.chmod(0o700)
             monkeypatch.setenv(env_name, str(executable))
+        node = fake_bin / "node"
+        node.write_text("#!/bin/sh\necho 0.58.1\n", encoding="utf-8")
+        node.chmod(0o700)
+        monkeypatch.setenv("PATH", str(fake_bin))
         payload = _live_preflight(project, require_explicit_paths=True)
         children = [
             int(item)
@@ -4971,6 +5408,10 @@ def test_post_preflight_executable_replacement_blocks_project_init(
         executable.write_text(script, encoding="utf-8")
         executable.chmod(0o700)
         monkeypatch.setenv(env_name, str(executable))
+    node = fake_bin / "node"
+    node.write_text("#!/bin/sh\necho 0.58.1\n", encoding="utf-8")
+    node.chmod(0o700)
+    monkeypatch.setenv("PATH", str(fake_bin))
     seals = _explicit_live_paths()
     payload = _live_preflight(project, require_explicit_paths=True)
     assert payload["ready"] is True

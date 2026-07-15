@@ -4,7 +4,7 @@
 
 **Goal:** Make the M2c read-only preflight discover already installed Codex, Claude, Claude Agent ACP, Node, and tmux through the active conda/pytest PATH while retaining strict canonical executable sealing and the single-preflight gate.
 
-**Architecture:** Add one test-harness-only canonicalization boundary between `shutil.which()`/explicit overrides and the existing strict `_seal_executable()` primitive. Keep production AgentDeck discovery and Task 14 launcher authority unchanged; resolve and seal Node only as an internal ACP probe dependency, preserve the four-tool response shape, and validate everything with fake executables before freezing one implementation commit.
+**Architecture:** Add one test-harness-only canonicalization boundary between `shutil.which()`/explicit overrides and the existing strict `_seal_executable()` primitive. Keep production AgentDeck discovery and Task 14 launcher authority unchanged; resolve and seal Node only as an internal ACP probe dependency, use that seal as the ACP probe's primary executable with the canonical adapter path as an argument, preserve the four-tool response shape, and validate everything with fake executables before freezing one implementation commit.
 
 **Tech Stack:** Python 3.12 standard library (`pathlib`, `shutil`, `os`, `stat`, `subprocess`), pytest, conda environment `agentdeck`, Git.
 
@@ -21,8 +21,10 @@
   - Route the next operator through the frozen implementation SHA, double suite, and one preflight gate.
 - Modify: `docs/validation/2026-07-13-phase3-m2-project-daemon.md`
   - Append the new PATH/tool-discovery evidence without rewriting historical blocked attempts.
-- Reference only: `docs/superpowers/specs/2026-07-15-m2c-path-tool-discovery-design.md`
-  - Human-approved design authority.
+- Modify: `docs/superpowers/specs/2026-07-15-m2c-path-tool-discovery-design.md`
+  - Human-approved design authority, synchronized with quality-review closure.
+- Modify: `docs/superpowers/plans/2026-07-15-m2c-path-tool-discovery.md`
+  - Record the reviewed direct sealed-Node execution semantics and closure tests.
 - Reference only: `src/agentdeck/cli.py`, `src/agentdeck/providers/cli_subprocess.py`, `src/agentdeck/runtime/tmux.py`
   - Existing production PATH-first behavior; no edits are authorized.
 
@@ -182,19 +184,30 @@ def _seal_preflight_candidate(
 ) -> _ExecutableSeal | None:
     if not value:
         return None
-    candidate = Path(value).expanduser()
-    if require_absolute and not candidate.is_absolute():
+    raw_candidate = Path(value)
+    if require_absolute and not raw_candidate.is_absolute():
         return None
     try:
+        candidate = raw_candidate.expanduser()
         canonical = candidate.resolve(strict=True)
     except (OSError, RuntimeError):
         return None
     return _seal_executable(str(canonical))
 ```
 
-This helper resolves only the discovery candidate. The returned seal contains
-the canonical regular path, and all existing descriptor/hash verification
-continues to run in `_seal_executable()`.
+This helper checks the raw explicit value before expansion, so `~/tool` and
+relative values cannot become absolute through environment-dependent
+rewriting. It then resolves only the discovery candidate. The returned seal
+contains the canonical regular path, and all existing descriptor/hash
+verification continues to run in `_seal_executable()`.
+
+Final-review TDD adds
+`test_preflight_candidate_rejects_tilde_explicit_override`: with an executable
+`$HOME/tool`, the initial implementation returns a seal for raw `~/tool` and
+the test is RED. Moving the absolute gate before `expanduser()` makes both the
+tilde value and a plain relative value fail closed while the existing
+expanduser RuntimeError test remains GREEN. This is part of the same amended
+implementation commit, not a new commit.
 
 - [ ] **Step 2: Route PATH and explicit preflight candidates through the helper**
 
@@ -259,19 +272,19 @@ conda run -n agentdeck python -m pytest \
 
 Expected: `2 passed`.
 
-### Task 3: RED/GREEN — make the ACP probe find the installed Node interpreter
+### Task 3: RED/GREEN — execute ACP through the sealed Node interpreter
 
 **Files:**
 - Modify: `tests/test_m2c_live_acceptance.py:254-268`
 - Modify: `tests/test_m2c_live_acceptance.py:593-675`
 - Test: `tests/test_m2c_live_acceptance.py`
 
-- [ ] **Step 1: Add a fake env-Node ACP regression**
+- [ ] **Step 1: Add a fake env-Node ACP regression with a version-named canonical Node**
 
 Add:
 
 ```python
-def test_preflight_adds_canonical_path_node_for_acp_shebang(
+def test_preflight_invokes_canonical_node_for_acp_adapter(
     tmp_path, monkeypatch,
 ) -> None:
     project = tmp_path / "project"
@@ -293,7 +306,7 @@ def test_preflight_adds_canonical_path_node_for_acp_shebang(
             _write_fake_capability_tool(target, name)
         (discovered / name).symlink_to(target)
         monkeypatch.delenv(env_name, raising=False)
-    node_target = targets / "node"
+    node_target = targets / "node-22.23.0"
     node_target.write_text(
         "#!/bin/sh\necho 0.58.1\n",
         encoding="utf-8",
@@ -318,10 +331,9 @@ def test_preflight_adds_canonical_path_node_for_acp_shebang(
     assert payload["blockers"] == []
 ```
 
-The fake `node` emits the bounded adapter version without interpreting the
-JavaScript fixture. It proves that `/usr/bin/env` resolves only the canonical
-fake Node directory placed in the bounded probe PATH; no real Node or real
-adapter runs.
+The fake Node emits the bounded adapter version without interpreting the
+JavaScript fixture. Its canonical basename is intentionally not `node`; PATH
+selects the symlink candidate, while the canonical seal supplies authority.
 
 - [ ] **Step 2: Run the Node regression and verify RED**
 
@@ -329,14 +341,29 @@ Run:
 
 ```bash
 conda run -n agentdeck python -m pytest \
-  tests/test_m2c_live_acceptance.py::test_preflight_adds_canonical_path_node_for_acp_shebang \
+  tests/test_m2c_live_acceptance.py::test_preflight_invokes_canonical_node_for_acp_adapter \
   -q
 ```
 
-Expected: FAIL because `_probe_environment()` currently receives only the four
-canonical tool paths and therefore contains no directory with a `node` entry.
+Expected for the initial candidate: FAIL with ACP unavailable because the
+accidental `node_seal.path.name == "node"` gate rejects the valid version-named
+canonical target.
 
-- [ ] **Step 3: Resolve and seal Node as an internal dependency**
+- [ ] **Step 3: Add a pre-spawn Node replacement regression**
+
+Add `test_acp_probe_uses_node_seal_as_primary_executable`. Wrap the real
+`_bounded_probe`; when its primary seal is the version-named Node target,
+replace that target immediately before forwarding the call. Require the
+wrapper to observe Node as primary, require no fallback/adapter marker, and
+require ACP to be unready with `executable_identity_drift` plus the existing
+ACP unavailable blocker.
+
+Expected for the initial candidate: RED because `_bounded_probe` receives the
+adapter seal instead of the Node seal, so the wrapper never observes Node as
+primary. This reproduces the quality-review finding that manual Node verify
+followed by `/usr/bin/env` lookup leaves an interpreter replacement window.
+
+- [ ] **Step 4: Resolve Node and use its seal as the primary executable**
 
 In `_live_preflight()`, after resolving the four public tools, add:
 
@@ -348,68 +375,63 @@ node_seal = (
     if resolved.get("claude-agent-acp") is not None
     else None
 )
-probe_seals = tuple(
-    seal for seal in (*resolved.values(), node_seal) if seal is not None
-)
 probe_env = _probe_environment(
     isolation,
-    tuple(seal.path for seal in probe_seals),
+    tuple(
+        seal.path
+        for seal in (node_seal, *resolved.values())
+        if seal is not None
+    ),
 )
 ```
 
-Remove the old `probe_env = _probe_environment(...)` block so there is a single
-bounded PATH construction.
-
-- [ ] **Step 4: Verify the interpreter seal around the ACP probe**
-
-Immediately before the ACP version probe, add:
+Do not require the canonical Node basename to equal `node`. If ACP exists but
+Node cannot be sealed, retain the early ACP-unavailable path and do not execute
+the adapter. Otherwise verify the adapter seal before the call, then invoke:
 
 ```python
-if name == "claude-agent-acp" and node_seal is not None:
-    try:
-        _verify_executable_seal(node_seal)
-    except _LiveHarnessFailure:
-        blockers.append("executable_identity_drift")
-        tools.append(
-            {
-                "name": name,
-                "executable_basename": name,
-                "version": None,
-                "ready": False,
-            }
-        )
-        continue
+version_probe = _bounded_probe(
+    node_seal,
+    (str(executable.path), *version_args),
+    cwd=project,
+    env=tool_probe_env,
+)
 ```
 
-Immediately after the ACP version probe, before sanitizing the version, add:
+Verify the adapter seal again after the call and replace the outcome with
+`executable_identity_drift` if it changed. `_bounded_probe` itself verifies
+Node immediately before spawn and after exit. The adapter is passed directly
+to Node, so ACP execution has no `/usr/bin/env` lookup or unsealed PATH
+fallback. Do not expand `_bounded_probe`'s API or add public response fields.
 
-```python
-if name == "claude-agent-acp" and node_seal is not None:
-    try:
-        _verify_executable_seal(node_seal)
-    except _LiveHarnessFailure:
-        blockers.append("executable_identity_drift")
-        version_probe = _ProbeOutcome(
-            False, b"", "executable_identity_drift",
-        )
-```
+- [ ] **Step 5: Isolate every fake ACP-ready fixture from machine Node**
 
-The existing blocker deduplication keeps the public list compact. Do not add a
-Node response item or a new blocker code.
+In each fake explicit-preflight fixture that expects ACP ready, create an
+executable `fake_bin/node` emitting `0.58.1` and monkeypatch `PATH` to that
+`fake_bin`. This includes the real-HOME write isolation, guarded Codex home,
+same-process-group child cleanup, and post-preflight executable replacement
+tests. No fake-ready fixture may rely on the machine Node to parse a fake shell
+adapter.
 
-- [ ] **Step 5: Run the Node and symlink matrix**
+- [ ] **Step 6: Run the Node and symlink matrix**
 
 Run:
 
 ```bash
 conda run -n agentdeck python -m pytest \
+  tests/test_m2c_live_acceptance.py::test_preflight_invokes_canonical_node_for_acp_adapter \
+  tests/test_m2c_live_acceptance.py::test_acp_probe_uses_node_seal_as_primary_executable \
+  tests/test_m2c_live_acceptance.py::test_preflight_does_not_execute_acp_without_sealed_path_node \
   tests/test_m2c_live_acceptance.py::test_preflight_resolves_path_symlinks_to_canonical_targets \
   tests/test_m2c_live_acceptance.py::test_preflight_resolves_explicit_absolute_symlink \
-  tests/test_m2c_live_acceptance.py::test_preflight_adds_canonical_path_node_for_acp_shebang \
   -q
 ```
 
-Expected: `3 passed`.
+Expected: `5 passed`.
+
+This direct sealed-Node construction and the replacement regression are the
+quality-review closure for the initial implementation candidate. They do not
+consume the designated real-tool preflight.
 
 ### Task 4: RED/GREEN — preserve strict negative and drift boundaries
 
@@ -495,16 +517,19 @@ Run the exact fake-only nodes:
 conda run -n agentdeck python -m pytest \
   tests/test_m2c_live_acceptance.py::test_preflight_resolves_path_symlinks_to_canonical_targets \
   tests/test_m2c_live_acceptance.py::test_preflight_resolves_explicit_absolute_symlink \
-  tests/test_m2c_live_acceptance.py::test_preflight_adds_canonical_path_node_for_acp_shebang \
+  tests/test_m2c_live_acceptance.py::test_preflight_invokes_canonical_node_for_acp_adapter \
+  tests/test_m2c_live_acceptance.py::test_acp_probe_uses_node_seal_as_primary_executable \
+  tests/test_m2c_live_acceptance.py::test_preflight_does_not_execute_acp_without_sealed_path_node \
   tests/test_m2c_live_acceptance.py::test_preflight_candidate_rejects_unsafe_canonical_target \
   tests/test_m2c_live_acceptance.py::test_preflight_symlink_seal_rejects_canonical_target_replacement \
   tests/test_m2c_live_acceptance.py::test_preflight_isolates_probe_writes_from_real_home \
   tests/test_m2c_live_acceptance.py::test_codex_probe_uses_temporary_guarded_home_without_writes \
+  tests/test_m2c_live_acceptance.py::test_successful_probe_reaps_same_group_children \
   tests/test_m2c_live_acceptance.py::test_post_preflight_executable_replacement_blocks_project_init \
   -q
 ```
 
-Expected: all selected fake-only cases PASS. Do not add
+Expected: `14 passed`. Do not add
 `test_m2c_live_preflight_is_read_only` to this command.
 
 ### Task 5: Synchronize durable documentation and freeze one implementation commit
@@ -513,6 +538,8 @@ Expected: all selected fake-only cases PASS. Do not add
 - Modify: `HISTORY.md:5-20`
 - Modify: `docs/handoff/current-development-state.md:5-35`
 - Modify: `docs/validation/2026-07-13-phase3-m2-project-daemon.md`
+- Modify: `docs/superpowers/specs/2026-07-15-m2c-path-tool-discovery-design.md`
+- Modify: `docs/superpowers/plans/2026-07-15-m2c-path-tool-discovery.md`
 - Test: repository verification commands
 
 - [ ] **Step 1: Update HISTORY without claiming live readiness**
@@ -521,6 +548,7 @@ Extend `Design M2c PATH-first tool discovery` with these implemented facts:
 
 ```markdown
 - Implemented a preflight-only canonical resolver between PATH/explicit candidates and the unchanged strict executable seal. Valid installed symlinks now bind to canonical regular targets; broken/cyclic/non-executable targets and post-seal replacement still fail closed.
+- Quality-review closure uses sealed Node as the ACP probe primary executable with the canonical adapter path as its argument, eliminating env lookup/fallback while accepting version-named canonical Node targets.
 - Added fake-only PATH, explicit symlink, logical-basename, env-Node shebang, unsafe-target, target-drift, and read-only-isolation regressions. Production Leader/ACP/tmux discovery and Task 14 controlled launchers remain unchanged.
 ```
 
@@ -531,12 +559,12 @@ Do not add full-suite or real-preflight results before those commands run.
 Replace the final paragraph of the top active-goal section with:
 
 ```markdown
-The approved spec and detailed TDD plan are implemented in the candidate
-revision containing this handoff. The next gate is to commit this exact tree,
-record its SHA, run two independent full suites without changing it, and then
-run the designated read-only preflight exactly once without explicit path
-overrides. No live Mission is authorized. M2c remains **BLOCKED** and M3
-remains locked.
+The approved spec and detailed TDD plan are implemented, including
+quality-review closure, and the candidate revision containing this handoff is
+committed. The next gate is to record its exact SHA, run two independent full
+suites without changing it, and then run the designated read-only preflight
+exactly once without explicit path overrides. No live Mission is authorized.
+M2c remains **BLOCKED** and M3 remains locked.
 ```
 
 - [ ] **Step 3: Append a pending verification subsection to the M2 validation report**
@@ -550,8 +578,10 @@ The M2c harness now resolves PATH or explicit preflight candidates to strict
 canonical executable targets before applying its existing inode/content seal.
 This corrects false unavailable classification for ordinary Claude, npm, and
 Homebrew symlinks without changing production dispatch or Task 14 launcher
-authority. Deterministic fake-tool regressions pass; no new real-tool preflight
-or live Mission has run in this candidate revision. The result remains
+authority. ACP runs through sealed Node as the primary executable with the
+canonical adapter as an argument and no env fallback. Deterministic fake-tool
+regressions pass; no new real-tool preflight or live Mission has run in this
+candidate revision. The result remains
 **BLOCKED** pending two unchanged-SHA full suites and one designated read-only
 preflight.
 ```
@@ -581,7 +611,7 @@ git diff --check
 
 Expected: both exit `0` with no compile error or whitespace error.
 
-- [ ] **Step 6: Commit the complete implementation slice**
+- [ ] **Step 6: Amend quality-review closure into the implementation commit**
 
 Run:
 
@@ -590,12 +620,15 @@ git add \
   tests/test_m2c_live_acceptance.py \
   HISTORY.md \
   docs/handoff/current-development-state.md \
-  docs/validation/2026-07-13-phase3-m2-project-daemon.md
-git commit -m "test: resolve M2c tools from PATH symlinks"
+  docs/validation/2026-07-13-phase3-m2-project-daemon.md \
+  docs/superpowers/specs/2026-07-15-m2c-path-tool-discovery-design.md \
+  docs/superpowers/plans/2026-07-15-m2c-path-tool-discovery.md
+git commit --amend --no-edit
 ```
 
-Expected: one implementation commit containing all RED/GREEN and durable-doc
-changes. No production source file is staged.
+Expected: the same single implementation commit, with a new SHA containing all
+RED/GREEN, quality-review closure, and durable-doc changes. No production
+source file is staged and no additional commit is created.
 
 ### Task 6: Freeze the SHA, run two full suites, and consume one preflight
 
@@ -694,7 +727,9 @@ new blocker requires a separate systematic-debugging/design round.
   `_explicit_live_paths()`, Task 14 launchers, response schema, blocker set,
   provider/auth state, and live Mission remain unchanged.
 - **TDD:** Each new behavior has an explicit failing command before its minimal
-  implementation and an exact passing command afterward.
+  implementation and an exact passing command afterward. Quality review added
+  RED coverage for version-named Node and pre-spawn Node replacement before
+  changing ACP probe construction.
 - **Type consistency:** `_seal_preflight_candidate()` always returns
   `_ExecutableSeal | None`; `_live_preflight()` retains
   `dict[str, object]`; public tool dictionaries retain their exact four fields.
@@ -703,3 +738,9 @@ new blocker requires a separate systematic-debugging/design round.
 - **Evidence safety:** Fake-only focused commands avoid the designated real
   node. The final real preflight is a single command after two clean full-suite
   passes, and neither result authorizes Task 14.
+- **Interpreter authority:** ACP is invoked as sealed Node plus the canonical
+  adapter argument. The bounded PATH is no longer an interpreter selection or
+  fallback mechanism, and fake-ready fixtures provide their own Node.
+- **Explicit-path authority:** The raw override must be absolute before tilde
+  expansion or canonicalization. Deterministic tilde, plain-relative, and
+  expanduser-failure coverage proves this ordering remains fail closed.

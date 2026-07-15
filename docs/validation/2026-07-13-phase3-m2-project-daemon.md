@@ -18,7 +18,7 @@ facts, and zero attempts, permissions, Worker replies, and handoffs. Closed
 failure diagnostics contain only the fixed gate names and booleans. The old
 token checks remain test mutation helpers and cannot produce a live PASS.
 
-The complete non-live M2c harness currently passes `110` tests with exactly one
+The complete non-live M2c harness currently passes `122` tests with exactly one
 opt-in live skip. This is deterministic pre-freeze evidence only. It does not
 claim a real four-stage PASS, change login or global settings, or authorize a
 live attempt. M2c remains **BLOCKED** and M3 remains locked until the new commit
@@ -261,3 +261,35 @@ four-stage M2c verdict therefore remains **BLOCKED**, not PASS.
 M2 delivers a project-local Unix-socket daemon, not A2A, remote execution,
 global roaming, notifications, a Workspace Client, full transcript recovery,
 automatic installation/login, Windows IPC, or a terminal emulator.
+
+## PATH-first preflight discovery candidate
+
+The candidate test harness now resolves PATH-discovered and explicit preflight
+candidates to canonical targets before applying the unchanged strict regular,
+executable, inode, and content seal. Ordinary installed symlinks can therefore
+bind to their canonical executable targets, while broken or cyclic links,
+non-executable or non-regular targets, and post-seal target replacement still
+fail closed. Explicit overrides are checked for absoluteness in their raw form,
+so tilde-prefixed and relative values are rejected before expansion.
+
+For the ACP probe, PATH-discovered Node is independently canonicalized and
+sealed, then used as `_bounded_probe`'s primary executable with the canonical
+adapter path as its first argument. Node is therefore verified immediately
+before spawn and after exit without a second `/usr/bin/env` PATH lookup or
+fallback; the adapter seal is verified separately around the call. If no
+valid sealed Node exists, ACP is reported unavailable and is not executed.
+Version-named canonical Node targets remain valid.
+
+The correction remains confined to the M2c preflight harness. Production
+Leader, ACP, and tmux discovery and the Task 14 controlled-launcher authority
+are unchanged. Deterministic fake-only PATH, explicit-symlink,
+logical-basename, env-Node-shebang, unsafe-target, target-drift, and read-only
+isolation regressions pass without real provider, ACP, tmux, installation,
+authentication, or global PATH/config effects. Quality-review closure also
+proves Node replacement before `_bounded_probe` spawn fails with compact
+identity drift and cannot execute the adapter through an unsealed fallback.
+
+No new designated real-tool preflight or live Mission has been run for this
+candidate. M2c remains **BLOCKED** pending two independent full suites on the
+unchanged implementation commit followed by exactly one designated read-only
+preflight with no path overrides. M3 remains locked.
