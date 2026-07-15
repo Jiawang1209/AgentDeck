@@ -2936,6 +2936,11 @@ def test_live_mission_task_authority_blocks_real_confirmation_path(
     tmp_path, monkeypatch,
 ) -> None:
     store = StateStore(tmp_path)
+    store.load()
+    store.all_events()
+    actual_state_before = copy.deepcopy(store.load())
+    actual_events_before = copy.deepcopy(store.all_events())
+    project_tree_before = _tree_snapshot(tmp_path)
     steps = _exact_live_steps()
     steps[2]["task"] = steps[2]["task"].replace("accepted-v2", "ACCEPTED-V2")
     previewed = {
@@ -3003,8 +3008,14 @@ def test_live_mission_task_authority_blocks_real_confirmation_path(
     assert writes[0].endswith("共4轮。\n".encode("utf-8"))
     assert "确认执行当前预览".encode("utf-8") not in writes[0]
     assert previewed == before
-    assert previewed["mission_attempts"] == []
-    assert previewed["permission_requests"] == []
+    actual_state_after = store.load()
+    actual_events_after = store.all_events()
+    project_tree_after = _tree_snapshot(tmp_path)
+    assert actual_state_after == actual_state_before
+    assert actual_events_after == actual_events_before
+    assert project_tree_after == project_tree_before
+    assert actual_state_after["mission_attempts"] == []
+    assert actual_state_after["permission_requests"] == []
 
 
 def test_live_failure_rejects_nonclosed_task_authority_without_stringifying() -> None:
