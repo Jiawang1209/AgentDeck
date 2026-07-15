@@ -772,6 +772,45 @@ def _clause_is_fully_supported(clause: str, operation: str | None) -> bool:
     )
 
 
+def _static_clause_rejection_kind(
+    *,
+    clause: str,
+    agent_id: str,
+    operation: str | None,
+    logic_kind: str | None,
+    agent_mismatch: bool,
+    sensitivity: str,
+    targets: tuple[str, ...],
+    values: tuple[str, ...],
+    unsafe_target: bool,
+    unsupported_value: bool,
+    fully_supported: bool,
+) -> str | None:
+    if sensitivity != "ordinary":
+        return "sensitive_content"
+    if agent_mismatch:
+        return "wrong_or_unknown_agent"
+    if logic_kind is not None:
+        return logic_kind
+    if len(targets) > 1:
+        return "ambiguous_target"
+    if len(values) > 1:
+        return "ambiguous_literal"
+    if _UNSUPPORTED_EXACT_VALUE_RE.search(clause) and not values:
+        return "unsupported_literal"
+    if unsupported_value:
+        return "unsupported_value"
+    if not fully_supported:
+        return "unsupported_clause_logic"
+    if unsafe_target:
+        return "unsafe_target"
+    if operation is None and (targets or values):
+        return "unbound_explicit_detail"
+    if operation is not None and agent_id == "unassigned":
+        return "ambiguous_agent"
+    return None
+
+
 def _opaque_item_id(prefix: str, body: dict[str, object]) -> str:
     return f"{prefix}_{hashlib.sha256(_canonical_bytes(body)).hexdigest()[:12]}"
 
@@ -795,7 +834,6 @@ def _requirements_from_clauses(
         return [], [{"unresolved_id": _opaque_item_id("unr", body), **body}]
 
     analyses: list[dict[str, object]] = []
-    safe_global_targets: list[str] = []
     for index, clause in enumerate(clauses):
         phase = (
             phases[index]
@@ -828,6 +866,8 @@ def _requirements_from_clauses(
                     "values": (),
                     "unsafe_target": False,
                     "unsupported_value": False,
+                    "rejection_kind": "sensitive_content",
+                    "validated_action_candidate": False,
                 }
             )
             continue
@@ -842,8 +882,23 @@ def _requirements_from_clauses(
                 unsafe_target = True
             else:
                 safe_targets.append(target)
-                if target not in safe_global_targets:
-                    safe_global_targets.append(target)
+        safe_targets_tuple = tuple(safe_targets)
+        unsupported_value = (
+            _EXPLICIT_VALUE_LEAD_RE.search(clause) is not None and not values
+        )
+        rejection_kind = _static_clause_rejection_kind(
+            clause=clause,
+            agent_id=agent_id,
+            operation=operation,
+            logic_kind=logic_kind,
+            agent_mismatch=agent_mismatch,
+            sensitivity=sensitivity,
+            targets=safe_targets_tuple,
+            values=values,
+            unsafe_target=unsafe_target,
+            unsupported_value=unsupported_value,
+            fully_supported=supported_clause,
+        )
         analyses.append(
             {
                 "clause": "" if unsafe_target else clause,
@@ -853,13 +908,18 @@ def _requirements_from_clauses(
                 "logic_kind": logic_kind,
                 "agent_mismatch": agent_mismatch,
                 "sensitivity": sensitivity,
-                "targets": tuple(safe_targets),
+                "targets": safe_targets_tuple,
                 "values": values,
                 "unsafe_target": unsafe_target,
-                "unsupported_value": (
-                    _EXPLICIT_VALUE_LEAD_RE.search(clause) is not None and not values
-                ),
+                "unsupported_value": unsupported_value,
                 "supported_clause": supported_clause,
+                "rejection_kind": rejection_kind,
+                "validated_action_candidate": (
+                    rejection_kind is None
+                    and operation is not None
+                    and len(safe_targets_tuple) == 1
+                    and len(values) == 1
+                ),
             }
         )
 
@@ -892,39 +952,12 @@ def _requirements_from_clauses(
         assert type(targets) is tuple
         assert type(values) is tuple
 
-        if analysis["sensitivity"] != "ordinary":
-            add_unresolved("sensitive_content", phase, agent_id)
-            continue
-        if analysis["agent_mismatch"]:
-            add_unresolved("wrong_or_unknown_agent", phase, agent_id)
-            continue
-        if analysis["logic_kind"] is not None:
-            add_unresolved(analysis["logic_kind"], phase, agent_id)
-            continue
-        if len(targets) > 1:
-            add_unresolved("ambiguous_target", phase, agent_id)
-            continue
-        if len(values) > 1:
-            add_unresolved("ambiguous_literal", phase, agent_id)
-            continue
-        if _UNSUPPORTED_EXACT_VALUE_RE.search(clause) and not values:
-            add_unresolved("unsupported_literal", phase, agent_id)
-            continue
-        if analysis["unsupported_value"]:
-            add_unresolved("unsupported_value", phase, agent_id)
-            continue
-        if not analysis["supported_clause"]:
-            add_unresolved("unsupported_clause_logic", phase, agent_id)
-            continue
-        if analysis["unsafe_target"]:
-            add_unresolved("unsafe_target", phase, agent_id)
+        rejection_kind = analysis["rejection_kind"]
+        assert rejection_kind is None or type(rejection_kind) is str
+        if rejection_kind is not None:
+            add_unresolved(rejection_kind, phase, agent_id)
             continue
         if operation is None:
-            if targets or values:
-                add_unresolved("unbound_explicit_detail", phase, agent_id)
-            continue
-        if agent_id == "unassigned":
-            add_unresolved("ambiguous_agent", phase, agent_id)
             continue
 
         target = targets[0] if targets else None
@@ -940,13 +973,14 @@ def _requirements_from_clauses(
             aligned = {
                 later["values"][0]
                 for later in analyses[index + 1 :]
-                if later["operation"] == "update"
+                if later["validated_action_candidate"]
+                and later["operation"] == "update"
                 and len(later["targets"]) == 1
                 and later["targets"][0] == target
                 and len(later["values"]) == 1
                 and later["values"][0].removesuffix("\n") == literal
             }
-            if len(safe_global_targets) == 1 and len(aligned) == 1:
+            if len(aligned) == 1:
                 literal = aligned.pop()
         if (
             literal is None

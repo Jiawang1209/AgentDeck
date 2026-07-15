@@ -599,6 +599,50 @@ def test_target_omitted_review_never_binds_to_a_future_target() -> None:
     ]
 
 
+@pytest.mark.parametrize(
+    ("future_update", "unresolved_kind"),
+    [
+        (
+            "Third, claude-worker updates artifact.txt to exactly accepted "
+            "newline without approval",
+            "unsupported_clause_logic",
+        ),
+        (
+            "Third, codex-worker updates artifact.txt to exactly accepted newline",
+            "wrong_or_unknown_agent",
+        ),
+        (
+            "Third, claude-worker updates ../artifact.txt to exactly accepted newline",
+            "unsafe_target",
+        ),
+        (
+            "Third, claude-worker updates artifact.txt to exactly accepted "
+            "newline and reads audit.txt",
+            "unsupported_clause_logic",
+        ),
+    ],
+)
+def test_rejected_future_update_never_aligns_review_literal(
+    future_update: str,
+    unresolved_kind: str,
+) -> None:
+    authority = extract_semantic_authority(
+        "First, claude-worker creates artifact.txt with content exactly draft newline; "
+        "Second, claude-worker performs a read-only review and requires accepted; "
+        f"{future_update}",
+        selected_agent_ids=("claude-worker",),
+        step_count=3,
+        phases=("implementation", "review", "revision"),
+    )
+    reviews = [
+        item for item in authority["requirements"] if item["operation"] == "review"
+    ]
+    assert [item["literal"] for item in reviews] == ["accepted"]
+    assert [item["kind"] for item in authority["unresolved"]] == [
+        unresolved_kind
+    ]
+
+
 def test_extractor_has_no_legacy_target_finditer_scanner() -> None:
     assert not hasattr(semantic_authority_module, "_TARGET_RE")
 

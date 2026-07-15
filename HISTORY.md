@@ -4,6 +4,12 @@
 
 ## 2026-07-15
 
+### Validate future semantic alignment candidates
+
+- Added a pure static safety result for every parsed clause and limited review newline alignment to later update candidates that pass full-clause consumption, sensitivity, target, operation, agent-position, and ambiguity checks.
+- Rejected future updates—including unsupported tails, wrong agents, unsafe targets, and extra operations—can no longer modify an earlier review literal; the exact live path still aligns against its fully valid later update.
+- Added RED/GREEN table coverage for rejected future alignment sources. This remains Task 2 extraction only and does not claim final approval, M2c PASS, live execution, or Task 3 progress.
+
 ### Unify conservative semantic clause parsing
 
 - Replaced scattered operation/target scanning with one anchored `_ParsedClause` per clause across create, read, review, update, and verify; explicit whole-target and target-omitted read-only variants are distinct grammar branches, and omitted review/verification targets can only inherit one uniquely established prior state rather than a future target.

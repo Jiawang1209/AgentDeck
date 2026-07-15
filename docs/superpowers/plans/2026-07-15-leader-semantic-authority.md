@@ -368,6 +368,12 @@ each complete candidate receives one linear whole-token fullmatch.
 Target-omitted review or verification may inherit a target only from the one
 unique state established by earlier accepted clauses in sequential order;
 later clauses must never provide target authority to an earlier clause.
+The only permitted future lookup is review literal/newline alignment against a
+later update for that already-known target and token. The later clause must be
+a validated action candidate from the same parse/safety pass: full-clause
+consumption, ordinary sensitivity, one safe target, one literal, one supported
+operation, and the expected explicit agent/position must all pass. A rejected
+future clause contributes no alignment state.
 
 Generate ids from the canonical requirement body without `requirement_id`,
 using the first 12 lowercase SHA-256 hex characters. Never use timestamps,
