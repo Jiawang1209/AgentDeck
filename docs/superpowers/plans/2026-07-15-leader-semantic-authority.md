@@ -422,6 +422,8 @@ git commit -m "Extract conservative Mission semantics"
 
 - Create: `src/agentdeck/semantic_planning.py`
 - Create: `tests/test_semantic_planning.py`
+- Modify: `src/agentdeck/semantic_authority.py`
+- Modify: `tests/test_semantic_authority.py`
 - Modify: `HISTORY.md`
 
 - [ ] **Step 1: Write the complete RED mutation matrix**
@@ -479,6 +481,30 @@ def test_compiler_is_byte_deterministic() -> None:
 Add hostile newline, Unicode, colon, Markdown-fence, and instruction-like
 literals. Assert they are JSON-escaped into a canonical value line and cannot
 create a second `Authoritative operation:` header.
+
+Use the shared pure `semantic_text_contains_sensitive_value()` helper from the
+authority module for candidate, authority, and semantic-step sensitive scans;
+the helper must reuse the extractor assignment-key classifier and known token
+prefix detection. Add a complete public semantic-step mutation matrix covering
+exact fields, scalar/resource bounds, refs/effects agreement, nested authority
+shape, sensitive/instruction verification, and malformed or forged embedded
+hashes. `compile_worker_task()` accepts only a persisted step with a correct
+embedded hash; `semantic_step_hash()` accepts a body for internal construction
+but must verify any embedded hash it receives.
+
+Before defensive copying or canonical hashing, public semantic-step validation
+must iteratively preflight an exact built-in JSON tree with fixed depth, node,
+collection, scalar, and integer bounds; cycles, shared containers, subclasses,
+and custom containers fail closed. `agent_id` and `phase` use the authority
+ordinary-scalar domain, while `role` reuses candidate bounded NFC safe text so
+configured roles such as `architecture planning` remain valid.
+
+Duplicate phase names are allowed when every authority ref still matches its
+requirement phase and Worker. Proposal targets must use the canonical authority
+target validator, including safe extensionless paths such as `README` and
+`docs/config`. Draft authority passed into candidate validation/compilation
+must have an empty `proposed_effects`; existing proposals fail closed rather
+than being overwritten.
 
 - [ ] **Step 2: Run RED**
 
@@ -584,8 +610,10 @@ home paths, raw candidate JSON, prompt fragments, or literal values.
 - [ ] **Step 5: Commit validator/compiler**
 
 ```bash
-git add src/agentdeck/semantic_planning.py tests/test_semantic_planning.py HISTORY.md
-git commit -m "Validate and compile semantic plans"
+git add src/agentdeck/semantic_authority.py src/agentdeck/semantic_planning.py \
+  tests/test_semantic_authority.py tests/test_semantic_planning.py \
+  docs/superpowers/plans/2026-07-15-leader-semantic-authority.md HISTORY.md
+git commit -m "Harden semantic planning boundaries"
 ```
 
 ## Task 4: Versioned semantic Leader native schema and request authority

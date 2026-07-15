@@ -3,6 +3,7 @@ from __future__ import annotations
 from copy import deepcopy
 import hashlib
 import json
+import math
 import re
 import unicodedata
 from typing import Any, NoReturn
@@ -11,6 +12,7 @@ from agentdeck.semantic_authority import (
     SEMANTIC_AUTHORITY_SCHEMA_VERSION,
     SEMANTIC_OPERATIONS,
     SemanticAuthorityError,
+    semantic_text_contains_sensitive_value,
     validate_semantic_authority,
 )
 
@@ -55,17 +57,12 @@ _SEMANTIC_STEP_BODY_FIELDS = _SEMANTIC_STEP_FIELDS - {"semantic_step_hash"}
 _SAFE_RISKS = frozenset({"low"})
 _MAX_TEXT_BYTES = 4096
 _MAX_ITEMS = 256
+_MAX_JSON_TREE_DEPTH = 16
+_MAX_JSON_TREE_NODES = 10_000
+_MAX_JSON_COLLECTION_ITEMS = 512
 _HASH_RE = re.compile(r"sha256:[0-9a-f]{64}\Z")
 _REQUIREMENT_ID_RE = re.compile(r"req_[0-9a-f]{12}\Z")
-_PHASE_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}\Z")
-_TARGET_RE = re.compile(
-    r"(?:[A-Za-z0-9_-]+/)*[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)+\Z"
-)
-_SECRET_RE = re.compile(
-    r"(?:\b(?:password|passwd|secret|credential)s?\b\s*[:=]"
-    r"|\b(?:api|access)[_-]?token\b\s*[:=]|\bsk-[A-Za-z0-9])",
-    re.IGNORECASE,
-)
+_ORDINARY_SCALAR_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}\Z")
 _INSTRUCTION_RE = re.compile(
     r"(?:ignore\s+(?:all\s+)?previous\s+instructions?"
     r"|authoritative\s+operation\s*:|```|system\s+prompt)",
@@ -121,7 +118,7 @@ def _safe_text(value: object, *, allow_instruction: bool = False) -> bool:
         return False
     if any(unicodedata.category(char) in {"Cc", "Cs"} for char in value):
         return False
-    if _SECRET_RE.search(value):
+    if semantic_text_contains_sensitive_value(value):
         return False
     return allow_instruction or _INSTRUCTION_RE.search(value) is None
 
@@ -133,7 +130,7 @@ def _contains_sensitive_authority(value: object) -> bool:
         return any(_contains_sensitive_authority(item) for item in value.values())
     if type(value) is list:
         return any(_contains_sensitive_authority(item) for item in value)
-    return type(value) is str and _SECRET_RE.search(value) is not None
+    return semantic_text_contains_sensitive_value(value)
 
 
 def _validated_authority(authority: object) -> dict[str, Any]:
@@ -174,20 +171,29 @@ def _validate_proposal_shape(value: object, *, step: int) -> dict[str, str]:
     target = value["target"]
     operation = value["operation"]
     sensitivity = value["sensitivity"]
-    if type(sensitivity) is not str or sensitivity != "ordinary":
+    if type(target) is not str or type(operation) is not str or type(sensitivity) is not str:
+        _fail("semantic_candidate_schema_invalid", step=step)
+    if sensitivity != "ordinary":
         _fail("semantic_authority_sensitive_value", step=step)
-    if (
-        type(target) is not str
-        or not _safe_text(target)
-        or _TARGET_RE.fullmatch(target) is None
-        or target.startswith(("/", "."))
-        or "//" in target
-        or any(segment in {".", ".."} for segment in target.split("/"))
-    ):
+    if semantic_text_contains_sensitive_value(target):
+        _fail("semantic_authority_sensitive_value", step=step)
+    if operation not in SEMANTIC_OPERATIONS:
         _fail("semantic_scope_addition_blocked", step=step)
-    if type(operation) is not str or operation not in SEMANTIC_OPERATIONS:
+    normalized = {"target": target, "operation": operation, "sensitivity": sensitivity}
+    proposal = {"proposed_effect_id": _proposal_id(normalized), **normalized}
+    try:
+        validate_semantic_authority(
+            {
+                "schema_version": SEMANTIC_AUTHORITY_SCHEMA_VERSION,
+                "source_message_hash": f"sha256:{'0' * 64}",
+                "requirements": [],
+                "proposed_effects": [proposal],
+                "unresolved": [],
+            }
+        )
+    except SemanticAuthorityError:
         _fail("semantic_scope_addition_blocked", step=step)
-    return {"target": target, "operation": operation, "sensitivity": sensitivity}
+    return normalized
 
 
 def _looks_like_transition_fragment(reference: str, transition_ids: set[str]) -> bool:
@@ -209,6 +215,8 @@ def validate_semantic_candidate(
 ) -> dict[str, object]:
     """Validate an exact Leader semantic candidate and return a defensive copy."""
     validated_authority = _validated_authority(authority)
+    if validated_authority["proposed_effects"]:
+        _fail("semantic_candidate_schema_invalid")
     agents, role_map, count = _validate_context(selected_agent_ids, roles, step_count)
     if not _exact_dict(candidate) or set(candidate) != _CANDIDATE_FIELDS:
         _fail("semantic_candidate_schema_invalid")
@@ -224,7 +232,6 @@ def validate_semantic_candidate(
         item["requirement_id"] for item in requirements if item["kind"] == "state_transition"
     }
     seen: set[str] = set()
-    seen_phases: set[str] = set()
     for index, raw_step in enumerate(steps, start=1):
         if not _exact_dict(raw_step) or set(raw_step) != _CANDIDATE_STEP_FIELDS:
             _fail("semantic_candidate_schema_invalid", step=index)
@@ -236,11 +243,12 @@ def validate_semantic_candidate(
         if type(raw_step["role"]) is not str or raw_step["role"] != role_map[expected_agent]:
             _fail("semantic_candidate_schema_invalid", step=index)
         phase = raw_step["phase"]
-        if type(phase) is not str or _PHASE_RE.fullmatch(phase) is None or not _safe_text(phase):
+        if (
+            type(phase) is not str
+            or _ORDINARY_SCALAR_RE.fullmatch(phase) is None
+            or not _safe_text(phase)
+        ):
             _fail("semantic_candidate_schema_invalid", step=index)
-        if phase in seen_phases:
-            _fail("semantic_candidate_schema_invalid", step=index)
-        seen_phases.add(phase)
         refs = raw_step["authority_refs"]
         if not _exact_list(refs) or len(refs) > _MAX_ITEMS or any(type(ref) is not str for ref in refs):
             _fail("semantic_candidate_schema_invalid", step=index)
@@ -302,23 +310,94 @@ def _canonical_bytes(value: object) -> bytes:
         _fail("semantic_compilation_failed")
 
 
-def _validate_semantic_step(value: object) -> tuple[dict[str, Any], str | None]:
-    if not _exact_dict(value) or set(value) not in {
+def _bounded_ordinary_scalar(value: object) -> bool:
+    return (
+        type(value) is str
+        and _ORDINARY_SCALAR_RE.fullmatch(value) is not None
+        and _safe_text(value)
+    )
+
+
+def _preflight_exact_json_tree(value: object) -> None:
+    stack: list[tuple[object, int]] = [(value, 0)]
+    seen_containers: set[int] = set()
+    node_count = 0
+    while stack:
+        item, depth = stack.pop()
+        node_count += 1
+        if depth > _MAX_JSON_TREE_DEPTH or node_count > _MAX_JSON_TREE_NODES:
+            _fail("semantic_compilation_failed")
+        if type(item) in {dict, list}:
+            identity = id(item)
+            if identity in seen_containers:
+                _fail("semantic_compilation_failed")
+            seen_containers.add(identity)
+            if len(item) > _MAX_JSON_COLLECTION_ITEMS:
+                _fail("semantic_compilation_failed")
+            if type(item) is dict:
+                if any(type(key) is not str for key in item):
+                    _fail("semantic_compilation_failed")
+                stack.extend((child, depth + 1) for child in item.values())
+            else:
+                stack.extend((child, depth + 1) for child in item)
+            continue
+        if type(item) is str:
+            try:
+                encoded = item.encode("utf-8")
+            except UnicodeError:
+                _fail("semantic_compilation_failed")
+            if (
+                len(encoded) > _MAX_TEXT_BYTES
+                or unicodedata.normalize("NFC", item) != item
+            ):
+                _fail("semantic_compilation_failed")
+            continue
+        if item is None or type(item) is bool:
+            continue
+        if type(item) is int:
+            if not -(2**63) <= item <= 2**63 - 1:
+                _fail("semantic_compilation_failed")
+            continue
+        if type(item) is float:
+            if not math.isfinite(item):
+                _fail("semantic_compilation_failed")
+            continue
+        _fail("semantic_compilation_failed")
+
+
+def _validate_semantic_step(
+    value: object, *, require_hash: bool
+) -> tuple[dict[str, Any], str | None]:
+    _preflight_exact_json_tree(value)
+    expected_fields = _SEMANTIC_STEP_FIELDS if require_hash else _SEMANTIC_STEP_BODY_FIELDS
+    allowed_fields = {expected_fields} if require_hash else {
         _SEMANTIC_STEP_BODY_FIELDS,
         _SEMANTIC_STEP_FIELDS,
-    }:
+    }
+    if not _exact_dict(value) or frozenset(value) not in allowed_fields:
         _fail("semantic_compilation_failed")
-    body = {key: deepcopy(item) for key, item in value.items() if key != "semantic_step_hash"}
+    body = {key: item for key, item in value.items() if key != "semantic_step_hash"}
     if (
         type(body["step"]) is not int
         or body["step"] <= 0
-        or type(body["agent_id"]) is not str
-        or type(body["role"]) is not str
-        or type(body["phase"]) is not str
+        or body["step"] > _MAX_ITEMS
+        or not _bounded_ordinary_scalar(body["agent_id"])
+        or not _safe_text(body["role"])
+        or not _bounded_ordinary_scalar(body["phase"])
         or not _exact_list(body["authority_refs"])
+        or len(body["authority_refs"]) > _MAX_ITEMS
+        or any(
+            type(reference) is not str
+            or _REQUIREMENT_ID_RE.fullmatch(reference) is None
+            for reference in body["authority_refs"]
+        )
+        or len(body["authority_refs"]) != len(set(body["authority_refs"]))
         or not _exact_list(body["proposed_effects"])
+        or len(body["proposed_effects"]) > _MAX_ITEMS
         or not _exact_list(body["required_effects"])
-        or type(body["verification"]) is not str
+        or len(body["required_effects"]) > _MAX_ITEMS
+        or not body["required_effects"] and not body["proposed_effects"]
+        or not _safe_text(body["verification"])
         or type(body["risk"]) is not str
         or body["risk"] not in _SAFE_RISKS
         or type(body["requires_approval"]) is not bool
@@ -326,6 +405,10 @@ def _validate_semantic_step(value: object) -> tuple[dict[str, Any], str | None]:
     ):
         _fail("semantic_compilation_failed")
     required_ids = []
+    if _contains_sensitive_authority(body["required_effects"]) or _contains_sensitive_authority(
+        body["proposed_effects"]
+    ):
+        _fail("semantic_compilation_failed")
     for effect in body["required_effects"]:
         if not _exact_dict(effect) or type(effect.get("requirement_id")) is not str:
             _fail("semantic_compilation_failed")
@@ -337,6 +420,14 @@ def _validate_semantic_step(value: object) -> tuple[dict[str, Any], str | None]:
             not _exact_dict(proposal)
             or set(proposal) != _PROPOSAL_FIELDS | {"proposed_effect_id"}
             or type(proposal["proposed_effect_id"]) is not str
+            or type(proposal["target"]) is not str
+            or type(proposal["operation"]) is not str
+            or type(proposal["sensitivity"]) is not str
+        ):
+            _fail("semantic_compilation_failed")
+        if (
+            proposal["sensitivity"] != "ordinary"
+            or semantic_text_contains_sensitive_value(proposal["target"])
         ):
             _fail("semantic_compilation_failed")
         proposal_body = {
@@ -364,16 +455,29 @@ def _validate_semantic_step(value: object) -> tuple[dict[str, Any], str | None]:
         for effect in validated_effects["requirements"]
     ):
         _fail("semantic_compilation_failed")
-    embedded = value.get("semantic_step_hash")
-    if embedded is not None and (type(embedded) is not str or _HASH_RE.fullmatch(embedded) is None):
+    has_embedded_hash = "semantic_step_hash" in value
+    embedded = value["semantic_step_hash"] if has_embedded_hash else None
+    if has_embedded_hash and (
+        type(embedded) is not str or _HASH_RE.fullmatch(embedded) is None
+    ):
         _fail("semantic_compilation_failed")
-    return body, embedded
+    try:
+        return deepcopy(body), embedded
+    except RecursionError:
+        _fail("semantic_compilation_failed")
+
+
+def _semantic_step_body_hash(body: dict[str, Any]) -> str:
+    return f"sha256:{hashlib.sha256(_canonical_bytes(body)).hexdigest()}"
 
 
 def semantic_step_hash(semantic_step: object) -> str:
     """Hash the canonical semantic step body, excluding its own hash field."""
-    body, _ = _validate_semantic_step(semantic_step)
-    return f"sha256:{hashlib.sha256(_canonical_bytes(body)).hexdigest()}"
+    body, embedded_hash = _validate_semantic_step(semantic_step, require_hash=False)
+    actual_hash = _semantic_step_body_hash(body)
+    if embedded_hash is not None and embedded_hash != actual_hash:
+        _fail("semantic_compilation_drift")
+    return actual_hash
 
 
 def _json_line(value: object) -> str:
@@ -385,9 +489,8 @@ def _json_line(value: object) -> str:
 
 def compile_worker_task(semantic_step: object) -> str:
     """Compile a validated semantic step into a deterministic Worker task."""
-    body, embedded_hash = _validate_semantic_step(semantic_step)
-    actual_hash = semantic_step_hash(body)
-    if embedded_hash is not None and embedded_hash != actual_hash:
+    body, embedded_hash = _validate_semantic_step(semantic_step, require_hash=True)
+    if embedded_hash != _semantic_step_body_hash(body):
         _fail("semantic_compilation_drift")
 
     lines = ["Authoritative effects:"]

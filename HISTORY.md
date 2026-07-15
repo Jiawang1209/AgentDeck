@@ -4,6 +4,12 @@
 
 ## 2026-07-15
 
+### Harden semantic planning boundaries
+
+- Exposed one pure exact-type sensitive-text classifier from semantic authority and reused its assignment-key and known-token-prefix decisions across extraction, candidate, authority, and persisted semantic-step validation.
+- Tightened public semantic-step hashing/compilation around an iterative exact-JSON preflight for depth, size, cycles, aliases, and custom containers; canonical nested effects; non-empty combined effects; reference agreement; bounded safe-text roles; sensitive and instruction rejection; and mandatory matching embedded hashes for Worker compilation.
+- Reused the canonical authority target validator for proposals, accepted valid extensionless project paths, allowed repeated phase labels when requirement bindings agree, and rejected draft authorities that already contain proposals. Added RED/GREEN matrices and synchronized the Task 3 plan; this remains pure validation/compilation with no Task 4, provider, conversation, state, runtime, tmux, ACP, live execution, or M2c PASS claim.
+
 ### Validate and compile semantic Leader plans
 
 - Added a pure exact-shape semantic candidate validator that freezes round-robin Worker order, configured roles, step phases, complete requirement coverage, atomic state transitions, bounded non-sensitive text, and reviewable project-local proposals behind closed non-echoing failure codes.

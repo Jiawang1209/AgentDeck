@@ -21,6 +21,7 @@ from agentdeck.semantic_authority import (
     compact_semantic_authority,
     extract_semantic_authority,
     semantic_authority_hash,
+    semantic_text_contains_sensitive_value,
     validate_semantic_authority,
 )
 
@@ -53,6 +54,59 @@ def valid_authority() -> dict[str, object]:
         ],
         "unresolved": [],
     }
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "DBPASSWORDHASH=super-secret-value",
+        "APIKEYVALUE=super-secret-value",
+        "private_key=super-secret-value",
+        "accessToken=super-secret-value",
+        "sk-DO_NOT_ECHO",
+        "ghp_DO_NOT_ECHO",
+    ],
+)
+def test_shared_sensitive_text_helper_uses_extraction_classifier(text: str) -> None:
+    assert semantic_text_contains_sensitive_value(text) is True
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "ordinary-value",
+        "secretary=available",
+        "tokenizer=enabled",
+        "monkey_value=banana",
+    ],
+)
+def test_shared_sensitive_text_helper_preserves_benign_assignments(text: str) -> None:
+    assert semantic_text_contains_sensitive_value(text) is False
+
+
+def test_shared_sensitive_text_helper_requires_exact_builtin_string() -> None:
+    class StringSubclass(str):
+        pass
+
+    assert semantic_text_contains_sensitive_value(StringSubclass("password=SECRET")) is False
+    assert semantic_text_contains_sensitive_value({"password": "SECRET"}) is False
+
+
+def test_known_token_prefix_values_are_redacted_before_source_hashing() -> None:
+    first = extract_semantic_authority(
+        "First, worker creates artifact.txt with content exactly ghp_FIRSTSECRET",
+        selected_agent_ids=("worker",),
+        step_count=1,
+        phases=("implementation",),
+    )
+    second = extract_semantic_authority(
+        "First, worker creates artifact.txt with content exactly ghp_SECONDSECRET",
+        selected_agent_ids=("worker",),
+        step_count=1,
+        phases=("implementation",),
+    )
+    assert first["source_message_hash"] == second["source_message_hash"]
+    assert first["requirements"] == second["requirements"] == []
 
 
 _CHINESE_LIVE_REQUEST = (

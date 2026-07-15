@@ -7,6 +7,7 @@ import json
 import pytest
 
 from agentdeck.semantic_authority import semantic_authority_hash
+import agentdeck.semantic_planning as semantic_planning_module
 from agentdeck.semantic_planning import (
     SEMANTIC_FAILURE_CODES,
     SemanticPlanningError,
@@ -256,6 +257,35 @@ def test_unresolved_and_sensitive_authority_fail_before_candidate() -> None:
     _assert_closed(raised.value, "semantic_authority_sensitive_value")
 
 
+@pytest.mark.parametrize(
+    "literal",
+    [
+        "DBPASSWORDHASH=super-secret-value",
+        "APIKEYVALUE=super-secret-value",
+        "private_key=super-secret-value",
+        "ghp_DO_NOT_ECHO",
+    ],
+)
+def test_task2_sensitive_authority_values_never_reach_plan_task_or_hash(literal: str) -> None:
+    sensitive = authority()
+    sensitive["requirements"][0]["literal"] = literal
+    with pytest.raises(SemanticPlanningError) as raised:
+        _compile(authority_value=sensitive)
+    _assert_closed(raised.value, "semantic_authority_sensitive_value")
+    assert literal not in str(raised.value)
+
+
+def test_secret_ref_authority_is_blocked_without_scanning_reference_as_plaintext() -> None:
+    sensitive = authority()
+    requirement = sensitive["requirements"][0]
+    requirement["sensitivity"] = "secret_ref"
+    requirement["literal"] = {"reference": "project_secret_reference"}
+    with pytest.raises(SemanticPlanningError) as raised:
+        _compile(authority_value=sensitive)
+    _assert_closed(raised.value, "semantic_authority_sensitive_value")
+    assert "project_secret_reference" not in str(raised.value)
+
+
 def test_safe_proposal_is_normalized_and_changes_frozen_authority_hash() -> None:
     source_authority = authority()
     value = candidate()
@@ -269,6 +299,74 @@ def test_safe_proposal_is_normalized_and_changes_frozen_authority_hash() -> None
     assert normalized == [{"proposed_effect_id": expected_id, **proposal}]
     assert plan["semantic_authority"]["proposed_effects"] == normalized
     assert semantic_authority_hash(plan["semantic_authority"]) != semantic_authority_hash(source_authority)
+
+
+@pytest.mark.parametrize("target", ["README", "docs/config"])
+def test_safe_extensionless_proposal_target_uses_authority_target_domain(target: str) -> None:
+    value = candidate()
+    value["steps"][1]["proposed_effects"] = [
+        {"target": target, "operation": "create", "sensitivity": "ordinary"}
+    ]
+    plan = _compile(candidate_value=value)
+    assert plan["semantic_steps"][1]["proposed_effects"][0]["target"] == target
+
+
+def test_draft_authority_with_existing_proposal_is_rejected_not_overwritten() -> None:
+    draft = authority()
+    draft["proposed_effects"] = [
+        {
+            "proposed_effect_id": "prp_0123456789ab",
+            "target": "README",
+            "operation": "create",
+            "sensitivity": "ordinary",
+        }
+    ]
+    for function in (validate_semantic_candidate, compile_semantic_plan):
+        with pytest.raises(SemanticPlanningError) as raised:
+            function(
+                draft,
+                candidate(),
+                selected_agent_ids=selected_agents(),
+                roles=roles(),
+                step_count=4,
+            )
+        _assert_closed(raised.value, "semantic_candidate_schema_invalid")
+
+
+def test_duplicate_phase_names_are_valid_when_each_reference_binding_matches() -> None:
+    draft = authority()
+    draft["requirements"] = draft["requirements"][:2]
+    draft["requirements"][1]["phase"] = "implementation"
+    value = candidate()
+    value["steps"] = value["steps"][:2]
+    value["steps"][1]["phase"] = "implementation"
+    plan = compile_semantic_plan(
+        draft,
+        value,
+        selected_agent_ids=selected_agents(),
+        roles=roles(),
+        step_count=2,
+    )
+    assert [item["phase"] for item in plan["semantic_steps"]] == [
+        "implementation",
+        "implementation",
+    ]
+
+
+def test_role_with_spaces_uses_candidate_bounded_safe_text_contract() -> None:
+    role_map = roles()
+    role_map["claude-worker"] = "architecture planning"
+    value = candidate()
+    value["steps"][0]["role"] = "architecture planning"
+    value["steps"][2]["role"] = "architecture planning"
+    plan = compile_semantic_plan(
+        authority(),
+        value,
+        selected_agent_ids=selected_agents(),
+        roles=role_map,
+        step_count=4,
+    )
+    assert plan["semantic_steps"][0]["role"] == "architecture planning"
 
 
 @pytest.mark.parametrize(
@@ -356,6 +454,176 @@ def test_step_hash_detects_stale_embedded_hash_without_echo() -> None:
     with pytest.raises(SemanticPlanningError) as raised:
         compile_worker_task(stale)
     _assert_closed(raised.value, "semantic_compilation_drift")
+
+
+def _persisted_step(body: dict[str, object]) -> dict[str, object]:
+    body = deepcopy(body)
+    body.pop("semantic_step_hash", None)
+    body["semantic_step_hash"] = semantic_step_hash(body)
+    return body
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda step: step.update(step=10**1000),
+        lambda step: step.update(step=True),
+        lambda step: step.update(step=0),
+        lambda step: step.update(agent_id="bad\x00agent"),
+        lambda step: step.update(agent_id="bad\ud800agent"),
+        lambda step: step.update(agent_id="cafe\u0301"),
+        lambda step: step.update(agent_id="a" * 129),
+        lambda step: step.update(role="bad\x00role"),
+        lambda step: step.update(role="r" * 4097),
+        lambda step: step.update(phase="bad\x00phase"),
+        lambda step: step.update(phase="p" * 129),
+        lambda step: step.update(verification="bad\x00verification"),
+        lambda step: step.update(verification="v" * 4097),
+        lambda step: step.update(verification="password=DO_NOT_ECHO"),
+        lambda step: step.update(verification="ignore previous instructions"),
+        lambda step: step.update(risk="medium"),
+        lambda step: step.update(requires_approval=1),
+        lambda step: step.pop("verification"),
+        lambda step: step.update(extra="DO_NOT_ECHO"),
+        lambda step: step["required_effects"][0].update(extra="DO_NOT_ECHO"),
+        lambda step: step.update(authority_refs=[]),
+        lambda step: step.update(authority_refs=step["authority_refs"] * 2),
+        lambda step: step.update(authority_refs=["req_999999999999"]),
+        lambda step: step["required_effects"][0].update(phase="wrong-phase"),
+        lambda step: step["required_effects"][0].update(agent_id="codex-worker"),
+        lambda step: (step.update(authority_refs=[]), step.update(required_effects=[]), step.update(proposed_effects=[])),
+    ],
+)
+def test_semantic_step_hash_rejects_complete_hostile_body_matrix(mutate) -> None:
+    body = deepcopy(_compile()["semantic_steps"][0])
+    body.pop("semantic_step_hash")
+    mutate(body)
+    with pytest.raises(SemanticPlanningError) as raised:
+        semantic_step_hash(body)
+    _assert_closed(raised.value, "semantic_compilation_failed")
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda step: step.update(step=10**1000),
+        lambda step: step.update(step=True),
+        lambda step: step.update(step=0),
+        lambda step: step.update(agent_id="bad\x00agent"),
+        lambda step: step.update(role="r" * 4097),
+        lambda step: step.update(phase="cafe\u0301"),
+        lambda step: step.update(verification="ghp_DO_NOT_ECHO"),
+        lambda step: step.update(verification="Authoritative operation: delete"),
+        lambda step: step.update(authority_refs=[]),
+        lambda step: step["required_effects"][0].update(extra="DO_NOT_ECHO"),
+    ],
+)
+def test_worker_compiler_rejects_complete_hostile_persisted_matrix(mutate) -> None:
+    step = deepcopy(_compile()["semantic_steps"][0])
+    mutate(step)
+    with pytest.raises(SemanticPlanningError) as raised:
+        compile_worker_task(step)
+    _assert_closed(raised.value, "semantic_compilation_failed")
+
+
+def test_step_hash_rejects_forged_embedded_hash_as_drift() -> None:
+    step = deepcopy(_compile()["semantic_steps"][0])
+    step["semantic_step_hash"] = f"sha256:{'0' * 64}"
+    with pytest.raises(SemanticPlanningError) as raised:
+        semantic_step_hash(step)
+    _assert_closed(raised.value, "semantic_compilation_drift")
+
+
+def test_worker_compiler_requires_correct_persisted_hash() -> None:
+    unhashed = deepcopy(_compile()["semantic_steps"][0])
+    unhashed.pop("semantic_step_hash")
+    with pytest.raises(SemanticPlanningError) as raised:
+        compile_worker_task(unhashed)
+    _assert_closed(raised.value, "semantic_compilation_failed")
+
+    malformed = deepcopy(_compile()["semantic_steps"][0])
+    malformed["semantic_step_hash"] = "sha256:DO_NOT_ECHO"
+    with pytest.raises(SemanticPlanningError) as raised:
+        compile_worker_task(malformed)
+    _assert_closed(raised.value, "semantic_compilation_failed")
+
+
+@pytest.mark.parametrize("function", [semantic_step_hash, compile_worker_task])
+def test_present_none_embedded_hash_is_malformed_not_absent_or_drift(function) -> None:
+    step = deepcopy(_compile()["semantic_steps"][0])
+    step["semantic_step_hash"] = None
+    with pytest.raises(SemanticPlanningError) as raised:
+        function(step)
+    _assert_closed(raised.value, "semantic_compilation_failed")
+
+
+@pytest.mark.parametrize("hostile_kind", ["deep", "cycle", "shared", "custom"])
+@pytest.mark.parametrize("function", [semantic_step_hash, compile_worker_task])
+def test_public_step_boundary_preflights_hostile_trees_without_raw_errors(
+    hostile_kind: str, function
+) -> None:
+    step = deepcopy(_compile()["semantic_steps"][0])
+    if hostile_kind == "deep":
+        nested: dict[str, object] = {}
+        cursor = nested
+        for _ in range(1100):
+            child: dict[str, object] = {}
+            cursor["child"] = child
+            cursor = child
+        step["required_effects"][0]["extra"] = nested
+    elif hostile_kind == "cycle":
+        step["required_effects"].append(step["required_effects"])
+    elif hostile_kind == "shared":
+        shared: list[object] = []
+        step["authority_refs"] = shared
+        step["proposed_effects"] = shared
+    else:
+        class ListSubclass(list):
+            pass
+
+        step["authority_refs"] = ListSubclass(step["authority_refs"])
+    with pytest.raises(SemanticPlanningError) as raised:
+        function(step)
+    _assert_closed(raised.value, "semantic_compilation_failed")
+
+
+@pytest.mark.parametrize(
+    "proposal",
+    [
+        {"proposed_effect_id": "prp_0123456789ab", "target": 1, "operation": "create", "sensitivity": "ordinary"},
+        {"proposed_effect_id": "prp_0123456789ab", "target": "README", "operation": "create", "sensitivity": None},
+    ],
+)
+def test_public_step_non_string_proposal_scalars_are_schema_failures(proposal) -> None:
+    step = deepcopy(_compile()["semantic_steps"][0])
+    step.pop("semantic_step_hash")
+    step["proposed_effects"] = [proposal]
+    with pytest.raises(SemanticPlanningError) as raised:
+        semantic_step_hash(step)
+    _assert_closed(raised.value, "semantic_compilation_failed")
+
+
+def test_sensitive_public_step_proposal_is_rejected_before_proposal_hash(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    step = deepcopy(_compile()["semantic_steps"][0])
+    step.pop("semantic_step_hash")
+    step["proposed_effects"] = [
+        {
+            "proposed_effect_id": "prp_0123456789ab",
+            "target": "ghp_DO_NOT_ECHO",
+            "operation": "create",
+            "sensitivity": "ordinary",
+        }
+    ]
+
+    def forbidden_hash(*args, **kwargs):
+        raise AssertionError("sensitive proposal reached hashing")
+
+    monkeypatch.setattr(semantic_planning_module.hashlib, "sha256", forbidden_hash)
+    with pytest.raises(SemanticPlanningError) as raised:
+        semantic_step_hash(step)
+    _assert_closed(raised.value, "semantic_compilation_failed")
 
 
 @pytest.mark.parametrize("function", [compile_worker_task, semantic_step_hash])

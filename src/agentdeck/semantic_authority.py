@@ -214,6 +214,11 @@ _FUSED_SENSITIVE_KEY_RE = re.compile(
     r"[a-z0-9]*(?:password|passwd|secret|token|credentials?)"
     r"(?:(?:hash|value|id|key|digest|ref|reference))*\Z"
 )
+_KNOWN_TOKEN_RE = re.compile(
+    r"(?<![A-Za-z0-9])(?:sk-[A-Za-z0-9_-]+|gh[pousr]_[A-Za-z0-9_-]+"
+    r"|github_pat_[A-Za-z0-9_-]+)",
+    re.IGNORECASE,
+)
 _TARGET_SEGMENT_PATTERNS = (
     re.compile(rf"{_CHINESE_ACTION_PREFIX}创建\s+(?P<target>.+?)\s+且内容"),
     re.compile(rf"{_CHINESE_ACTION_PREFIX}将\s+(?P<target>.+?)\s+精确改为"),
@@ -723,10 +728,11 @@ def _parse_clause(clause: str) -> _ParsedClause:
 
 
 def _classify_sensitive(clause: str) -> str:
-    for match in _ASSIGNMENT_RE.finditer(clause):
-        if _is_sensitive_assignment_key(match.group("key")):
-            return "sensitive_content"
-    return "ordinary"
+    return (
+        "sensitive_content"
+        if semantic_text_contains_sensitive_value(clause)
+        else "ordinary"
+    )
 
 
 def _sensitive_key_components(key: str) -> tuple[str, ...]:
@@ -753,6 +759,18 @@ def _is_sensitive_assignment_key(key: str) -> bool:
     )
 
 
+def semantic_text_contains_sensitive_value(text: object) -> bool:
+    """Return whether an exact built-in string contains sensitive plaintext."""
+    if type(text) is not str:
+        return False
+    if _KNOWN_TOKEN_RE.search(text) is not None:
+        return True
+    return any(
+        _is_sensitive_assignment_key(match.group("key"))
+        for match in _ASSIGNMENT_RE.finditer(text)
+    )
+
+
 def _redact_sensitive_assignments(message: str) -> str:
     pieces: list[str] = []
     position = 0
@@ -763,7 +781,7 @@ def _redact_sensitive_assignments(message: str) -> str:
         pieces.append("<sensitive-value>")
         position = match.end("value")
     pieces.append(message[position:])
-    return "".join(pieces)
+    return _KNOWN_TOKEN_RE.sub("<sensitive-value>", "".join(pieces))
 
 
 def _source_message_hash(message: str) -> str:
