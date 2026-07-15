@@ -472,7 +472,8 @@ def _option_names(payload: bytes) -> set[str]:
 
 def _sanitized_version(payload: bytes) -> str | None:
     text = payload.decode("utf-8", errors="replace")
-    line = next((item.strip() for item in text.splitlines() if item.strip()), "")
+    lines = [item.strip() for item in text.splitlines() if item.strip()]
+    line = next((item for item in lines if not item.startswith("WARNING:")), "")
     line = line.replace(str(Path.home()), "<home>")
     line = re.sub(r"[/\\]+[^ ]*", " <path>", line)
     line = re.sub(r"[^A-Za-z0-9 ._+():<>-]", " ", line)
@@ -517,8 +518,13 @@ def _live_preflight(
         if executable is None:
             blockers.append(unavailable)
         else:
+            tool_probe_env = dict(probe_env)
+            if name == "codex":
+                tool_probe_env["CODEX_HOME"] = str(
+                    isolation.temporary / "codex-home"
+                )
             version_probe = _bounded_probe(
-                executable, version_args, cwd=project, env=probe_env
+                executable, version_args, cwd=project, env=tool_probe_env
             )
             if version_probe.blocker is not None:
                 blockers.append(version_probe.blocker)
@@ -532,7 +538,7 @@ def _live_preflight(
                 tool_ready = False
             if help_args is not None:
                 help_probe = _bounded_probe(
-                    executable, help_args, cwd=project, env=probe_env
+                    executable, help_args, cwd=project, env=tool_probe_env
                 )
                 if help_probe.blocker is not None:
                     blockers.append(help_probe.blocker)
@@ -2733,6 +2739,63 @@ def test_preflight_isolates_probe_writes_from_real_home(
     assert "probe_wrote_files" in payload["blockers"]
     assert not (real_home / "probe-write").exists()
     assert _roots_snapshot((project, *isolation.roots)) != before
+
+
+def test_codex_probe_uses_temporary_guarded_home_without_writes(
+    tmp_path, monkeypatch,
+) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    codex = fake_bin / "codex"
+    codex.write_text(
+        "#!/bin/sh\n"
+        "case \"${CODEX_HOME:-}\" in\n"
+        "  \"$TMPDIR\"/*) ;;\n"
+        "  *) mkdir -p \"$HOME/.codex/tmp/arg0/leaked\";;\n"
+        "esac\n"
+        "printf 'WARNING: helper aliases unavailable\\n' >&2\n"
+        "case \"$1\" in\n"
+        "  exec) echo --output-schema --output-last-message;;\n"
+        "  *) echo codex-cli 0.131.0;;\n"
+        "esac\n",
+        encoding="utf-8",
+    )
+    codex.chmod(0o700)
+    monkeypatch.setenv("AGENTDECK_M2C_CODEX", str(codex))
+    for name, env_name, _help, _version in TOOL_SPECS[1:]:
+        executable = fake_bin / name
+        executable.write_text(
+            "#!/bin/sh\n"
+            "case \"$1\" in\n"
+            "  --help) echo --json-schema --output-format;;\n"
+            "  -V) echo tmux 3.6a;;\n"
+            "  *) echo 1.0.0;;\n"
+            "esac\n",
+            encoding="utf-8",
+        )
+        executable.chmod(0o700)
+        monkeypatch.setenv(env_name, str(executable))
+    isolation = _prepare_probe_isolation(project)
+    before = _roots_snapshot((project, *isolation.roots))
+
+    payload = _live_preflight(
+        project,
+        require_explicit_paths=True,
+        isolation=isolation,
+    )
+
+    assert payload["ready"] is True
+    assert payload["blockers"] == []
+    assert payload["tools"][0]["version"] == "codex-cli 0.131.0"
+    assert _roots_snapshot((project, *isolation.roots)) == before
+
+
+def test_sanitized_version_skips_leading_warning() -> None:
+    assert _sanitized_version(
+        b"WARNING: helper aliases unavailable\ncodex-cli 0.131.0\n"
+    ) == "codex-cli 0.131.0"
 
 
 def test_exact_pane_control_executes_and_verifies_target(

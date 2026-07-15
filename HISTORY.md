@@ -4,6 +4,18 @@
 
 ## 2026-07-15
 
+### Complete bare TTY test project isolation
+
+- **Worktree RED**: the first daemon-start isolation fix still depended on whether pytest's checkout already contained `.agentdeck/config.toml`; merged `main` called the fake daemon, while a clean feature worktree skipped it and failed the same call-order assertion.
+- **Deterministic fixture**: the test now creates and enters its own initialized temporary project before invoking the bare CLI, then uses the existing fake daemon start to verify `daemon -> ui -> run`. It neither starts a real project daemon nor depends on ignored checkout state; production behavior is unchanged.
+
+### Make Codex capability probes zero-write
+
+- **Root cause**: six isolated real-tool reproductions showed Codex CLI `--version` and `exec --help` always initialize `$HOME/.codex/tmp/arg0` helper directories, locks, and aliases; Claude CLI, Claude Agent ACP, and tmux capability probes produced no snapshot change. The write was deterministic Codex startup behavior, not an intermittent cache or another provider.
+- **Fail-closed probe environment**: Codex capability probes alone now receive `CODEX_HOME` as a non-created child of their isolated `TMPDIR`. Release Codex refuses helper installation there and continues metadata output without changing project, HOME, XDG, or TMP roots. The live execution environment is unchanged, and any future write still triggers `probe_wrote_files`.
+- **Version provenance**: bounded merged output may begin with Codex's fixed warning after helper refusal, so sanitized version extraction skips leading `WARNING:` lines and retains the actual `codex-cli` version; warning-only output remains unavailable rather than becoming version evidence.
+- **Strict TDD**: the zero-write Codex integration and leading-warning version tests failed with `ready=false` and warning-as-version before the change, then passed after the minimal environment and extraction fix. The complete non-live M2c harness now passes `41` tests with the live node still explicitly skipped.
+
 ### Isolate bare TTY daemon startup test
 
 - **Root cause**: `test_bare_tty_runs_foreground_ui` mocked the foreground UI/session but not `_start_daemon`. In an initialized main checkout it therefore spawned a real detached project daemon while still passing, retained one reaper thread, and caused later daemon/IPC tests to fail as a cascade.

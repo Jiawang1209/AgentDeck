@@ -54,6 +54,16 @@ payload contains only:
 - sanitized version strings;
 - the fixed probe timeout.
 
+Codex CLI initializes per-process arg0 helper aliases even for `--version` and
+`exec --help`. For those two capability probes only, the harness sets
+`CODEX_HOME` to a non-created child of the already isolated `TMPDIR`. Release
+Codex refuses to place helper binaries under its temporary directory, emits a
+bounded warning, and continues with the requested metadata output. The version
+extractor skips leading `WARNING:` lines and still requires a non-empty
+sanitized version. No live Leader/Worker invocation receives this probe-only
+environment. If a future Codex release writes anyway, the unchanged root
+snapshot gate still returns `probe_wrote_files`.
+
 Each probe is started in a new session and immediately bound to its exact
 process group plus kernel process-birth identity. A unique opaque scope marker
 is inherited only by that probe tree. While the root lives, bounded polling

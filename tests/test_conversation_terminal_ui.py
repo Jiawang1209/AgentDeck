@@ -5,6 +5,7 @@ import io
 import pytest
 
 from agentdeck import cli
+from agentdeck.config import write_default_config
 from agentdeck.conversation.session import ConversationResponse
 from agentdeck.conversation.terminal_ui import TerminalConversationUI
 
@@ -106,8 +107,13 @@ def test_bare_non_tty_fails_fast_before_session_or_project_construction(
     assert len(captured.err.encode("utf-8")) < 512
 
 
-def test_bare_tty_runs_foreground_ui(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_bare_tty_runs_foreground_ui(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     calls: list[str] = []
+    (tmp_path / ".git").mkdir()
+    write_default_config(tmp_path)
+    monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: True)
 
     async def fake_start(*_args, **_kwargs):
