@@ -4,6 +4,34 @@
 
 ## 2026-07-16
 
+### Correct required-target diagnostic precedence
+
+- Made `semantic_required_target_reproposed` globally precede
+  `semantic_proposal_target_duplicate` whenever any proposal in the complete
+  Candidate, or in the available persisted standalone-step facts, reuses a
+  required-owned target. Proposal order no longer changes the closed diagnosis.
+- Preserved proposal shape and sensitive-value validation before ownership.
+  Persisted steps validate their supplied required effects without proposals,
+  then perform the complete required-target pass before duplicate detection and
+  before validating the unchanged full authority; no proposal is repaired,
+  filtered, reordered, or deduplicated.
+- RED command:
+  `PYTHONPATH=src conda run --no-capture-output -n agentdeck python -m pytest
+  tests/test_semantic_planning.py::test_required_target_diagnostic_precedes_earlier_new_target_duplicate
+  tests/test_semantic_planning.py::test_public_step_required_target_precedes_earlier_new_target_duplicate
+  -q` produced the intended `3 failed`, all reporting
+  `semantic_proposal_target_duplicate` instead of the required-target code.
+  The first minimal change then exposed an existing persisted identical-ID
+  ordering contract as `2 failed, 177 passed`; requirements-only validation
+  restored that contract without Candidate repair.
+- GREEN commands/results:
+  `PYTHONPATH=src conda run --no-capture-output -n agentdeck python -m pytest
+  tests/test_semantic_planning.py -q` passed `179`; the four-file regression
+  over semantic planning, Leader CLI, Leader plan schema, and structured CLI
+  output passed `740`; the relevant closed M2c terminal nodes passed `18`.
+- All Python commands used the `agentdeck` conda environment. No Provider,
+  network, preflight, ACP/tmux Worker, opt-in live test, push, or merge ran.
+
 ### Enforce semantic proposal target ownership
 
 - Made every target represented by required semantic authority exclusively

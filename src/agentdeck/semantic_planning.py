@@ -286,11 +286,14 @@ def _validate_effect_target_ownership(
     required_targets = {
         requirement["target"] for requirement in required_effects
     }
+    if any(
+        proposal["target"] in required_targets
+        for proposal in proposed_effects
+    ):
+        _fail("semantic_required_target_reproposed")
     proposed_targets: set[str] = set()
     for proposal in proposed_effects:
         target = proposal["target"]
-        if target in required_targets:
-            _fail("semantic_required_target_reproposed")
         if target in proposed_targets:
             _fail("semantic_proposal_target_duplicate")
         proposed_targets.add(target)
@@ -529,7 +532,21 @@ def _validate_semantic_step(
         _validate_proposal_shape(proposal, persisted=True)
         for proposal in body["proposed_effects"]
     ]
-    _validate_effect_target_ownership([], validated_step_proposals)
+    try:
+        validated_requirements = validate_semantic_authority(
+            {
+                "schema_version": SEMANTIC_AUTHORITY_SCHEMA_VERSION,
+                "source_message_hash": f"sha256:{'0' * 64}",
+                "requirements": body["required_effects"],
+                "proposed_effects": [],
+                "unresolved": [],
+            }
+        )
+    except SemanticAuthorityError:
+        _fail("semantic_compilation_failed")
+    _validate_effect_target_ownership(
+        validated_requirements["requirements"], validated_step_proposals
+    )
     try:
         validated_effects = validate_semantic_authority(
             {

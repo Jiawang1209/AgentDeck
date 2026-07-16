@@ -680,6 +680,29 @@ def test_required_target_diagnostic_precedes_duplicate_proposal_diagnostic() -> 
     _assert_closed(raised.value, "semantic_required_target_reproposed")
 
 
+def test_required_target_diagnostic_precedes_earlier_new_target_duplicate() -> None:
+    value = candidate()
+    duplicate = {
+        "target": "notes.md",
+        "operation": "create",
+        "sensitivity": "ordinary",
+    }
+    value["steps"][0]["proposed_effects"] = [deepcopy(duplicate)]
+    value["steps"][1]["proposed_effects"] = [deepcopy(duplicate)]
+    value["steps"][2]["proposed_effects"] = [
+        {
+            "target": "artifact.txt",
+            "operation": "update",
+            "sensitivity": "ordinary",
+        }
+    ]
+
+    with pytest.raises(SemanticPlanningError) as raised:
+        _compile(candidate_value=value)
+
+    _assert_closed(raised.value, "semantic_required_target_reproposed")
+
+
 def test_candidate_accepts_distinct_genuinely_new_proposed_targets() -> None:
     value = candidate()
     value["steps"][0]["proposed_effects"] = [
@@ -847,6 +870,25 @@ def test_public_step_rejects_required_target_reproposal(function) -> None:
     value = body if function is semantic_step_hash else _force_persisted_hash(body)
     with pytest.raises(SemanticPlanningError) as raised:
         function(value)
+    _assert_closed(raised.value, "semantic_required_target_reproposed")
+
+
+@pytest.mark.parametrize("function", [semantic_step_hash, compile_worker_task])
+def test_public_step_required_target_precedes_earlier_new_target_duplicate(
+    function,
+) -> None:
+    body = deepcopy(_compile()["semantic_steps"][0])
+    body.pop("semantic_step_hash")
+    body["proposed_effects"] = [
+        _proposal("README", "create"),
+        _proposal("README", "review"),
+        _proposal("artifact.txt", "create"),
+    ]
+    value = body if function is semantic_step_hash else _force_persisted_hash(body)
+
+    with pytest.raises(SemanticPlanningError) as raised:
+        function(value)
+
     _assert_closed(raised.value, "semantic_required_target_reproposed")
 
 
