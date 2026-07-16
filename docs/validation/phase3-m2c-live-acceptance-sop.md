@@ -198,11 +198,16 @@ metadata through a successful daemon handshake, seals no-follow metadata
    removes the project, and derives zero residual process/resource counts from
    post-cleanup probes.
 
-PTY output is retained only as a 64 KiB tail for in-process parsing. PTY open,
-process spawn, setup, and cleanup are all enclosed by collect-all failure
-guards that seal the exact new-session process group plus leader birth identity,
-enumerate group members, and apply bounded group TERM/KILL even if the leader
-has already exited. Tracked groups participate in final derived residual counts.
+PTY output is retained only as a 64 KiB process-local tail for in-process
+parsing. That tail is excluded from `_PtyTail`'s default representation. The
+transcript-free boundary includes default pytest traceback/report rendering,
+not only the exception string; it does not depend on `--tb=short` or output
+post-filtering. Any PTY diagnostic exposes only `byte_count`, `truncated`, and
+`sha256`. PTY open, process spawn, setup, and cleanup are all enclosed by
+collect-all failure guards that seal the exact new-session process group plus
+leader birth identity, enumerate group members, and apply bounded group
+TERM/KILL even if the leader has already exited. Tracked groups participate in
+final derived residual counts.
 The parent-scoped setup guard begins before the first `repo`, tmux temporary,
 runtime-bin, or controlled-launcher write. A first or mid-sequence launcher
 failure removes the entire disposable parent while preserving the original
@@ -336,6 +341,6 @@ conda run --no-capture-output -n agentdeck \
   pytest tests/test_m2c_live_acceptance.py -q
 ```
 
-Expected portable result for this frozen candidate: `186 passed, 1 skipped`.
+Expected portable result for this frozen candidate: `190 passed, 1 skipped`.
 A printed `ready=false`
 payload remains an honest setup result, not M2c PASS.

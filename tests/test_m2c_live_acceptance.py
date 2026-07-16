@@ -6,7 +6,7 @@ import copy
 import ctypes
 import ctypes.util
 from contextlib import contextmanager
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 import hashlib
 import os
 from pathlib import Path
@@ -917,7 +917,7 @@ def _validate_preflight_payload(payload: object) -> list[str]:
 class _PtyTail:
     byte_count: int = 0
     truncated: bool = False
-    tail: bytes = b""
+    tail: bytes = field(default=b"", repr=False)
 
     def __post_init__(self) -> None:
         self._digest = hashlib.sha256()
@@ -937,6 +937,101 @@ class _PtyTail:
             "truncated": self.truncated,
             "sha256": self._digest.hexdigest(),
         }
+
+
+def test_pty_tail_repr_excludes_process_local_transcript() -> None:
+    hostile = (
+        b"PTY_REPR_UNIQUE_SENTINEL Prompt /Users/private/injected-path "
+        b"prompt raw stderr model output"
+    )
+    capture = _PtyTail()
+    capture.add(hostile)
+
+    rendered = repr(capture)
+    diagnostic = capture.diagnostic()
+
+    assert "PTY_REPR_UNIQUE_SENTINEL" not in rendered
+    assert "/Users/private/injected-path" not in rendered
+    assert "prompt raw stderr model output" not in rendered
+    assert "tail=" not in rendered
+    assert f"byte_count={len(hostile)}" in rendered
+    assert "truncated=False" in rendered
+    assert set(diagnostic) == {"byte_count", "truncated", "sha256"}
+    assert diagnostic["byte_count"] == len(hostile)
+    assert diagnostic["truncated"] is False
+
+
+def test_default_pytest_report_excludes_pty_transcript(tmp_path: Path) -> None:
+    hostile = (
+        "PTY_DEFAULT_REPORT_UNIQUE_SENTINEL Prompt "
+        "/Users/private/injected-pty-path prompt raw stderr model output"
+    )
+    probe = tmp_path / "test_default_report_probe.py"
+    probe.write_text(
+        """\
+import os
+import sys
+
+sys.path.insert(0, os.environ["AGENTDECK_PROBE_TESTS"])
+sys.path.insert(0, os.environ["AGENTDECK_PROBE_SRC"])
+
+from test_m2c_live_acceptance import (
+    _PtyTail,
+    _PreviewStore,
+    _leader_terminal_fixture,
+    _observe_mission_preview_or_terminal,
+)
+
+
+def test_real_observer_failure():
+    durable, events, baseline = _leader_terminal_fixture(
+        stage="schema",
+        diagnostic_code="semantic_required_target_reproposed",
+        attempt_count=2,
+        constraint_mode="local",
+    )
+    capture = _PtyTail()
+    capture.add(os.environ["AGENTDECK_PROBE_HOSTILE"].encode())
+    _observe_mission_preview_or_terminal(
+        _PreviewStore([durable], [events]),
+        capture,
+        baseline_turn_ids=baseline,
+    )
+""",
+        encoding="utf-8",
+    )
+    env = os.environ.copy()
+    env.pop("AGENTDECK_M2C_LIVE", None)
+    env.update(
+        {
+            "AGENTDECK_PROBE_TESTS": str(Path(__file__).parent),
+            "AGENTDECK_PROBE_SRC": str(Path(__file__).parents[1] / "src"),
+            "AGENTDECK_PROBE_HOSTILE": hostile,
+        }
+    )
+
+    completed = subprocess.run(
+        [sys.executable, "-m", "pytest", str(probe), "-q"],
+        cwd=tmp_path,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+
+    rendered = completed.stdout + completed.stderr
+    assert completed.returncode == 1, rendered
+    assert "leader_schema_before_preview" in rendered
+    assert "semantic_required_target_reproposed" in rendered
+    assert f'"byte_count": {len(hostile.encode())}' in rendered
+    assert '"truncated": false' in rendered
+    assert f'"sha256": "{hashlib.sha256(hostile.encode()).hexdigest()}"' in rendered
+    assert "PTY_DEFAULT_REPORT_UNIQUE_SENTINEL" not in rendered
+    # Pytest's own probe source path is allowed; this injected PTY path is not.
+    assert "/Users/private/injected-pty-path" not in rendered
+    assert "prompt raw stderr model output" not in rendered
+    assert "tail=" not in rendered
 
 
 class _LiveHarnessFailure(AssertionError):

@@ -4,6 +4,32 @@
 
 ## 2026-07-16
 
+### Redact process-local PTY tails from pytest reports
+
+- Excluded `_PtyTail.tail` from the dataclass representation while preserving
+  its bounded in-memory bytes for PTY interaction. Transcript-free diagnostics
+  continue to expose exactly `byte_count`, `truncated`, and `sha256`.
+- Added direct representation coverage and a deterministic nested pytest probe
+  that exercises the real durable Leader terminal observer under pytest's
+  default traceback. The probe passes hostile PTY content only through an
+  environment variable and rejects the injected transcript, private path, and
+  `tail=` while retaining the closed Leader code and PTY digest fields. It does
+  not rely on `--tb=short` or report post-filtering.
+- Direct RED failed at the intended sentinel assertion with
+  `1 failed in 0.76s`. Mutation sensitivity temporarily restored the unsafe
+  default `tail` representation; the outer report node then failed at its
+  intended sentinel assertion with `1 failed in 1.73s` after the nested default
+  traceback rendered `_PtyTail(..., tail=b'...')`. The unsafe mutation was
+  restored immediately and was never staged or committed.
+- Fresh GREEN results were: direct repr node `1 passed in 0.37s`; default report
+  node `1 passed in 1.01s`; PTY/Preview-wait selection `17 passed, 174
+  deselected in 0.45s`; complete portable live-acceptance file `190 passed, 1
+  skipped in 43.89s`; `python -m compileall -q src tests` and `git diff
+  --check` both exited zero.
+- Every Python/test command used `PYTHONPATH=src conda run
+  --no-capture-output -n agentdeck`. No Provider, network, preflight, ACP,
+  tmux, opt-in live test, push, merge, or amend ran.
+
 ### Harden semantic regeneration leakage coverage
 
 - Strengthened fake-only API, Codex CLI, and Claude CLI regeneration tests with
