@@ -1063,7 +1063,7 @@ Update the five listed documentation files with:
 - next gate is explicit model selection plus authorization for exactly one new
   read-only preflight.
 
-- [ ] **Step 8: Commit evidence without changing implementation authority**
+- [x] **Step 8: Commit evidence without changing implementation authority**
 
 ```bash
 git diff --check
@@ -1084,7 +1084,7 @@ name the SHA from Step 1 when discussing preflight.
 **Files:**
 - No code or state changes.
 
-- [ ] **Step 1: Do not inherit old authority**
+- [x] **Step 1: Do not inherit old authority**
 
 Do not reuse:
 
@@ -1181,6 +1181,6 @@ never automatically retried.
 - [x] Compileall and diff checks pass.
 - [x] Two independent full suites pass on one unchanged implementation SHA.
 - [x] Residual audit is clean.
-- [ ] Evidence is committed separately from implementation authority.
+- [x] Evidence is committed separately from implementation authority.
 - [x] No preflight or live runs without their new explicit authorizations.
 - [x] M2c remains BLOCKED and M3 remains locked until a real four-stage PASS.

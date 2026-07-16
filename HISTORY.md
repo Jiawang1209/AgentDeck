@@ -4,6 +4,18 @@
 
 ## 2026-07-16
 
+### Close M2c verification evidence bookkeeping
+
+- Recorded evidence commit `7967da66` separately from frozen implementation
+  authority `75f0366d4d5619b29c77f10949365f43d46185b1`, then closed only the
+  corresponding implementation-plan bookkeeping.
+- Preserved the stop gate: no old model, preflight, or live authorization is
+  inherited; Task 7 still requires a human-selected exact Leader model and one
+  explicit read-only preflight authorization before any further execution.
+- This documentation-only closure runs no tests, provider, preflight, live
+  Mission, ACP, tmux, push, merge, install, login, or global configuration
+  change. M2c remains **BLOCKED** and M3 remains locked.
+
 ### Freeze and verify M2c semantic-conflict closure
 
 - Froze the target-exclusivity and pytest-report-redaction implementation at
