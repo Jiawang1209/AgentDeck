@@ -2,15 +2,17 @@
 
 Updated: 2026-07-16
 
-## Active goal — review M2c semantic-conflict/redaction written spec
+## Active goal — choose execution mode for approved M2c TDD plan
 
-The human-approved design is now written at
+The human-approved design is written at
 `docs/superpowers/specs/2026-07-16-m2c-semantic-conflict-and-pytest-redaction-design.md`.
+The detailed TDD implementation plan is
+`docs/superpowers/plans/2026-07-16-m2c-semantic-conflict-and-pytest-redaction.md`.
 It selects required-target exclusivity, Mission-wide unique proposed targets,
 two precise closed codes, one same-Leader code-specific regeneration, and
-default-pytest transcript-safe reporting. The immediate gate is human review of
-that written spec. After approval, use `writing-plans` to produce a detailed
-TDD implementation plan; do not implement before the plan is reviewed.
+default-pytest transcript-safe reporting. The immediate gate is choosing
+Subagent-Driven or Inline Execution. Implementation must follow the plan
+task-by-task.
 
 No preflight or live authorization carries forward. M2c remains **BLOCKED** and
 M3 remains locked.

@@ -4,6 +4,13 @@
 
 ## 2026-07-16
 
+### Plan M2c semantic conflict and pytest redaction implementation
+
+- Added the detailed TDD implementation plan for required-target exclusivity, Mission-wide unique proposed targets, the two new closed diagnostics, one shared static CLI/API regeneration guidance boundary, and transcript-safe default pytest reporting.
+- The plan locks exact files, RED/GREEN tests, two primary implementation commits, focused/non-live verification, compile/diff/leakage review, a newly frozen implementation SHA, two independent unchanged-SHA full suites, residual audit, and an evidence-only commit.
+- The terminal gate does not inherit the old SHA, model, preflight, or live authority. A new read-only preflight requires explicit human model/SHA authorization and runs at most once; even a ready result stops before a separately authorized future live Mission.
+- This planning commit changes no production or test behavior and runs no provider, preflight, ACP/tmux Worker, or live Mission. M2c remains **BLOCKED** and M3 locked.
+
 ### Design M2c semantic target exclusivity and pytest redaction
 
 - Approved the north-star rule that any target already present in required semantic authority is exclusively required-owned across the complete Candidate, independent of phase, Worker, kind, or operation. Leader steps must use `authority_refs` for that target; only genuinely new, Mission-wide unique targets may enter `proposed_effects` for explicit Preview confirmation.
