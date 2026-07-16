@@ -4,6 +4,27 @@
 
 ## 2026-07-16
 
+### Revise provenance persistence design for the StateStore dual shape
+
+- RED proved the semantic Mission path drops `leader_generation`, but the
+  minimal deletion exposed a second closed-contract mismatch: semantic
+  provenance has eleven fields while StateStore accepts only the ordinary
+  nine-field shape and only `leader-plan/v1`.
+- Approved solution A2: retain the existing ordinary nine-field contract and
+  add a strict semantic eleven-field contract carrying
+  `semantic_authority_schema_version` and `semantic_authority_hash`; revalidate
+  both against the semantic plan body and require
+  `leader-semantic-plan/v1` for semantic native mode.
+- Rejected stripping the semantic fields, Mission-only storage, and open-ended
+  field acceptance. Legacy missing-generation projection remains unchanged;
+  plan hash, confirmation, Provider, daemon, ACP/tmux, permission, and live
+  behavior remain out of scope.
+- Updated the approved spec and TDD plan before further production changes.
+  The retained TDD scene is `2 failed, 1 passed` for the original RED and
+  `2 failed, 1 passed in 0.71s` after the stale-discard deletion exposed the
+  StateStore mismatch. No commit, preflight, live, Provider, ACP, or tmux run
+  occurred in this revision.
+
 ### Plan semantic native-schema provenance persistence
 
 - Wrote a task-by-task TDD plan for the approved semantic

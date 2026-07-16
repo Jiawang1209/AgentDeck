@@ -2,7 +2,7 @@
 
 **Date:** 2026-07-16
 
-**Status:** Human-approved direction; written specification awaiting human review
+**Status:** Human-approved revised design
 
 **Milestone:** Phase 3 M2c live-acceptance blocker closure
 
@@ -79,7 +79,12 @@ diagnostics. No deterministic test crosses both dimensions.
 ## 3. Chosen approach
 
 Use the already validated semantic generation envelope as the one durable plan
-provenance value.
+provenance value, and extend the StateStore normalizer to recognize two strict
+closed shapes:
+
+- ordinary plan provenance: the existing nine fields;
+- semantic plan provenance: the same nine fields plus
+  `semantic_authority_schema_version` and `semantic_authority_hash`.
 
 The production change is intentionally minimal:
 
@@ -94,8 +99,16 @@ Leader candidate
 ```
 
 The stale branch that replaces `leader_generation` with `None` is removed.
-No new reconstruction helper, fallback, migration, repair path, or alternate
-storage field is introduced.
+StateStore does not reconstruct Provider provenance. It only revalidates that a
+supplied semantic envelope's two authority fields match the authoritative
+semantic plan body before deep-copying the exact eleven-field shape.
+
+For native schema mode, ordinary plans continue to require
+`leader-plan/v1`; semantic plans require `leader-semantic-plan/v1`. For
+non-native semantic modes, schema version/hash remain null while the two
+semantic authority fields remain mandatory.
+
+No fallback, migration, repair path, or alternate storage field is introduced.
 
 ## 4. Rejected approaches
 
@@ -120,9 +133,18 @@ Removing the assertion would produce a less auditable product and a false PASS.
 
 For semantic and non-semantic candidates alike, a supplied
 `leader_generation` must first pass the existing exact validator. Persistence
-continues through `StateStore._plan_leader_generation()`, which deep-copies the
-closed field set and rejects malformed, unknown, secret-bearing, or inconsistent
-input.
+continues through `StateStore._plan_leader_generation()`, which selects the
+closed field set from the validated plan shape:
+
+- a non-semantic plan rejects either semantic provenance field;
+- a semantic plan rejects a missing or partial semantic field pair;
+- semantic authority version must equal the plan authority schema version;
+- semantic authority hash must equal a fresh hash of the plan authority;
+- native schema version must match the ordinary or semantic schema family;
+- every accepted value is deep-copied in deterministic field order.
+
+Malformed, unknown, secret-bearing, partial, or inconsistent input remains
+rejected.
 
 The canonical workflow plan hash must remain byte-stable when only
 `leader_generation` is added or removed. It continues to authorize the plan
@@ -141,6 +163,8 @@ The fix must preserve current fail-closed behavior:
 - missing or malformed semantic generation rejects the preview with zero plan
   and Mission writes;
 - provider/model/Worker/step-count/schema drift remains rejected;
+- ordinary/semantic provenance shape mismatch remains rejected;
+- semantic authority version/hash drift remains rejected;
 - forbidden keys and secret-bearing nested values are never persisted or
   echoed;
 - a generation envelope is never repaired, filtered, or synthesized locally;
@@ -148,9 +172,11 @@ The fix must preserve current fail-closed behavior:
 - full Leader output, PTY bytes, prompts, stderr, and schema payloads remain
   non-durable.
 
-This slice changes no Provider command, model, timeout, schema definition,
-semantic extraction, Candidate compilation, confirmation digest, daemon,
-ACP/tmux transport, permission, takeover, handoff, artifact, cleanup, login,
+This slice changes the durable plan provenance normalizer only enough to accept
+the already-defined semantic provenance fields and semantic schema version.
+It changes no Provider command, model, timeout, schema definition, semantic
+extraction, Candidate compilation, confirmation digest, daemon, ACP/tmux
+transport, permission, takeover, handoff, artifact, cleanup, login,
 installation, or fallback behavior.
 
 ## 7. Deterministic TDD contract
@@ -165,13 +191,17 @@ RED coverage must prove the exact missing behavior before production changes:
    otherwise identical persisted plan;
 4. malformed or secret-bearing semantic generation remains zero-write and
    transcript-safe;
-5. non-semantic native, legacy, local, and JSON-object behavior remains
+5. semantic missing/partial fields, authority hash/version drift, and semantic
+   fields on an ordinary plan remain zero-write;
+6. semantic local provenance with null schema fields remains valid;
+7. non-semantic native, legacy, local, and JSON-object behavior remains
    unchanged.
 
 The first RED must fail because `leader_generation` is absent, not because a
 fixture, schema, or semantic plan is invalid.
 
-GREEN is the smallest production edit that preserves the validated value.
+GREEN is the smallest production edit that preserves the validated value and
+adds the strict StateStore nine-field/eleven-field discriminator.
 Focused verification must cover mission orchestration, conversation session,
 conversation bindings/acceptance, ProjectView/trace provenance, structured
 Provider output, semantic planning, and the complete non-live M2c harness.
@@ -208,6 +238,8 @@ This slice is complete only when:
 - semantic native-schema preview plans durably contain the exact validated
   `leader_generation`;
 - ProjectView and trace expose that same compact envelope;
+- StateStore accepts only the exact ordinary nine-field or semantic
+  eleven-field shape and revalidates semantic authority version/hash;
 - plan hash and confirmation authority remain unchanged;
 - malformed/secret-bearing provenance remains fail-closed and zero-write;
 - focused and complete non-live M2c suites pass;

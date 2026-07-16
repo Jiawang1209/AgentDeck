@@ -4,7 +4,7 @@
 
 **Goal:** Preserve the exact already-validated `leader_generation` envelope on semantic Mission preview plans so the real M2c native-schema provenance gate can advance without changing plan authority or runtime behavior.
 
-**Architecture:** Keep `validate_leader_generation_provenance()` as the sole admission gate and `StateStore._plan_leader_generation()` as the sole durable normalizer. Remove only the stale semantic branch that discards the validated envelope before `build_plan_record()`; do not reconstruct provenance, add fields, or alter plan hashing, confirmation, Provider, daemon, ACP/tmux, permission, or live behavior.
+**Architecture:** Keep `validate_leader_generation_provenance()` as the sole Provider-envelope admission gate and `StateStore._plan_leader_generation()` as the sole durable normalizer. Remove the stale semantic discard, then make StateStore strictly distinguish the existing ordinary nine-field shape from the already-defined semantic eleven-field shape and revalidate the latter against the semantic plan authority; do not reconstruct provenance or alter plan hashing, confirmation, Provider, daemon, ACP/tmux, permission, or live behavior.
 
 **Tech Stack:** Python 3.12, dataclasses, pytest, AgentDeck semantic Mission orchestration, ConversationSession, StateStore, conda environment `agentdeck`.
 
@@ -36,6 +36,9 @@
   - natural-language semantic preview persists the exact gateway envelope.
 - Modify `src/agentdeck/mission_orchestration.py`
   - remove the stale semantic `leader_generation = None` discard only.
+- Modify `src/agentdeck/state.py`
+  - strict ordinary-nine / semantic-eleven field selection;
+  - semantic authority version/hash and semantic schema-version validation.
 - Modify `HISTORY.md`
   - RED/GREEN and verification evidence.
 - Modify `docs/handoff/current-development-state.md`
@@ -243,10 +246,74 @@ conda run --no-capture-output -n agentdeck \
 
 Expected: the security node PASSes; the two persistence nodes remain RED.
 
+- [ ] **Step 3: Add StateStore dual-shape RED coverage**
+
+Add focused tests in `tests/test_mission_orchestration.py`:
+
+```python
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        lambda value: {
+            key: item
+            for key, item in value.items()
+            if key != "semantic_authority_schema_version"
+        },
+        lambda value: {
+            **value,
+            "semantic_authority_schema_version": "mission-semantic-authority/v0",
+        },
+        lambda value: {
+            **value,
+            "semantic_authority_hash": "sha256:" + "f" * 64,
+        },
+    ],
+)
+def test_semantic_plan_generation_shape_or_authority_drift_is_zero_write(
+    tmp_path: Path,
+    mutation,
+) -> None:
+    _root, config, store, _path = project(tmp_path)
+    candidate = semantic_candidate_fixture(config)
+    generation = mutation(semantic_native_generation(config, candidate))
+
+    with pytest.raises(ValueError, match="^plan leader generation invalid$"):
+        store.build_plan_record(
+            candidate.user_message,
+            candidate.provider,
+            candidate.model,
+            candidate.plan,
+            leader_generation=generation,
+        )
+
+    assert store.load()["plans"] == []
+```
+
+Extend the existing ordinary-plan invalid-generation mutation table with one
+eleven-field semantic envelope mutation and retain its zero-write assertion.
+The existing natural-language semantic RED supplies valid local semantic
+eleven-field coverage with null schema fields.
+
+- [ ] **Step 4: Run the expanded StateStore RED**
+
+```bash
+PYTHONPATH="$PWD/src" \
+conda run --no-capture-output -n agentdeck \
+  python -m pytest \
+  tests/test_mission_orchestration.py \
+  -k 'semantic_native or semantic_plan_generation_shape_or_authority_drift or candidate_generation' \
+  -q
+```
+
+Expected before the StateStore correction: valid semantic provenance fails
+because only the ordinary nine-field shape is accepted; drift/forbidden cases
+remain rejected.
+
 ## Task 4: Make the minimal production correction
 
 **Files:**
 - Modify: `src/agentdeck/mission_orchestration.py`
+- Modify: `src/agentdeck/state.py`
 
 - [ ] **Step 1: Remove only the stale discard branch**
 
@@ -259,10 +326,30 @@ Delete:
             leader_generation = None
 ```
 
-Do not change the validator, request, semantic authority, plan body, StateStore,
-hash function, confirmation facts, or any runtime code.
+Do not change the Provider validator, request, semantic authority, plan body,
+hash function, confirmation facts, or any runtime code. StateStore changes are
+limited to Step 2's strict dual-shape normalizer.
 
-- [ ] **Step 2: Run GREEN for the three focused nodes**
+- [ ] **Step 2: Add the strict StateStore dual-shape normalizer**
+
+In `src/agentdeck/state.py`:
+
+1. split the existing field tuple into the ordinary base fields and the two
+   semantic fields;
+2. detect semantic shape from the already validated plan body;
+3. require exact nine or eleven keys accordingly;
+4. for semantic plans, require both authority fields to match
+   `plan["semantic_authority"]["schema_version"]` and
+   `semantic_authority_hash(plan["semantic_authority"])`;
+5. for native mode, require `leader-plan/v1` on ordinary plans and
+   `SEMANTIC_LEADER_PLAN_SCHEMA_VERSION` on semantic plans;
+6. return a deep copy in the selected deterministic field order.
+
+Import `SEMANTIC_LEADER_PLAN_SCHEMA_VERSION` from
+`agentdeck.providers.semantic_plan_schema`. Preserve the legacy missing-
+generation projection unchanged for historical records.
+
+- [ ] **Step 3: Run GREEN for the focused nodes**
 
 ```bash
 PYTHONPATH="$PWD/src" \
@@ -274,9 +361,9 @@ conda run --no-capture-output -n agentdeck \
   -q
 ```
 
-Expected: `3 passed`.
+Expected: all focused persistence, dual-shape, and security nodes PASS.
 
-- [ ] **Step 3: Run semantic Mission and Conversation regression**
+- [ ] **Step 4: Run semantic Mission and Conversation regression**
 
 ```bash
 PYTHONPATH="$PWD/src" \
@@ -291,7 +378,7 @@ conda run --no-capture-output -n agentdeck \
 
 Expected: all PASS.
 
-- [ ] **Step 4: Run Provider/provenance and complete non-live M2c regression**
+- [ ] **Step 5: Run Provider/provenance and complete non-live M2c regression**
 
 ```bash
 PYTHONPATH="$PWD/src" \
@@ -307,7 +394,7 @@ conda run --no-capture-output -n agentdeck \
 Expected: all deterministic tests PASS with exactly the existing opt-in live
 skip. Do not set `AGENTDECK_M2C_LIVE`.
 
-- [ ] **Step 5: Update implementation history**
+- [ ] **Step 6: Update implementation history**
 
 Add one `HISTORY.md` entry containing:
 
@@ -317,11 +404,12 @@ Add one `HISTORY.md` entry containing:
 - focused and non-live GREEN counts;
 - explicit statement that no preflight/live/provider/ACP/tmux ran.
 
-- [ ] **Step 6: Commit the implementation**
+- [ ] **Step 7: Commit the implementation**
 
 ```bash
 git add \
   src/agentdeck/mission_orchestration.py \
+  src/agentdeck/state.py \
   tests/test_mission_orchestration.py \
   tests/test_conversation_session.py \
   HISTORY.md
@@ -367,8 +455,9 @@ git diff 17e5f5c3..HEAD -- src/agentdeck |
   rg -n '^[+-]' || true
 ```
 
-Required production diff: only deletion of the stale semantic
-`leader_generation = None` block.
+Required production diff: deletion of the stale semantic
+`leader_generation = None` block plus the bounded StateStore dual-shape
+normalizer. No other production subsystem may change.
 
 - [ ] **Step 4: Audit synthetic marker boundary**
 
@@ -497,9 +586,12 @@ implementation SHA and authorize exactly one read-only preflight.
 - [ ] Direct semantic native preview persists exact validated provenance.
 - [ ] Natural-language semantic preview persists exact gateway provenance.
 - [ ] ProjectView and trace use the same compact envelope.
+- [ ] StateStore enforces ordinary nine-field and semantic eleven-field shapes.
+- [ ] Semantic authority version/hash and semantic schema family are revalidated.
 - [ ] Canonical plan hash is unchanged.
 - [ ] Malformed/forbidden semantic provenance is zero-write and transcript-safe.
-- [ ] Production diff only removes the stale discard.
+- [ ] Production diff only removes the stale discard and adds the bounded
+  StateStore dual-shape normalizer.
 - [ ] Focused and complete non-live M2c suites pass.
 - [ ] Independent spec and quality reviews pass.
 - [ ] Two full suites pass on one unchanged new implementation SHA.
