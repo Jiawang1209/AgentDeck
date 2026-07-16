@@ -5236,6 +5236,8 @@ def test_closed_leader_terminal_preserves_stage(
     [
         ("json_parse", "invalid_output_envelope"),
         ("schema", "semantic_candidate_missing_requirement"),
+        ("schema", "semantic_required_target_reproposed"),
+        ("schema", "semantic_proposal_target_duplicate"),
     ],
 )
 def test_closed_leader_terminal_preserves_allowlisted_diagnostic(

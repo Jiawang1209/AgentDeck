@@ -4,6 +4,73 @@
 
 ## 2026-07-16
 
+### Enforce semantic proposal target ownership
+
+- Made every target represented by required semantic authority exclusively
+  required-owned across the complete Candidate, independent of operation.
+  Leader proposals now fail with
+  `semantic_required_target_reproposed`; repeated genuinely new proposal
+  targets fail Mission-wide with `semantic_proposal_target_duplicate`, with
+  required-target diagnosis taking precedence. Historical
+  `semantic_effect_conflict` remains valid in both closed domains.
+- Added one shared, static, code-specific regeneration guidance helper and used
+  it in both OpenAI-compatible and native Codex/Claude semantic prompts. The
+  same Leader may return one complete replacement Candidate; prompts never
+  receive the prior raw Candidate, its marker, Candidate-only target/output
+  data, transcript, or paths, and AgentDeck performs no local repair or
+  filtering.
+- TDD RED evidence used the `agentdeck` conda environment with
+  `PYTHONPATH=src`: the ownership selection reported `7 failed, 2 passed`; the
+  missing guidance helper produced one expected collection `ImportError`; the
+  fake-only Provider target/prompt selection reported
+  `7 failed, 12 passed`. The first unqualified ownership command was
+  infrastructure-only and stopped at collection with
+  `ModuleNotFoundError: agentdeck` because this isolated worktree was not
+  installed, so it was rerun against the same conda environment with
+  `PYTHONPATH=src`.
+- RED commands were
+  `PYTHONPATH=src conda run --no-capture-output -n agentdeck python -m pytest
+  tests/test_semantic_planning.py::test_failure_codes_are_the_fixed_closed_domain
+  tests/test_semantic_planning.py::test_candidate_rejects_required_target_reproposal_independent_of_operation
+  tests/test_semantic_planning.py::test_candidate_rejects_duplicate_new_target_across_steps
+  tests/test_semantic_planning.py::test_required_target_diagnostic_precedes_duplicate_proposal_diagnostic
+  tests/test_semantic_planning.py::test_candidate_accepts_distinct_genuinely_new_proposed_targets
+  tests/test_semantic_planning.py::test_multi_phase_required_target_without_proposal_remains_valid
+  -q`,
+  `PYTHONPATH=src conda run --no-capture-output -n agentdeck python -m pytest
+  tests/test_semantic_planning.py::test_semantic_regeneration_guidance_is_static_and_closed
+  tests/test_semantic_planning.py::test_semantic_regeneration_guidance_rejects_nonclosed_codes
+  -q`, and
+  `PYTHONPATH=src conda run --no-capture-output -n agentdeck python -m pytest
+  tests/test_leader_cli.py -k 'semantic_provider_initial_prompts or
+  semantic_target_conflict or semantic_repeated_target_conflict or
+  semantic_second_failure_preserves_true_diagnostic' -q`.
+- GREEN evidence: `tests/test_semantic_planning.py` passed `176`; the focused
+  fake-only API/native Provider matrix passed `19`; the required
+  `test_semantic_planning.py`, `test_leader_cli.py`,
+  `test_leader_plan_schema.py`, and `test_cli_structured_output.py` regression
+  passed `737`; the closed terminal projection/evidence nodes in
+  `test_m2c_live_acceptance.py` passed `18`.
+- GREEN commands were
+  `PYTHONPATH=src conda run --no-capture-output -n agentdeck python -m pytest
+  tests/test_semantic_planning.py -q`,
+  `PYTHONPATH=src conda run --no-capture-output -n agentdeck python -m pytest
+  tests/test_leader_cli.py -k 'semantic_provider_initial_prompts or
+  semantic_target_conflict or semantic_repeated_target_conflict or
+  semantic_second_failure_preserves_true_diagnostic' -q`,
+  `PYTHONPATH=src conda run --no-capture-output -n agentdeck python -m pytest
+  tests/test_semantic_planning.py tests/test_leader_cli.py
+  tests/test_leader_plan_schema.py tests/test_cli_structured_output.py -q`, and
+  `PYTHONPATH=src conda run --no-capture-output -n agentdeck python -m pytest
+  tests/test_m2c_live_acceptance.py::test_closed_leader_terminal_preserves_stage
+  tests/test_m2c_live_acceptance.py::test_closed_leader_terminal_preserves_allowlisted_diagnostic
+  tests/test_m2c_live_acceptance.py::test_leader_terminal_evidence_fails_closed
+  -q`.
+- All Python and pytest commands ran through
+  `conda run --no-capture-output -n agentdeck`. No real Provider or network
+  call, preflight, ACP/tmux Worker, opt-in live test, install, login, or global
+  configuration change occurred; `AGENTDECK_M2C_LIVE=1` was not set.
+
 ### Plan M2c semantic conflict and pytest redaction implementation
 
 - Added the detailed TDD implementation plan for required-target exclusivity, Mission-wide unique proposed targets, the two new closed diagnostics, one shared static CLI/API regeneration guidance boundary, and transcript-safe default pytest reporting.

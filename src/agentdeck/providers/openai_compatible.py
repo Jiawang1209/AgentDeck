@@ -20,6 +20,7 @@ from agentdeck.semantic_planning import (
     SEMANTIC_REGENERABLE_FAILURE_CODES,
     SemanticPlanningError,
     compile_semantic_plan,
+    semantic_regeneration_guidance,
 )
 
 from .base import (
@@ -561,6 +562,8 @@ class OpenAICompatibleProvider:
             "Never output an executable task field.",
             "Every step must include step, agent_id, role, phase, authority_refs, proposed_effects, verification, risk, requires_approval.",
             "Use every required authority reference exactly once and preserve atomic transitions.",
+            "Targets already represented by required authority must appear only through authority_refs and must not appear in proposed_effects.",
+            "Every proposed_effects target must be genuinely new and appear at most once across the complete candidate.",
             "Every step risk must be low and requires_approval must be true.",
             f"Exact step count: {step_count}",
             f"Selected workers: {json.dumps(workers, ensure_ascii=False, sort_keys=True, separators=(',', ':'))}",
@@ -571,8 +574,13 @@ class OpenAICompatibleProvider:
                 [
                     "Regenerate the complete semantic candidate.",
                     f"Previous attempt diagnostic: {request.regeneration_diagnostic}.",
-                    "Return a complete replacement; do not discuss or reproduce the previous output.",
                 ]
+            )
+            lines.extend(
+                semantic_regeneration_guidance(request.regeneration_diagnostic)
+            )
+            lines.append(
+                "Return a complete replacement; do not discuss or reproduce the previous output."
             )
         return "\n".join(lines)
 

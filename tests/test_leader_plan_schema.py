@@ -11,6 +11,7 @@ import pytest
 from agentdeck.models import AgentSpec, LeaderConfig, ProjectConfig, RuntimeConfig
 from agentdeck.providers.base import LeaderPlanRequest, LeaderPlanResult
 from agentdeck.providers.plan_schema import (
+    LEADER_PLAN_DIAGNOSTIC_CODES,
     LEADER_PLAN_SCHEMA_VERSION,
     SEMANTIC_LEADER_PLAN_SCHEMA_VERSION,
     ProviderPlanValidationError,
@@ -868,17 +869,33 @@ def test_duplicate_selected_config_context_fails_closed() -> None:
     assert str(raised.value) == "provider plan authority is invalid"
 
 
-def test_semantic_schema_is_deterministic_and_regeneration_diagnostic_free() -> None:
+@pytest.mark.parametrize(
+    "diagnostic",
+    [
+        "semantic_candidate_missing_requirement",
+        "semantic_required_target_reproposed",
+        "semantic_proposal_target_duplicate",
+    ],
+)
+def test_semantic_schema_is_deterministic_and_regeneration_diagnostic_free(
+    diagnostic: str,
+) -> None:
     request = _semantic_request()
     retry = replace(
         request,
-        regeneration_diagnostic="semantic_candidate_missing_requirement",
+        regeneration_diagnostic=diagnostic,
     )
 
     assert build_leader_plan_schema(request) == build_leader_plan_schema(retry)
     assert canonical_leader_plan_schema_hash(
         build_leader_plan_schema(request)
     ) == canonical_leader_plan_schema_hash(build_leader_plan_schema(retry))
+
+
+def test_leader_plan_diagnostic_codes_keep_semantic_conflict_compatibility() -> None:
+    assert "semantic_required_target_reproposed" in LEADER_PLAN_DIAGNOSTIC_CODES
+    assert "semantic_proposal_target_duplicate" in LEADER_PLAN_DIAGNOSTIC_CODES
+    assert "semantic_effect_conflict" in LEADER_PLAN_DIAGNOSTIC_CODES
 
 
 def test_semantic_schema_maximum_authority_is_compact_and_deterministic() -> None:

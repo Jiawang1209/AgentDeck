@@ -174,6 +174,32 @@ def semantic_cli_candidate(*, omit_requirement: bool = False) -> dict[str, objec
     return candidate
 
 
+def semantic_candidate_with_required_target_proposal() -> dict[str, object]:
+    value = semantic_cli_candidate()
+    value["steps"][0]["proposed_effects"] = [
+        {
+            "target": "artifact.txt",
+            "operation": "create",
+            "sensitivity": "ordinary",
+        }
+    ]
+    value["summary"] = "FIRST_CONFLICT_CANDIDATE_SECRET"
+    return value
+
+
+def semantic_candidate_with_duplicate_new_target() -> dict[str, object]:
+    value = semantic_cli_candidate()
+    proposal = {
+        "target": "notes.md",
+        "operation": "create",
+        "sensitivity": "ordinary",
+    }
+    value["steps"][0]["proposed_effects"] = [dict(proposal)]
+    value["steps"][1]["proposed_effects"] = [dict(proposal)]
+    value["summary"] = "FIRST_CONFLICT_CANDIDATE_SECRET"
+    return value
+
+
 def semantic_cli_request(config) -> LeaderPlanRequest:
     return LeaderPlanRequest(
         task="password=RAW_TASK_SECRET must never enter a semantic prompt",
@@ -213,6 +239,27 @@ class SemanticApiResponse:
         chunk = self.payload[self.offset:end]
         self.offset += len(chunk)
         return chunk
+
+
+def test_semantic_provider_initial_prompts_share_target_ownership_rules(
+    tmp_path, monkeypatch
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    request = semantic_cli_request(cli.load_config(root))
+    prompts = [
+        OpenAICompatibleProvider()._system_prompt(request),
+        CodexCliProvider()._prompt(request),
+    ]
+
+    for prompt in prompts:
+        assert (
+            "Targets already represented by required authority must appear only "
+            "through authority_refs and must not appear in proposed_effects."
+        ) in prompt
+        assert (
+            "Every proposed_effects target must be genuinely new and appear at "
+            "most once across the complete candidate."
+        ) in prompt
 
 
 def test_fake_semantic_provider_compiles_every_exact_requirement(
@@ -335,6 +382,166 @@ def test_api_semantic_generation_regenerates_once_under_one_deadline(
             "regeneration_used": False,
         },
     )
+
+
+@pytest.mark.parametrize(
+    ("first_candidate", "expected_code", "expected_guidance"),
+    [
+        (
+            semantic_candidate_with_required_target_proposal,
+            "semantic_required_target_reproposed",
+            "Remove every proposed effect whose target is already represented by "
+            "required authority. Keep authority_refs unchanged. Do not add a "
+            "replacement proposal for that target.",
+        ),
+        (
+            semantic_candidate_with_duplicate_new_target,
+            "semantic_proposal_target_duplicate",
+            "Each proposed target may appear only once. Return one complete "
+            "candidate without repeated proposed targets.",
+        ),
+    ],
+)
+def test_api_semantic_target_conflict_regenerates_with_static_guidance(
+    tmp_path,
+    monkeypatch,
+    first_candidate,
+    expected_code: str,
+    expected_guidance: str,
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    request = semantic_cli_request(cli.load_config(root))
+    candidates = [first_candidate(), semantic_cli_candidate()]
+    calls: list[dict[str, object]] = []
+    monkeypatch.setenv("AGENTDECK_LEADER_API_KEY", "test-key")
+
+    def fake_urlopen(http_request, timeout):
+        calls.append(
+            {
+                "body": json.loads(http_request.data.decode("utf-8")),
+                "timeout": timeout,
+            }
+        )
+        return SemanticApiResponse(candidates[len(calls) - 1])
+
+    monkeypatch.setattr(
+        "agentdeck.providers.openai_compatible.request.urlopen", fake_urlopen
+    )
+
+    result = OpenAICompatibleProvider(timeout=30).plan_result(request)
+
+    assert len(calls) == 2
+    assert calls[0]["body"]["model"] == calls[1]["body"]["model"]
+    assert calls[0]["timeout"] > calls[1]["timeout"] > 0
+    first_messages = calls[0]["body"]["messages"]
+    second_messages = calls[1]["body"]["messages"]
+    first_prompt = first_messages[0]["content"]
+    second_prompt = second_messages[0]["content"]
+    for prefix in (
+        "Exact step count:",
+        "Selected workers:",
+        "Compact semantic authority:",
+    ):
+        assert next(
+            line for line in first_prompt.splitlines() if line.startswith(prefix)
+        ) == next(
+            line for line in second_prompt.splitlines() if line.startswith(prefix)
+        )
+    assert expected_code not in json.dumps(first_messages)
+    assert expected_code in json.dumps(second_messages)
+    assert expected_guidance in json.dumps(second_messages)
+    assert "FIRST_CONFLICT_CANDIDATE_SECRET" not in json.dumps(second_messages)
+    assert json.dumps(candidates[0], ensure_ascii=False) not in json.dumps(
+        second_messages, ensure_ascii=False
+    )
+    assert result.semantic_diagnostics == (
+        {
+            "code": expected_code,
+            "attempt_count": 1,
+            "regeneration_used": False,
+        },
+    )
+    assert result.leader_generation["attempt_count"] == 2
+    assert result.leader_generation["regeneration_used"] is True
+
+
+@pytest.mark.parametrize(
+    ("candidate_factory", "expected_code"),
+    [
+        (
+            semantic_candidate_with_required_target_proposal,
+            "semantic_required_target_reproposed",
+        ),
+        (
+            semantic_candidate_with_duplicate_new_target,
+            "semantic_proposal_target_duplicate",
+        ),
+    ],
+)
+def test_api_semantic_repeated_target_conflict_stops_after_second_attempt(
+    tmp_path, monkeypatch, candidate_factory, expected_code: str
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    request = semantic_cli_request(cli.load_config(root))
+    calls = 0
+    monkeypatch.setenv("AGENTDECK_LEADER_API_KEY", "test-key")
+
+    def fake_urlopen(_http_request, timeout):
+        nonlocal calls
+        calls += 1
+        return SemanticApiResponse(candidate_factory())
+
+    monkeypatch.setattr(
+        "agentdeck.providers.openai_compatible.request.urlopen", fake_urlopen
+    )
+
+    with pytest.raises(OpenAICompatibleProviderError) as raised:
+        OpenAICompatibleProvider(timeout=30).plan_result(request)
+
+    assert calls == 2
+    assert raised.value.stage == "schema"
+    assert raised.value.diagnostic_code == expected_code
+    assert raised.value.attempt_count == 2
+
+
+@pytest.mark.parametrize(
+    "candidate_factory",
+    [
+        semantic_candidate_with_required_target_proposal,
+        semantic_candidate_with_duplicate_new_target,
+    ],
+)
+def test_api_semantic_second_failure_preserves_true_diagnostic(
+    tmp_path, monkeypatch, candidate_factory
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    request = semantic_cli_request(cli.load_config(root))
+    candidates = [
+        candidate_factory(),
+        semantic_cli_candidate(omit_requirement=True),
+    ]
+    calls = 0
+    monkeypatch.setenv("AGENTDECK_LEADER_API_KEY", "test-key")
+
+    def fake_urlopen(_http_request, timeout):
+        nonlocal calls
+        calls += 1
+        return SemanticApiResponse(candidates[calls - 1])
+
+    monkeypatch.setattr(
+        "agentdeck.providers.openai_compatible.request.urlopen", fake_urlopen
+    )
+
+    with pytest.raises(OpenAICompatibleProviderError) as raised:
+        OpenAICompatibleProvider(timeout=30).plan_result(request)
+
+    assert calls == 2
+    assert raised.value.stage == "schema"
+    assert (
+        raised.value.diagnostic_code
+        == "semantic_candidate_missing_requirement"
+    )
+    assert raised.value.attempt_count == 2
 
 
 def test_api_semantic_generation_freezes_effective_provider_identity(
@@ -2049,6 +2256,236 @@ def test_native_cli_semantic_generation_uses_safe_schema_prompt_and_one_regenera
     assert "semantic_authority" in result.plan
     assert "semantic_steps" in result.plan
     assert all("task" in step for step in result.plan["steps"])
+
+
+@pytest.mark.parametrize("provider_class", [CodexCliProvider, ClaudeCliProvider])
+@pytest.mark.parametrize(
+    ("first_candidate", "expected_code", "expected_guidance"),
+    [
+        (
+            semantic_candidate_with_required_target_proposal,
+            "semantic_required_target_reproposed",
+            "Remove every proposed effect whose target is already represented by "
+            "required authority. Keep authority_refs unchanged. Do not add a "
+            "replacement proposal for that target.",
+        ),
+        (
+            semantic_candidate_with_duplicate_new_target,
+            "semantic_proposal_target_duplicate",
+            "Each proposed target may appear only once. Return one complete "
+            "candidate without repeated proposed targets.",
+        ),
+    ],
+)
+def test_native_cli_semantic_target_conflict_regenerates_with_static_guidance(
+    tmp_path,
+    monkeypatch,
+    provider_class,
+    first_candidate,
+    expected_code: str,
+    expected_guidance: str,
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    request = semantic_cli_request(cli.load_config(root))
+    candidates = [first_candidate(), semantic_cli_candidate()]
+    calls: list[dict[str, object]] = []
+
+    def fake_run(command, **kwargs):
+        call_index = len(calls)
+        if "--output-schema" in command:
+            schema = json.loads(
+                Path(command[command.index("--output-schema") + 1]).read_text(
+                    encoding="utf-8"
+                )
+            )
+        else:
+            schema = json.loads(command[command.index("--json-schema") + 1])
+        calls.append(
+            {
+                "command": list(command),
+                "prompt": kwargs["input"],
+                "timeout": kwargs["timeout"],
+                "schema": schema,
+            }
+        )
+        candidate = candidates[call_index]
+        if "--output-last-message" in command:
+            Path(
+                command[command.index("--output-last-message") + 1]
+            ).write_text(json.dumps(candidate), encoding="utf-8")
+        else:
+            kwargs["stdout"].write(
+                json.dumps(
+                    {
+                        "type": "result",
+                        "subtype": "success",
+                        "is_error": False,
+                        "structured_output": candidate,
+                    }
+                ).encode("utf-8")
+            )
+        return subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr(
+        "agentdeck.providers.cli_subprocess.subprocess.run", fake_run
+    )
+
+    result = provider_class().plan_result(request)
+
+    assert len(calls) == 2
+    assert calls[0]["schema"] == calls[1]["schema"]
+    normalized_commands = []
+    for call in calls:
+        command = list(call["command"])
+        for flag in ("--output-schema", "--output-last-message", "--json-schema"):
+            if flag in command:
+                command[command.index(flag) + 1] = f"<{flag}>"
+        normalized_commands.append(command)
+    assert normalized_commands[0] == normalized_commands[1]
+    first_prompt = calls[0]["prompt"]
+    second_prompt = calls[1]["prompt"]
+    for prefix in (
+        "Exact step count:",
+        "Selected workers:",
+        "Compact semantic authority:",
+    ):
+        assert next(
+            line for line in first_prompt.splitlines() if line.startswith(prefix)
+        ) == next(
+            line for line in second_prompt.splitlines() if line.startswith(prefix)
+        )
+    assert expected_code not in first_prompt
+    assert expected_code in second_prompt
+    assert expected_guidance in second_prompt
+    assert "FIRST_CONFLICT_CANDIDATE_SECRET" not in second_prompt
+    assert json.dumps(candidates[0], ensure_ascii=False) not in second_prompt
+    assert result.semantic_diagnostics == (
+        {
+            "code": expected_code,
+            "attempt_count": 1,
+            "regeneration_used": False,
+        },
+    )
+    assert result.leader_generation["attempt_count"] == 2
+    assert result.leader_generation["regeneration_used"] is True
+
+
+@pytest.mark.parametrize("provider_class", [CodexCliProvider, ClaudeCliProvider])
+@pytest.mark.parametrize(
+    ("candidate_factory", "expected_code"),
+    [
+        (
+            semantic_candidate_with_required_target_proposal,
+            "semantic_required_target_reproposed",
+        ),
+        (
+            semantic_candidate_with_duplicate_new_target,
+            "semantic_proposal_target_duplicate",
+        ),
+    ],
+)
+def test_native_cli_semantic_repeated_target_conflict_stops_after_second_attempt(
+    tmp_path,
+    monkeypatch,
+    provider_class,
+    candidate_factory,
+    expected_code: str,
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    request = semantic_cli_request(cli.load_config(root))
+    calls = 0
+
+    def fake_run(command, **kwargs):
+        nonlocal calls
+        calls += 1
+        candidate = candidate_factory()
+        if "--output-last-message" in command:
+            Path(
+                command[command.index("--output-last-message") + 1]
+            ).write_text(json.dumps(candidate), encoding="utf-8")
+        else:
+            kwargs["stdout"].write(
+                json.dumps(
+                    {
+                        "type": "result",
+                        "subtype": "success",
+                        "is_error": False,
+                        "structured_output": candidate,
+                    }
+                ).encode("utf-8")
+            )
+        return subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr(
+        "agentdeck.providers.cli_subprocess.subprocess.run", fake_run
+    )
+
+    with pytest.raises(CliLeaderProviderError) as raised:
+        provider_class().plan_result(request)
+
+    assert calls == 2
+    assert raised.value.stage == "schema"
+    assert raised.value.diagnostic_code == expected_code
+    assert raised.value.attempt_count == 2
+
+
+@pytest.mark.parametrize("provider_class", [CodexCliProvider, ClaudeCliProvider])
+@pytest.mark.parametrize(
+    "candidate_factory",
+    [
+        semantic_candidate_with_required_target_proposal,
+        semantic_candidate_with_duplicate_new_target,
+    ],
+)
+def test_native_cli_semantic_second_failure_preserves_true_diagnostic(
+    tmp_path,
+    monkeypatch,
+    provider_class,
+    candidate_factory,
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    request = semantic_cli_request(cli.load_config(root))
+    candidates = [
+        candidate_factory(),
+        semantic_cli_candidate(omit_requirement=True),
+    ]
+    calls = 0
+
+    def fake_run(command, **kwargs):
+        nonlocal calls
+        candidate = candidates[calls]
+        calls += 1
+        if "--output-last-message" in command:
+            Path(
+                command[command.index("--output-last-message") + 1]
+            ).write_text(json.dumps(candidate), encoding="utf-8")
+        else:
+            kwargs["stdout"].write(
+                json.dumps(
+                    {
+                        "type": "result",
+                        "subtype": "success",
+                        "is_error": False,
+                        "structured_output": candidate,
+                    }
+                ).encode("utf-8")
+            )
+        return subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr(
+        "agentdeck.providers.cli_subprocess.subprocess.run", fake_run
+    )
+
+    with pytest.raises(CliLeaderProviderError) as raised:
+        provider_class().plan_result(request)
+
+    assert calls == 2
+    assert raised.value.stage == "schema"
+    assert (
+        raised.value.diagnostic_code
+        == "semantic_candidate_missing_requirement"
+    )
+    assert raised.value.attempt_count == 2
 
 
 def test_native_cli_semantic_double_failure_is_sanitized_and_bounded(

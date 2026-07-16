@@ -27,6 +27,8 @@ SEMANTIC_FAILURE_CODES = frozenset(
         "semantic_candidate_wrong_worker",
         "semantic_transition_incomplete",
         "semantic_effect_conflict",
+        "semantic_required_target_reproposed",
+        "semantic_proposal_target_duplicate",
         "semantic_scope_addition_blocked",
         "semantic_candidate_schema_invalid",
         "semantic_compilation_failed",
@@ -42,8 +44,30 @@ SEMANTIC_REGENERABLE_FAILURE_CODES = frozenset(
         "semantic_candidate_wrong_worker",
         "semantic_transition_incomplete",
         "semantic_effect_conflict",
+        "semantic_required_target_reproposed",
+        "semantic_proposal_target_duplicate",
     }
 )
+
+_SEMANTIC_REGENERATION_GUIDANCE = {
+    "semantic_required_target_reproposed": (
+        "Remove every proposed effect whose target is already represented by "
+        "required authority. Keep authority_refs unchanged. Do not add a "
+        "replacement proposal for that target."
+    ),
+    "semantic_proposal_target_duplicate": (
+        "Each proposed target may appear only once. Return one complete "
+        "candidate without repeated proposed targets."
+    ),
+}
+
+
+def semantic_regeneration_guidance(code: str) -> tuple[str, ...]:
+    if type(code) is not str or code not in SEMANTIC_REGENERABLE_FAILURE_CODES:
+        raise ValueError("semantic regeneration diagnostic invalid")
+    value = _SEMANTIC_REGENERATION_GUIDANCE.get(code)
+    return () if value is None else (value,)
+
 
 _CANDIDATE_FIELDS = frozenset({"goal", "summary", "steps"})
 _CANDIDATE_STEP_FIELDS = frozenset(
@@ -255,24 +279,21 @@ def _validate_proposal_shape(
     return normalized
 
 
-def _validate_effect_conflicts(
+def _validate_effect_target_ownership(
     required_effects: list[dict[str, Any]],
     proposed_effects: list[dict[str, str]],
 ) -> None:
-    proposed_operations_by_target: dict[str, str] = {}
+    required_targets = {
+        requirement["target"] for requirement in required_effects
+    }
+    proposed_targets: set[str] = set()
     for proposal in proposed_effects:
         target = proposal["target"]
-        operation = proposal["operation"]
-        previous = proposed_operations_by_target.get(target)
-        if previous is not None:
-            _fail("semantic_effect_conflict")
-        proposed_operations_by_target[target] = operation
-        if any(
-            requirement["target"] == target
-            and requirement["operation"] != operation
-            for requirement in required_effects
-        ):
-            _fail("semantic_effect_conflict")
+        if target in required_targets:
+            _fail("semantic_required_target_reproposed")
+        if target in proposed_targets:
+            _fail("semantic_proposal_target_duplicate")
+        proposed_targets.add(target)
 
 
 def validate_semantic_candidate(
@@ -380,7 +401,7 @@ def validate_semantic_candidate(
         _fail("semantic_transition_incomplete")
     if missing:
         _fail("semantic_candidate_missing_requirement")
-    _validate_effect_conflicts(requirements, validated_proposals)
+    _validate_effect_target_ownership(requirements, validated_proposals)
     return deepcopy(candidate)
 
 
@@ -508,7 +529,7 @@ def _validate_semantic_step(
         _validate_proposal_shape(proposal, persisted=True)
         for proposal in body["proposed_effects"]
     ]
-    _validate_effect_conflicts([], validated_step_proposals)
+    _validate_effect_target_ownership([], validated_step_proposals)
     try:
         validated_effects = validate_semantic_authority(
             {
@@ -523,7 +544,7 @@ def _validate_semantic_step(
         _fail("semantic_compilation_failed")
     if _contains_sensitive_authority(validated_effects):
         _fail("semantic_compilation_failed")
-    _validate_effect_conflicts(
+    _validate_effect_target_ownership(
         validated_effects["requirements"], validated_effects["proposed_effects"]
     )
     if any(

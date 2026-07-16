@@ -283,7 +283,12 @@ AgentDeck's compiler; it is never accepted from the Leader candidate.
 - atomic transitions preserve both endpoints;
 - references exist and are not silently duplicated or dropped;
 - effects do not contradict another frozen requirement;
-- Leader proposals are separated from required authority;
+- every exact target represented by required authority is required-owned across
+  the complete Candidate, independent of operation, phase, Worker, or
+  requirement kind; it may appear in Leader steps only through
+  `authority_refs` and never in `proposed_effects`;
+- every proposed target is genuinely new and appears at most once across the
+  complete Candidate, including across different steps;
 - safe, explicit project-local scope additions remain visible proposals until
   confirmation, while unreviewable additions fail closed;
 - destructive, credential, publish, external-send, or otherwise elevated
@@ -291,10 +296,13 @@ AgentDeck's compiler; it is never accepted from the Leader candidate.
 - unresolved or sensitive plaintext prevents confirmation;
 - schema, authority, candidate, and compiled projections agree.
 
-The validator never repairs a candidate. On the first retryable semantic
-failure, the same Leader receives only a closed diagnostic and must return a
-complete replacement candidate. The second failure terminates planning. There
-is no local partial patch and no provider, model, or transport fallback.
+The validator never repairs, filters, or patches a candidate. On the first
+retryable semantic failure, the same Leader receives only a closed diagnostic
+and, where defined, one static code-specific correction that contains no
+Candidate, target, output, transcript, or path data. It must return a complete
+replacement candidate under the same provider, model, schema, authority,
+Workers, roles, and original deadline. The second failure terminates planning.
+There is no local partial patch and no provider, model, or transport fallback.
 
 ## 11. Deterministic Worker task compilation
 
@@ -416,12 +424,23 @@ semantic_candidate_wrong_phase
 semantic_candidate_wrong_worker
 semantic_transition_incomplete
 semantic_effect_conflict
+semantic_required_target_reproposed
+semantic_proposal_target_duplicate
 semantic_scope_addition_blocked
 semantic_candidate_schema_invalid
 semantic_compilation_failed
 semantic_compilation_drift
 semantic_confirmation_stale
 ```
+
+`semantic_required_target_reproposed` identifies a proposal that reuses a
+required-owned target. `semantic_proposal_target_duplicate` identifies a
+repeated genuinely new proposed target anywhere in the Candidate. Required
+ownership is checked first, so a repeated required target reports
+`semantic_required_target_reproposed`. Historical
+`semantic_effect_conflict` remains in the closed failure and regenerable
+domains for stored diagnostics and compatibility, but new target-ownership
+violations use the two precise codes.
 
 Diagnostics may contain only stage, closed code, schema version, authority hash,
 opaque requirement id, requirement kind, step number, attempt count, and a
@@ -455,7 +474,8 @@ ids. They do not become a second authority store.
    authority, and the original deadline.
 6. The Leader returns a native-schema semantic candidate.
 7. Semantic validation either accepts it or triggers one complete same-Leader
-   regeneration.
+   regeneration using only the closed code plus its shared static correction;
+   AgentDeck does not repair or filter the prior Candidate.
 8. A second failure terminates the turn without creating a plan or Mission.
 9. The compiler creates deterministic step tasks and hashes.
 10. AgentDeck creates one exact preview.

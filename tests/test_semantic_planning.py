@@ -16,6 +16,7 @@ from agentdeck.semantic_planning import (
     compile_semantic_plan,
     compile_worker_task,
     semantic_context_text_is_safe,
+    semantic_regeneration_guidance,
     semantic_step_hash,
     validate_semantic_candidate,
 )
@@ -201,6 +202,8 @@ def test_failure_codes_are_the_fixed_closed_domain() -> None:
             "semantic_candidate_wrong_worker",
             "semantic_transition_incomplete",
             "semantic_effect_conflict",
+            "semantic_required_target_reproposed",
+            "semantic_proposal_target_duplicate",
             "semantic_scope_addition_blocked",
             "semantic_candidate_schema_invalid",
             "semantic_compilation_failed",
@@ -208,8 +211,69 @@ def test_failure_codes_are_the_fixed_closed_domain() -> None:
             "semantic_confirmation_stale",
         }
     )
+    assert SEMANTIC_REGENERABLE_FAILURE_CODES == frozenset(
+        {
+            "semantic_candidate_missing_requirement",
+            "semantic_candidate_duplicate_requirement",
+            "semantic_candidate_wrong_phase",
+            "semantic_candidate_wrong_worker",
+            "semantic_transition_incomplete",
+            "semantic_effect_conflict",
+            "semantic_required_target_reproposed",
+            "semantic_proposal_target_duplicate",
+        }
+    )
     with pytest.raises(ValueError):
         SemanticPlanningError("DO_NOT_ECHO")
+
+
+def test_historical_semantic_effect_conflict_remains_readable_and_closed() -> None:
+    _assert_closed(
+        SemanticPlanningError("semantic_effect_conflict"),
+        "semantic_effect_conflict",
+    )
+
+
+@pytest.mark.parametrize(
+    ("code", "expected"),
+    [
+        (
+            "semantic_required_target_reproposed",
+            (
+                "Remove every proposed effect whose target is already represented "
+                "by required authority. Keep authority_refs unchanged. Do not add "
+                "a replacement proposal for that target.",
+            ),
+        ),
+        (
+            "semantic_proposal_target_duplicate",
+            (
+                "Each proposed target may appear only once. Return one complete "
+                "candidate without repeated proposed targets.",
+            ),
+        ),
+        ("semantic_candidate_missing_requirement", ()),
+    ],
+)
+def test_semantic_regeneration_guidance_is_static_and_closed(
+    code: str,
+    expected: tuple[str, ...],
+) -> None:
+    assert semantic_regeneration_guidance(code) == expected
+
+
+@pytest.mark.parametrize(
+    "code",
+    [None, 1, "unknown", "semantic_compilation_failed"],
+)
+def test_semantic_regeneration_guidance_rejects_nonclosed_codes(
+    code: object,
+) -> None:
+    with pytest.raises(
+        ValueError,
+        match="semantic regeneration diagnostic invalid",
+    ):
+        semantic_regeneration_guidance(code)  # type: ignore[arg-type]
 
 
 def test_valid_candidate_is_defensively_validated_with_exact_shape() -> None:
@@ -554,7 +618,7 @@ def test_public_tree_oversized_string_rejects_before_unicode_normalization(
         ({"target": "artifact.txt", "operation": "delete", "sensitivity": "ordinary"}, "semantic_scope_addition_blocked"),
         ({"target": "artifact.txt", "operation": "create", "sensitivity": "secret_ref"}, "semantic_authority_sensitive_value"),
         ({"target": "artifact.txt", "operation": "create", "sensitivity": "ordinary", "literal": "DO_NOT_ECHO"}, "semantic_candidate_schema_invalid"),
-        ({"target": "artifact.txt", "operation": "create", "sensitivity": "ordinary"}, "semantic_effect_conflict"),
+        ({"target": "artifact.txt", "operation": "create", "sensitivity": "ordinary"}, "semantic_required_target_reproposed"),
     ],
 )
 def test_proposal_reviewability_and_conflicts_fail_closed(proposal, code: str) -> None:
@@ -563,6 +627,82 @@ def test_proposal_reviewability_and_conflicts_fail_closed(proposal, code: str) -
     with pytest.raises(SemanticPlanningError) as raised:
         _compile(candidate_value=value)
     _assert_closed(raised.value, code)
+
+
+@pytest.mark.parametrize("operation", ["create", "review", "update", "verify"])
+def test_candidate_rejects_required_target_reproposal_independent_of_operation(
+    operation: str,
+) -> None:
+    value = candidate()
+    value["steps"][0]["proposed_effects"] = [
+        {
+            "target": "artifact.txt",
+            "operation": operation,
+            "sensitivity": "ordinary",
+        }
+    ]
+
+    with pytest.raises(SemanticPlanningError) as raised:
+        _compile(candidate_value=value)
+
+    _assert_closed(raised.value, "semantic_required_target_reproposed")
+
+
+def test_candidate_rejects_duplicate_new_target_across_steps() -> None:
+    value = candidate()
+    proposal = {
+        "target": "notes.md",
+        "operation": "create",
+        "sensitivity": "ordinary",
+    }
+    value["steps"][0]["proposed_effects"] = [deepcopy(proposal)]
+    value["steps"][1]["proposed_effects"] = [deepcopy(proposal)]
+
+    with pytest.raises(SemanticPlanningError) as raised:
+        _compile(candidate_value=value)
+
+    _assert_closed(raised.value, "semantic_proposal_target_duplicate")
+
+
+def test_required_target_diagnostic_precedes_duplicate_proposal_diagnostic() -> None:
+    value = candidate()
+    proposal = {
+        "target": "artifact.txt",
+        "operation": "create",
+        "sensitivity": "ordinary",
+    }
+    value["steps"][0]["proposed_effects"] = [deepcopy(proposal)]
+    value["steps"][1]["proposed_effects"] = [deepcopy(proposal)]
+
+    with pytest.raises(SemanticPlanningError) as raised:
+        _compile(candidate_value=value)
+
+    _assert_closed(raised.value, "semantic_required_target_reproposed")
+
+
+def test_candidate_accepts_distinct_genuinely_new_proposed_targets() -> None:
+    value = candidate()
+    value["steps"][0]["proposed_effects"] = [
+        {"target": "notes.md", "operation": "create", "sensitivity": "ordinary"}
+    ]
+    value["steps"][1]["proposed_effects"] = [
+        {"target": "review.md", "operation": "create", "sensitivity": "ordinary"}
+    ]
+
+    plan = _compile(candidate_value=value)
+
+    assert [
+        item["target"] for item in plan["semantic_authority"]["proposed_effects"]
+    ] == ["notes.md", "review.md"]
+
+
+def test_multi_phase_required_target_without_proposal_remains_valid() -> None:
+    plan = _compile()
+
+    assert {
+        item["target"] for item in plan["semantic_authority"]["requirements"]
+    } == {"artifact.txt"}
+    assert plan["semantic_authority"]["proposed_effects"] == []
 
 
 def test_compiler_preserves_atomic_revision_transition() -> None:
@@ -700,18 +840,18 @@ def _force_persisted_hash(body: dict[str, object]) -> dict[str, object]:
 
 
 @pytest.mark.parametrize("function", [semantic_step_hash, compile_worker_task])
-def test_public_step_rejects_required_proposal_effect_conflict(function) -> None:
+def test_public_step_rejects_required_target_reproposal(function) -> None:
     body = deepcopy(_compile()["semantic_steps"][0])
     body.pop("semantic_step_hash")
     body["proposed_effects"] = [_proposal("artifact.txt", "review")]
     value = body if function is semantic_step_hash else _force_persisted_hash(body)
     with pytest.raises(SemanticPlanningError) as raised:
         function(value)
-    _assert_closed(raised.value, "semantic_effect_conflict")
+    _assert_closed(raised.value, "semantic_required_target_reproposed")
 
 
 @pytest.mark.parametrize("function", [semantic_step_hash, compile_worker_task])
-def test_public_step_rejects_conflicting_proposals_on_same_target(function) -> None:
+def test_public_step_rejects_duplicate_proposed_target(function) -> None:
     body = deepcopy(_compile()["semantic_steps"][0])
     body.pop("semantic_step_hash")
     body["proposed_effects"] = [
@@ -721,10 +861,10 @@ def test_public_step_rejects_conflicting_proposals_on_same_target(function) -> N
     value = body if function is semantic_step_hash else _force_persisted_hash(body)
     with pytest.raises(SemanticPlanningError) as raised:
         function(value)
-    _assert_closed(raised.value, "semantic_effect_conflict")
+    _assert_closed(raised.value, "semantic_proposal_target_duplicate")
 
 
-def test_candidate_rejects_conflicting_proposals_on_same_target() -> None:
+def test_candidate_rejects_duplicate_proposed_target_with_different_operations() -> None:
     value = candidate()
     value["steps"][0]["proposed_effects"] = [
         {"target": "README", "operation": "create", "sensitivity": "ordinary"},
@@ -732,7 +872,7 @@ def test_candidate_rejects_conflicting_proposals_on_same_target() -> None:
     ]
     with pytest.raises(SemanticPlanningError) as raised:
         _compile(candidate_value=value)
-    _assert_closed(raised.value, "semantic_effect_conflict")
+    _assert_closed(raised.value, "semantic_proposal_target_duplicate")
 
 
 def test_candidate_rejects_identical_duplicate_proposals_before_compilation() -> None:
@@ -747,7 +887,7 @@ def test_candidate_rejects_identical_duplicate_proposals_before_compilation() ->
             roles=roles(),
             step_count=4,
         )
-    _assert_closed(raised.value, "semantic_effect_conflict")
+    _assert_closed(raised.value, "semantic_proposal_target_duplicate")
 
 
 @pytest.mark.parametrize("function", [semantic_step_hash, compile_worker_task])
@@ -759,7 +899,7 @@ def test_public_step_rejects_identical_duplicate_proposals(function) -> None:
     value = body if function is semantic_step_hash else _force_persisted_hash(body)
     with pytest.raises(SemanticPlanningError) as raised:
         function(value)
-    _assert_closed(raised.value, "semantic_effect_conflict")
+    _assert_closed(raised.value, "semantic_proposal_target_duplicate")
 
 
 def test_candidate_rejects_more_than_authority_proposal_limit_before_validation(
@@ -787,7 +927,9 @@ def test_candidate_rejects_more_than_authority_proposal_limit_before_validation(
     )
     monkeypatch.setattr(semantic_planning_module, "_proposal_id", forbidden_processing)
     monkeypatch.setattr(
-        semantic_planning_module, "_validate_effect_conflicts", forbidden_processing
+        semantic_planning_module,
+        "_validate_effect_target_ownership",
+        forbidden_processing,
     )
     with pytest.raises(SemanticPlanningError) as raised:
         validate_semantic_candidate(
