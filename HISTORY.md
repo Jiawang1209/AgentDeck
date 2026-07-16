@@ -4,6 +4,22 @@
 
 ## 2026-07-16
 
+### Verify bounded PTY diagnostic evidence
+
+- Tightened the direct `_PtyTail` representation regression to require the
+  complete diagnostic dictionary, including the exact SHA-256 of the retained
+  hostile bytes, rather than checking only its key set and two values.
+- Strengthened the nested default-pytest-report regression with a positive
+  assertion that the legitimate probe source filename remains identifiable.
+  This proves redaction is specific to the process-local PTY tail rather than
+  suppression of the complete traceback.
+- Fresh GREEN results were: both focused nodes `2 passed in 1.37s`;
+  PTY/Preview-wait selection `17 passed, 174 deselected in 0.45s`; complete
+  portable live-acceptance file `190 passed, 1 skipped in 47.35s`.
+- Every Python/test command used `PYTHONPATH=src conda run
+  --no-capture-output -n agentdeck`. No Provider, network, preflight, ACP,
+  tmux, opt-in live test, push, merge, or amend ran.
+
 ### Redact process-local PTY tails from pytest reports
 
 - Excluded `_PtyTail.tail` from the dataclass representation while preserving

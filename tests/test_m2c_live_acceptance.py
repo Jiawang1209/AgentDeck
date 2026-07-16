@@ -956,9 +956,11 @@ def test_pty_tail_repr_excludes_process_local_transcript() -> None:
     assert "tail=" not in rendered
     assert f"byte_count={len(hostile)}" in rendered
     assert "truncated=False" in rendered
-    assert set(diagnostic) == {"byte_count", "truncated", "sha256"}
-    assert diagnostic["byte_count"] == len(hostile)
-    assert diagnostic["truncated"] is False
+    assert diagnostic == {
+        "byte_count": len(hostile),
+        "truncated": False,
+        "sha256": hashlib.sha256(hostile).hexdigest(),
+    }
 
 
 def test_default_pytest_report_excludes_pty_transcript(tmp_path: Path) -> None:
@@ -1022,6 +1024,7 @@ def test_real_observer_failure():
 
     rendered = completed.stdout + completed.stderr
     assert completed.returncode == 1, rendered
+    assert probe.name in rendered
     assert "leader_schema_before_preview" in rendered
     assert "semantic_required_target_reproposed" in rendered
     assert f'"byte_count": {len(hostile.encode())}' in rendered
