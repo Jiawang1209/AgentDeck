@@ -4,6 +4,25 @@
 
 ## 2026-07-16
 
+### Pass the frozen M2c read-only preflight
+
+- Bound explicit Leader model `gpt-5.5` to frozen implementation authority
+  `75f0366d4d5619b29c77f10949365f43d46185b1` under one new human authorization
+  and executed the designated read-only preflight exactly once.
+- The allowlisted `m2c-live-preflight/v2` result passed `1 passed in 3.75s` with
+  `ready=true`, `blockers=[]`, and `source=explicit`. Codex CLI `0.131.0`,
+  Claude Code `2.1.211`, Claude Agent ACP `0.58.1`, and tmux `3.7` were all
+  ready.
+- Removed the detached preflight checkout exactly once. The feature worktree
+  remained clean, and the residual audit found zero matching live acceptance
+  pytest/AgentDeck daemon processes and zero M2c live roots.
+- Preflight count for this SHA is now exactly `1` and live count remains `0`.
+  The preflight must not be rerun. No live Mission, ACP Worker, tmux Worker,
+  permission, install, login, global configuration, push, or merge ran.
+- M2c remains **BLOCKED** and M3 remains locked. The next gate is a separate
+  human authorization naming this exact SHA and model for one real four-stage
+  live attempt.
+
 ### Close M2c verification evidence bookkeeping
 
 - Recorded evidence commit `7967da66` separately from frozen implementation

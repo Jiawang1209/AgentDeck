@@ -37,11 +37,19 @@ configuration was changed. The implementation changed no extractor, compiler,
 ACP, tmux, daemon, permission, handoff, model, login, timeout, or fallback
 behavior.
 
-For this SHA, preflight count is exactly `0` and live count is exactly `0`.
-This evidence is not M2c PASS and does not inherit the earlier `gpt-5.5`
-authorization. M2c remains **BLOCKED** and M3 remains locked. The next gate is
-human selection of an exact Leader model plus authorization for exactly one
-new read-only preflight against this frozen implementation SHA.
+For this SHA, one newly authorized read-only preflight bound explicit Leader
+model `gpt-5.5` and passed `1 passed in 3.75s` with `ready=true`,
+`blockers=[]`. Its allowlisted payload reported Codex CLI `0.131.0`, Claude
+Code `2.1.211`, Claude Agent ACP `0.58.1`, and tmux `3.7` ready. The preflight
+checkout was removed exactly once; the feature worktree remained clean; the
+post-run audit found zero matching live processes and zero M2c live roots.
+
+The preflight count for this SHA is exactly `1`; it must not be rerun. The live
+count remains exactly `0`. This evidence is not M2c PASS. M2c remains
+**BLOCKED** and M3 remains locked. The next gate is separate human
+authorization naming frozen SHA
+`75f0366d4d5619b29c77f10949365f43d46185b1` and Leader model `gpt-5.5` for
+exactly one real four-stage live attempt.
 
 ## Historical semantic-authority harness conversion checkpoint
 

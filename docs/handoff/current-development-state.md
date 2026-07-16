@@ -2,7 +2,7 @@
 
 Updated: 2026-07-16
 
-## Active goal — authorize one new read-only preflight for the frozen M2c candidate
+## Active goal — authorize one real four-stage live run for the ready M2c candidate
 
 The approved target-exclusivity and pytest-report-redaction TDD plan is
 implemented and verified. The implementation authority is frozen at
@@ -19,12 +19,18 @@ and `186.08s`. Compile, diff, scope, sentinel-leakage, cleanup, and residual
 audits passed. No provider, ACP, tmux, preflight, or live Mission ran during
 this implementation verification.
 
-No previous model, preflight, or live authorization carries forward. For the
-new frozen SHA, preflight count is `0` and live count is `0`. M2c remains
-**BLOCKED** and M3 remains locked. The next action requires the human to name an
-exact Leader model and authorize exactly one read-only preflight for SHA
-`75f0366d4d5619b29c77f10949365f43d46185b1`. A live attempt still requires a
-separate authorization after a `ready=true`, `blockers=[]` preflight.
+The human explicitly bound Leader model `gpt-5.5` to frozen implementation
+`75f0366d4d5619b29c77f10949365f43d46185b1` and authorized exactly one read-only
+preflight. It ran once and passed `1 passed in 3.75s` with `ready=true`,
+`blockers=[]`, `source=explicit`, Codex CLI `0.131.0`, Claude Code `2.1.211`,
+Claude Agent ACP `0.58.1`, and tmux `3.7` all ready. The detached checkout was
+removed; the feature worktree remained clean; residual audit found zero live
+pytest/AgentDeck daemon processes and zero M2c live roots.
+
+For this SHA, preflight count is now exactly `1` and live count remains exactly
+`0`. The preflight must not be rerun. M2c remains **BLOCKED** and M3 remains
+locked. The next action requires separate human authorization naming this exact
+SHA and model for one real four-stage live attempt.
 
 ## Historical previous frozen live evidence
 

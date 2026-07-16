@@ -1094,7 +1094,7 @@ old gpt-5.5 preflight authorization
 old live authorization
 ```
 
-- [ ] **Step 2: Request exact new human authority**
+- [x] **Step 2: Request exact new human authority**
 
 Report:
 
@@ -1110,7 +1110,7 @@ M3: locked
 Ask the human to name the exact Leader model id and authorize exactly one
 read-only preflight on that SHA.
 
-- [ ] **Step 3: If later authorized, run only the designated preflight once**
+- [x] **Step 3: If later authorized, run only the designated preflight once**
 
 This step is intentionally gated and must not execute during ordinary plan
 implementation. After the human names the exact values, export them as
@@ -1147,6 +1147,13 @@ git -C "$feature_root" worktree remove --force "$preflight_root"
 git -C "$feature_root" worktree prune
 test ! -e "$preflight_root"
 ```
+
+Evidence: the human bound `gpt-5.5` to frozen SHA
+`75f0366d4d5619b29c77f10949365f43d46185b1` and authorized one preflight. It
+ran exactly once, passed `1 passed in 3.75s`, and returned `ready=true`,
+`blockers=[]`. The detached checkout was removed; the feature worktree remained
+clean; residual process and live-root counts were both zero. Preflight count is
+`1`; live count is `0`.
 
 - [ ] **Step 4: Never run live without a second separate authorization**
 
