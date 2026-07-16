@@ -1155,7 +1155,7 @@ ran exactly once, passed `1 passed in 3.75s`, and returned `ready=true`,
 clean; residual process and live-root counts were both zero. Preflight count is
 `1`; live count is `0`.
 
-- [ ] **Step 4: Never run live without a second separate authorization**
+- [x] **Step 4: Never run live without a second separate authorization**
 
 Do not set:
 
@@ -1172,6 +1172,18 @@ test_real_four_stage_m2c_acceptance
 until the human separately names the new frozen SHA, exact model, and unique
 live attempt after a ready preflight. Any future live result is run once and is
 never automatically retried.
+
+Evidence: the human separately authorized frozen SHA
+`75f0366d4d5619b29c77f10949365f43d46185b1` with Leader `gpt-5.5`. The real
+node ran exactly once, failed `1 failed in 48.26s`, and was not retried. Its
+closed result was `stage=live_acceptance`,
+`code=native_schema_provenance_missing`, with one plan, one Mission, and zero
+attempts, permissions, Worker replies, or handoffs. PTY evidence retained only
+`byte_count=1438`, `truncated=false`, and
+`sha256=4d261e29ad7cf2b3a5d19b899eb0cc734c8e86f19ec71e55731e39a2c6b706fa`.
+The outer checkout/tool mirror were removed and current-run process matches
+were zero. Preflight count and live count for this SHA are both `1`; neither may
+be rerun.
 
 ## Completion checklist
 

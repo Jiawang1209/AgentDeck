@@ -4,6 +4,29 @@
 
 ## 2026-07-16
 
+### Record the single M2c native-schema provenance blocker
+
+- Executed the separately authorized real four-stage M2c node exactly once on
+  frozen implementation `75f0366d4d5619b29c77f10949365f43d46185b1` with
+  explicit Leader model `gpt-5.5`; it was not retried.
+- The node failed `1 failed in 48.26s` at `stage=live_acceptance`,
+  `code=native_schema_provenance_missing`. The compact snapshot had one plan,
+  one Mission, and zero attempts, permissions, Worker replies, or handoffs.
+  PTY evidence remains transcript-free: `byte_count=1438`, `truncated=false`,
+  `sha256=4d261e29ad7cf2b3a5d19b899eb0cc734c8e86f19ec71e55731e39a2c6b706fa`.
+- Removed the live checkout and disposable strict-basename tool mirror. The
+  feature worktree remained clean and current-run process matches were zero.
+  One `agentdeck-m2c-path-verify-954b868c` directory predated the run and was
+  left untouched.
+- Root-cause inspection found that the semantic preview path validates
+  `leader_generation`, then explicitly sets it to `None` before persisting the
+  plan under a stale Task 7/Task 8 ownership comment. Existing native
+  provenance tests cover non-semantic previews and therefore missed this path.
+- Preflight and live counts for this frozen SHA are both exactly `1`; neither
+  may be rerun. M2c remains **BLOCKED**, M3 remains locked, and the next gate is
+  an approved deterministic RED/GREEN persistence fix, new verification, and a
+  new frozen authorization cycle.
+
 ### Pass the frozen M2c read-only preflight
 
 - Bound explicit Leader model `gpt-5.5` to frozen implementation authority

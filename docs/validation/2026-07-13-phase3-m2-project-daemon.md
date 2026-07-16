@@ -44,12 +44,30 @@ Code `2.1.211`, Claude Agent ACP `0.58.1`, and tmux `3.7` ready. The preflight
 checkout was removed exactly once; the feature worktree remained clean; the
 post-run audit found zero matching live processes and zero M2c live roots.
 
-The preflight count for this SHA is exactly `1`; it must not be rerun. The live
-count remains exactly `0`. This evidence is not M2c PASS. M2c remains
-**BLOCKED** and M3 remains locked. The next gate is separate human
-authorization naming frozen SHA
-`75f0366d4d5619b29c77f10949365f43d46185b1` and Leader model `gpt-5.5` for
-exactly one real four-stage live attempt.
+The preflight count for this SHA is exactly `1`; it must not be rerun.
+
+After separate authorization, the real four-stage node ran exactly once and was
+not retried. It failed `1 failed in 48.26s` at `stage=live_acceptance`,
+`code=native_schema_provenance_missing`. The compact state snapshot contained
+`plans=1`, `missions=1`, `mission_attempts=0`, `permission_requests=0`,
+`mission_worker_replies=0`, and `mission_handoffs=0`. Bounded PTY identity was
+`byte_count=1438`, `truncated=false`, and
+`sha256=4d261e29ad7cf2b3a5d19b899eb0cc734c8e86f19ec71e55731e39a2c6b706fa`;
+no terminal text is retained here.
+
+The live checkout and strict-basename tool mirror were removed. The feature
+worktree remained clean and current-run process matches were zero. A
+`/private/tmp/agentdeck-m2c-path-verify-954b868c` directory with mtime
+`2026-07-16T00:29:09+0800` predated this run and was not deleted.
+
+The live count for this SHA is now exactly `1`; it must not be rerun. This
+evidence is not M2c PASS. M2c remains **BLOCKED** and M3 remains locked.
+Read-only root-cause inspection found that the semantic preview path validates
+the native-schema `leader_generation` envelope and then explicitly replaces it
+with `None` before `build_plan_record()`. Existing native provenance tests cover
+only non-semantic previews. The next gate is deterministic RED/GREEN for this
+exact persistence boundary, followed by a new frozen SHA and new authorization
+cycle.
 
 ## Historical semantic-authority harness conversion checkpoint
 
