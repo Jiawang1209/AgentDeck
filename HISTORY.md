@@ -4,6 +4,39 @@
 
 ## 2026-07-16
 
+### Isolate pytest redaction reports and close the PID-file race
+
+- Made the nested default-report regression independent of caller pytest
+  configuration by removing inherited `PYTEST_ADDOPTS`, disabling plugin
+  autoload, and asserting its child argv has no `--tb` option. Five distinct
+  hostile markers now independently cover sentinel, prompt, stderr, model
+  output, and injected path content while the legitimate probe filename must
+  remain visible.
+- Moved each nested probe into an explicit `TemporaryDirectory`. Subprocess
+  execution and all output assertions stay inside the cleanup boundary; both
+  normal exit and an injected assertion path verify that the probe file and
+  root no longer exist.
+- Made the existing PTY process-group cleanup fixture deterministically expose
+  the PID-file race by flushing an empty file before writing the child PID. The
+  parent now polls boundedly for a positive decimal PID rather than file
+  existence, and asserts that a PID was obtained before cleanup.
+- PID RED failed at the intended empty read with `1 failed in 0.84s` and
+  `ValueError: invalid literal for int() with base 10: ''`. The addopts RED,
+  run with parent `PYTEST_ADDOPTS=--tb=short`, failed at the intended child-env
+  isolation assertion with `1 failed in 0.84s`.
+- The deterministic PID race node passed 10 consecutive runs in `1.20s`,
+  `0.90s`, `0.93s`, `0.92s`, `0.92s`, `0.90s`, `0.92s`, `0.89s`, `0.96s`, and
+  `0.90s`. Default-report coverage passed `3 passed, 190 deselected in 2.21s`
+  normally and `3 passed, 190 deselected in 1.92s` with parent
+  `PYTEST_ADDOPTS=--tb=short`.
+- PTY/Preview-wait coverage passed `17 passed, 176 deselected in 0.47s`.
+  Complete portable live-acceptance coverage passed twice: `192 passed, 1
+  skipped in 47.38s` and `192 passed, 1 skipped in 44.19s`. `python -m
+  compileall -q src tests` and `git diff --check` exited zero.
+- Every Python/test command used `PYTHONPATH=src conda run
+  --no-capture-output -n agentdeck`. No Provider, network, preflight, ACP,
+  tmux, opt-in live test, push, merge, or amend ran.
+
 ### Verify bounded PTY diagnostic evidence
 
 - Tightened the direct `_PtyTail` representation regression to require the

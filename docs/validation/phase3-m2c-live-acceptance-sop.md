@@ -208,6 +208,16 @@ collect-all failure guards that seal the exact new-session process group plus
 leader birth identity, enumerate group members, and apply bounded group
 TERM/KILL even if the leader has already exited. Tracked groups participate in
 final derived residual counts.
+
+The deterministic default-report regression removes inherited
+`PYTEST_ADDOPTS`, sets `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1`, and invokes the child
+as `python -m pytest <probe> -q` with no `--tb` option and no output filtering.
+It retains the legitimate pytest probe source marker while independently
+rejecting injected prompt, stderr, model-output, path, and sentinel markers.
+The probe lives in an explicit temporary directory; subprocess execution and
+report assertions remain inside that cleanup boundary, and a separate injected
+assertion verifies cleanup on exceptional exit.
+
 The parent-scoped setup guard begins before the first `repo`, tmux temporary,
 runtime-bin, or controlled-launcher write. A first or mid-sequence launcher
 failure removes the entire disposable parent while preserving the original
@@ -341,6 +351,6 @@ conda run --no-capture-output -n agentdeck \
   pytest tests/test_m2c_live_acceptance.py -q
 ```
 
-Expected portable result for this frozen candidate: `190 passed, 1 skipped`.
+Expected portable result for this frozen candidate: `192 passed, 1 skipped`.
 A printed `ready=false`
 payload remains an honest setup result, not M2c PASS.

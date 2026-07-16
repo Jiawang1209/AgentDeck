@@ -963,14 +963,41 @@ def test_pty_tail_repr_excludes_process_local_transcript() -> None:
     }
 
 
-def test_default_pytest_report_excludes_pty_transcript(tmp_path: Path) -> None:
-    hostile = (
-        "PTY_DEFAULT_REPORT_UNIQUE_SENTINEL Prompt "
-        "/Users/private/injected-pty-path prompt raw stderr model output"
+@contextmanager
+def _temporary_pytest_report_probe(tmp_path: Path):
+    probe_root: Path | None = None
+    probe: Path | None = None
+    try:
+        with tempfile.TemporaryDirectory(
+            prefix="agentdeck-pytest-report-", dir=tmp_path
+        ) as temporary:
+            probe_root = Path(temporary)
+            probe = probe_root / "test_default_report_probe.py"
+            yield probe_root, probe
+    finally:
+        if probe is not None:
+            assert not probe.exists()
+        if probe_root is not None:
+            assert not probe_root.exists()
+
+
+def _assert_default_pytest_report_excludes_pty_transcript(tmp_path: Path) -> None:
+    hostile_markers = (
+        "PTY_REPORT_SENTINEL_7E16A1",
+        "PTY_REPORT_PROMPT_7E16A2",
+        "PTY_REPORT_STDERR_7E16A3",
+        "PTY_REPORT_MODEL_OUTPUT_7E16A4",
+        "/Users/private/PTY_REPORT_PATH_7E16A5",
     )
-    probe = tmp_path / "test_default_report_probe.py"
-    probe.write_text(
-        """\
+    hostile = " ".join(hostile_markers)
+    hostile_bytes = hostile.encode()
+    probe_root: Path | None = None
+    probe: Path | None = None
+
+    with _temporary_pytest_report_probe(tmp_path) as paths:
+        probe_root, probe = paths
+        probe.write_text(
+            """\
 import os
 import sys
 
@@ -1000,41 +1027,81 @@ def test_real_observer_failure():
         baseline_turn_ids=baseline,
     )
 """,
-        encoding="utf-8",
-    )
-    env = os.environ.copy()
-    env.pop("AGENTDECK_M2C_LIVE", None)
-    env.update(
-        {
-            "AGENTDECK_PROBE_TESTS": str(Path(__file__).parent),
-            "AGENTDECK_PROBE_SRC": str(Path(__file__).parents[1] / "src"),
-            "AGENTDECK_PROBE_HOSTILE": hostile,
-        }
-    )
+            encoding="utf-8",
+        )
+        env = os.environ.copy()
+        env.pop("AGENTDECK_M2C_LIVE", None)
+        env.pop("PYTEST_ADDOPTS", None)
+        env["PYTEST_DISABLE_PLUGIN_AUTOLOAD"] = "1"
+        env.update(
+            {
+                "AGENTDECK_PROBE_TESTS": str(Path(__file__).parent),
+                "AGENTDECK_PROBE_SRC": str(Path(__file__).parents[1] / "src"),
+                "AGENTDECK_PROBE_HOSTILE": hostile,
+            }
+        )
+        command = [sys.executable, "-m", "pytest", str(probe), "-q"]
+        assert "PYTEST_ADDOPTS" not in env
+        assert env["PYTEST_DISABLE_PLUGIN_AUTOLOAD"] == "1"
+        assert not any(
+            item == "--tb" or item.startswith("--tb=") for item in command
+        )
 
-    completed = subprocess.run(
-        [sys.executable, "-m", "pytest", str(probe), "-q"],
-        cwd=tmp_path,
-        env=env,
-        capture_output=True,
-        text=True,
-        timeout=30,
-        check=False,
-    )
+        completed = subprocess.run(
+            command,
+            cwd=probe_root,
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
 
-    rendered = completed.stdout + completed.stderr
-    assert completed.returncode == 1, rendered
-    assert probe.name in rendered
-    assert "leader_schema_before_preview" in rendered
-    assert "semantic_required_target_reproposed" in rendered
-    assert f'"byte_count": {len(hostile.encode())}' in rendered
-    assert '"truncated": false' in rendered
-    assert f'"sha256": "{hashlib.sha256(hostile.encode()).hexdigest()}"' in rendered
-    assert "PTY_DEFAULT_REPORT_UNIQUE_SENTINEL" not in rendered
-    # Pytest's own probe source path is allowed; this injected PTY path is not.
-    assert "/Users/private/injected-pty-path" not in rendered
-    assert "prompt raw stderr model output" not in rendered
-    assert "tail=" not in rendered
+        rendered = completed.stdout + completed.stderr
+        assert completed.returncode == 1, rendered
+        assert probe.name in rendered
+        assert "leader_schema_before_preview" in rendered
+        assert "semantic_required_target_reproposed" in rendered
+        assert f'"byte_count": {len(hostile_bytes)}' in rendered
+        assert '"truncated": false' in rendered
+        assert (
+            f'"sha256": "{hashlib.sha256(hostile_bytes).hexdigest()}"'
+            in rendered
+        )
+        for marker in hostile_markers:
+            assert marker not in rendered
+        assert "tail=" not in rendered
+
+    assert probe is not None and not probe.exists()
+    assert probe_root is not None and not probe_root.exists()
+
+
+def test_default_pytest_report_excludes_pty_transcript(tmp_path: Path) -> None:
+    _assert_default_pytest_report_excludes_pty_transcript(tmp_path)
+
+
+def test_default_pytest_report_ignores_parent_addopts(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setenv("PYTEST_ADDOPTS", "--tb=short")
+
+    _assert_default_pytest_report_excludes_pty_transcript(tmp_path)
+
+
+def test_temporary_pytest_report_probe_cleans_up_after_assertion(
+    tmp_path: Path,
+) -> None:
+    probe_root: Path | None = None
+    probe: Path | None = None
+
+    with pytest.raises(AssertionError, match="injected probe assertion"):
+        with _temporary_pytest_report_probe(tmp_path) as paths:
+            probe_root, probe = paths
+            probe.write_text("temporary", encoding="utf-8")
+            raise AssertionError("injected probe assertion")
+
+    assert probe is not None and not probe.exists()
+    assert probe_root is not None and not probe_root.exists()
 
 
 class _LiveHarnessFailure(AssertionError):
@@ -6715,7 +6782,9 @@ def test_pty_cleanup_kills_child_after_session_leader_exits(tmp_path) -> None:
             (
                     "import subprocess,sys,time; "
                     "child=subprocess.Popen([sys.executable,'-c','import time;time.sleep(60)']); "
-                    f"open({str(child_pid_file)!r},'w').write(str(child.pid)); "
+                    f"pid_file=open({str(child_pid_file)!r},'w'); "
+                    "pid_file.flush(); time.sleep(0.2); "
+                    "pid_file.write(str(child.pid)); pid_file.close(); "
                     "time.sleep(60)"
             ),
         ],
@@ -6727,9 +6796,14 @@ def test_pty_cleanup_kills_child_after_session_leader_exits(tmp_path) -> None:
     try:
         scope = _seal_process_group(process.pid)
         deadline = time.monotonic() + 5
-        while not child_pid_file.exists() and time.monotonic() < deadline:
+        while time.monotonic() < deadline:
+            if child_pid_file.exists():
+                pid_text = child_pid_file.read_text(encoding="utf-8")
+                if pid_text.isdecimal() and int(pid_text) > 0:
+                    child_pid = int(pid_text)
+                    break
             time.sleep(0.02)
-        child_pid = int(child_pid_file.read_text(encoding="utf-8"))
+        assert child_pid is not None
         process.terminate()
         process.wait(timeout=5)
         result = _terminate_process_group(scope)
