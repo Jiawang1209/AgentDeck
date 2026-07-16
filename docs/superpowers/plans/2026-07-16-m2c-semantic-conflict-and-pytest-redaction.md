@@ -825,7 +825,7 @@ git commit -m "test: redact PTY tail from pytest reports"
 - Modify only if verification exposes a real defect; every correction requires
   tests and a new `HISTORY.md` entry.
 
-- [ ] **Step 1: Run semantic and Provider focused suites**
+- [x] **Step 1: Run semantic and Provider focused suites**
 
 ```bash
 conda run --no-capture-output -n agentdeck \
@@ -839,20 +839,30 @@ conda run --no-capture-output -n agentdeck \
 
 Expected: all PASS.
 
-- [ ] **Step 2: Run Conversation and M2c non-live suites**
+Evidence: `740 passed in 9.27s`. The command used
+`PYTHONPATH="$PWD/src"` because the conda editable install referenced an older
+worktree.
+
+- [x] **Step 2: Run Conversation and M2c non-live suites**
 
 ```bash
 conda run --no-capture-output -n agentdeck \
   python -m pytest \
   tests/test_conversation_session.py \
-  tests/test_conversation_cli.py \
+  tests/test_conversation_terminal_ui.py \
   tests/test_m2c_live_acceptance.py \
   -q
 ```
 
 Expected: deterministic tests PASS with exactly the existing opt-in live skip.
 
-- [ ] **Step 3: Compile and check the diff**
+Evidence: the session/terminal-CLI/M2c selection exited `0`; collection was
+`243` tests with the opt-in live node skipped. The complete M2c file passed
+`192 passed, 1 skipped in 46.41s`. The planned `test_conversation_cli.py` name
+did not exist; `test_conversation_terminal_ui.py` is the repository's actual
+terminal conversation CLI boundary.
+
+- [x] **Step 3: Compile and check the diff**
 
 ```bash
 conda run --no-capture-output -n agentdeck \
@@ -862,15 +872,20 @@ git diff --check 2f280334..HEAD
 
 Expected: both exit 0.
 
-- [ ] **Step 4: Audit scope and leakage**
+Evidence: both exited `0`.
+
+- [x] **Step 4: Audit scope and leakage**
 
 Run:
 
 ```bash
 git diff --name-only 2f280334..HEAD
 rg -n \
-  'PTY_REPORT_SECRET|PTY_REPR_SECRET|FIRST_CONFLICT_CANDIDATE_SECRET' \
-  src/agentdeck docs/validation docs/handoff HISTORY.md || true
+  'PTY_REPORT_[A-Z0-9_]+|PTY_REPR_[A-Z0-9_]+|FIRST_CONFLICT_CANDIDATE_SECRET|REQUIRED_TARGET_VERIFICATION_SECRET|DUPLICATE_TARGET_VERIFICATION_SECRET|API_RAW_ENVELOPE_SECRET|NATIVE_IGNORED_OUTPUT_SECRET|candidate-only-notes-secret\.md' \
+  tests HISTORY.md docs/superpowers/plans || true
+rg -n \
+  'PTY_REPORT_[A-Z0-9_]+|PTY_REPR_[A-Z0-9_]+|FIRST_CONFLICT_CANDIDATE_SECRET|REQUIRED_TARGET_VERIFICATION_SECRET|DUPLICATE_TARGET_VERIFICATION_SECRET|API_RAW_ENVELOPE_SECRET|NATIVE_IGNORED_OUTPUT_SECRET|candidate-only-notes-secret\.md' \
+  src/agentdeck docs/validation docs/handoff || true
 rg -n \
   'fallback|AGENTDECK_M2C_LIVE=1|test_real_four_stage_m2c_acceptance' \
   src/agentdeck tests/test_leader_cli.py \
@@ -879,15 +894,23 @@ rg -n \
 
 Required conclusions:
 
-- sentinels occur only in deterministic test source and this implementation
-  plan's literal test examples;
-- no sentinel occurs in production source, validation evidence, handoff, or
-  history;
+- synthetic markers occur only in deterministic test source, this
+  implementation plan's literal examples, and HISTORY's explicit TDD/mutation
+  evidence;
+- no synthetic marker occurs in production source, validation evidence, or
+  handoff;
 - no new fallback exists;
 - the live node was not invoked;
 - no extractor/compiler/ACP/tmux/daemon/permission code changed.
 
-- [ ] **Step 5: Handle any failure without hiding it**
+Evidence: current `PTY_REPORT_*_7E16`, `PTY_REPR_*`, Candidate-only verification,
+raw-envelope, and ignored-native-output markers appeared only in deterministic
+tests, literal plan examples, and HISTORY's TDD/mutation record; none appeared
+in production, validation, or handoff. No new fallback or live invocation
+appeared; no extractor, compiler, ACP, tmux, daemon, permission, handoff, model,
+login, timeout, or fallback code changed.
+
+- [x] **Step 5: Handle any failure without hiding it**
 
 If any command fails:
 
@@ -901,6 +924,12 @@ If any command fails:
 
 Do not amend prior commits and do not proceed with a red suite.
 
+Evidence: the first focused command initially failed collection because the
+conda editable install pointed to an older worktree; explicit current-checkout
+`PYTHONPATH` identified and removed that environment ambiguity without changing
+code. The second planned command named a nonexistent test file; the actual
+terminal UI test file was used and the complete M2c file was also run directly.
+
 ## Task 6: Freeze the implementation and run two full suites
 
 **Files:**
@@ -909,8 +938,10 @@ Do not amend prior commits and do not proceed with a red suite.
 - Modify after verification: `docs/handoff/current-development-state.md`
 - Modify after verification: `HISTORY.md`
 - Modify after verification: this plan
+- Modify after verification:
+  `docs/superpowers/specs/2026-07-16-m2c-semantic-conflict-and-pytest-redaction-design.md`
 
-- [ ] **Step 1: Freeze exact implementation authority**
+- [x] **Step 1: Freeze exact implementation authority**
 
 Run:
 
@@ -924,7 +955,10 @@ printf '%s\n' "$implementation_sha"
 Record the 40-character SHA. From this point, any code/test correction creates a
 new implementation SHA and restarts Task 5 plus both full suites.
 
-- [ ] **Step 2: Create one detached verification checkout**
+Frozen implementation SHA:
+`75f0366d4d5619b29c77f10949365f43d46185b1`.
+
+- [x] **Step 2: Create one detached verification checkout**
 
 Use a path that does not collide with M2c live-root patterns:
 
@@ -938,7 +972,7 @@ git -C "$feature_root" worktree add --detach "$verify_root" "$implementation_sha
 test -z "$(git -C "$verify_root" status --short)"
 ```
 
-- [ ] **Step 3: Run full suite 1 on the frozen SHA**
+- [x] **Step 3: Run full suite 1 on the frozen SHA**
 
 ```bash
 feature_root="$(git rev-parse --show-toplevel)"
@@ -954,7 +988,9 @@ PYTHONPATH="$verify_root/src" \
 Expected: all tests PASS with only explicit opt-in live skips. Record exact
 passed/skipped counts and duration.
 
-- [ ] **Step 4: Reconfirm unchanged SHA**
+Evidence: `4266 passed, 2 skipped in 199.05s`.
+
+- [x] **Step 4: Reconfirm unchanged SHA**
 
 ```bash
 feature_root="/Users/liuyue/.config/superpowers/worktrees/multi-agent-explore/codex/m2c-leader-preview-observability"
@@ -965,7 +1001,7 @@ test "$(git -C "$verify_root" rev-parse HEAD)" = "$implementation_sha"
 test -z "$(git -C "$verify_root" status --short)"
 ```
 
-- [ ] **Step 5: Run full suite 2 independently**
+- [x] **Step 5: Run full suite 2 independently**
 
 Run:
 
@@ -983,7 +1019,9 @@ PYTHONPATH="$verify_root/src" \
 Expected: all tests PASS with the same collection/skip boundary. Record exact
 counts and duration.
 
-- [ ] **Step 6: Remove verification checkout and audit residuals**
+Evidence: `4266 passed, 2 skipped in 186.08s`.
+
+- [x] **Step 6: Remove verification checkout and audit residuals**
 
 Return to the feature worktree, then:
 
@@ -1006,9 +1044,12 @@ ps -axo pid=,command= |
 Expected: no current-run live root, staged mirror, live pytest, or AgentDeck
 daemon residual. Do not inspect or delete unrelated user tmux sessions.
 
-- [ ] **Step 7: Record frozen evidence**
+Evidence: detached checkout removed; no matching current-run live root, live
+pytest process, or AgentDeck daemon process was found.
 
-Update the four listed documentation files with:
+- [x] **Step 7: Record frozen evidence**
+
+Update the five listed documentation files with:
 
 - exact implementation SHA;
 - Task 5 focused counts;
@@ -1030,7 +1071,8 @@ git add \
   docs/validation/2026-07-13-phase3-m2-project-daemon.md \
   docs/handoff/current-development-state.md \
   HISTORY.md \
-  docs/superpowers/plans/2026-07-16-m2c-semantic-conflict-and-pytest-redaction.md
+  docs/superpowers/plans/2026-07-16-m2c-semantic-conflict-and-pytest-redaction.md \
+  docs/superpowers/specs/2026-07-16-m2c-semantic-conflict-and-pytest-redaction-design.md
 git commit -m "docs: record M2c semantic conflict verification"
 ```
 
@@ -1126,19 +1168,19 @@ never automatically retried.
 
 ## Completion checklist
 
-- [ ] Required targets are exclusive from proposals.
-- [ ] New proposed targets are Mission-wide unique.
-- [ ] Both new codes are closed, retryable once, and historical
+- [x] Required targets are exclusive from proposals.
+- [x] New proposed targets are Mission-wide unique.
+- [x] Both new codes are closed, retryable once, and historical
   `semantic_effect_conflict` remains readable.
-- [ ] CLI and API use one shared static guidance helper.
-- [ ] Same Leader/model/schema/authority regeneration is proven.
-- [ ] No local Candidate repair or fallback exists.
-- [ ] `_PtyTail.tail` is excluded from default `repr`.
-- [ ] Nested default pytest report contains no injected PTY marker.
-- [ ] Complete non-live M2c harness passes with live skipped.
-- [ ] Compileall and diff checks pass.
-- [ ] Two independent full suites pass on one unchanged implementation SHA.
-- [ ] Residual audit is clean.
+- [x] CLI and API use one shared static guidance helper.
+- [x] Same Leader/model/schema/authority regeneration is proven.
+- [x] No local Candidate repair or fallback exists.
+- [x] `_PtyTail.tail` is excluded from default `repr`.
+- [x] Nested default pytest report contains no injected PTY marker.
+- [x] Complete non-live M2c harness passes with live skipped.
+- [x] Compileall and diff checks pass.
+- [x] Two independent full suites pass on one unchanged implementation SHA.
+- [x] Residual audit is clean.
 - [ ] Evidence is committed separately from implementation authority.
-- [ ] No preflight or live runs without their new explicit authorizations.
-- [ ] M2c remains BLOCKED and M3 remains locked until a real four-stage PASS.
+- [x] No preflight or live runs without their new explicit authorizations.
+- [x] M2c remains BLOCKED and M3 remains locked until a real four-stage PASS.

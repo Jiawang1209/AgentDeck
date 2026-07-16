@@ -6,7 +6,44 @@ Date: 2026-07-16
 
 **Deterministic M2 acceptance: PASS. Two-step real transport rehearsal: PASS. Full approved four-stage M2c rehearsal: BLOCKED.**
 
-## Semantic-authority harness conversion
+## Frozen semantic-conflict closure candidate
+
+The target-exclusivity and pytest-report-redaction implementation is frozen at
+`75f0366d4d5619b29c77f10949365f43d46185b1`. Required semantic targets are now
+exclusive from Leader proposals across the complete Candidate, genuinely new
+proposal targets are Mission-wide unique, and one same-Leader regeneration uses
+one closed code-specific static instruction. `_PtyTail` retains bounded bytes
+in process memory but excludes them from dataclass representation, and a nested
+default-pytest regression proves hostile PTY, prompt, stderr, model-output, and
+path markers do not enter the report.
+
+Frozen non-live evidence is:
+
+- semantic/Provider focused suite: `740 passed in 9.27s`;
+- conversation session, terminal CLI, and M2c selection: exit `0`, with `243`
+  collected tests and the existing opt-in live node skipped;
+- complete non-live M2c file: `192 passed, 1 skipped in 46.41s`;
+- unchanged-SHA full suite 1: `4266 passed, 2 skipped in 199.05s`;
+- unchanged-SHA full suite 2: `4266 passed, 2 skipped in 186.08s`;
+- `python -m compileall -q src tests`, `git diff --check`, scope audit, and
+  sentinel-leakage audit: PASS;
+- detached verification checkout removed, with zero current-run M2c live roots,
+  live pytest processes, or AgentDeck daemon processes found.
+
+The installed editable package in the `agentdeck` conda environment still
+pointed at an older worktree, so every authoritative command explicitly used
+`PYTHONPATH=<frozen-checkout>/src`; no environment installation or global
+configuration was changed. The implementation changed no extractor, compiler,
+ACP, tmux, daemon, permission, handoff, model, login, timeout, or fallback
+behavior.
+
+For this SHA, preflight count is exactly `0` and live count is exactly `0`.
+This evidence is not M2c PASS and does not inherit the earlier `gpt-5.5`
+authorization. M2c remains **BLOCKED** and M3 remains locked. The next gate is
+human selection of an exact Leader model plus authorization for exactly one
+new read-only preflight against this frozen implementation SHA.
+
+## Historical semantic-authority harness conversion checkpoint
 
 The new M2c harness replaces its live PASS decision based on free-text phase
 and token searches with the implemented `mission-semantic-authority/v1`
@@ -18,13 +55,12 @@ facts, and zero attempts, permissions, Worker replies, and handoffs. Closed
 failure diagnostics contain only the fixed gate names and booleans. The old
 token checks remain test mutation helpers and cannot produce a live PASS.
 
-The complete non-live M2c harness currently passes `122` tests with exactly one
-opt-in live skip. This is deterministic pre-freeze evidence only. It does not
-claim a real four-stage PASS, change login or global settings, or authorize a
-live attempt. M2c remains **BLOCKED** and M3 remains locked until the new commit
-passes two independent full suites, the single read-only preflight returns
-`ready=true`, `blockers=[]`, and a separately authorized one-shot live run meets
-every success criterion.
+At this historical checkpoint, the complete non-live M2c harness passed `122`
+tests with exactly one opt-in live skip. It was deterministic pre-freeze
+evidence only. It is superseded for current non-live counts and frozen authority
+by the `75f0366d4d5619b29c77f10949365f43d46185b1` section above. It did not claim
+a real four-stage PASS, change login or global settings, or authorize a live
+attempt.
 
 This is a control-plane feature around LLM reasoning, not a replacement for an
 LLM. Required user authority, visible Leader proposals, unresolved facts, and
@@ -33,9 +69,9 @@ independent from runtime permissions, and ProjectView exposes only compact
 non-authorizing provenance. A2A, remote execution, GUI redesign, and a terminal
 emulator remain out of scope.
 
-## Frozen M2c single-live evidence
+## Historical frozen M2c single-live evidence
 
-The latest M2c evidence authority is frozen commit
+The evidence authority for this earlier live attempt was frozen commit
 `1a22618ba083a76f4a21ffc7ebc7a3e513e4aae6` on branch
 `codex/m2c-probe-readonly`. Before live execution, the complete non-live focused
 harness passed `97` tests with `1` explicit live skip. The full suite passed
@@ -75,10 +111,10 @@ These observed facts are the cleanup evidence; no unreported
 
 The approved four-stage M2c rehearsal remains **BLOCKED**, not a partial PASS,
 and M3 remains locked. This historical failure motivated the implemented
-semantic-authority control plane and frozen harness described above; it must
-not be retried from the old evidence commit. The next active gate is the new
-frozen commit, two independent full suites, and exactly one read-only preflight.
-There is no automatic retry or live authorization in this document.
+semantic-authority control plane and later corrective slices; it must not be
+retried from the old evidence commit. The current gate is defined only by the
+new frozen `75f0366d4d5619b29c77f10949365f43d46185b1` section above. There is no
+automatic retry or live authorization in this document.
 
 ## tmux startup/readiness correction
 

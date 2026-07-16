@@ -4,6 +4,32 @@
 
 ## 2026-07-16
 
+### Freeze and verify M2c semantic-conflict closure
+
+- Froze the target-exclusivity and pytest-report-redaction implementation at
+  `75f0366d4d5619b29c77f10949365f43d46185b1`. This documentation commit records
+  evidence only and is not the implementation authority.
+- Fresh focused evidence passed: semantic/Provider coverage `740 passed in
+  9.27s`; conversation session, terminal CLI, and M2c selection exited `0` over
+  `243` collected tests with the existing opt-in live skip; the complete M2c
+  non-live file passed `192 passed, 1 skipped in 46.41s`.
+- Two independent full suites ran in one detached checkout on the unchanged
+  frozen SHA and passed `4266 passed, 2 skipped in 199.05s` and `4266 passed, 2
+  skipped in 186.08s`. `python -m compileall -q src tests`, `git diff --check`,
+  scope review, and synthetic-marker leakage review passed. Current hostile
+  markers occur only in deterministic tests, literal plan examples, and this
+  file's explicit TDD/mutation record; none occur in production, validation, or
+  handoff.
+- Removed the detached checkout and found zero current-run M2c live roots, live
+  acceptance pytest processes, or AgentDeck daemon processes. The authoritative
+  test commands used explicit frozen-checkout `PYTHONPATH` because the conda
+  environment's editable install still referenced an older worktree; no install
+  or global environment change was made.
+- Ran zero preflights and zero live Missions for this SHA. No previous model or
+  authorization carries forward. M2c remains **BLOCKED**, M3 remains locked,
+  and the next gate is an exact Leader model plus authorization for exactly one
+  read-only preflight.
+
 ### Isolate pytest redaction reports and close the PID-file race
 
 - Made the nested default-report regression independent of caller pytest
