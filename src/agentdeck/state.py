@@ -62,6 +62,7 @@ from .models import (
     new_id,
     utc_now,
 )
+from .providers.semantic_plan_schema import SEMANTIC_LEADER_PLAN_SCHEMA_VERSION
 from .runtime.protocol import (
     AGENT_SESSION_STATES,
     PERMISSION_STATES,
@@ -160,7 +161,7 @@ _DAEMON_ADMISSION_FIELDS = frozenset(
 )
 _INVALID_DAEMON_ADMISSION_BLOCKER = "invalid daemon admission state"
 
-_PLAN_LEADER_GENERATION_FIELDS = (
+_PLAN_LEADER_GENERATION_BASE_FIELDS = (
     "provider",
     "model",
     "constraint_mode",
@@ -170,6 +171,10 @@ _PLAN_LEADER_GENERATION_FIELDS = (
     "regeneration_used",
     "selected_agent_ids",
     "step_count",
+)
+_PLAN_LEADER_GENERATION_SEMANTIC_FIELDS = (
+    "semantic_authority_schema_version",
+    "semantic_authority_hash",
 )
 _PLAN_LEADER_GENERATION_MODES = frozenset(
     {"local", "json_object", "prompt_only", "native_json_schema"}
@@ -9068,7 +9073,16 @@ class StateStore:
         if step_count < 2:
             fail()
 
-        if type(value) is not dict or set(value) != set(_PLAN_LEADER_GENERATION_FIELDS):
+        semantic_plan = type(plan) is dict and (
+            "semantic_authority" in plan or "semantic_steps" in plan
+        )
+        selected_fields = (
+            _PLAN_LEADER_GENERATION_BASE_FIELDS
+            + _PLAN_LEADER_GENERATION_SEMANTIC_FIELDS
+            if semantic_plan
+            else _PLAN_LEADER_GENERATION_BASE_FIELDS
+        )
+        if type(value) is not dict or set(value) != set(selected_fields):
             fail()
         candidate = value
         mode = candidate.get("constraint_mode")
@@ -9084,8 +9098,13 @@ class StateStore:
         if type(mode) is not str or mode not in _PLAN_LEADER_GENERATION_MODES:
             fail()
         if mode == "native_json_schema":
+            expected_schema_version = (
+                SEMANTIC_LEADER_PLAN_SCHEMA_VERSION
+                if semantic_plan
+                else _PLAN_LEADER_SCHEMA_VERSION
+            )
             if (
-                schema_version != _PLAN_LEADER_SCHEMA_VERSION
+                schema_version != expected_schema_version
                 or type(schema_version) is not str
                 or type(schema_hash) is not str
                 or re.fullmatch(r"sha256:[0-9a-f]{64}", schema_hash) is None
@@ -9093,6 +9112,23 @@ class StateStore:
                 fail()
         elif schema_version is not None or schema_hash is not None:
             fail()
+        if semantic_plan:
+            authority = plan.get("semantic_authority")
+            try:
+                provenance_authority = copy.deepcopy(authority)
+                provenance_authority["proposed_effects"] = []
+                expected_authority_hash = semantic_authority_hash(
+                    provenance_authority
+                )
+            except (TypeError, ValueError):
+                fail()
+            if (
+                candidate.get("semantic_authority_schema_version")
+                != authority.get("schema_version")
+                or candidate.get("semantic_authority_hash")
+                != expected_authority_hash
+            ):
+                fail()
         if type(attempt_count) is not int or attempt_count < 1 or attempt_count > 2:
             fail()
         if type(regeneration_used) is not bool or regeneration_used is not (attempt_count == 2):
@@ -9124,7 +9160,7 @@ class StateStore:
             fail()
         return {
             field: copy.deepcopy(candidate[field])
-            for field in _PLAN_LEADER_GENERATION_FIELDS
+            for field in selected_fields
         }
 
     def list_plans(self) -> list[dict[str, Any]]:

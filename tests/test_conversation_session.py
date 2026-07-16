@@ -146,6 +146,32 @@ def test_exact_live_shaped_request_reaches_one_semantic_preview(tmp_path: Path) 
     )
 
 
+def test_exact_live_shaped_preview_persists_exact_gateway_generation(
+    tmp_path: Path,
+) -> None:
+    _config, store = _project(tmp_path)
+    inner = LeaderGateway(provider_factory=lambda _name: FakeLeaderProvider())
+    observed: dict[str, object] = {}
+
+    class RecordingGateway:
+        def generate_mission(self, request, cancel):
+            candidate = inner.generate_mission(request, cancel)
+            observed["leader_generation"] = deepcopy(
+                candidate.leader_generation
+            )
+            return candidate
+
+    response = ConversationSession(
+        root=tmp_path,
+        leader_gateway=RecordingGateway(),
+    ).handle(SEMANTIC_MESSAGE)
+
+    assert response.kind == "mission_preview"
+    stored = store.load()["plans"][0]
+    assert stored["leader_generation"] == observed["leader_generation"]
+    assert stored["leader_generation"] is not observed["leader_generation"]
+
+
 def test_session_and_gateway_deep_copy_exact_authority_through_provider_request(
     tmp_path: Path,
 ) -> None:

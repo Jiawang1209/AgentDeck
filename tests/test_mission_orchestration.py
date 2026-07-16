@@ -131,6 +131,29 @@ def semantic_candidate_fixture(config) -> LeaderMissionCandidate:
     )
 
 
+def semantic_native_generation(
+    config, candidate: LeaderMissionCandidate
+) -> dict[str, object]:
+    authority = deepcopy(candidate.semantic_authority)
+    authority["proposed_effects"] = []
+    request = LeaderPlanRequest(
+        task=candidate.user_message,
+        config=config,
+        model=config.leader.model,
+        selected_agent_ids=candidate.selected_agent_ids,
+        step_count=candidate.step_count,
+        timeout_seconds=candidate.timeout_seconds,
+        semantic_authority=authority,
+    )
+    return build_leader_generation_provenance(
+        request=request,
+        provider="fake",
+        constraint_mode="native_json_schema",
+        schema=build_leader_plan_schema(request),
+        attempt_count=2,
+    )
+
+
 def test_leader_orchestrator_carries_semantic_authority_and_compiled_result(
     tmp_path
 ) -> None:
@@ -1289,6 +1312,11 @@ def test_candidate_generation_is_validated_and_deep_copied_into_plan(
         lambda value: {**value, "regeneration_used": True},
         lambda value: {**value, "schema_version": "leader-plan/v1"},
         lambda value: {**value, "schema_hash": "sha256:" + "0" * 64},
+        lambda value: {
+            **value,
+            "semantic_authority_schema_version": "mission-semantic-authority/v1",
+            "semantic_authority_hash": "sha256:" + "a" * 64,
+        },
     ],
 )
 def test_invalid_candidate_generation_rejects_before_domain_writes(
@@ -1461,6 +1489,112 @@ def test_semantic_preview_persists_exact_authority_steps_and_compact_mission(
         "compiled_step_count",
         "preview_generation",
     }
+
+
+def test_semantic_native_preview_persists_exact_generation_without_hash_drift(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _root, config, store, _path = project(tmp_path)
+    monkeypatch.setattr(
+        "agentdeck.mission_orchestration.shutil.which",
+        lambda command: f"/bin/{command}",
+    )
+    candidate = semantic_candidate_fixture(config)
+    generation = semantic_native_generation(config, candidate)
+    candidate = replace(candidate, leader_generation=generation)
+
+    preview = create_mission_preview_from_candidate(
+        config=config,
+        store=store,
+        candidate=candidate,
+    )
+
+    stored = store.plan_by_id(preview["plan_id"])
+    projected = store.project_view(config).plans["items"][-1]
+    assert stored["leader_generation"] == generation
+    assert stored["leader_generation"] is not generation
+    assert projected["leader_generation"] == generation
+
+    state = store.load()
+    state["approvals"] = [
+        {"message_id": "msg_semantic_trace", "plan_id": stored["plan_id"]}
+    ]
+    traced = StateStore._trace_plan_for_message(
+        state, "msg_semantic_trace"
+    )
+    assert traced is not None
+    assert traced["leader_generation"] == generation
+
+    without_generation = deepcopy(stored)
+    without_generation.pop("leader_generation")
+    assert canonical_workflow_plan_hash(stored) == canonical_workflow_plan_hash(
+        without_generation
+    )
+
+
+def test_semantic_native_generation_with_forbidden_key_is_zero_write(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _root, config, store, _path = project(tmp_path)
+    monkeypatch.setattr(
+        "agentdeck.mission_orchestration.shutil.which",
+        lambda command: f"/bin/{command}",
+    )
+    candidate = semantic_candidate_fixture(config)
+    generation = semantic_native_generation(config, candidate)
+    generation["raw_prompt"] = "SEMANTIC_GENERATION_SECRET"
+
+    with pytest.raises(
+        MissionPreviewError, match="^mission preview generation invalid$"
+    ) as raised:
+        create_mission_preview_from_candidate(
+            config=config,
+            store=store,
+            candidate=replace(candidate, leader_generation=generation),
+        )
+
+    assert store.load()["plans"] == []
+    assert store.load().get("missions", []) == []
+    assert "SEMANTIC_GENERATION_SECRET" not in str(raised.value)
+    assert "SEMANTIC_GENERATION_SECRET" not in repr(raised.value)
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        lambda value: {
+            key: item
+            for key, item in value.items()
+            if key != "semantic_authority_schema_version"
+        },
+        lambda value: {
+            **value,
+            "semantic_authority_schema_version": "mission-semantic-authority/v0",
+        },
+        lambda value: {
+            **value,
+            "semantic_authority_hash": "sha256:" + "f" * 64,
+        },
+    ],
+)
+def test_semantic_plan_generation_shape_or_authority_drift_is_zero_write(
+    tmp_path: Path,
+    mutation,
+) -> None:
+    _root, config, store, _path = project(tmp_path)
+    candidate = semantic_candidate_fixture(config)
+    generation = mutation(semantic_native_generation(config, candidate))
+
+    with pytest.raises(ValueError, match="^plan leader generation invalid$"):
+        store.build_plan_record(
+            candidate.user_message,
+            candidate.provider,
+            candidate.model,
+            candidate.plan,
+            leader_generation=generation,
+        )
+
+    assert store.load()["plans"] == []
 
 
 def test_semantic_confirmation_freezes_authority_event_in_mission_atomic_save(

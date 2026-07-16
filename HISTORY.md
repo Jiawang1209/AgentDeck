@@ -4,6 +4,38 @@
 
 ## 2026-07-16
 
+### Persist semantic Leader generation provenance
+
+- Closed the deterministic form of the M2c
+  `native_schema_provenance_missing` blocker: semantic Mission preview
+  validation produced an exact eleven-field `leader_generation`, but a stale
+  branch discarded it and the durable StateStore normalizer accepted only the
+  ordinary nine-field shape.
+- TDD RED evidence: the original direct and natural-language persistence nodes
+  failed with missing stored `leader_generation` while the forbidden-key
+  zero-write node passed (`2 failed, 1 passed`); after retaining the envelope,
+  the expanded StateStore run failed only the valid semantic case while all
+  drift and shape-mismatch cases remained closed
+  (`1 failed, 22 passed, 100 deselected`).
+- Removed only the stale semantic discard and added strict ordinary-nine /
+  semantic-eleven StateStore normalization. Semantic native provenance requires
+  `leader-semantic-plan/v1`; the two authority fields must match the validated
+  plan authority's schema version and required-authority hash; legacy
+  missing-generation projection remains the original nine-field shape.
+- A broader regression exposed the existing legal-proposal API detail:
+  Provider generation provenance hashes the required authority before compiled
+  `proposed_effects` are added. StateStore now mirrors the existing Mission
+  admission rule by clearing only `proposed_effects` for hash revalidation; it
+  does not alter, repair, synthesize, or fall back from the supplied envelope.
+- GREEN evidence: expanded focused selection
+  `23 passed, 100 deselected`; direct/natural-language/security nodes
+  `3 passed`; semantic Mission and Conversation regression `211 passed`;
+  Provider/provenance and complete non-live M2c regression
+  `595 passed, 1 skipped`.
+- No preflight, live Mission, real Provider call, ACP, tmux, daemon, push,
+  merge, amend, install, login, or global configuration change ran in this
+  implementation slice.
+
 ### Revise provenance persistence design for the StateStore dual shape
 
 - RED proved the semantic Mission path drops `leader_generation`, but the

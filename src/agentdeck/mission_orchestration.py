@@ -726,10 +726,6 @@ def create_mission_preview_from_candidate(
             )
         except Exception:
             raise MissionPreviewError("mission preview generation invalid") from None
-        if validated_candidate_authority is not None:
-            # Task 7 validates semantic generation transiently. Task 8 owns its
-            # durable plan/Mission representation and confirmation binding.
-            leader_generation = None
     semantic_plan: dict[str, object] | None = None
     try:
         raw_plan = candidate.plan
