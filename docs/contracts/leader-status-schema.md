@@ -44,3 +44,16 @@ All controls are projections only. `agentdeck leader status` may recommend `agen
 `coordination_roles` is also a projection. It lets GUI/TUI clients show the layered Leader topology from a narrow status card, but it does not grant dispatch permission, start tmux panes, or split the Leader into separate runtime agents.
 
 Use `agentdeck contract leader-status --example` for a stable example payload.
+
+## Contract Discovery
+
+`agentdeck contract leader-status` preserves
+`leader_generation_fields` as the ordinary nine-field projection for existing
+clients and additionally exposes `semantic_leader_generation_fields` as the
+strict eleven-field semantic projection. `latest_plan`, when present, follows
+the same ProjectView generation-shape rules: native ordinary provenance uses
+`leader-plan/v1`, native semantic provenance uses
+`leader-semantic-plan/v1`, and non-native schema fields are null. The semantic
+generation authority hash identifies proposal-stripped required/input
+authority; it must not be compared directly with the latest plan's compact
+full-output semantic authority hash when legal Leader proposals exist.

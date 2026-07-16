@@ -39,6 +39,8 @@ Use `agentdeck contract trace` to discover this contract from tools or GUI clien
   "top_level_fields": [],
   "message_fields": [],
   "plan_fields": [],
+  "leader_generation_fields": [],
+  "semantic_leader_generation_fields": [],
   "attempt_fields": [],
   "job_fields": [],
   "reply_fields": [],
@@ -71,7 +73,7 @@ Use `agentdeck contract trace --example` to include a stable GUI-ready lineage f
 
 `attempts[]` records execution attempts for the message. `validate_trace_contract()` checks every item in each lineage collection, not only the first row.
 
-`plan` is either `null` or a compact source-plan provenance card when the traced message came from an approved plan dispatch. It uses the ProjectView plan item shape except that it intentionally omits the separate compact `semantic_authority` card. Its `leader_generation` therefore accepts the same strict ordinary nine-field and semantic eleven-field projections as ProjectView, distinguishing them by exact key set: native ordinary provenance requires `leader-plan/v1`, native semantic provenance requires `leader-semantic-plan/v1`, and non-native schema fields remain null. Semantic projections additionally require `semantic_authority_schema_version=mission-semantic-authority/v1` and a lowercase canonical SHA-256 `semantic_authority_hash`. The trace contract checks projection shape, types, hash format, and schema family only; StateStore is responsible for revalidating the hash against the persisted plan authority before producing the trace. The plan card includes compact `skill_context`, so GUI clients and auditors can see which loaded skills were visible when the Leader planned the work, and intentionally excludes full skill `content_snapshot`.
+`plan` is either `null` or a compact source-plan provenance card when the traced message came from an approved plan dispatch. It uses the ProjectView plan item shape except that it intentionally omits the separate compact `semantic_authority` card. Its `leader_generation` therefore accepts the same strict ordinary nine-field and semantic eleven-field projections as ProjectView, distinguishing them by exact key set: native ordinary provenance requires `leader-plan/v1`, native semantic provenance requires `leader-semantic-plan/v1`, and non-native schema fields remain null. Semantic projections additionally require `semantic_authority_schema_version=mission-semantic-authority/v1` and a lowercase canonical SHA-256 `semantic_authority_hash`. This generation hash identifies the proposal-stripped required/input authority that constrained the Provider, not the complete compiled output authority. The trace contract checks projection shape, types, hash format, and schema family only; StateStore is responsible for deriving the required/input authority from the persisted plan, stripping compiled `proposed_effects`, and revalidating the generation hash before producing the trace. The plan card includes compact `skill_context`, so GUI clients and auditors can see which loaded skills were visible when the Leader planned the work, and intentionally excludes full skill `content_snapshot`.
 
 `jobs[]` records runtime dispatch facts such as agent id, pane id, and job status.
 

@@ -4,6 +4,36 @@
 
 ## 2026-07-16
 
+### Discover semantic generation contracts
+
+- Closed two code-quality review gaps after semantic provenance persistence:
+  ProjectView, trace, and Leader-status discovery still advertised only the
+  ordinary nine-field generation shape, and legal proposal coverage did not
+  freeze the distinct input/output authority hash meanings.
+- TDD RED evidence: six discovery payload/response nodes failed with missing
+  `semantic_leader_generation_fields`, while the expanded legal-proposal
+  provenance characterization passed (`6 failed, 1 passed`).
+- Preserved the compatible `leader_generation_fields` metadata as the ordinary
+  nine-field list and added `semantic_leader_generation_fields` as the strict
+  eleven-field list to `agentdeck contract project-view`, `trace`, and
+  `leader-status`, including their `--example` responses.
+- Expanded the natural-language legal-proposal regression to prove the exact
+  stored, ProjectView, and trace generation envelope is retained. Its
+  `semantic_authority_hash` equals a fresh hash of the proposal-stripped
+  required/input authority, while ProjectView's compact semantic authority hash
+  equals the complete compiled output authority and differs when a legal Leader
+  proposal is present.
+- Updated ProjectView, trace, and Leader-status contract docs to prohibit
+  comparing those two hashes directly. StateStore remains the producer-side
+  generation-hash revalidation source; contract validators only check the
+  compact projection shape, types, hash format, and schema family.
+- GREEN evidence: focused discovery/proposal nodes `7 passed`; complete
+  contracts plus proposal-focused regression `531 passed`; related
+  Mission/Conversation regression `211 passed`; Provider/provenance and
+  complete non-live M2c regression `595 passed, 1 skipped`.
+- No preflight, live Mission, real Provider call, ACP, tmux, daemon, push,
+  merge, amend, install, login, or global configuration change ran.
+
 ### Validate semantic generation projections
 
 - Fixed the ProjectView/trace contract gap found during spec review: StateStore

@@ -115,9 +115,9 @@ The summary is read-only. Rendering ProjectView never creates a conversation, co
 
 `plans.items[]` includes the configured provider name plus normalized provenance labels: `provider_backend` is `local` for the fake dry-run provider, `api` for API-backed Leader providers such as DeepSeek or OpenAI-compatible backends, `cli` for local CLI-backed Leader providers such as Codex CLI or Claude Code CLI, and `unknown` for unrecognized legacy records; `provider_transport` is `local`, `http`, `subprocess`, or `unknown`. Each plan item also includes `leader_backend`, a normalized identity card that keeps `agent_id=leader`, provider/model, backend/transport, `reasoning_backend`, `runtime_kind=logical_leader`, `pane_backed=false`, `pane_id=null`, `approval_required=true`, and `dispatch_ready=false` together for GUI/audit rendering.
 
-Immediately after `leader_backend`, `leader_generation` exposes immutable compact generation audit metadata. Ordinary plans use exactly `provider`, `model`, `constraint_mode`, `schema_version`, `schema_hash`, `attempt_count`, `regeneration_used`, `selected_agent_ids`, and `step_count`. Semantic plans use that same closed base plus exactly `semantic_authority_schema_version` and `semantic_authority_hash`. Native ordinary records require `leader-plan/v1`; native semantic records require `leader-semantic-plan/v1`; both require a lowercase canonical SHA-256 schema identity. Non-native records require null schema fields. Semantic authority version must be `mission-semantic-authority/v1`, and its authority hash must use lowercase canonical SHA-256 syntax. The contract validator checks only this closed projection shape, scalar coherence, hash format, and schema family; it does not possess the full plan authority and does not recompute the authority hash. StateStore remains the producer-side source that revalidates the semantic authority and hash before projection. New provenance must carry the exact non-empty Worker set represented by the plan, an exact 2–64 step count, and coherent attempt/regeneration facts. Historical records where the key is completely absent are projected deterministically without rewriting state: provider class selects `local`, `json_object`, or `prompt_only`, schema fields remain null, attempt count is one, regeneration is false, and the unprovable selected-Worker list is empty. An explicitly persisted `leader_generation: null` is corrupt new state and fails closed; it is never treated as legacy absence. That exact legacy nine-field shape alone may represent an existing one-step plan for additive `project-view/v1` compatibility. ProjectView and trace rebuild these allowlisted objects and reject unknown fields, malformed hashes, contradictory authority shape, and nested prompt/argv/path/credential/secret semantic keys without echoing raw values. The nested provider/model must be non-empty and match both the enclosing plan and its already validated logical `leader_backend` identity.
+Immediately after `leader_backend`, `leader_generation` exposes immutable compact generation audit metadata. Ordinary plans use exactly `provider`, `model`, `constraint_mode`, `schema_version`, `schema_hash`, `attempt_count`, `regeneration_used`, `selected_agent_ids`, and `step_count`. Semantic plans use that same closed base plus exactly `semantic_authority_schema_version` and `semantic_authority_hash`. Native ordinary records require `leader-plan/v1`; native semantic records require `leader-semantic-plan/v1`; both require a lowercase canonical SHA-256 schema identity. Non-native records require null schema fields. Semantic authority version must be `mission-semantic-authority/v1`, and its authority hash must use lowercase canonical SHA-256 syntax. The generation authority hash identifies the required/input authority that constrained Provider generation: StateStore derives that authority from the persisted semantic plan and strips compiled `proposed_effects` before recomputing the hash. By contrast, `plans.items[].semantic_authority.authority_hash` identifies the complete compiled output authority, including admitted Leader proposals. A legal proposal therefore makes these two hashes different; clients and contract validators must not require equality. The contract validator checks only the closed generation projection shape, scalar coherence, hash format, and schema family; it does not possess the full authority and does not recompute either hash. StateStore remains the producer-side source that performs the required/input-authority revalidation before projection. New provenance must carry the exact non-empty Worker set represented by the plan, an exact 2–64 step count, and coherent attempt/regeneration facts. Historical records where the key is completely absent are projected deterministically without rewriting state: provider class selects `local`, `json_object`, or `prompt_only`, schema fields remain null, attempt count is one, regeneration is false, and the unprovable selected-Worker list is empty. An explicitly persisted `leader_generation: null` is corrupt new state and fails closed; it is never treated as legacy absence. That exact legacy nine-field shape alone may represent an existing one-step plan for additive `project-view/v1` compatibility. ProjectView and trace rebuild these allowlisted objects and reject unknown fields, malformed hashes, contradictory authority shape, and nested prompt/argv/path/credential/secret semantic keys without echoing raw values. The nested provider/model must be non-empty and match both the enclosing plan and its already validated logical `leader_backend` identity.
 
-Authority validation uses only facts each surface actually owns. For a ProjectView plan with a matching Mission, `selected_agent_ids` must exactly equal that Mission's selected Worker set; without a matching Mission, every selected id must at least belong to the top-level configured `agents[]` registry. ProjectView uses the presence of its compact `semantic_authority` card to require the ordinary nine-field or semantic eleven-field generation shape. The trace response intentionally adds no duplicate authority card: attempts and jobs are only the executed subset and cannot prove all selected Workers. `validate_trace_contract()` therefore distinguishes the same strict nine/eleven shapes from their exact key sets, checks their internal coherence and schema family, and does not recompute semantic authority. The StateStore trace producer first validates selected ids exactly against the persisted raw plan steps and revalidates semantic generation against the persisted plan before returning any trace. This separates contract-level evidence from producer-level persisted-plan evidence without treating execution lineage as authorization.
+Authority validation uses only facts each surface actually owns. For a ProjectView plan with a matching Mission, `selected_agent_ids` must exactly equal that Mission's selected Worker set; without a matching Mission, every selected id must at least belong to the top-level configured `agents[]` registry. ProjectView uses the presence of its compact `semantic_authority` card to require the ordinary nine-field or semantic eleven-field generation shape. The trace response intentionally adds no duplicate authority card: attempts and jobs are only the executed subset and cannot prove all selected Workers. `validate_trace_contract()` therefore distinguishes the same strict nine/eleven shapes from their exact key sets, checks their internal coherence and schema family, and does not recompute semantic authority. The StateStore trace producer first validates selected ids exactly against the persisted raw plan steps and revalidates semantic generation against the proposal-stripped required/input authority derived from that plan before returning any trace. This separates contract-level evidence from producer-level persisted-plan evidence without treating execution lineage as authorization.
 
 `skill_context` is the compact loaded-skill provenance snapshot that was visible when the Leader created the plan; it mirrors ProjectView `skills` summary shape and intentionally excludes full `content_snapshot`. `validate_project_view_contract()` checks every plan item and rejects `leader_backend` payloads that claim a worker agent, tmux pane, or dispatch-ready Leader. GUI clients may render `leader_backend` and `leader_generation` as plan origin metadata, but neither proves provider readiness, identifies a tmux pane, grants permission, authorizes dispatch/execution, or overrides approval and runtime safety.
 
@@ -222,7 +222,13 @@ When no state queue needs attention but the configured API-backed Leader provide
 
 Use `agentdeck contract project-view` to discover this contract from tools or GUI clients:
 
-Discovery includes `semantic_authority_fields`, the ordered exact eight-field compact shape shared by Plan and Mission items. This remains an additive extension of `project-view/v1`; no new top-level authority source or schema version is introduced.
+Discovery preserves `leader_generation_fields` as the ordinary ordered
+nine-field shape for existing clients, adds
+`semantic_leader_generation_fields` as the ordered eleven-field semantic
+shape, and includes `semantic_authority_fields`, the exact eight-field compact
+shape shared by Plan and Mission items. These remain additive extensions of
+`project-view/v1`; no new top-level authority source or schema version is
+introduced.
 
 ```json
 {
@@ -236,6 +242,30 @@ Discovery includes `semantic_authority_fields`, the ordered exact eight-field co
   "missions_fields": [],
   "mission_item_fields": [],
   "plan_item_fields": [],
+  "leader_generation_fields": [
+    "provider",
+    "model",
+    "constraint_mode",
+    "schema_version",
+    "schema_hash",
+    "attempt_count",
+    "regeneration_used",
+    "selected_agent_ids",
+    "step_count"
+  ],
+  "semantic_leader_generation_fields": [
+    "provider",
+    "model",
+    "constraint_mode",
+    "schema_version",
+    "schema_hash",
+    "attempt_count",
+    "regeneration_used",
+    "selected_agent_ids",
+    "step_count",
+    "semantic_authority_schema_version",
+    "semantic_authority_hash"
+  ],
   "semantic_authority_fields": [
     "schema_version",
     "state",

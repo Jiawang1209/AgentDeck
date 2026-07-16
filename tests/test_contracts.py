@@ -1555,6 +1555,22 @@ def test_project_view_contract_payload_is_reusable_without_cli(tmp_path: Path) -
     assert payload["semantic_authority_fields"] == list(
         PROJECT_VIEW_SEMANTIC_AUTHORITY_FIELDS
     )
+    assert payload["leader_generation_fields"] == [
+        "provider",
+        "model",
+        "constraint_mode",
+        "schema_version",
+        "schema_hash",
+        "attempt_count",
+        "regeneration_used",
+        "selected_agent_ids",
+        "step_count",
+    ]
+    assert payload["semantic_leader_generation_fields"] == [
+        *payload["leader_generation_fields"],
+        "semantic_authority_schema_version",
+        "semantic_authority_hash",
+    ]
 
 
 def test_artifacts_contract_payload_is_reusable_without_cli(tmp_path: Path) -> None:
@@ -1741,6 +1757,11 @@ def test_project_view_contract_response_includes_example_without_drift(tmp_path:
         "regeneration_used",
         "selected_agent_ids",
         "step_count",
+    ]
+    assert payload["semantic_leader_generation_fields"] == [
+        *payload["leader_generation_fields"],
+        "semantic_authority_schema_version",
+        "semantic_authority_hash",
     ]
     assert payload["example_recovery_fields"] == payload["recovery_fields"]
     assert set(payload["example_recovery_fields"]) == set(example["recovery"])
@@ -4366,6 +4387,11 @@ def test_leader_status_contract_payload_is_reusable_without_cli(tmp_path: Path) 
         "controls",
     ]
     assert payload["coordination_role_fields"] == list(PROJECT_VIEW_COORDINATION_ROLE_FIELDS)
+    assert payload["semantic_leader_generation_fields"] == [
+        *payload["leader_generation_fields"],
+        "semantic_authority_schema_version",
+        "semantic_authority_hash",
+    ]
     assert payload["queue_fields"] == [
         "leader_actions_pending",
         "approvals_pending",
@@ -4394,6 +4420,11 @@ def test_leader_status_contract_response_includes_example_without_drift(tmp_path
     assert set(payload["example_queue_fields"]) == set(example["queues"])
     assert payload["example_control_fields"] == payload["control_fields"]
     assert set(payload["example_control_fields"]) == set(example["controls"][0])
+    assert payload["semantic_leader_generation_fields"] == [
+        *payload["leader_generation_fields"],
+        "semantic_authority_schema_version",
+        "semantic_authority_hash",
+    ]
     assert example["mode"] == "leader_status"
     assert example["source_command"] == "agentdeck leader status"
     assert example["refresh_command"] == "agentdeck leader status"
@@ -5976,6 +6007,11 @@ def test_trace_contract_payload_is_reusable_without_cli(tmp_path: Path) -> None:
     assert payload["contract_exists"] is True
     assert payload["top_level_fields"] == list(TRACE_TOP_LEVEL_FIELDS)
     assert payload["message_fields"] == list(TRACE_MESSAGE_FIELDS)
+    assert payload["semantic_leader_generation_fields"] == [
+        *payload["leader_generation_fields"],
+        "semantic_authority_schema_version",
+        "semantic_authority_hash",
+    ]
     assert payload["attempt_fields"] == list(TRACE_ATTEMPT_FIELDS)
     assert payload["job_fields"] == list(TRACE_JOB_FIELDS)
     assert payload["reply_fields"] == list(TRACE_REPLY_FIELDS)
@@ -6006,6 +6042,11 @@ def test_trace_contract_response_includes_example_without_drift(tmp_path: Path) 
     assert set(payload["example_artifact_fields"]) == set(example["artifacts"][0])
     assert payload["example_inbox_item_fields"] == payload["inbox_item_fields"]
     assert set(payload["example_inbox_item_fields"]) == set(example["inbox_items"][0])
+    assert payload["semantic_leader_generation_fields"] == [
+        *payload["leader_generation_fields"],
+        "semantic_authority_schema_version",
+        "semantic_authority_hash",
+    ]
 
 
 def test_validate_trace_contract_accepts_example() -> None:

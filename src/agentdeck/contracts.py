@@ -3164,6 +3164,9 @@ def project_view_contract_payload(contract_path: Path) -> dict[str, object]:
         "plan_item_fields": list(PROJECT_VIEW_PLAN_ITEM_FIELDS),
         "semantic_authority_fields": list(PROJECT_VIEW_SEMANTIC_AUTHORITY_FIELDS),
         "leader_generation_fields": list(PROJECT_VIEW_LEADER_GENERATION_FIELDS),
+        "semantic_leader_generation_fields": list(
+            PROJECT_VIEW_SEMANTIC_LEADER_GENERATION_FIELDS
+        ),
         "recovery_fields": list(PROJECT_VIEW_RECOVERY_FIELDS),
         "recovery_pending_fields": list(PROJECT_VIEW_RECOVERY_PENDING_FIELDS),
         "recommended_action_fields": list(PROJECT_VIEW_RECOMMENDED_ACTION_FIELDS),
@@ -7247,6 +7250,9 @@ def leader_status_contract_payload(contract_path: Path) -> dict[str, object]:
         "provider_health_fields": list(WORKBENCH_PROVIDER_HEALTH_FIELDS),
         "latest_plan_fields": list(PROJECT_VIEW_PLAN_ITEM_FIELDS),
         "leader_generation_fields": list(PROJECT_VIEW_LEADER_GENERATION_FIELDS),
+        "semantic_leader_generation_fields": list(
+            PROJECT_VIEW_SEMANTIC_LEADER_GENERATION_FIELDS
+        ),
         "queue_fields": list(LEADER_STATUS_QUEUE_FIELDS),
         "recovery_fields": list(PROJECT_VIEW_RECOVERY_FIELDS),
         "control_fields": list(WORKBENCH_CONTROL_MODE_CONTROL_FIELDS),
@@ -7280,6 +7286,9 @@ def trace_contract_payload(contract_path: Path) -> dict[str, object]:
         "message_fields": list(TRACE_MESSAGE_FIELDS),
         "plan_fields": list(TRACE_PLAN_FIELDS),
         "leader_generation_fields": list(PROJECT_VIEW_LEADER_GENERATION_FIELDS),
+        "semantic_leader_generation_fields": list(
+            PROJECT_VIEW_SEMANTIC_LEADER_GENERATION_FIELDS
+        ),
         "attempt_fields": list(TRACE_ATTEMPT_FIELDS),
         "job_fields": list(TRACE_JOB_FIELDS),
         "reply_fields": list(TRACE_REPLY_FIELDS),

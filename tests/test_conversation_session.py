@@ -15,7 +15,10 @@ from agentdeck.providers import LeaderPlanResult
 from agentdeck.providers.fake import FakeLeaderProvider
 from agentdeck.providers.plan_schema import build_leader_generation_provenance
 from agentdeck.state import StateStore
-from agentdeck.semantic_authority import extract_semantic_authority
+from agentdeck.semantic_authority import (
+    extract_semantic_authority,
+    semantic_authority_hash,
+)
 
 
 MESSAGE = "让 Codex 和 Claude 一人一句接龙百家姓，共2轮"
@@ -430,7 +433,7 @@ def test_session_rejects_hostile_worker_tuple_without_equality_hook(
 
 
 def test_legal_project_local_proposal_reaches_semantic_preview(tmp_path: Path) -> None:
-    _config, store = _project(tmp_path)
+    config, store = _project(tmp_path)
 
     class ProposalProvider(FakeLeaderProvider):
         @staticmethod
@@ -458,7 +461,33 @@ def test_legal_project_local_proposal_reaches_semantic_preview(tmp_path: Path) -
     ).handle(SEMANTIC_MESSAGE)
 
     assert response.kind == "mission_preview"
-    assert len(store.load()["plans"]) == len(store.load()["missions"]) == 1
+    state = store.load()
+    assert len(state["plans"]) == len(state["missions"]) == 1
+    stored = state["plans"][0]
+    generation = stored["leader_generation"]
+    full_authority = stored["plan"]["semantic_authority"]
+    required_authority = deepcopy(full_authority)
+    required_authority["proposed_effects"] = []
+    assert generation["semantic_authority_hash"] == semantic_authority_hash(
+        required_authority
+    )
+
+    projected = store.project_view(config).plans["items"][-1]
+    assert projected["leader_generation"] == generation
+    assert projected["semantic_authority"]["authority_hash"] == (
+        semantic_authority_hash(full_authority)
+    )
+    assert (
+        projected["semantic_authority"]["authority_hash"]
+        != generation["semantic_authority_hash"]
+    )
+
+    state["approvals"] = [
+        {"message_id": "msg_legal_proposal", "plan_id": stored["plan_id"]}
+    ]
+    traced = StateStore._trace_plan_for_message(state, "msg_legal_proposal")
+    assert traced is not None
+    assert traced["leader_generation"] == generation
 
 
 def test_regeneration_audit_uses_generation_provenance_not_diagnostic_shape(
