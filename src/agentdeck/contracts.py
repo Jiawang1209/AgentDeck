@@ -26,6 +26,9 @@ from .models import (
     PROJECT_VIEW_SCHEMA_VERSION,
     PROJECT_VIEW_SEMANTIC_AUTHORITY_FIELDS,
 )
+from .providers.plan_schema import LEADER_PLAN_SCHEMA_VERSION
+from .providers.semantic_plan_schema import SEMANTIC_LEADER_PLAN_SCHEMA_VERSION
+from .semantic_authority import SEMANTIC_AUTHORITY_SCHEMA_VERSION
 from .daemon.scheduler import DECISION_KINDS
 from .state import leader_backend_identity
 from .runtime.protocol import PROTOCOL_TRANSITION_EDGES, TRANSPORT_KINDS, TransportCapabilities
@@ -568,6 +571,11 @@ PROJECT_VIEW_LEADER_GENERATION_FIELDS = (
     "regeneration_used",
     "selected_agent_ids",
     "step_count",
+)
+PROJECT_VIEW_SEMANTIC_LEADER_GENERATION_FIELDS = (
+    *PROJECT_VIEW_LEADER_GENERATION_FIELDS,
+    "semantic_authority_schema_version",
+    "semantic_authority_hash",
 )
 
 PROJECT_VIEW_MISSIONS_FIELDS = (
@@ -8487,7 +8495,23 @@ def _validate_plan_leader_generation(
     if type(generation) is not dict:
         errors.append(f"{prefix}.leader_generation must be an object")
         return
-    if set(generation) != set(PROJECT_VIEW_LEADER_GENERATION_FIELDS):
+    generation_fields = set(generation)
+    if "semantic_authority" in item:
+        semantic_generation = item.get("semantic_authority") is not None
+        expected_fields = (
+            PROJECT_VIEW_SEMANTIC_LEADER_GENERATION_FIELDS
+            if semantic_generation
+            else PROJECT_VIEW_LEADER_GENERATION_FIELDS
+        )
+        fields_valid = generation_fields == set(expected_fields)
+    else:
+        semantic_generation = generation_fields == set(
+            PROJECT_VIEW_SEMANTIC_LEADER_GENERATION_FIELDS
+        )
+        fields_valid = semantic_generation or generation_fields == set(
+            PROJECT_VIEW_LEADER_GENERATION_FIELDS
+        )
+    if not fields_valid:
         errors.append(f"{prefix}.leader_generation fields are invalid")
         return
 
@@ -8522,6 +8546,23 @@ def _validate_plan_leader_generation(
     regeneration_used = generation.get("regeneration_used")
     selected_agent_ids = generation.get("selected_agent_ids")
     step_count = generation.get("step_count")
+    if semantic_generation:
+        if (
+            generation.get("semantic_authority_schema_version")
+            != SEMANTIC_AUTHORITY_SCHEMA_VERSION
+        ):
+            errors.append(
+                f"{prefix}.leader_generation.semantic_authority_schema_version is invalid"
+            )
+        semantic_authority_hash = generation.get("semantic_authority_hash")
+        if (
+            type(semantic_authority_hash) is not str
+            or re.fullmatch(r"sha256:[0-9a-f]{64}", semantic_authority_hash)
+            is None
+        ):
+            errors.append(
+                f"{prefix}.leader_generation.semantic_authority_hash is invalid"
+            )
 
     if type(provider) is not str or not provider or provider != item.get("provider"):
         errors.append(f"{prefix}.leader_generation.provider must match plan provider")
@@ -8562,7 +8603,12 @@ def _validate_plan_leader_generation(
     }:
         errors.append(f"{prefix}.leader_generation.constraint_mode is invalid")
     if mode == "native_json_schema":
-        if schema_version != "leader-plan/v1":
+        expected_schema_version = (
+            SEMANTIC_LEADER_PLAN_SCHEMA_VERSION
+            if semantic_generation
+            else LEADER_PLAN_SCHEMA_VERSION
+        )
+        if schema_version != expected_schema_version:
             errors.append(f"{prefix}.leader_generation.schema_version is invalid")
         if type(schema_hash) is not str or re.fullmatch(r"sha256:[0-9a-f]{64}", schema_hash) is None:
             errors.append(f"{prefix}.leader_generation.schema_hash is invalid")

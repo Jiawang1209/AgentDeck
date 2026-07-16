@@ -1802,6 +1802,134 @@ def test_project_view_contract_rejects_invalid_leader_generation(mutation) -> No
     assert validate_project_view_contract(payload)["ok"] is False
 
 
+def _semantic_generation_projection(
+    generation: dict[str, object],
+) -> dict[str, object]:
+    return {
+        **generation,
+        "schema_version": "leader-semantic-plan/v1",
+        "semantic_authority_schema_version": "mission-semantic-authority/v1",
+        "semantic_authority_hash": "sha256:" + "b" * 64,
+    }
+
+
+def _semantic_project_view_projection() -> dict[str, object]:
+    payload = project_view_example()
+    semantic_authority = {
+        "schema_version": "mission-semantic-authority/v1",
+        "state": "preview",
+        "authority_hash": "sha256:" + "b" * 64,
+        "requirement_count": 2,
+        "proposed_effect_count": 0,
+        "unresolved_count": 0,
+        "compiled_step_count": 2,
+        "blockers": [],
+    }
+    plan = payload["plans"]["items"][0]
+    plan["leader_generation"] = _semantic_generation_projection(
+        plan["leader_generation"]
+    )
+    plan["semantic_authority"] = deepcopy(semantic_authority)
+    payload["missions"]["items"][0]["semantic_authority"] = deepcopy(
+        semantic_authority
+    )
+    return payload
+
+
+def test_project_view_contract_accepts_ordinary_and_semantic_generation_shapes() -> None:
+    assert validate_project_view_contract(project_view_example()) == {
+        "ok": True,
+        "errors": [],
+    }
+    semantic = _semantic_project_view_projection()
+    assert validate_project_view_contract(semantic) == {
+        "ok": True,
+        "errors": [],
+    }
+    semantic["plans"]["items"][0]["leader_generation"].update(
+        {
+            "constraint_mode": "local",
+            "schema_version": None,
+            "schema_hash": None,
+        }
+    )
+    assert validate_project_view_contract(semantic) == {
+        "ok": True,
+        "errors": [],
+    }
+
+
+@pytest.mark.parametrize(
+    ("semantic", "mutation"),
+    [
+        (
+            False,
+            lambda value: {
+                **value,
+                "semantic_authority_schema_version": "mission-semantic-authority/v1",
+                "semantic_authority_hash": "sha256:" + "b" * 64,
+            },
+        ),
+        (
+            False,
+            lambda value: {
+                **value,
+                "schema_version": "leader-semantic-plan/v1",
+            },
+        ),
+        (
+            True,
+            lambda value: {
+                key: item
+                for key, item in value.items()
+                if key != "semantic_authority_schema_version"
+            },
+        ),
+        (
+            True,
+            lambda value: {
+                **value,
+                "semantic_authority_schema_version": "mission-semantic-authority/v0",
+            },
+        ),
+        (
+            True,
+            lambda value: {
+                **value,
+                "semantic_authority_hash": "sha256:short",
+            },
+        ),
+        (
+            True,
+            lambda value: {
+                **value,
+                "schema_version": "leader-plan/v1",
+            },
+        ),
+        (
+            True,
+            lambda value: {
+                **value,
+                "constraint_mode": "local",
+            },
+        ),
+    ],
+)
+def test_project_view_contract_rejects_generation_shape_or_schema_family_drift(
+    semantic: bool,
+    mutation,
+) -> None:
+    payload = (
+        _semantic_project_view_projection()
+        if semantic
+        else project_view_example()
+    )
+    item = payload["plans"]["items"][0]
+    item["leader_generation"] = mutation(deepcopy(item["leader_generation"]))
+
+    assert validate_project_view_contract(payload)["ok"] is False
+
+
 def test_project_view_contract_allows_only_exact_legacy_one_step_generation() -> None:
     payload = project_view_example()
     item = payload["plans"]["items"][0]
@@ -5886,6 +6014,26 @@ def test_validate_trace_contract_accepts_example() -> None:
     assert result == {"ok": True, "errors": []}
 
 
+def test_validate_trace_contract_accepts_semantic_generation_projection() -> None:
+    payload = trace_example()
+    payload["plan"]["leader_generation"] = _semantic_generation_projection(
+        payload["plan"]["leader_generation"]
+    )
+
+    assert validate_trace_contract(payload) == {"ok": True, "errors": []}
+
+
+def test_validate_trace_contract_rejects_partial_semantic_generation_projection() -> None:
+    payload = trace_example()
+    generation = _semantic_generation_projection(
+        payload["plan"]["leader_generation"]
+    )
+    generation.pop("semantic_authority_hash")
+    payload["plan"]["leader_generation"] = generation
+
+    assert validate_trace_contract(payload)["ok"] is False
+
+
 def test_validate_trace_contract_reports_missing_reply_field() -> None:
     payload = trace_example()
     del payload["replies"][0]["reply_id"]
@@ -6780,9 +6928,13 @@ def test_workbench_contract_reuses_project_view_semantic_projection() -> None:
     payload["project_view"]["plans"]["items"][0]["step_count"] = compact[
         "compiled_step_count"
     ]
-    payload["project_view"]["plans"]["items"][0]["leader_generation"][
-        "step_count"
-    ] = compact["compiled_step_count"]
+    generation = payload["project_view"]["plans"]["items"][0][
+        "leader_generation"
+    ]
+    generation["step_count"] = compact["compiled_step_count"]
+    payload["project_view"]["plans"]["items"][0]["leader_generation"] = (
+        _semantic_generation_projection(generation)
+    )
     payload["mission_card"]["semantic_authority"] = compact
     payload["control_registry"] = workbench_control_registry(payload)
 

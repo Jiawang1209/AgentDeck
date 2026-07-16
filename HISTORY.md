@@ -4,6 +4,36 @@
 
 ## 2026-07-16
 
+### Validate semantic generation projections
+
+- Fixed the ProjectView/trace contract gap found during spec review: StateStore
+  correctly produced semantic eleven-field `leader_generation`, but the shared
+  projection validator still accepted only the ordinary nine-field shape and
+  `leader-plan/v1`.
+- TDD RED evidence: legal semantic ProjectView and trace projections both
+  failed with `leader_generation fields are invalid`, while ordinary and
+  malformed shape/schema/authority cases behaved as expected
+  (`2 failed, 7 passed`).
+- Added strict projection-level dual-shape validation. ProjectView selects the
+  ordinary nine-field or semantic eleven-field shape from its compact
+  `semantic_authority` card; trace omits that card and selects only from the
+  exact key set. Native ordinary provenance requires `leader-plan/v1`, native
+  semantic provenance requires `leader-semantic-plan/v1`, and non-native schema
+  fields remain null.
+- Semantic projection fields require
+  `semantic_authority_schema_version=mission-semantic-authority/v1` and a
+  lowercase canonical SHA-256 `semantic_authority_hash`. The contract validator
+  checks only closed shape, scalar coherence, hash format, and schema family;
+  StateStore remains the authority-recomputation source.
+- Updated the ProjectView and trace contract docs plus the existing workbench
+  semantic fixture to use the semantic eleven-field shape.
+- GREEN evidence: focused projection nodes `10 passed`; complete contract and
+  Mission tests `653 passed`; semantic Mission/Conversation regression
+  `211 passed`; Provider/provenance and complete non-live M2c regression
+  `595 passed, 1 skipped`.
+- No preflight, live Mission, real Provider call, ACP, tmux, daemon, push,
+  merge, amend, install, login, or global configuration change ran.
+
 ### Persist semantic Leader generation provenance
 
 - Closed the deterministic form of the M2c
