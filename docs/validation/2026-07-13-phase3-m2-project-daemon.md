@@ -39,12 +39,36 @@ ready model card for `codex-cli` / `gpt-5.5`, and four ready tools: Codex CLI
 The preflight did not call the model or start a live Mission.
 
 The detached preflight checkout was removed. Follow-up audit found no matching
-checkout, pytest/daemon process, or M2c live root. For this SHA,
-preflight/live counts are now exactly `1/0`; the preflight must not be rerun.
-M2c remains **BLOCKED**, M3 remains locked, and the next gate is separate
-explicit human authorization for exactly one real four-stage live Mission on
-this frozen SHA and model. The historical `75f0366d...` preflight/live counts
-remain exactly `1/1` and neither may be rerun.
+checkout, pytest/daemon process, or M2c live root.
+
+After separate human authorization, the real four-stage node ran exactly once
+on the same frozen SHA and model. It exited `1` with
+`1 failed in 14.36s` and fixed diagnostic `stage=live_acceptance`,
+`code=preflight_blocked`. The run stopped before project initialization,
+Mission Preview, model invocation, daemon admission, ACP/tmux Worker execution,
+permissions, handoffs, or artifact effects. It was not retried.
+
+The designated preflight had used PATH-discovered installed tools, while the
+live SOP supplied a disposable strict-basename mirror as its explicit
+executable authority. The live harness performed its internal preflight on
+that different authority and collapsed the result to `preflight_blocked`
+without retaining the underlying allowlisted blocker list. Static inspection
+therefore identifies an authority-binding and observability gap, but cannot
+honestly identify which tool or probe blocked. No additional probe or
+preflight was run.
+
+The harness left no reported cleanup-failure note. The detached live checkout
+and tool mirror were removed, and follow-up audit found no matching live root,
+pytest/daemon process, or staged mirror. No install, login, global
+configuration/auth/permission change, user tmux inspection, push, or merge
+occurred.
+
+For this SHA, preflight/live counts are now exactly `1/1`; both are exhausted
+and neither may be rerun. M2c remains **BLOCKED**, M3 remains locked, and the
+next gate is a new brainstorming -> spec -> plan cycle for same-authority
+preflight/live binding plus closed internal-preflight blocker projection. The
+historical `75f0366d...` preflight/live counts remain exactly `1/1` and neither
+may be rerun.
 
 ## Frozen semantic-conflict closure candidate
 
@@ -106,8 +130,8 @@ Read-only root-cause inspection found that the semantic preview path validated
 the native-schema `leader_generation` envelope and then explicitly replaced it
 with `None` before `build_plan_record()`. That persistence boundary is now
 closed by frozen implementation `7a76ada81938be3ba0720a7c2f5a540b4beebb3e`;
-that new SHA has since consumed its exact-model read-only preflight and is now
-waiting for separate authorization for exactly one live Mission.
+that new SHA has since exhausted both its exact-model preflight and its single
+live authorization, which stopped at `preflight_blocked`.
 
 ## Historical semantic-authority harness conversion checkpoint
 
@@ -180,9 +204,9 @@ and M3 remains locked. This historical failure motivated the implemented
 semantic-authority control plane and later corrective slices; it must not be
 retried from the old evidence commit. The current gate is defined only by the
 new frozen `7a76ada81938be3ba0720a7c2f5a540b4beebb3e` candidate section above:
-its exact `gpt-5.5` preflight is ready and exhausted, so only a separate
-one-live authorization may advance it. There is no automatic retry or live
-authorization in this document.
+its exact `gpt-5.5` preflight and single live attempt are both exhausted at
+`1/1`; only a new approved same-authority/diagnostic design cycle may advance
+it. There is no automatic retry or live authorization in this document.
 
 ## tmux startup/readiness correction
 

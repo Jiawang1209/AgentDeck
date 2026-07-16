@@ -613,6 +613,18 @@ residual audit was empty. New-SHA preflight/live counts are now `1/0`; the
 preflight must not be rerun. Live remains unauthorized pending a separate
 explicit human decision.
 
+The human subsequently authorized exactly one real four-stage live Mission on
+that frozen SHA and model. The node ran once, exited `1`, and reported
+`1 failed in 14.36s` with `stage=live_acceptance`,
+`code=preflight_blocked`; it was not retried. The designated preflight had
+bound PATH-discovered installed tools, while live supplied a disposable
+strict-basename mirror, so the two checks did not share one executable
+authority. The internal preflight's allowlisted blockers were not projected by
+the failure diagnostic and cannot be recovered without another external
+execution. Checkout, mirror, process, and live-root cleanup passed.
+New-SHA preflight/live counts are now `1/1`; both are exhausted. M2c remains
+BLOCKED and M3 locked pending a new approved design/TDD cycle.
+
 ## Completion checklist
 
 - [x] Direct semantic native preview persists exact validated provenance.
@@ -627,5 +639,5 @@ explicit human decision.
 - [x] Focused and complete non-live M2c suites pass.
 - [x] Independent spec and quality reviews pass.
 - [x] Two full suites pass on one unchanged new implementation SHA.
-- [x] New SHA used exactly one authorized ready preflight and zero live attempts.
+- [x] New SHA used exactly one ready preflight and one separately authorized live attempt.
 - [x] M2c remains BLOCKED and M3 locked until real four-stage PASS.

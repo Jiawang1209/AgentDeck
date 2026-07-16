@@ -4,6 +4,30 @@
 
 ## 2026-07-16
 
+### Record the exhausted provenance-candidate single-live blocker
+
+- Consumed the separately authorized real four-stage live attempt exactly once
+  on frozen implementation
+  `7a76ada81938be3ba0720a7c2f5a540b4beebb3e` with Leader `gpt-5.5`.
+- The node exited `1` with `1 failed in 14.36s` and the transcript-free fixed
+  diagnostic `stage=live_acceptance`, `code=preflight_blocked`. It stopped
+  before project initialization, Mission Preview, provider invocation, daemon
+  admission, Worker execution, permissions, handoffs, or artifact effects.
+- The earlier designated preflight used PATH-discovered installed tools, while
+  live used the SOP's explicit strict-basename mirror. The internal preflight
+  checked this different executable authority, and the harness discarded its
+  allowlisted blocker list when raising `preflight_blocked`; static inspection
+  cannot identify the exact underlying tool/probe blocker without an
+  unauthorized rerun.
+- Removed the detached live checkout and disposable tool mirror. Follow-up
+  audit found no matching live root, pytest/daemon process, or staged mirror.
+  No install, login, global configuration/auth/permission change, user tmux
+  inspection, push, merge, or retry occurred.
+- This SHA's preflight/live counts are now `1/1`; both are exhausted. M2c
+  remains **BLOCKED**, M3 remains locked, and the next gate is a new
+  brainstorming/spec/plan cycle for same-authority binding and closed internal
+  preflight diagnostics.
+
 ### Consume the authorized provenance-candidate read-only preflight
 
 - Bound the human-selected exact Leader model `gpt-5.5` to frozen
@@ -17,9 +41,10 @@
   call the model or start a live Mission.
 - Removed the detached preflight checkout and confirmed no matching checkout,
   pytest/daemon process, or M2c live root remained.
-- This frozen SHA now has preflight/live counts `1/0`; the preflight cannot be
-  rerun. M2c remains **BLOCKED**, M3 remains locked, and a real four-stage live
-  Mission requires separate explicit human authorization.
+- At this pre-live checkpoint the frozen SHA had preflight/live counts `1/0`;
+  the preflight could not be rerun. M2c remained **BLOCKED**, M3 remained
+  locked, and a real four-stage live Mission still required separate explicit
+  human authorization.
 
 ### Freeze and verify semantic generation provenance persistence
 
