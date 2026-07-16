@@ -604,6 +604,15 @@ evidence were complete.
 Do not run preflight or live. Ask the human to bind an exact model to the new
 implementation SHA and authorize exactly one read-only preflight.
 
+The human later bound `gpt-5.5` and separately authorized the designated
+read-only preflight. It ran exactly once on
+`7a76ada81938be3ba0720a7c2f5a540b4beebb3e`, passed
+`1 passed in 4.24s`, and returned `ready=true`, `blockers=[]`, the exact ready
+model card, and four ready tools. The detached checkout was removed and the
+residual audit was empty. New-SHA preflight/live counts are now `1/0`; the
+preflight must not be rerun. Live remains unauthorized pending a separate
+explicit human decision.
+
 ## Completion checklist
 
 - [x] Direct semantic native preview persists exact validated provenance.
@@ -618,5 +627,5 @@ implementation SHA and authorize exactly one read-only preflight.
 - [x] Focused and complete non-live M2c suites pass.
 - [x] Independent spec and quality reviews pass.
 - [x] Two full suites pass on one unchanged new implementation SHA.
-- [x] New SHA has zero preflight/live attempts.
+- [x] New SHA used exactly one authorized ready preflight and zero live attempts.
 - [x] M2c remains BLOCKED and M3 locked until real four-stage PASS.

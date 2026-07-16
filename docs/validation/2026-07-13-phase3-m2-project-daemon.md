@@ -28,12 +28,23 @@ Frozen verification evidence:
 - compile/diff/scope/marker audits: PASS;
 - detached checkout removed; current live process/root residuals: zero.
 
-No Provider, preflight, live Mission, ACP, tmux, install, login, global
-configuration, push, or merge ran. For this new SHA, preflight/live counts are
-exactly `0/0`. M2c remains **BLOCKED**, M3 remains locked, and the next gate is
-new explicit exact-model selection/binding plus one read-only preflight
-authorization. The historical `75f0366d...` preflight/live counts remain
-exactly `1/1` and neither may be rerun.
+No Provider, live Mission, ACP session, managed tmux session, install, login,
+global configuration, push, or merge ran during implementation verification.
+After separate human authorization, exact Leader model `gpt-5.5` was bound and
+the designated read-only preflight node ran exactly once on this frozen SHA.
+It passed `1 passed in 4.24s` and returned
+`schema_version=m2c-live-preflight/v2`, `ready=true`, `blockers=[]`, an exact
+ready model card for `codex-cli` / `gpt-5.5`, and four ready tools: Codex CLI
+`0.131.0`, Claude Code `2.1.211`, Claude Agent ACP `0.58.1`, and tmux `3.7`.
+The preflight did not call the model or start a live Mission.
+
+The detached preflight checkout was removed. Follow-up audit found no matching
+checkout, pytest/daemon process, or M2c live root. For this SHA,
+preflight/live counts are now exactly `1/0`; the preflight must not be rerun.
+M2c remains **BLOCKED**, M3 remains locked, and the next gate is separate
+explicit human authorization for exactly one real four-stage live Mission on
+this frozen SHA and model. The historical `75f0366d...` preflight/live counts
+remain exactly `1/1` and neither may be rerun.
 
 ## Frozen semantic-conflict closure candidate
 
@@ -95,8 +106,8 @@ Read-only root-cause inspection found that the semantic preview path validated
 the native-schema `leader_generation` envelope and then explicitly replaced it
 with `None` before `build_plan_record()`. That persistence boundary is now
 closed by frozen implementation `7a76ada81938be3ba0720a7c2f5a540b4beebb3e`;
-the next gate is exact Leader-model binding plus authorization for exactly one
-read-only preflight on that new SHA.
+that new SHA has since consumed its exact-model read-only preflight and is now
+waiting for separate authorization for exactly one live Mission.
 
 ## Historical semantic-authority harness conversion checkpoint
 
@@ -169,8 +180,9 @@ and M3 remains locked. This historical failure motivated the implemented
 semantic-authority control plane and later corrective slices; it must not be
 retried from the old evidence commit. The current gate is defined only by the
 new frozen `7a76ada81938be3ba0720a7c2f5a540b4beebb3e` candidate section above:
-bind one exact Leader model and separately authorize exactly one read-only
-preflight. There is no automatic retry or live authorization in this document.
+its exact `gpt-5.5` preflight is ready and exhausted, so only a separate
+one-live authorization may advance it. There is no automatic retry or live
+authorization in this document.
 
 ## tmux startup/readiness correction
 

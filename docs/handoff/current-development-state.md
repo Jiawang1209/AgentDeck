@@ -2,7 +2,7 @@
 
 Updated: 2026-07-16
 
-## Active goal — authorize a new preflight for the frozen provenance candidate
+## Active goal — authorize one live Mission after the ready provenance preflight
 
 The native-schema provenance persistence correction is implemented and frozen
 at `7a76ada81938be3ba0720a7c2f5a540b4beebb3e`. Semantic Mission previews now
@@ -31,14 +31,25 @@ Fresh verification on the frozen SHA passed:
 
 The detached verification checkout was removed. The feature worktree remained
 clean; live pytest/AgentDeck daemon matches and current live/tool roots were
-zero. No Provider, preflight, live Mission, ACP, tmux, install, login, global
-configuration, push, or merge ran during this correction cycle.
+zero. No Provider, live Mission, ACP session, managed tmux session, install,
+login, global configuration, push, or merge ran during the correction cycle.
 
-For new SHA `7a76ada81938be3ba0720a7c2f5a540b4beebb3e`, preflight count is `0`
-and live count is `0`. Historical SHA `75f0366d...` already used exactly one
-preflight and one live attempt and must not be rerun. M2c remains **BLOCKED**
-and M3 remains locked. The next gate is a new explicit exact-model binding plus
-authorization for exactly one read-only preflight on the new frozen SHA.
+The human then bound exact Leader model `gpt-5.5` and authorized exactly one
+read-only preflight on frozen implementation
+`7a76ada81938be3ba0720a7c2f5a540b4beebb3e`. That node ran once and passed
+`1 passed in 4.24s`, returning `schema_version=m2c-live-preflight/v2`,
+`ready=true`, `blockers=[]`, and four ready tools: Codex CLI `0.131.0`, Claude
+Code `2.1.211`, Claude Agent ACP `0.58.1`, and tmux `3.7`. The model card was
+exactly `{provider: codex-cli, model: gpt-5.5, source: explicit, ready: true}`.
+The detached preflight checkout was removed, and follow-up audits found no
+matching checkout, pytest/daemon process, or M2c live root.
+
+For this SHA, preflight count is now exactly `1` and live count remains `0`.
+The preflight must not be rerun. Historical SHA `75f0366d...` already used
+exactly one preflight and one live attempt and must also not be rerun. M2c
+remains **BLOCKED** and M3 remains locked. The next gate is separate explicit
+human authorization for exactly one real four-stage live Mission on the same
+frozen SHA and model; the ready preflight does not itself authorize live work.
 
 ## Historical 75f provenance blocker evidence
 
@@ -332,7 +343,7 @@ The Task 6 quality closure also makes the hidden daemon's idle loop reload the f
 
 The final Task 6 spec closure makes offline ProjectView use the same pure time-aware lease predicate as live status: only a strictly parsed active `lse_` lease whose aware expiry is later than current UTC reports `controller_present=true`; expired, terminal, naive, and malformed facts report false without repairing or writing state. DaemonServer also owns a monotonic process-local `activity_generation`: accept and each successfully decoded protocol-valid request increment once, while close never increments. The idle loop remembers the last generation and resets `idle_since` before evaluating keepalive, so a sub-100ms client that connects and closes entirely between polls still grants a new full idle window. This counter is runtime-only, is not added to ProjectView/contracts, and is not execution authority.
 
-Historical routing note: before the Codex probe was made zero-write, the active instruction was to investigate the Task 11 `probe_wrote_files` blocker and rerun preflight before any live attempt. That instruction was completed and is no longer the active route. Frozen historical live results remain evidence only. The approved semantic-authority and Leader Preview observability work at `9db5b476f885cfcf68a55cbf59673a2d908d3fce` used its one explicit-model preflight and one separately authorized live attempt, which stopped at `leader_schema_before_preview` / `semantic_effect_conflict`; neither may be rerun in place. The target-exclusivity and pytest-redaction slice frozen at `75f0366d4d5619b29c77f10949365f43d46185b1` also used exactly one preflight and one live attempt, which stopped at `native_schema_provenance_missing`; neither may be rerun. That blocker is now corrected and verified at new frozen SHA `7a76ada81938be3ba0720a7c2f5a540b4beebb3e`, whose preflight/live counts are `0/0`. The active route is new explicit exact-model binding and one read-only preflight authorization for `7a76ada...`. M2c is **BLOCKED**, M3 remains locked, and A2A Client/Server, remote daemon, global roaming, Workspace Client, system notifications, complete transcript persistence, automatic install/auth, Windows IPC, and terminal-emulator work remain out of scope.
+Historical routing note: before the Codex probe was made zero-write, the active instruction was to investigate the Task 11 `probe_wrote_files` blocker and rerun preflight before any live attempt. That instruction was completed and is no longer the active route. Frozen historical live results remain evidence only. The approved semantic-authority and Leader Preview observability work at `9db5b476f885cfcf68a55cbf59673a2d908d3fce` used its one explicit-model preflight and one separately authorized live attempt, which stopped at `leader_schema_before_preview` / `semantic_effect_conflict`; neither may be rerun in place. The target-exclusivity and pytest-redaction slice frozen at `75f0366d4d5619b29c77f10949365f43d46185b1` also used exactly one preflight and one live attempt, which stopped at `native_schema_provenance_missing`; neither may be rerun. That blocker is now corrected and verified at new frozen SHA `7a76ada81938be3ba0720a7c2f5a540b4beebb3e`, whose exact `gpt-5.5` preflight is ready and exhausted, with preflight/live counts `1/0`. The active route is separate explicit authorization for exactly one live Mission on `7a76ada...`; there is no automatic retry. M2c is **BLOCKED**, M3 remains locked, and A2A Client/Server, remote daemon, global roaming, Workspace Client, system notifications, complete transcript persistence, automatic install/auth, Windows IPC, and terminal-emulator work remain out of scope.
 
 The completed natural-language Mission and G-series work below is historical context only. It must not be treated as an active continuation request or redone.
 
@@ -356,7 +367,7 @@ conda run -n agentdeck pytest -q
 
 ## Current Phase
 
-Phase 0, Phase 1, Phase 2, Phase 3 M1, and Phase 3 M2 implementation Tasks 1–14 are complete and integrated into `main`. M1's final full suite was 1855 passed and 1 skipped; its deterministic and live Claude ACP/PTY evidence is `docs/validation/2026-07-13-phase3-m1-foreground-conversation.md`. M2's earlier final full suite was `2928 passed, 1 skipped`; deterministic evidence and the two-step real transport PASS are recorded in `docs/validation/2026-07-13-phase3-m2-project-daemon.md`. M2c remains **BLOCKED**, not a partial PASS; M3 remains locked. Historical `9db5b476...` and `75f0366d...` preflight/live authorities are exhausted and must not be rerun. The provenance correction is frozen at `7a76ada81938be3ba0720a7c2f5a540b4beebb3e`; focused verification and two unchanged-SHA full suites pass, while its preflight/live counts remain `0/0`. The remaining gate is human selection/binding of an exact Leader model plus authorization for exactly one read-only preflight on `7a76ada...`. Earlier live and `probe_wrote_files` states are historical evidence only, not current routing.
+Phase 0, Phase 1, Phase 2, Phase 3 M1, and Phase 3 M2 implementation Tasks 1–14 are complete and integrated into `main`. M1's final full suite was 1855 passed and 1 skipped; its deterministic and live Claude ACP/PTY evidence is `docs/validation/2026-07-13-phase3-m1-foreground-conversation.md`. M2's earlier final full suite was `2928 passed, 1 skipped`; deterministic evidence and the two-step real transport PASS are recorded in `docs/validation/2026-07-13-phase3-m2-project-daemon.md`. M2c remains **BLOCKED**, not a partial PASS; M3 remains locked. Historical `9db5b476...` and `75f0366d...` preflight/live authorities are exhausted and must not be rerun. The provenance correction is frozen at `7a76ada81938be3ba0720a7c2f5a540b4beebb3e`; focused verification and two unchanged-SHA full suites pass, and its exact `gpt-5.5` read-only preflight passed once. Its preflight/live counts are now `1/0`; the preflight must not be rerun. The remaining gate is separate explicit human authorization for exactly one live Mission on `7a76ada...`. Earlier live and `probe_wrote_files` states are historical evidence only, not current routing.
 
 The final M2 security closure anchors audit-journal reads to the verified project state directory and implements append as a bounded 64 MiB full-content temp/fsync/identity-check/atomic-replace transaction. Symlink, non-regular, and journal-inode replacement races cannot append to the detached journal; daemon/conversation/protocol outboxes stay pending on failure and retry without duplicate events. Current writers acquire the stable project-root directory flock before the legacy filename lock, then revalidate project-root/deck/state and lock-file identities around every atomic state or journal effect. Replacing `protocol-mutation.lock` or the whole state directory after proof therefore cannot split current writers, report a detached write as success, clear the canonical outbox, or cause a canonical lost update. The explicit threat boundary is cooperative AgentDeck writers under the opened project-root inode: a same-UID process that ignores advisory locks can move open directories and cause a rejected detached-descriptor effect, while project-root replacement itself is rejected rather than recovered.
 
@@ -383,7 +394,7 @@ Please continue AgentDeck development from this repository.
 Read CLAUDE.md, AGENT.md, the top of HISTORY.md, docs/roadmap/ultimate-goal-roadmap.md, and docs/handoff/current-development-state.md first.
 Use conda activate agentdeck or conda run -n agentdeck for commands.
 Every development iteration must update HISTORY.md, run verification, and commit locally.
-Treat Phase 3 M2 Tasks 1–14 as complete. Historical live failures remain evidence only; M2c is BLOCKED and M3 remains locked. Do not rerun the historical `9db5b476` or `75f0366d` preflight/live cycles. The semantic provenance persistence and public contract correction is frozen at `7a76ada81938be3ba0720a7c2f5a540b4beebb3e`, has passed focused verification and two full suites, and has new-SHA preflight/live counts `0/0`. The next gate is for the human to bind an exact Leader model and authorize exactly one read-only preflight on `7a76ada...`; live still requires a later separate authorization after a ready preflight. No prior model/preflight/live authorization carries forward. Do not redo M1 or earlier phases; do not merge/push, auto-install, change authentication, add A2A, remote execution, global roaming, Workspace Client, full transcript persistence, or terminal-emulator work.
+Treat Phase 3 M2 Tasks 1–14 as complete. Historical live failures remain evidence only; M2c is BLOCKED and M3 remains locked. Do not rerun the historical `9db5b476` or `75f0366d` preflight/live cycles. The semantic provenance persistence and public contract correction is frozen at `7a76ada81938be3ba0720a7c2f5a540b4beebb3e`, has passed focused verification and two full suites, and has consumed exactly one ready `gpt-5.5` read-only preflight. Its preflight/live counts are `1/0`; do not rerun preflight. The next gate is separate explicit human authorization for exactly one live Mission on `7a76ada...` with the same model. No prior live authorization carries forward. Do not redo M1 or earlier phases; do not merge/push, auto-install, change authentication, add A2A, remote execution, global roaming, Workspace Client, full transcript persistence, or terminal-emulator work.
 ```
 
 ## Historical development log — not active

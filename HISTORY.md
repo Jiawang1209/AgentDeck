@@ -4,6 +4,23 @@
 
 ## 2026-07-16
 
+### Consume the authorized provenance-candidate read-only preflight
+
+- Bound the human-selected exact Leader model `gpt-5.5` to frozen
+  implementation `7a76ada81938be3ba0720a7c2f5a540b4beebb3e` and executed the
+  designated read-only M2c preflight exactly once.
+- The node passed `1 passed in 4.24s` with
+  `schema_version=m2c-live-preflight/v2`, `ready=true`, `blockers=[]`, and the
+  exact ready `codex-cli` / `gpt-5.5` model card.
+- All four capability probes were ready: Codex CLI `0.131.0`, Claude Code
+  `2.1.211`, Claude Agent ACP `0.58.1`, and tmux `3.7`. The preflight did not
+  call the model or start a live Mission.
+- Removed the detached preflight checkout and confirmed no matching checkout,
+  pytest/daemon process, or M2c live root remained.
+- This frozen SHA now has preflight/live counts `1/0`; the preflight cannot be
+  rerun. M2c remains **BLOCKED**, M3 remains locked, and a real four-stage live
+  Mission requires separate explicit human authorization.
+
 ### Freeze and verify semantic generation provenance persistence
 
 - Froze the complete correction at
@@ -21,12 +38,13 @@
   checkout cleanup, and residual audits passed. The verification checkout was
   removed; current live pytest/AgentDeck daemon and live/tool-root counts were
   zero.
-- No Provider, preflight, live Mission, ACP, tmux, install, login, global
-  configuration, push, or merge ran. New-SHA preflight/live counts remain
-  `0/0`; historical `75f0366d...` counts remain `1/1` and cannot be reused.
-- M2c remains **BLOCKED** and M3 remains locked. The next gate is explicit
-  exact-model binding and authorization for exactly one read-only preflight on
-  the new frozen SHA.
+- At this freeze checkpoint no Provider, preflight, live Mission, ACP, tmux,
+  install, login, global configuration, push, or merge ran. New-SHA
+  preflight/live counts were then `0/0`; historical `75f0366d...` counts
+  remained `1/1` and could not be reused.
+- M2c remained **BLOCKED** and M3 remained locked. Its then-next gate was
+  explicit exact-model binding and authorization for exactly one read-only
+  preflight on the new frozen SHA.
 
 ### Discover semantic generation contracts
 
