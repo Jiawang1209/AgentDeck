@@ -1284,6 +1284,24 @@ implementation SHA and exact model id. If preflight is blocked or the model id
 is missing, report that blocker instead. M2c remains BLOCKED and M3 remains
 locked in every outcome of this implementation plan.
 
+This stop was honored. A later human message separately authorized the exact
+frozen SHA `9db5b476...`, model `gpt-5.5`, and one real four-stage attempt.
+
+- [x] **Step 12: Record the separately authorized single-live result**
+
+The opt-in live node ran exactly once and was not retried. It exited `1` with
+`1 failed in 52.39s`. The first fixed blocker was
+`leader_schema_before_preview`; the allowlisted terminal was `stage=schema`,
+`diagnostic_code=semantic_effect_conflict`, `attempt_count=2`, and
+`constraint_mode=native_json_schema`. All Plan/Mission/effect cardinalities
+were zero. The harness reported no cleanup failure, and the detached checkout,
+live root, live processes, and disposable tool mirror were removed or absent.
+
+The exception JSON was transcript-free, but pytest rendered `_PtyTail.tail`
+through the dataclass's default `repr` in its traceback. No raw bytes are
+copied into durable evidence and no fix or retry occurred. M2c stays BLOCKED
+and M3 locked pending a new approved design/TDD cycle.
+
 Verification evidence for this cycle:
 
 - frozen implementation SHA:
@@ -1292,6 +1310,7 @@ Verification evidence for this cycle:
 - full suite 2: `4219 passed, 2 skipped in 191.59s`;
 - designated preflight count: `1` (`gpt-5.5`, `ready=true`, `blockers=[]`,
   `1 passed in 4.19s`);
-- live attempt count: `0`;
+- live attempt count: `1` (`leader_schema_before_preview`,
+  `semantic_effect_conflict`, `1 failed in 52.39s`, not retried);
 - residual matching root/process count: `0`;
 - frozen-SHA status after verification: clean.

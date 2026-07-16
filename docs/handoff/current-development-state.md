@@ -2,74 +2,55 @@
 
 Updated: 2026-07-16
 
-## Active goal — M2c real four-stage live authorization gate
+## Active goal — M2c Leader schema-before-preview blocker closure
 
-Frozen commit `954b868cafc509a6a767f35930b345bbccbdf887` passed two
-independent full suites (`4155 passed, 2 skipped` in `195.15s` and `185.79s`).
-Its one designated read-only preflight passed in `3.05s` with `ready=true`,
-`blockers=[]`, Codex CLI `0.131.0`, Claude CLI `2.1.208`, Claude Agent ACP
-`0.58.1`, and tmux `3.6a`. The SHA remained unchanged through verification.
+Leader Preview observability is frozen at
+`9db5b476f885cfcf68a55cbf59673a2d908d3fce`. Its complete non-live harness
+passed `186 passed, 1 skipped in 42.69s`; two independent unchanged-SHA full
+suites passed `4219 passed, 2 skipped` in `185.64s` and `191.59s`. The one
+human-authorized read-only preflight for Leader model `gpt-5.5` passed with
+`1 passed in 4.19s`, `ready=true`, `blockers=[]`, and all four tools ready.
+That preflight must not be rerun.
 
-After separate human authorization, Task 14 executed its opt-in live pytest
-node exactly once. It exited `1` with `1 failed` in `198.95s` and was not
-retried. The first unmet gate is `stage=live_acceptance` and
-`code=mission_preview_timeout`. The durable snapshot had `plans=0`,
-`missions=0`, `mission_attempts=0`, `permission_requests=0`,
-`mission_worker_replies=0`, and `mission_handoffs=0`; the closed ledger
-classification was `permission_state_inconsistent` with every lifecycle field
-unknown and permission count zero.
+After separate explicit authorization naming the frozen SHA and model, the
+sole opt-in real four-stage node ran exactly once. It exited `1` with
+`1 failed in 52.39s` and was not retried. The first unmet gate is
+`stage=live_acceptance`, `code=leader_schema_before_preview`. The exact durable
+Leader terminal is `stage=schema`, `diagnostic_code=semantic_effect_conflict`,
+`attempt_count=2`, and `constraint_mode=native_json_schema`.
 
-The failure happened before Mission preview creation or confirmation. It did
-not reach daemon admission, ACP/tmux Worker execution, either permission
-pause, disconnect/reconnect, takeover/return-control, handoffs, lineage links,
-or artifact effects. The bounded PTY evidence is `byte_count=11`,
-`truncated=false`, and
-`sha256=066523e516460e23c045358c6736f76f2fecd1022157b11c679ae69715c0c734`;
-that hash is identity evidence only and does not explain terminal or model
-behavior. The historical result remains only `mission_preview_timeout`; no
-new diagnosis is applied retroactively.
+The same snapshot had `plans=0`, `missions=0`, `mission_attempts=0`,
+`permission_requests=0`, `mission_worker_replies=0`, and
+`mission_handoffs=0`. Its closed ledger classification was
+`permission_state_inconsistent`, with zero permissions and unknown lifecycle
+fields. The run therefore stopped before Mission Preview creation or
+confirmation, daemon admission, ACP/tmux Worker execution, permission,
+disconnect/reconnect, takeover/return-control, handoff, lineage, or artifact
+effects. This is not a partial four-stage PASS.
 
-The harness emitted no cleanup-failure note. Post-run audit found zero matching
-live pytest/AgentDeck/tmux processes, zero `agentdeck-m2c-live-*` roots, and
-zero staged tool mirrors. HEAD remained the frozen SHA, the source/test/docs
-tree was unchanged by the live run, and the pre-existing user-owned `.omc/`
-and untracked `AGENTS.md` status was byte-identical before and after. No
-package install, login, authentication change, global permission/configuration
-change, user tmux inspection, or second live attempt occurred.
+Bounded PTY identity was `byte_count=608`, `truncated=false`, and
+`sha256=cbc80281637c6d93de32e51d883339c5095b1a38ae4c1e2c518345fa96e8560a`.
+The allowlisted failure JSON retained no terminal text. However, pytest's
+traceback rendered `_PtyTail` through its default dataclass representation and
+showed raw tail bytes in ephemeral test output; the existing deterministic
+leakage test covers `str(exception)`, not pytest report rendering. Do not copy
+those bytes into durable evidence, and do not claim transcript-safe pytest
+failure output until a separately approved TDD slice closes that boundary.
 
-The approved observability candidate is now implemented inside the M2c test
-harness. A specialized Preview wait prioritizes the exact new conversation
-turn's validated durable failed/cancelled terminal, continuously performs
-bounded PTY drain plus process polling, distinguishes PTY exit from a genuine
-no-terminal timeout, and emits only four closed Leader diagnostic fields. It
-also requires one immutable explicit `AGENTDECK_M2C_LEADER_MODEL`, exposes the
-identity in `m2c-live-preflight/v2`, writes that exact value to disposable
-config, and blocks missing, invalid, or drifted identity with no fallback.
+The harness emitted no cleanup-failure note. The frozen checkout remained
+clean; the detached checkout and disposable tool mirror were removed; audit
+found zero current-run live roots, live pytest/AgentDeck daemon processes, or
+staged mirrors. Four tmux sockets created on July 14 predated this July 16 run,
+were outside its isolated live root, and were left untouched. No install,
+login, global config/auth/permission change, user tmux inspection, or second
+live attempt occurred.
 
-The complete non-live M2c harness passes `186 passed, 1 skipped in 42.69s`;
-the skipped test is the only real four-stage live node. The implementation was
-frozen as `9db5b476f885cfcf68a55cbf59673a2d908d3fce`. Two independent full suites
-on that unchanged SHA passed with `4219 passed, 2 skipped` in `185.64s` and
-`191.59s`; HEAD stayed fixed and the worktree stayed clean.
-
-Production provider, ConversationSession, MCP, authentication, network,
-ACP/tmux, daemon, permission, Worker, and timeout behavior are unchanged. The
-human then explicitly selected Leader model `gpt-5.5` and authorized exactly
-one read-only preflight. On frozen implementation `9db5b476...`, it passed in
-`4.19s` with `schema_version=m2c-live-preflight/v2`, `ready=true`,
-`blockers=[]`, and the exact explicit model card ready. Codex CLI `0.131.0`,
-Claude CLI `2.1.208`, Claude Agent ACP `0.58.1`, and tmux `3.6a` were all ready.
-
-Preflight invocation count is exactly one and live attempt count remains zero.
-The frozen checkout stayed clean. Post-preflight cleanup and residual audit
-found zero matching temporary roots or processes; no user tmux server or
-global config/auth state was inspected or changed.
-
-M2c therefore remains **BLOCKED**, not partial PASS, and M3 remains locked.
-The next strict gate is separate human authorization for the unique real
-implementation -> review -> revision -> acceptance Mission, naming frozen SHA
-`9db5b476...` and model `gpt-5.5`. This passing preflight does not authorize
-live execution by itself.
+M2c remains **BLOCKED**, not partial PASS, and M3 remains locked. The next gate
+is a new brainstorming -> spec -> plan cycle for the exact
+`leader_schema_before_preview` / `semantic_effect_conflict` boundary and
+transcript-safe pytest reporting. Only after deterministic RED/GREEN, a new
+frozen commit, fresh full verification, a newly authorized read-only preflight,
+and separate human authorization may another single live attempt occur.
 
 ## Natural-language Mission Phase 0 baseline — accepted
 
@@ -257,7 +238,7 @@ The Task 6 quality closure also makes the hidden daemon's idle loop reload the f
 
 The final Task 6 spec closure makes offline ProjectView use the same pure time-aware lease predicate as live status: only a strictly parsed active `lse_` lease whose aware expiry is later than current UTC reports `controller_present=true`; expired, terminal, naive, and malformed facts report false without repairing or writing state. DaemonServer also owns a monotonic process-local `activity_generation`: accept and each successfully decoded protocol-valid request increment once, while close never increments. The idle loop remembers the last generation and resets `idle_since` before evaluating keepalive, so a sub-100ms client that connects and closes entirely between polls still grants a new full idle window. This counter is runtime-only, is not added to ProjectView/contracts, and is not execution authority.
 
-Historical routing note: before the Codex probe was made zero-write, the active instruction was to investigate the Task 11 `probe_wrote_files` blocker and rerun preflight before any live attempt. That instruction was completed and is no longer the active route. Frozen historical live results remain evidence only: M2c is **BLOCKED** and M3 remains locked. The approved semantic-authority and Leader Preview observability work is implemented; `9db5b476f885cfcf68a55cbf59673a2d908d3fce` passed both full suites unchanged and its single explicit-model preflight is ready. The active route is now separate human authorization for one real four-stage attempt naming that SHA and `gpt-5.5`; no live attempt is currently authorized. A2A Client/Server, remote daemon, global roaming, Workspace Client, system notifications, complete transcript persistence, automatic install/auth, Windows IPC, and terminal-emulator work remain out of scope.
+Historical routing note: before the Codex probe was made zero-write, the active instruction was to investigate the Task 11 `probe_wrote_files` blocker and rerun preflight before any live attempt. That instruction was completed and is no longer the active route. Frozen historical live results remain evidence only. The approved semantic-authority and Leader Preview observability work is implemented at `9db5b476f885cfcf68a55cbf59673a2d908d3fce`, and its one explicit-model preflight passed. Its separately authorized live attempt has now run exactly once and stopped at `leader_schema_before_preview` / `semantic_effect_conflict`; neither preflight nor live may be rerun in place. The active route is the new brainstorming -> spec -> plan gate stated at the top of this file. M2c is **BLOCKED**, M3 remains locked, and A2A Client/Server, remote daemon, global roaming, Workspace Client, system notifications, complete transcript persistence, automatic install/auth, Windows IPC, and terminal-emulator work remain out of scope.
 
 The completed natural-language Mission and G-series work below is historical context only. It must not be treated as an active continuation request or redone.
 
@@ -281,7 +262,7 @@ conda run -n agentdeck pytest -q
 
 ## Current Phase
 
-Phase 0, Phase 1, Phase 2, Phase 3 M1, and Phase 3 M2 implementation Tasks 1–14 are complete and integrated into `main`. M1's final full suite was 1855 passed and 1 skipped; its deterministic and live Claude ACP/PTY evidence is `docs/validation/2026-07-13-phase3-m1-foreground-conversation.md`. M2's earlier final full suite was `2928 passed, 1 skipped`; deterministic evidence and the two-step real transport PASS are recorded in `docs/validation/2026-07-13-phase3-m2-project-daemon.md`. M2c remains **BLOCKED**, not a partial PASS; M3 remains locked. The semantic-authority implementation, Task 13 harness conversion, and Leader Preview observability candidate are frozen at `9db5b476f885cfcf68a55cbf59673a2d908d3fce` with two unchanged-SHA full-suite passes. Its one designated `gpt-5.5` preflight passed with `ready=true` and `blockers=[]`; the remaining gate is separate authorization for the unique live attempt. Earlier live and `probe_wrote_files` states are historical evidence only, not current routing.
+Phase 0, Phase 1, Phase 2, Phase 3 M1, and Phase 3 M2 implementation Tasks 1–14 are complete and integrated into `main`. M1's final full suite was 1855 passed and 1 skipped; its deterministic and live Claude ACP/PTY evidence is `docs/validation/2026-07-13-phase3-m1-foreground-conversation.md`. M2's earlier final full suite was `2928 passed, 1 skipped`; deterministic evidence and the two-step real transport PASS are recorded in `docs/validation/2026-07-13-phase3-m2-project-daemon.md`. M2c remains **BLOCKED**, not a partial PASS; M3 remains locked. The semantic-authority implementation, Task 13 harness conversion, and Leader Preview observability candidate are frozen at `9db5b476f885cfcf68a55cbf59673a2d908d3fce` with two unchanged-SHA full-suite passes. Its one designated `gpt-5.5` preflight passed with `ready=true` and `blockers=[]`; its one separately authorized live attempt stopped before Preview at `leader_schema_before_preview` / `semantic_effect_conflict` and was not retried. The remaining gate is a new approved design/TDD cycle for that exact boundary and transcript-safe pytest reporting. Earlier live and `probe_wrote_files` states are historical evidence only, not current routing.
 
 The final M2 security closure anchors audit-journal reads to the verified project state directory and implements append as a bounded 64 MiB full-content temp/fsync/identity-check/atomic-replace transaction. Symlink, non-regular, and journal-inode replacement races cannot append to the detached journal; daemon/conversation/protocol outboxes stay pending on failure and retry without duplicate events. Current writers acquire the stable project-root directory flock before the legacy filename lock, then revalidate project-root/deck/state and lock-file identities around every atomic state or journal effect. Replacing `protocol-mutation.lock` or the whole state directory after proof therefore cannot split current writers, report a detached write as success, clear the canonical outbox, or cause a canonical lost update. The explicit threat boundary is cooperative AgentDeck writers under the opened project-root inode: a same-UID process that ignores advisory locks can move open directories and cause a rejected detached-descriptor effect, while project-root replacement itself is rejected rather than recovered.
 
@@ -308,7 +289,7 @@ Please continue AgentDeck development from this repository.
 Read CLAUDE.md, AGENT.md, the top of HISTORY.md, docs/roadmap/ultimate-goal-roadmap.md, and docs/handoff/current-development-state.md first.
 Use conda activate agentdeck or conda run -n agentdeck for commands.
 Every development iteration must update HISTORY.md, run verification, and commit locally.
-Treat Phase 3 M2 Tasks 1–14 as complete. Historical live failures remain evidence only; M2c is BLOCKED and M3 remains locked. Leader Preview observability is frozen at `9db5b476f885cfcf68a55cbf59673a2d908d3fce`, passed two unchanged-SHA full suites, and its one designated `gpt-5.5` preflight passed with ready=true and blockers=[]. Do not rerun preflight. Stop before the unique real four-stage attempt unless a human separately authorizes that exact SHA and model. Never retry automatically. Do not redo M1 or earlier phases; do not merge/push, auto-install, change authentication, add A2A, remote execution, global roaming, Workspace Client, full transcript persistence, or terminal-emulator work.
+Treat Phase 3 M2 Tasks 1–14 as complete. Historical live failures remain evidence only; M2c is BLOCKED and M3 remains locked. Leader Preview observability is frozen at `9db5b476f885cfcf68a55cbf59673a2d908d3fce`, passed two unchanged-SHA full suites, and its one designated `gpt-5.5` preflight passed with ready=true and blockers=[]. Do not rerun that preflight. The separately authorized live attempt has already run exactly once and stopped at leader_schema_before_preview with diagnostic_code=semantic_effect_conflict; do not retry it. Start a new brainstorming -> spec -> plan cycle for that exact semantic boundary and transcript-safe pytest reporting before any TDD implementation, new frozen verification, new preflight authorization, or future live authorization. Do not redo M1 or earlier phases; do not merge/push, auto-install, change authentication, add A2A, remote execution, global roaming, Workspace Client, full transcript persistence, or terminal-emulator work.
 ```
 
 ## Historical development log — not active

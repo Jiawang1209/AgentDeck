@@ -1,6 +1,6 @@
 # Phase 3 M2 Project Daemon Validation
 
-Date: 2026-07-15
+Date: 2026-07-16
 
 ## Verdict
 
@@ -419,7 +419,65 @@ preflight/live pytest processes. No provider or model request, ACP session,
 tmux server, Mission, Worker, package install, login, global config/auth change,
 or user tmux inspection occurred.
 
-Preflight invocation count is exactly one; live attempt count remains zero.
-This is readiness evidence, not M2c PASS. M2c remains **BLOCKED** and M3 locked
-until a separate human authorization names frozen SHA `9db5b476...`, model
-`gpt-5.5`, and the unique real four-stage acceptance attempt.
+At this pre-live checkpoint, preflight invocation count was exactly one and
+live attempt count was zero. This was readiness evidence, not M2c PASS. The
+later separately authorized live result is recorded in the next section.
+
+## Frozen `9db5b476` single-live Leader schema evidence
+
+The human separately authorized exactly one real four-stage Mission on frozen
+implementation `9db5b476f885cfcf68a55cbf59673a2d908d3fce` with Codex Leader
+model `gpt-5.5`. A clean detached checkout and one disposable strict-basename
+tool mirror were used. `test_real_four_stage_m2c_acceptance` ran exactly once,
+exited `1`, and reported `1 failed in 52.39s`. It was not retried, and the
+designated preflight was not rerun.
+
+The first unmet gate was the fixed `stage=live_acceptance`,
+`code=leader_schema_before_preview`. The exact allowlisted Leader terminal was:
+
+- `stage=schema`;
+- `diagnostic_code=semantic_effect_conflict`;
+- `attempt_count=2`;
+- `constraint_mode=native_json_schema`.
+
+The same snapshot reported `plans=0`, `missions=0`, `mission_attempts=0`,
+`permission_requests=0`, `mission_worker_replies=0`, and
+`mission_handoffs=0`. The closed ledger was
+`classification=permission_state_inconsistent`, `permission_count=0`, an empty
+permission-state list, and unknown Mission, attempt, reply, handoff, agent, and
+transport fields. No inference is made about which semantic effects conflicted
+or why the Leader returned that diagnostic.
+
+The run stopped before Mission Preview creation or confirmation. It did not
+reach daemon admission, ACP/tmux Worker execution, either permission pause,
+disconnect/reconnect, takeover/return-control, handoff evidence, predecessor
+links, artifact effects, or final ProjectView/ledger/trace agreement. Bounded
+PTY identity was `byte_count=608`, `truncated=false`, and
+`sha256=cbc80281637c6d93de32e51d883339c5095b1a38ae4c1e2c518345fa96e8560a`.
+The bytes are not copied into this report and the hash does not explain model
+or terminal behavior.
+
+The `_LiveHarnessFailure` JSON itself contained only the allowed terminal,
+ledger, cardinality, and PTY identity fields. The actual pytest traceback also
+rendered the default `_PtyTail` dataclass representation, which exposed raw
+tail bytes in ephemeral test output. Source inspection confirmed the dataclass
+keeps `tail` in its default `repr`; the existing deterministic leakage test
+asserts only over `str(exception)`. This report retains none of those bytes and
+does not claim transcript-safe pytest failure rendering. No code fix or second
+live execution was attempted in this evidence-only slice.
+
+The harness emitted no cleanup-failure note. The frozen checkout stayed clean
+at the exact SHA. The detached checkout and disposable mirror were removed;
+post-run audit found zero `agentdeck-m2c-live-*` roots, current-run tool mirrors,
+live pytest processes, or AgentDeck daemon processes. Four tmux sockets born on
+July 14 predated this July 16 run, lived outside the disposable live root, and
+were left untouched. No package install, login, authentication, global
+configuration/permission change, user tmux inspection, or retry occurred.
+
+The honest verdict remains **BLOCKED**, not PASS, and M3 remains locked. The
+next gate is a new brainstorming -> spec -> plan cycle for the exact
+`leader_schema_before_preview` / `semantic_effect_conflict` boundary and the
+pytest-report leakage boundary. Any future live attempt requires deterministic
+RED/GREEN closure, a new frozen commit, fresh full verification, one newly
+authorized `ready=true` / `blockers=[]` preflight, and separate human
+authorization. The prior two-step real transport PASS is not promoted.

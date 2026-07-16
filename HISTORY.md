@@ -4,6 +4,15 @@
 
 ## 2026-07-16
 
+### Record the frozen M2c Leader schema-before-preview blocker
+
+- After explicit human authorization naming frozen implementation `9db5b476f885cfcf68a55cbf59673a2d908d3fce` and Leader model `gpt-5.5`, ran `test_real_four_stage_m2c_acceptance` exactly once from a clean detached checkout. It exited `1` with `1 failed in 52.39s` and was not retried.
+- The first unmet gate was fixed `stage=live_acceptance`, `code=leader_schema_before_preview`. The validated durable Leader terminal reported only `stage=schema`, `diagnostic_code=semantic_effect_conflict`, `attempt_count=2`, and `constraint_mode=native_json_schema`. The same snapshot had zero plans, Missions, attempts, permissions, replies, and handoffs; its closed ledger classification was `permission_state_inconsistent` with zero permissions and unknown lifecycle fields.
+- The failure occurred before Mission Preview creation or confirmation, daemon admission, ACP/tmux Worker execution, either permission pause, disconnect/reconnect, takeover/return-control, handoff, lineage, or artifact effects. Bounded PTY identity was `byte_count=608`, `truncated=false`, `sha256=cbc80281637c6d93de32e51d883339c5095b1a38ae4c1e2c518345fa96e8560a`; no PTY text is copied into durable evidence.
+- The allowlisted `_LiveHarnessFailure` JSON was transcript-free, but pytest's traceback rendered the default `_PtyTail` dataclass representation and thereby exposed raw tail bytes in the ephemeral test output. The existing deterministic leakage test covers `str(exception)`, not pytest report rendering. No fix was attempted in this evidence-only slice.
+- The harness emitted no cleanup-failure note. The frozen checkout stayed clean, and post-run cleanup removed the detached checkout and disposable tool mirror; audit found zero live roots, live pytest/AgentDeck daemon processes, or current-run staged mirrors. Four unrelated tmux sockets were created on July 14 outside the isolated live root and were left untouched. No install, login, global config/auth/permission change, user tmux inspection, or second live attempt occurred.
+- M2c remains **BLOCKED**, not partial PASS, and M3 remains locked. The next gate is a new brainstorming -> spec -> plan cycle for the exact `leader_schema_before_preview` / `semantic_effect_conflict` boundary, including transcript-safe pytest reporting, followed by deterministic RED/GREEN, a new frozen commit, fresh full verification, a new separately authorized read-only preflight, and separate authorization before any future live attempt.
+
 ### Pass the frozen M2c explicit-model preflight
 
 - After explicit human selection of Leader model `gpt-5.5` and authorization for one read-only preflight, ran the designated node exactly once from detached frozen implementation `9db5b476f885cfcf68a55cbf59673a2d908d3fce`.
