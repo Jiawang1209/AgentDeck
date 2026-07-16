@@ -4,6 +4,14 @@
 
 ## 2026-07-16
 
+### Design M2c semantic target exclusivity and pytest redaction
+
+- Approved the north-star rule that any target already present in required semantic authority is exclusively required-owned across the complete Candidate, independent of phase, Worker, kind, or operation. Leader steps must use `authority_refs` for that target; only genuinely new, Mission-wide unique targets may enter `proposed_effects` for explicit Preview confirmation.
+- Replaced the future umbrella target-conflict emission with two precise closed codes: `semantic_required_target_reproposed` and `semantic_proposal_target_duplicate`. Historical `semantic_effect_conflict` remains readable without migration. The same CLI/API Leader receives at most one code-specific static correction with the same model, schema, authority, Workers, roles, and deadline; AgentDeck never repairs or filters the Candidate locally.
+- Approved transcript-safe pytest reporting as part of the acceptance boundary. `_PtyTail.tail` remains bounded process-local data but must be excluded from default dataclass `repr`; a nested default-pytest regression must prove hostile PTY markers never appear in stdout/stderr while closed byte-count/truncation/hash evidence remains observable.
+- Froze the implementation scope away from extractor, compiler, confirmation, ACP, tmux, daemon, permission, handoff, model, MCP, timeout, login, and fallback behavior. Implementation requires deterministic RED/GREEN, focused/non-live M2c verification, one frozen SHA, two unchanged-SHA full suites, and a stop. Any new read-only preflight and any later live Mission require separate human authorization; M2c remains **BLOCKED** and M3 locked.
+- Wrote the human-approved formal specification at `docs/superpowers/specs/2026-07-16-m2c-semantic-conflict-and-pytest-redaction-design.md`. This documentation slice runs no tests, provider, preflight, ACP/tmux Worker, or live Mission and changes no production behavior.
+
 ### Record the frozen M2c Leader schema-before-preview blocker
 
 - After explicit human authorization naming frozen implementation `9db5b476f885cfcf68a55cbf59673a2d908d3fce` and Leader model `gpt-5.5`, ran `test_real_four_stage_m2c_acceptance` exactly once from a clean detached checkout. It exited `1` with `1 failed in 52.39s` and was not retried.

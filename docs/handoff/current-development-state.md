@@ -2,7 +2,20 @@
 
 Updated: 2026-07-16
 
-## Active goal — M2c Leader schema-before-preview blocker closure
+## Active goal — review M2c semantic-conflict/redaction written spec
+
+The human-approved design is now written at
+`docs/superpowers/specs/2026-07-16-m2c-semantic-conflict-and-pytest-redaction-design.md`.
+It selects required-target exclusivity, Mission-wide unique proposed targets,
+two precise closed codes, one same-Leader code-specific regeneration, and
+default-pytest transcript-safe reporting. The immediate gate is human review of
+that written spec. After approval, use `writing-plans` to produce a detailed
+TDD implementation plan; do not implement before the plan is reviewed.
+
+No preflight or live authorization carries forward. M2c remains **BLOCKED** and
+M3 remains locked.
+
+## Latest frozen evidence
 
 Leader Preview observability is frozen at
 `9db5b476f885cfcf68a55cbf59673a2d908d3fce`. Its complete non-live harness
@@ -45,12 +58,12 @@ were outside its isolated live root, and were left untouched. No install,
 login, global config/auth/permission change, user tmux inspection, or second
 live attempt occurred.
 
-M2c remains **BLOCKED**, not partial PASS, and M3 remains locked. The next gate
-is a new brainstorming -> spec -> plan cycle for the exact
-`leader_schema_before_preview` / `semantic_effect_conflict` boundary and
-transcript-safe pytest reporting. Only after deterministic RED/GREEN, a new
-frozen commit, fresh full verification, a newly authorized read-only preflight,
-and separate human authorization may another single live attempt occur.
+M2c remains **BLOCKED**, not partial PASS, and M3 remains locked. The
+brainstorming and segmented design for this exact boundary are now complete;
+the active gate is review of the written spec named above. Only after spec
+approval, a detailed TDD plan, deterministic RED/GREEN, a new frozen commit,
+fresh full verification, a newly authorized read-only preflight, and separate
+human authorization may another single live attempt occur.
 
 ## Natural-language Mission Phase 0 baseline — accepted
 
@@ -238,7 +251,7 @@ The Task 6 quality closure also makes the hidden daemon's idle loop reload the f
 
 The final Task 6 spec closure makes offline ProjectView use the same pure time-aware lease predicate as live status: only a strictly parsed active `lse_` lease whose aware expiry is later than current UTC reports `controller_present=true`; expired, terminal, naive, and malformed facts report false without repairing or writing state. DaemonServer also owns a monotonic process-local `activity_generation`: accept and each successfully decoded protocol-valid request increment once, while close never increments. The idle loop remembers the last generation and resets `idle_since` before evaluating keepalive, so a sub-100ms client that connects and closes entirely between polls still grants a new full idle window. This counter is runtime-only, is not added to ProjectView/contracts, and is not execution authority.
 
-Historical routing note: before the Codex probe was made zero-write, the active instruction was to investigate the Task 11 `probe_wrote_files` blocker and rerun preflight before any live attempt. That instruction was completed and is no longer the active route. Frozen historical live results remain evidence only. The approved semantic-authority and Leader Preview observability work is implemented at `9db5b476f885cfcf68a55cbf59673a2d908d3fce`, and its one explicit-model preflight passed. Its separately authorized live attempt has now run exactly once and stopped at `leader_schema_before_preview` / `semantic_effect_conflict`; neither preflight nor live may be rerun in place. The active route is the new brainstorming -> spec -> plan gate stated at the top of this file. M2c is **BLOCKED**, M3 remains locked, and A2A Client/Server, remote daemon, global roaming, Workspace Client, system notifications, complete transcript persistence, automatic install/auth, Windows IPC, and terminal-emulator work remain out of scope.
+Historical routing note: before the Codex probe was made zero-write, the active instruction was to investigate the Task 11 `probe_wrote_files` blocker and rerun preflight before any live attempt. That instruction was completed and is no longer the active route. Frozen historical live results remain evidence only. The approved semantic-authority and Leader Preview observability work is implemented at `9db5b476f885cfcf68a55cbf59673a2d908d3fce`, and its one explicit-model preflight passed. Its separately authorized live attempt has now run exactly once and stopped at `leader_schema_before_preview` / `semantic_effect_conflict`; neither preflight nor live may be rerun in place. The active route is written-spec review, followed only after approval by `writing-plans`, as stated at the top of this file. M2c is **BLOCKED**, M3 remains locked, and A2A Client/Server, remote daemon, global roaming, Workspace Client, system notifications, complete transcript persistence, automatic install/auth, Windows IPC, and terminal-emulator work remain out of scope.
 
 The completed natural-language Mission and G-series work below is historical context only. It must not be treated as an active continuation request or redone.
 
@@ -262,7 +275,7 @@ conda run -n agentdeck pytest -q
 
 ## Current Phase
 
-Phase 0, Phase 1, Phase 2, Phase 3 M1, and Phase 3 M2 implementation Tasks 1–14 are complete and integrated into `main`. M1's final full suite was 1855 passed and 1 skipped; its deterministic and live Claude ACP/PTY evidence is `docs/validation/2026-07-13-phase3-m1-foreground-conversation.md`. M2's earlier final full suite was `2928 passed, 1 skipped`; deterministic evidence and the two-step real transport PASS are recorded in `docs/validation/2026-07-13-phase3-m2-project-daemon.md`. M2c remains **BLOCKED**, not a partial PASS; M3 remains locked. The semantic-authority implementation, Task 13 harness conversion, and Leader Preview observability candidate are frozen at `9db5b476f885cfcf68a55cbf59673a2d908d3fce` with two unchanged-SHA full-suite passes. Its one designated `gpt-5.5` preflight passed with `ready=true` and `blockers=[]`; its one separately authorized live attempt stopped before Preview at `leader_schema_before_preview` / `semantic_effect_conflict` and was not retried. The remaining gate is a new approved design/TDD cycle for that exact boundary and transcript-safe pytest reporting. Earlier live and `probe_wrote_files` states are historical evidence only, not current routing.
+Phase 0, Phase 1, Phase 2, Phase 3 M1, and Phase 3 M2 implementation Tasks 1–14 are complete and integrated into `main`. M1's final full suite was 1855 passed and 1 skipped; its deterministic and live Claude ACP/PTY evidence is `docs/validation/2026-07-13-phase3-m1-foreground-conversation.md`. M2's earlier final full suite was `2928 passed, 1 skipped`; deterministic evidence and the two-step real transport PASS are recorded in `docs/validation/2026-07-13-phase3-m2-project-daemon.md`. M2c remains **BLOCKED**, not a partial PASS; M3 remains locked. The semantic-authority implementation, Task 13 harness conversion, and Leader Preview observability candidate are frozen at `9db5b476f885cfcf68a55cbf59673a2d908d3fce` with two unchanged-SHA full-suite passes. Its one designated `gpt-5.5` preflight passed with `ready=true` and `blockers=[]`; its one separately authorized live attempt stopped before Preview at `leader_schema_before_preview` / `semantic_effect_conflict` and was not retried. The approved target-exclusivity and pytest-redaction design is written; the remaining gate is human review of that spec before `writing-plans`. Earlier live and `probe_wrote_files` states are historical evidence only, not current routing.
 
 The final M2 security closure anchors audit-journal reads to the verified project state directory and implements append as a bounded 64 MiB full-content temp/fsync/identity-check/atomic-replace transaction. Symlink, non-regular, and journal-inode replacement races cannot append to the detached journal; daemon/conversation/protocol outboxes stay pending on failure and retry without duplicate events. Current writers acquire the stable project-root directory flock before the legacy filename lock, then revalidate project-root/deck/state and lock-file identities around every atomic state or journal effect. Replacing `protocol-mutation.lock` or the whole state directory after proof therefore cannot split current writers, report a detached write as success, clear the canonical outbox, or cause a canonical lost update. The explicit threat boundary is cooperative AgentDeck writers under the opened project-root inode: a same-UID process that ignores advisory locks can move open directories and cause a rejected detached-descriptor effect, while project-root replacement itself is rejected rather than recovered.
 
@@ -289,7 +302,7 @@ Please continue AgentDeck development from this repository.
 Read CLAUDE.md, AGENT.md, the top of HISTORY.md, docs/roadmap/ultimate-goal-roadmap.md, and docs/handoff/current-development-state.md first.
 Use conda activate agentdeck or conda run -n agentdeck for commands.
 Every development iteration must update HISTORY.md, run verification, and commit locally.
-Treat Phase 3 M2 Tasks 1–14 as complete. Historical live failures remain evidence only; M2c is BLOCKED and M3 remains locked. Leader Preview observability is frozen at `9db5b476f885cfcf68a55cbf59673a2d908d3fce`, passed two unchanged-SHA full suites, and its one designated `gpt-5.5` preflight passed with ready=true and blockers=[]. Do not rerun that preflight. The separately authorized live attempt has already run exactly once and stopped at leader_schema_before_preview with diagnostic_code=semantic_effect_conflict; do not retry it. Start a new brainstorming -> spec -> plan cycle for that exact semantic boundary and transcript-safe pytest reporting before any TDD implementation, new frozen verification, new preflight authorization, or future live authorization. Do not redo M1 or earlier phases; do not merge/push, auto-install, change authentication, add A2A, remote execution, global roaming, Workspace Client, full transcript persistence, or terminal-emulator work.
+Treat Phase 3 M2 Tasks 1–14 as complete. Historical live failures remain evidence only; M2c is BLOCKED and M3 remains locked. Leader Preview observability is frozen at `9db5b476f885cfcf68a55cbf59673a2d908d3fce`, passed two unchanged-SHA full suites, and its one designated `gpt-5.5` preflight passed with ready=true and blockers=[]. Do not rerun that preflight. The separately authorized live attempt has already run exactly once and stopped at leader_schema_before_preview with diagnostic_code=semantic_effect_conflict; do not retry it. Review `docs/superpowers/specs/2026-07-16-m2c-semantic-conflict-and-pytest-redaction-design.md`; after explicit approval, use writing-plans before any TDD implementation. No model/preflight/live authorization carries forward. Do not redo M1 or earlier phases; do not merge/push, auto-install, change authentication, add A2A, remote execution, global roaming, Workspace Client, full transcript persistence, or terminal-emulator work.
 ```
 
 ## Historical development log — not active
