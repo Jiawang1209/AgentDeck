@@ -4,6 +4,35 @@
 
 ## 2026-07-16
 
+### Harden semantic regeneration leakage coverage
+
+- Strengthened fake-only API, Codex CLI, and Claude CLI regeneration tests with
+  independent Candidate-only summary, verification, and genuinely new target
+  markers. The duplicate-proposal fixture now uses
+  `candidate-only-notes-secret.md`, which appears in neither required authority
+  nor the valid replacement Candidate; the required-target fixture uses a
+  separate Candidate-only verification fragment because `artifact.txt`
+  correctly remains visible in compact authority.
+- Added ignored API envelope and native stdout/stderr markers, plus an ignored
+  Claude result-envelope marker. Successful retry tests prove none enters the
+  second prompt; repeated and different-second-failure tests prove none enters
+  terminal exception `repr`, `vars`, or `str`. The exact initial ownership-rule
+  test now covers OpenAI-compatible, Codex CLI, and Claude CLI prompts.
+- Mutation sensitivity temporarily injected `candidate-only-notes-secret.md`
+  into the OpenAI-compatible retry prompt. The focused duplicate-target node
+  failed at the intended local-marker assertion with
+  `1 failed, 225 deselected in 0.97s`; after restoring safe production code and
+  confirming no `src/agentdeck` diff, the same node passed with
+  `1 passed, 225 deselected in 0.76s`. The unsafe mutation was never staged or
+  committed.
+- Focused safe coverage passed `19 passed, 207 deselected in 2.13s`; full
+  `tests/test_leader_cli.py` passed `226 tests in 10.58s`; the prior four-file
+  semantic, Leader CLI, Leader plan schema, and structured-output regression
+  passed `740 in 10.77s`. All commands used `PYTHONPATH=src conda run
+  --no-capture-output -n agentdeck python -m pytest ...`.
+- This review closure changes tests and history only. No Provider, network,
+  preflight, ACP/tmux Worker, opt-in live test, push, or merge ran.
+
 ### Correct required-target diagnostic precedence
 
 - Made `semantic_required_target_reproposed` globally precede

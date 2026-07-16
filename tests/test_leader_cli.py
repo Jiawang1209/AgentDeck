@@ -31,6 +31,18 @@ from agentdeck.semantic_planning import compile_worker_task
 
 
 EXPECTED_CONTROL_REGISTRY_ITEM_COUNT = 129
+FIRST_CONFLICT_CANDIDATE_SECRET = "FIRST_CONFLICT_CANDIDATE_SECRET"
+REQUIRED_TARGET_VERIFICATION_SECRET = "REQUIRED_TARGET_VERIFICATION_SECRET"
+CANDIDATE_ONLY_PROPOSAL_TARGET = "candidate-only-notes-secret.md"
+DUPLICATE_TARGET_VERIFICATION_SECRET = "DUPLICATE_TARGET_VERIFICATION_SECRET"
+API_RAW_ENVELOPE_SECRET = "API_RAW_ENVELOPE_SECRET"
+NATIVE_IGNORED_OUTPUT_SECRET = "NATIVE_IGNORED_OUTPUT_SECRET"
+CANDIDATE_ONLY_LEAK_MARKERS = (
+    FIRST_CONFLICT_CANDIDATE_SECRET,
+    REQUIRED_TARGET_VERIFICATION_SECRET,
+    CANDIDATE_ONLY_PROPOSAL_TARGET,
+    DUPLICATE_TARGET_VERIFICATION_SECRET,
+)
 
 
 class FakeTmuxBackend:
@@ -183,20 +195,22 @@ def semantic_candidate_with_required_target_proposal() -> dict[str, object]:
             "sensitivity": "ordinary",
         }
     ]
-    value["summary"] = "FIRST_CONFLICT_CANDIDATE_SECRET"
+    value["summary"] = FIRST_CONFLICT_CANDIDATE_SECRET
+    value["steps"][0]["verification"] = REQUIRED_TARGET_VERIFICATION_SECRET
     return value
 
 
 def semantic_candidate_with_duplicate_new_target() -> dict[str, object]:
     value = semantic_cli_candidate()
     proposal = {
-        "target": "notes.md",
+        "target": CANDIDATE_ONLY_PROPOSAL_TARGET,
         "operation": "create",
         "sensitivity": "ordinary",
     }
     value["steps"][0]["proposed_effects"] = [dict(proposal)]
     value["steps"][1]["proposed_effects"] = [dict(proposal)]
-    value["summary"] = "FIRST_CONFLICT_CANDIDATE_SECRET"
+    value["summary"] = FIRST_CONFLICT_CANDIDATE_SECRET
+    value["steps"][0]["verification"] = DUPLICATE_TARGET_VERIFICATION_SECRET
     return value
 
 
@@ -213,17 +227,25 @@ def semantic_cli_request(config) -> LeaderPlanRequest:
 
 
 class SemanticApiResponse:
-    def __init__(self, candidate: dict[str, object]) -> None:
-        self.payload = json.dumps(
-            {
-                "choices": [
-                    {
-                        "message": {
-                            "content": json.dumps(candidate, ensure_ascii=False)
-                        }
+    def __init__(
+        self,
+        candidate: dict[str, object],
+        *,
+        raw_marker: str | None = None,
+    ) -> None:
+        response = {
+            "choices": [
+                {
+                    "message": {
+                        "content": json.dumps(candidate, ensure_ascii=False)
                     }
-                ]
-            },
+                }
+            ]
+        }
+        if raw_marker is not None:
+            response["ignored_provider_fragment"] = raw_marker
+        self.payload = json.dumps(
+            response,
             ensure_ascii=False,
         ).encode("utf-8")
         self.offset = 0
@@ -249,6 +271,7 @@ def test_semantic_provider_initial_prompts_share_target_ownership_rules(
     prompts = [
         OpenAICompatibleProvider()._system_prompt(request),
         CodexCliProvider()._prompt(request),
+        ClaudeCliProvider()._prompt(request),
     ]
 
     for prompt in prompts:
@@ -416,13 +439,17 @@ def test_api_semantic_target_conflict_regenerates_with_static_guidance(
     monkeypatch.setenv("AGENTDECK_LEADER_API_KEY", "test-key")
 
     def fake_urlopen(http_request, timeout):
+        call_index = len(calls)
         calls.append(
             {
                 "body": json.loads(http_request.data.decode("utf-8")),
                 "timeout": timeout,
             }
         )
-        return SemanticApiResponse(candidates[len(calls) - 1])
+        return SemanticApiResponse(
+            candidates[call_index],
+            raw_marker=API_RAW_ENVELOPE_SECRET if call_index == 0 else None,
+        )
 
     monkeypatch.setattr(
         "agentdeck.providers.openai_compatible.request.urlopen", fake_urlopen
@@ -450,7 +477,8 @@ def test_api_semantic_target_conflict_regenerates_with_static_guidance(
     assert expected_code not in json.dumps(first_messages)
     assert expected_code in json.dumps(second_messages)
     assert expected_guidance in json.dumps(second_messages)
-    assert "FIRST_CONFLICT_CANDIDATE_SECRET" not in json.dumps(second_messages)
+    for marker in (*CANDIDATE_ONLY_LEAK_MARKERS, API_RAW_ENVELOPE_SECRET):
+        assert marker not in json.dumps(second_messages)
     assert json.dumps(candidates[0], ensure_ascii=False) not in json.dumps(
         second_messages, ensure_ascii=False
     )
@@ -489,7 +517,9 @@ def test_api_semantic_repeated_target_conflict_stops_after_second_attempt(
     def fake_urlopen(_http_request, timeout):
         nonlocal calls
         calls += 1
-        return SemanticApiResponse(candidate_factory())
+        return SemanticApiResponse(
+            candidate_factory(), raw_marker=API_RAW_ENVELOPE_SECRET
+        )
 
     monkeypatch.setattr(
         "agentdeck.providers.openai_compatible.request.urlopen", fake_urlopen
@@ -502,6 +532,14 @@ def test_api_semantic_repeated_target_conflict_stops_after_second_attempt(
     assert raised.value.stage == "schema"
     assert raised.value.diagnostic_code == expected_code
     assert raised.value.attempt_count == 2
+    terminal = (
+        repr(raised.value)
+        + repr(vars(raised.value))
+        + repr(raised.value.args)
+        + str(raised.value)
+    )
+    for marker in (*CANDIDATE_ONLY_LEAK_MARKERS, API_RAW_ENVELOPE_SECRET):
+        assert marker not in terminal
 
 
 @pytest.mark.parametrize(
@@ -526,7 +564,9 @@ def test_api_semantic_second_failure_preserves_true_diagnostic(
     def fake_urlopen(_http_request, timeout):
         nonlocal calls
         calls += 1
-        return SemanticApiResponse(candidates[calls - 1])
+        return SemanticApiResponse(
+            candidates[calls - 1], raw_marker=API_RAW_ENVELOPE_SECRET
+        )
 
     monkeypatch.setattr(
         "agentdeck.providers.openai_compatible.request.urlopen", fake_urlopen
@@ -542,6 +582,14 @@ def test_api_semantic_second_failure_preserves_true_diagnostic(
         == "semantic_candidate_missing_requirement"
     )
     assert raised.value.attempt_count == 2
+    terminal = (
+        repr(raised.value)
+        + repr(vars(raised.value))
+        + repr(raised.value.args)
+        + str(raised.value)
+    )
+    for marker in (*CANDIDATE_ONLY_LEAK_MARKERS, API_RAW_ENVELOPE_SECRET):
+        assert marker not in terminal
 
 
 def test_api_semantic_generation_freezes_effective_provider_identity(
@@ -2321,10 +2369,16 @@ def test_native_cli_semantic_target_conflict_regenerates_with_static_guidance(
                         "subtype": "success",
                         "is_error": False,
                         "structured_output": candidate,
+                        "ignored_provider_fragment": NATIVE_IGNORED_OUTPUT_SECRET,
                     }
                 ).encode("utf-8")
             )
-        return subprocess.CompletedProcess(command, 0)
+        return subprocess.CompletedProcess(
+            command,
+            0,
+            stdout=NATIVE_IGNORED_OUTPUT_SECRET,
+            stderr=NATIVE_IGNORED_OUTPUT_SECRET,
+        )
 
     monkeypatch.setattr(
         "agentdeck.providers.cli_subprocess.subprocess.run", fake_run
@@ -2357,7 +2411,8 @@ def test_native_cli_semantic_target_conflict_regenerates_with_static_guidance(
     assert expected_code not in first_prompt
     assert expected_code in second_prompt
     assert expected_guidance in second_prompt
-    assert "FIRST_CONFLICT_CANDIDATE_SECRET" not in second_prompt
+    for marker in (*CANDIDATE_ONLY_LEAK_MARKERS, NATIVE_IGNORED_OUTPUT_SECRET):
+        assert marker not in second_prompt
     assert json.dumps(candidates[0], ensure_ascii=False) not in second_prompt
     assert result.semantic_diagnostics == (
         {
@@ -2411,10 +2466,16 @@ def test_native_cli_semantic_repeated_target_conflict_stops_after_second_attempt
                         "subtype": "success",
                         "is_error": False,
                         "structured_output": candidate,
+                        "ignored_provider_fragment": NATIVE_IGNORED_OUTPUT_SECRET,
                     }
                 ).encode("utf-8")
             )
-        return subprocess.CompletedProcess(command, 0)
+        return subprocess.CompletedProcess(
+            command,
+            0,
+            stdout=NATIVE_IGNORED_OUTPUT_SECRET,
+            stderr=NATIVE_IGNORED_OUTPUT_SECRET,
+        )
 
     monkeypatch.setattr(
         "agentdeck.providers.cli_subprocess.subprocess.run", fake_run
@@ -2427,6 +2488,14 @@ def test_native_cli_semantic_repeated_target_conflict_stops_after_second_attempt
     assert raised.value.stage == "schema"
     assert raised.value.diagnostic_code == expected_code
     assert raised.value.attempt_count == 2
+    terminal = (
+        repr(raised.value)
+        + repr(vars(raised.value))
+        + repr(raised.value.args)
+        + str(raised.value)
+    )
+    for marker in (*CANDIDATE_ONLY_LEAK_MARKERS, NATIVE_IGNORED_OUTPUT_SECRET):
+        assert marker not in terminal
 
 
 @pytest.mark.parametrize("provider_class", [CodexCliProvider, ClaudeCliProvider])
@@ -2467,10 +2536,16 @@ def test_native_cli_semantic_second_failure_preserves_true_diagnostic(
                         "subtype": "success",
                         "is_error": False,
                         "structured_output": candidate,
+                        "ignored_provider_fragment": NATIVE_IGNORED_OUTPUT_SECRET,
                     }
                 ).encode("utf-8")
             )
-        return subprocess.CompletedProcess(command, 0)
+        return subprocess.CompletedProcess(
+            command,
+            0,
+            stdout=NATIVE_IGNORED_OUTPUT_SECRET,
+            stderr=NATIVE_IGNORED_OUTPUT_SECRET,
+        )
 
     monkeypatch.setattr(
         "agentdeck.providers.cli_subprocess.subprocess.run", fake_run
@@ -2486,6 +2561,14 @@ def test_native_cli_semantic_second_failure_preserves_true_diagnostic(
         == "semantic_candidate_missing_requirement"
     )
     assert raised.value.attempt_count == 2
+    terminal = (
+        repr(raised.value)
+        + repr(vars(raised.value))
+        + repr(raised.value.args)
+        + str(raised.value)
+    )
+    for marker in (*CANDIDATE_ONLY_LEAK_MARKERS, NATIVE_IGNORED_OUTPUT_SECRET):
+        assert marker not in terminal
 
 
 def test_native_cli_semantic_double_failure_is_sanitized_and_bounded(
