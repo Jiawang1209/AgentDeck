@@ -582,19 +582,22 @@ Evidence:
 - new `7a76ada...` preflight/live counts: `0/0`;
 - M2c: **BLOCKED**; M3: locked.
 
-- [ ] **Step 2: Commit evidence separately**
+- [x] **Step 2: Commit evidence separately**
 
 ```bash
 git add \
   docs/validation/2026-07-13-phase3-m2-project-daemon.md \
   docs/handoff/current-development-state.md \
   HISTORY.md \
+  docs/superpowers/specs/2026-07-16-m2c-native-schema-provenance-persistence-design.md \
   docs/superpowers/plans/2026-07-16-m2c-native-schema-provenance-persistence.md
 git diff --cached --check
 git commit -m "docs: record M2c provenance persistence verification"
 ```
 
 The evidence commit is not implementation authority.
+Recorded as `40e900b3` after the frozen implementation and verification
+evidence were complete.
 
 - [x] **Step 3: Stop at new authorization gate**
 
