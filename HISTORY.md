@@ -4,6 +4,22 @@
 
 ## 2026-07-16
 
+### Plan semantic native-schema provenance persistence
+
+- Wrote a task-by-task TDD plan for the approved semantic
+  `leader_generation` persistence correction at
+  `docs/superpowers/plans/2026-07-16-m2c-native-schema-provenance-persistence.md`.
+- The plan requires two observed RED paths—direct semantic native preview and
+  natural-language semantic preview—plus a malformed-generation zero-write
+  regression before deleting only the stale `leader_generation = None` block.
+- It freezes plan-hash and confirmation invariants, requires independent
+  spec/code review, complete non-live M2c verification, two full suites on one
+  unchanged SHA, separate evidence commit, and a stop before any new
+  preflight/live authorization.
+- This planning-only slice runs no test, provider, preflight, live Mission,
+  ACP, tmux, push, merge, install, login, or global configuration change. M2c
+  remains **BLOCKED** and M3 remains locked.
+
 ### Draft semantic native-schema provenance persistence design
 
 - Approved the minimal correction direction for the single live
