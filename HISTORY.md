@@ -4,6 +4,29 @@
 
 ## 2026-07-16
 
+### Draft semantic native-schema provenance persistence design
+
+- Approved the minimal correction direction for the single live
+  `native_schema_provenance_missing` blocker: preserve the exact
+  `leader_generation` envelope after existing semantic validation and pass it
+  into the canonical plan record instead of replacing it with `None`.
+- Rejected StateStore reconstruction, Mission-only provenance, and live-gate
+  relaxation because each creates a second authority, leaves plan provenance
+  incomplete, or manufactures a false PASS.
+- Froze invariants: plan hash and semantic confirmation facts remain unchanged;
+  malformed or secret-bearing generation remains zero-write and transcript-safe;
+  no Provider, schema, model, timeout, daemon, ACP/tmux, permission, handoff,
+  artifact, cleanup, login, install, or fallback behavior changes.
+- Required deterministic RED coverage for semantic native preview persistence,
+  natural-language session persistence, ProjectView/trace projection, hash
+  stability, and malformed-input zero-write behavior before the one-line
+  production correction.
+- Wrote the formal design at
+  `docs/superpowers/specs/2026-07-16-m2c-native-schema-provenance-persistence-design.md`.
+  This documentation-only slice runs no test, provider, preflight, live Mission,
+  ACP, tmux, push, merge, install, login, or global configuration change. M2c
+  remains **BLOCKED** and M3 remains locked.
+
 ### Record the single M2c native-schema provenance blocker
 
 - Executed the separately authorized real four-stage M2c node exactly once on
