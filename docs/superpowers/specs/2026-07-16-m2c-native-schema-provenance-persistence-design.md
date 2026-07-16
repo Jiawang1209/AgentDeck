@@ -2,13 +2,16 @@
 
 **Date:** 2026-07-16
 
-**Status:** Human-approved revised design
+**Status:** Implemented, independently reviewed, and frozen after verification
 
 **Milestone:** Phase 3 M2c live-acceptance blocker closure
 
 **Failure authority:** frozen implementation
 `75f0366d4d5619b29c77f10949365f43d46185b1`, preflight evidence commit
 `e53d493f`, live blocker evidence commit `e2a0f980`
+
+**Corrective implementation authority:**
+`7a76ada81938be3ba0720a7c2f5a540b4beebb3e`
 
 **North star:** `docs/roadmap/product-north-star.md`
 

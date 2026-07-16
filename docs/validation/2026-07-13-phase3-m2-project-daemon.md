@@ -6,6 +6,35 @@ Date: 2026-07-16
 
 **Deterministic M2 acceptance: PASS. Two-step real transport rehearsal: PASS. Full approved four-stage M2c rehearsal: BLOCKED.**
 
+## Frozen native-schema provenance persistence candidate
+
+The correction is frozen at
+`7a76ada81938be3ba0720a7c2f5a540b4beebb3e`. It preserves semantic
+`leader_generation`, enforces strict ordinary-nine / semantic-eleven durable
+and public contract shapes, distinguishes ordinary and semantic native schema
+families, and validates generation authority against the proposal-stripped
+required/input authority. ProjectView's compact semantic card continues to hash
+the complete compiled output authority, so a legal proposal can make the two
+hashes intentionally different.
+
+Frozen verification evidence:
+
+- focused Mission/Conversation: `211 passed in 5.77s`;
+- Provider/contracts/non-live M2c: `1125 passed, 1 skipped in 56.32s`;
+- spec review: compliant;
+- quality review: Ready with no findings;
+- full suite 1: `4283 passed, 2 skipped in 194.36s`;
+- full suite 2: `4283 passed, 2 skipped in 203.12s`;
+- compile/diff/scope/marker audits: PASS;
+- detached checkout removed; current live process/root residuals: zero.
+
+No Provider, preflight, live Mission, ACP, tmux, install, login, global
+configuration, push, or merge ran. For this new SHA, preflight/live counts are
+exactly `0/0`. M2c remains **BLOCKED**, M3 remains locked, and the next gate is
+new explicit exact-model selection/binding plus one read-only preflight
+authorization. The historical `75f0366d...` preflight/live counts remain
+exactly `1/1` and neither may be rerun.
+
 ## Frozen semantic-conflict closure candidate
 
 The target-exclusivity and pytest-report-redaction implementation is frozen at
@@ -62,12 +91,12 @@ worktree remained clean and current-run process matches were zero. A
 
 The live count for this SHA is now exactly `1`; it must not be rerun. This
 evidence is not M2c PASS. M2c remains **BLOCKED** and M3 remains locked.
-Read-only root-cause inspection found that the semantic preview path validates
-the native-schema `leader_generation` envelope and then explicitly replaces it
-with `None` before `build_plan_record()`. Existing native provenance tests cover
-only non-semantic previews. The next gate is deterministic RED/GREEN for this
-exact persistence boundary, followed by a new frozen SHA and new authorization
-cycle.
+Read-only root-cause inspection found that the semantic preview path validated
+the native-schema `leader_generation` envelope and then explicitly replaced it
+with `None` before `build_plan_record()`. That persistence boundary is now
+closed by frozen implementation `7a76ada81938be3ba0720a7c2f5a540b4beebb3e`;
+the next gate is exact Leader-model binding plus authorization for exactly one
+read-only preflight on that new SHA.
 
 ## Historical semantic-authority harness conversion checkpoint
 
@@ -139,8 +168,9 @@ The approved four-stage M2c rehearsal remains **BLOCKED**, not a partial PASS,
 and M3 remains locked. This historical failure motivated the implemented
 semantic-authority control plane and later corrective slices; it must not be
 retried from the old evidence commit. The current gate is defined only by the
-new frozen `75f0366d4d5619b29c77f10949365f43d46185b1` section above. There is no
-automatic retry or live authorization in this document.
+new frozen `7a76ada81938be3ba0720a7c2f5a540b4beebb3e` candidate section above:
+bind one exact Leader model and separately authorize exactly one read-only
+preflight. There is no automatic retry or live authorization in this document.
 
 ## tmux startup/readiness correction
 
@@ -536,8 +566,9 @@ July 14 predated this July 16 run, lived outside the disposable live root, and
 were left untouched. No package install, login, authentication, global
 configuration/permission change, user tmux inspection, or retry occurred.
 
-The honest verdict remains **BLOCKED**, not PASS, and M3 remains locked. The
-next gate is a new brainstorming -> spec -> plan cycle for the exact
+The honest verdict at that checkpoint remained **BLOCKED**, not PASS, and M3
+remained locked. Its then-next gate was a new brainstorming -> spec -> plan
+cycle for the exact
 `leader_schema_before_preview` / `semantic_effect_conflict` boundary and the
 pytest-report leakage boundary. Any future live attempt requires deterministic
 RED/GREEN closure, a new frozen commit, fresh full verification, one newly

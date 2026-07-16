@@ -4,6 +4,30 @@
 
 ## 2026-07-16
 
+### Freeze and verify semantic generation provenance persistence
+
+- Froze the complete correction at
+  `7a76ada81938be3ba0720a7c2f5a540b4beebb3e`. This SHA includes semantic
+  envelope persistence, StateStore strict 9/11 normalization, ProjectView/trace
+  validation, compatible contract discovery, and legal-proposal hash semantics.
+- Fresh focused verification passed `211` Mission/Conversation tests and
+  `1125 passed, 1 skipped` Provider/schema/contracts/non-live M2c tests.
+  Independent spec review was compliant; independent code-quality review found
+  no Critical, Important, or Minor issues.
+- Two detached-checkout full suites on the unchanged frozen SHA passed
+  `4283 passed, 2 skipped in 194.36s` and
+  `4283 passed, 2 skipped in 203.12s`.
+- `python -m compileall -q src tests`, diff/scope/synthetic-marker checks,
+  checkout cleanup, and residual audits passed. The verification checkout was
+  removed; current live pytest/AgentDeck daemon and live/tool-root counts were
+  zero.
+- No Provider, preflight, live Mission, ACP, tmux, install, login, global
+  configuration, push, or merge ran. New-SHA preflight/live counts remain
+  `0/0`; historical `75f0366d...` counts remain `1/1` and cannot be reused.
+- M2c remains **BLOCKED** and M3 remains locked. The next gate is explicit
+  exact-model binding and authorization for exactly one read-only preflight on
+  the new frozen SHA.
+
 ### Discover semantic generation contracts
 
 - Closed two code-quality review gaps after semantic provenance persistence:

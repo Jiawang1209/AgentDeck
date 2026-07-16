@@ -53,7 +53,7 @@
 **Files:**
 - Modify: `tests/test_mission_orchestration.py`
 
-- [ ] **Step 1: Add a semantic native-generation helper**
+- [x] **Step 1: Add a semantic native-generation helper**
 
 Place beside `semantic_candidate_fixture()`:
 
@@ -84,7 +84,7 @@ def semantic_native_generation(
 Reuse existing `deepcopy`, `LeaderPlanRequest`,
 `build_leader_generation_provenance`, and `build_leader_plan_schema` imports.
 
-- [ ] **Step 2: Add the exact RED**
+- [x] **Step 2: Add the exact RED**
 
 Add after
 `test_semantic_preview_persists_exact_authority_steps_and_compact_mission`:
@@ -134,7 +134,7 @@ def test_semantic_native_preview_persists_exact_generation_without_hash_drift(
 Ensure `replace` is imported from `dataclasses`; it is already available in
 this module or add the exact import.
 
-- [ ] **Step 3: Run RED and verify the intended failure**
+- [x] **Step 3: Run RED and verify the intended failure**
 
 ```bash
 PYTHONPATH="$PWD/src" \
@@ -153,7 +153,7 @@ wrong RED and must be fixed before continuing.
 **Files:**
 - Modify: `tests/test_conversation_session.py`
 
-- [ ] **Step 1: Add exact gateway-observation RED**
+- [x] **Step 1: Add exact gateway-observation RED**
 
 Add after `test_exact_live_shaped_request_reaches_one_semantic_preview`:
 
@@ -184,7 +184,7 @@ def test_exact_live_shaped_preview_persists_exact_gateway_generation(
     assert stored["leader_generation"] is not observed["leader_generation"]
 ```
 
-- [ ] **Step 2: Run both RED nodes**
+- [x] **Step 2: Run both RED nodes**
 
 ```bash
 PYTHONPATH="$PWD/src" \
@@ -202,7 +202,7 @@ Expected: both FAIL at missing stored `leader_generation`.
 **Files:**
 - Modify: `tests/test_mission_orchestration.py`
 
-- [ ] **Step 1: Add semantic malformed-generation regression before production code**
+- [x] **Step 1: Add semantic malformed-generation regression before production code**
 
 ```python
 def test_semantic_native_generation_with_forbidden_key_is_zero_write(
@@ -232,7 +232,7 @@ def test_semantic_native_generation_with_forbidden_key_is_zero_write(
     assert "SEMANTIC_GENERATION_SECRET" not in repr(raised.value)
 ```
 
-- [ ] **Step 2: Run the security regression with the RED nodes**
+- [x] **Step 2: Run the security regression with the RED nodes**
 
 ```bash
 PYTHONPATH="$PWD/src" \
@@ -246,7 +246,7 @@ conda run --no-capture-output -n agentdeck \
 
 Expected: the security node PASSes; the two persistence nodes remain RED.
 
-- [ ] **Step 3: Add StateStore dual-shape RED coverage**
+- [x] **Step 3: Add StateStore dual-shape RED coverage**
 
 Add focused tests in `tests/test_mission_orchestration.py`:
 
@@ -294,7 +294,7 @@ eleven-field semantic envelope mutation and retain its zero-write assertion.
 The existing natural-language semantic RED supplies valid local semantic
 eleven-field coverage with null schema fields.
 
-- [ ] **Step 4: Run the expanded StateStore RED**
+- [x] **Step 4: Run the expanded StateStore RED**
 
 ```bash
 PYTHONPATH="$PWD/src" \
@@ -315,7 +315,7 @@ remain rejected.
 - Modify: `src/agentdeck/mission_orchestration.py`
 - Modify: `src/agentdeck/state.py`
 
-- [ ] **Step 1: Remove only the stale discard branch**
+- [x] **Step 1: Remove only the stale discard branch**
 
 Delete:
 
@@ -330,7 +330,7 @@ Do not change the Provider validator, request, semantic authority, plan body,
 hash function, confirmation facts, or any runtime code. StateStore changes are
 limited to Step 2's strict dual-shape normalizer.
 
-- [ ] **Step 2: Add the strict StateStore dual-shape normalizer**
+- [x] **Step 2: Add the strict StateStore dual-shape normalizer**
 
 In `src/agentdeck/state.py`:
 
@@ -349,7 +349,7 @@ Import `SEMANTIC_LEADER_PLAN_SCHEMA_VERSION` from
 `agentdeck.providers.semantic_plan_schema`. Preserve the legacy missing-
 generation projection unchanged for historical records.
 
-- [ ] **Step 3: Run GREEN for the focused nodes**
+- [x] **Step 3: Run GREEN for the focused nodes**
 
 ```bash
 PYTHONPATH="$PWD/src" \
@@ -363,7 +363,7 @@ conda run --no-capture-output -n agentdeck \
 
 Expected: all focused persistence, dual-shape, and security nodes PASS.
 
-- [ ] **Step 4: Run semantic Mission and Conversation regression**
+- [x] **Step 4: Run semantic Mission and Conversation regression**
 
 ```bash
 PYTHONPATH="$PWD/src" \
@@ -378,7 +378,7 @@ conda run --no-capture-output -n agentdeck \
 
 Expected: all PASS.
 
-- [ ] **Step 5: Run Provider/provenance and complete non-live M2c regression**
+- [x] **Step 5: Run Provider/provenance and complete non-live M2c regression**
 
 ```bash
 PYTHONPATH="$PWD/src" \
@@ -394,7 +394,7 @@ conda run --no-capture-output -n agentdeck \
 Expected: all deterministic tests PASS with exactly the existing opt-in live
 skip. Do not set `AGENTDECK_M2C_LIVE`.
 
-- [ ] **Step 6: Update implementation history**
+- [x] **Step 6: Update implementation history**
 
 Add one `HISTORY.md` entry containing:
 
@@ -404,7 +404,7 @@ Add one `HISTORY.md` entry containing:
 - focused and non-live GREEN counts;
 - explicit statement that no preflight/live/provider/ACP/tmux ran.
 
-- [ ] **Step 7: Commit the implementation**
+- [x] **Step 7: Commit the implementation**
 
 ```bash
 git add \
@@ -424,7 +424,7 @@ git commit -m "fix: persist semantic leader generation provenance"
 - Modify only for a verified defect; any correction requires a new RED and a
   new commit.
 
-- [ ] **Step 1: Request spec-compliance review**
+- [x] **Step 1: Request spec-compliance review**
 
 Reviewer checks:
 
@@ -434,7 +434,7 @@ Reviewer checks:
 - malformed semantic generation remains zero-write;
 - no Provider/runtime/live scope.
 
-- [ ] **Step 2: Request code-quality review**
+- [x] **Step 2: Request code-quality review**
 
 Reviewer checks:
 
@@ -443,7 +443,7 @@ Reviewer checks:
 - no fixture-only assertion;
 - no secret marker enters production/docs evidence.
 
-- [ ] **Step 3: Run compile, diff, and scope audit**
+- [x] **Step 3: Run compile, diff, and scope audit**
 
 ```bash
 PYTHONPATH="$PWD/src" \
@@ -459,7 +459,7 @@ Required production diff: deletion of the stale semantic
 `leader_generation = None` block plus the bounded StateStore dual-shape
 normalizer. No other production subsystem may change.
 
-- [ ] **Step 4: Audit synthetic marker boundary**
+- [x] **Step 4: Audit synthetic marker boundary**
 
 ```bash
 rg -n 'SEMANTIC_GENERATION_SECRET' \
@@ -473,7 +473,7 @@ Expected: no output.
 **Files:**
 - No code modification during verification.
 
-- [ ] **Step 1: Freeze exact implementation SHA**
+- [x] **Step 1: Freeze exact implementation SHA**
 
 ```bash
 test -z "$(git status --short)"
@@ -481,7 +481,7 @@ implementation_sha="$(git rev-parse HEAD)"
 printf '%s\n' "$implementation_sha"
 ```
 
-- [ ] **Step 2: Create detached verification checkout**
+- [x] **Step 2: Create detached verification checkout**
 
 ```bash
 feature_root="$(git rev-parse --show-toplevel)"
@@ -493,7 +493,7 @@ git worktree add --detach "$verify_root" "$implementation_sha"
 test -z "$(git -C "$verify_root" status --short)"
 ```
 
-- [ ] **Step 3: Run full suite 1**
+- [x] **Step 3: Run full suite 1**
 
 ```bash
 (
@@ -506,7 +506,7 @@ test -z "$(git -C "$verify_root" status --short)"
 
 Record exact counts and duration.
 
-- [ ] **Step 4: Reconfirm unchanged SHA and run full suite 2**
+- [x] **Step 4: Reconfirm unchanged SHA and run full suite 2**
 
 ```bash
 test "$(git -C "$verify_root" rev-parse HEAD)" = "$implementation_sha"
@@ -521,7 +521,7 @@ test -z "$(git -C "$verify_root" status --short)"
 
 Record exact counts and duration.
 
-- [ ] **Step 5: Remove checkout and audit residuals**
+- [x] **Step 5: Remove checkout and audit residuals**
 
 ```bash
 git worktree remove --force "$verify_root"
@@ -546,7 +546,7 @@ Do not inspect or delete unrelated user tmux sessions or the pre-existing
 - Modify: `HISTORY.md`
 - Modify: this plan
 
-- [ ] **Step 1: Record evidence**
+- [x] **Step 1: Record evidence**
 
 Record:
 
@@ -562,6 +562,26 @@ Record:
 - next gate is new explicit exact-model binding plus one read-only preflight
   authorization.
 
+Evidence:
+
+- implementation SHA:
+  `7a76ada81938be3ba0720a7c2f5a540b4beebb3e`;
+- original RED: `2 failed, 1 passed`;
+- StateStore A2 RED: `1 failed, 22 passed, 100 deselected`;
+- ProjectView/trace contract RED: `2 failed, 7 passed`;
+- discovery RED: `6 failed, 1 passed`;
+- fresh Mission/Conversation GREEN: `211 passed in 5.77s`;
+- fresh Provider/contracts/non-live M2c GREEN:
+  `1125 passed, 1 skipped in 56.32s`;
+- independent spec review: compliant;
+- independent quality review: Ready, no findings;
+- full suite 1: `4283 passed, 2 skipped in 194.36s`;
+- full suite 2: `4283 passed, 2 skipped in 203.12s`;
+- compile/diff/scope/marker/cleanup/residual checks: PASS;
+- old `75f0366d...` preflight/live counts: `1/1`, never rerun;
+- new `7a76ada...` preflight/live counts: `0/0`;
+- M2c: **BLOCKED**; M3: locked.
+
 - [ ] **Step 2: Commit evidence separately**
 
 ```bash
@@ -576,24 +596,24 @@ git commit -m "docs: record M2c provenance persistence verification"
 
 The evidence commit is not implementation authority.
 
-- [ ] **Step 3: Stop at new authorization gate**
+- [x] **Step 3: Stop at new authorization gate**
 
 Do not run preflight or live. Ask the human to bind an exact model to the new
 implementation SHA and authorize exactly one read-only preflight.
 
 ## Completion checklist
 
-- [ ] Direct semantic native preview persists exact validated provenance.
-- [ ] Natural-language semantic preview persists exact gateway provenance.
-- [ ] ProjectView and trace use the same compact envelope.
-- [ ] StateStore enforces ordinary nine-field and semantic eleven-field shapes.
-- [ ] Semantic authority version/hash and semantic schema family are revalidated.
-- [ ] Canonical plan hash is unchanged.
-- [ ] Malformed/forbidden semantic provenance is zero-write and transcript-safe.
-- [ ] Production diff only removes the stale discard and adds the bounded
+- [x] Direct semantic native preview persists exact validated provenance.
+- [x] Natural-language semantic preview persists exact gateway provenance.
+- [x] ProjectView and trace use the same compact envelope.
+- [x] StateStore enforces ordinary nine-field and semantic eleven-field shapes.
+- [x] Semantic authority version/hash and semantic schema family are revalidated.
+- [x] Canonical plan hash is unchanged.
+- [x] Malformed/forbidden semantic provenance is zero-write and transcript-safe.
+- [x] Production diff only removes the stale discard and adds the bounded
   StateStore dual-shape normalizer.
-- [ ] Focused and complete non-live M2c suites pass.
-- [ ] Independent spec and quality reviews pass.
-- [ ] Two full suites pass on one unchanged new implementation SHA.
-- [ ] New SHA has zero preflight/live attempts.
-- [ ] M2c remains BLOCKED and M3 locked until real four-stage PASS.
+- [x] Focused and complete non-live M2c suites pass.
+- [x] Independent spec and quality reviews pass.
+- [x] Two full suites pass on one unchanged new implementation SHA.
+- [x] New SHA has zero preflight/live attempts.
+- [x] M2c remains BLOCKED and M3 locked until real four-stage PASS.
