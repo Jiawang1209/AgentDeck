@@ -4,6 +4,17 @@
 
 ## 2026-07-17
 
+### Plan M2c ACP package entrypoint authority implementation
+
+- Added a self-reviewed, task-by-task TDD plan for metadata-selected npm bin
+  parsing, authority v2, preflight v4, controlled Node execution, deterministic
+  verification, double full suites, one real preflight, one real four-stage
+  Mission, and the M2c-to-M3 transition gate.
+- The plan keeps deterministic changes inside the M2c harness, requires RED
+  before implementation, forbids PATH/npm fallback and compatibility wrappers,
+  and preserves one-shot real-authority evidence. No implementation,
+  preflight, provider, ACP/tmux session, daemon, merge, or push ran.
+
 ### Design metadata-bound M2c ACP package entrypoint authority
 
 - Confirmed before consuming the authorized real preflight that installed
