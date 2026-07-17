@@ -112,14 +112,14 @@ git commit -m "test: await M2c confirmation turn convergence"
 
 ## Task 5: Two independent complete suites
 
-- [ ] Create two fresh detached worktrees at the unchanged frozen SHA.
-- [ ] Run the complete suite in each with its own absolute `PYTHONPATH` and the
+- [x] Create two fresh detached worktrees at the unchanged frozen SHA.
+- [x] Run the complete suite in each with its own absolute `PYTHONPATH` and the
   `agentdeck` conda environment.
-- [ ] Require all deterministic tests to pass and only the three explicit real
+- [x] Require all deterministic tests to pass and only the three explicit real
   nodes to skip.
-- [ ] Remove both worktrees and confirm zero process, daemon, tmux, and temporary
+- [x] Remove both worktrees and confirm zero process, daemon, tmux, and temporary
   root residue.
-- [ ] Commit the full-suite evidence without altering the frozen implementation
+- [x] Commit the full-suite evidence without altering the frozen implementation
   files.
 
 ## Task 6: New one-shot preflight and live acceptance

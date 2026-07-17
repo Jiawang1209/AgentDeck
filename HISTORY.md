@@ -45,6 +45,15 @@
   and temporary-root audits passed. Two fresh complete suites remain before any
   new real preflight; the historical authority remains exhausted.
 
+### Verify the frozen preview-convergence candidate twice
+
+- Two fresh detached worktrees at frozen
+  `690f0baf6efad6ad5608edaf10cf396da2729521` passed the complete suite: `4384
+  passed, 3 skipped in 222.29s` and `4384 passed, 3 skipped in 211.96s`.
+- The skips were exactly the opt-in real ACP, designated v5 preflight, and real
+  Mission nodes. Both worktrees were removed; frozen implementation files were
+  unchanged; process, daemon, worktree, and temporary-root audits were empty.
+
 ### Record the one-shot M2c preview-consumption live blocker
 
 - Ran the one same-SHA/model/digest four-stage node exactly once. It failed `1

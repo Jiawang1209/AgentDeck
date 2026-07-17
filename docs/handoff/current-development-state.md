@@ -24,9 +24,18 @@ passed`; focused authority/preview coverage passed `55 passed`; complete
 non-live M2c passed `293 passed, 2 skipped in 86.41s`; product regressions
 passed `851 passed in 4.23s`. Compile, diff, current-slice
 `src/agentdeck/**` zero-change, leakage, process, and temporary-root audits
-passed. Two fresh detached-worktree full suites remain. No new real preflight,
-live Mission, provider, ACP/tmux session, daemon, install, login, merge, or push
-has run. M2c remains **BLOCKED** and M3 remains locked.
+passed. At that freeze point, the two detached-worktree full suites remained.
+No new real preflight, live Mission, provider, ACP/tmux session, daemon,
+install, login, merge, or push had run. M2c remains **BLOCKED** and M3 remains
+locked.
+
+Both fresh detached-worktree suites on frozen `690f0baf...` now pass: `4384
+passed, 3 skipped in 222.29s` and `4384 passed, 3 skipped in 211.96s`. The skips
+were exactly the opt-in real ACP, designated v5 preflight, and real four-stage
+Mission nodes. Both worktrees were removed; the frozen implementation remained
+unchanged; process, daemon, worktree, and temporary-root audits were empty. The
+next gate is a read-only installed-input audit followed by one new real v5
+preflight using Leader `gpt-5.5`.
 
 ### Historical M2c authority cycles
 
