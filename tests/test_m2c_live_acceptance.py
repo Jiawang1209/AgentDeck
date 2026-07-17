@@ -1009,18 +1009,48 @@ def _write_controlled_acp_launcher(
         "    values = [facts(relative, item) for item in (initial, opened, closed, final)]\n"
         "    if any(item != values[0] for item in values[1:]): raise ValueError()\n"
         "    return values[0], digest.hexdigest(), bool(mode & 0o111)\n"
-        "def scan(directory, parts, runtime, manifest):\n"
+        "def read_link(path, relative):\n"
+        "    initial = os.lstat(path); first = os.readlink(path)\n"
+        "    final = os.lstat(path); second = os.readlink(path)\n"
+        "    if not stat.S_ISLNK(initial.st_mode) or facts(relative, initial) != facts(relative, final) or first != second:\n"
+        "        raise ValueError()\n"
+        "    encoded = first.encode('utf-8')\n"
+        f"    if not encoded or len(encoded) > {MAX_PACKAGE_SYMLINK_BYTES}: raise ValueError()\n"
+        "    return facts(relative, initial), first, hashlib.sha256(encoded).hexdigest(), len(encoded)\n"
+        "def validate_link(link_path, raw_target, manifest_by_path):\n"
+        "    parts = link_path.split('/')\n"
+        "    if len(parts) != 3 or parts[:2] != ['node_modules', '.bin'] or parts[2] in ('', '.', '..'):\n"
+        "        raise ValueError()\n"
+        "    if not raw_target or raw_target.startswith('/') or '\\x00' in raw_target or '\\\\' in raw_target:\n"
+        "        raise ValueError()\n"
+        "    stack = parts[:-1]\n"
+        "    for component in raw_target.split('/'):\n"
+        "        if component == '.': continue\n"
+        "        if component == '' or (component == '..' and not stack): raise ValueError()\n"
+        "        if component == '..': stack.pop()\n"
+        "        else: stack.append(component)\n"
+        "    normalized = '/'.join(stack)\n"
+        "    target = manifest_by_path.get(normalized)\n"
+        "    if not normalized or normalized == link_path or target is None or target['kind'] != 'file':\n"
+        "        raise ValueError()\n"
+        "def scan(directory, parts, runtime, manifest, links):\n"
         "    with os.scandir(directory) as stream: children = sorted(stream, key=lambda item: item.name)\n"
         "    for child in children:\n"
         "        relative_parts = (*parts, child.name); relative = '/'.join(relative_parts)\n"
         "        path = os.path.join(directory, child.name); meta = child.stat(follow_symlinks=False)\n"
         "        mode = stat.S_IMODE(meta.st_mode)\n"
-        "        if stat.S_ISLNK(meta.st_mode) or mode & 0o022: raise ValueError()\n"
+        "        if stat.S_ISLNK(meta.st_mode):\n"
+        "            current, target, digest, size = read_link(path, relative)\n"
+        "            runtime.append(current); links.append((relative, target))\n"
+        "            manifest.append({'path': relative, 'kind': 'symlink', 'size': size,\n"
+        "                             'content_hash': digest, 'executable': False})\n"
+        "            continue\n"
+        "        if mode & 0o022: raise ValueError()\n"
         "        if stat.S_ISDIR(meta.st_mode):\n"
         "            runtime.append(facts(relative, meta))\n"
         "            manifest.append({'path': relative, 'kind': 'directory', 'size': None,\n"
         "                             'content_hash': None, 'executable': bool(mode & 0o111)})\n"
-        "            scan(path, relative_parts, runtime, manifest)\n"
+        "            scan(path, relative_parts, runtime, manifest, links)\n"
         "            if facts(relative, os.lstat(path)) != facts(relative, meta): raise ValueError()\n"
         "        elif stat.S_ISREG(meta.st_mode):\n"
         "            current, digest, executable = read_file(path, relative)\n"
@@ -1032,11 +1062,13 @@ def _write_controlled_acp_launcher(
         "    root = os.lstat(ROOT); root_mode = stat.S_IMODE(root.st_mode)\n"
         "    if not stat.S_ISDIR(root.st_mode) or stat.S_ISLNK(root.st_mode) or root_mode & 0o022:\n"
         "        raise ValueError()\n"
-        "    runtime = [facts('.', root)]; manifest = []\n"
-        "    scan(ROOT, (), runtime, manifest)\n"
+        "    runtime = [facts('.', root)]; manifest = []; links = []\n"
+        "    scan(ROOT, (), runtime, manifest, links)\n"
         "    if facts('.', os.lstat(ROOT)) != runtime[0]: raise ValueError()\n"
         "    runtime = [runtime[0], *sorted(runtime[1:], key=lambda item: item['path'])]\n"
         "    manifest = sorted(manifest, key=lambda item: item['path'])\n"
+        "    manifest_by_path = {item['path']: item for item in manifest}\n"
+        "    for link_path, raw_target in links: validate_link(link_path, raw_target, manifest_by_path)\n"
         "    if runtime != EXPECTED_RUNTIME or manifest != EXPECTED_MANIFEST: raise ValueError()\n"
         "    node_facts, node_hash, _ = read_file(NODE, '.')\n"
         "    node_facts.pop('path')\n"
@@ -5741,10 +5773,14 @@ def test_m2c_package_tree_runtime_seal_rejects_same_content_replacement(
         _verify_package_tree_seal(seal)
 
 
-def _fake_explicit_authority_environment(root: Path) -> dict[str, str]:
+def _fake_explicit_authority_environment(
+    root: Path, *, internal_bin_links: bool = False
+) -> dict[str, str]:
     binary = root / "bin"
     binary.mkdir(parents=True)
-    package = _fake_acp_package(root / "acp-package")
+    package = _fake_acp_package(
+        root / "acp-package", internal_bin_links=internal_bin_links
+    )
     values = {
         LEADER_MODEL_ENV: "gpt-5.5",
         "AGENTDECK_M2C_CLAUDE_ACP": str(
@@ -9713,11 +9749,14 @@ def test_controlled_launcher_rejects_source_replacement_before_invocation(
     assert wrapper.mode == 0o500
 
 
+@pytest.mark.parametrize("internal_bin_links", (False, True))
 def test_m2c_controlled_acp_launcher_uses_sealed_node_and_entrypoint(
-    tmp_path,
+    tmp_path, internal_bin_links
 ) -> None:
     authority, failures = _load_explicit_tool_authority(
-        _fake_explicit_authority_environment(tmp_path / "authority")
+        _fake_explicit_authority_environment(
+            tmp_path / "authority", internal_bin_links=internal_bin_links
+        )
     )
     assert failures == () and authority is not None
 
@@ -9742,13 +9781,24 @@ def test_m2c_controlled_acp_launcher_uses_sealed_node_and_entrypoint(
 
 
 @pytest.mark.parametrize(
-    "target", ("node", "package-json", "entrypoint", "package-file")
+    "target",
+    (
+        "node",
+        "package-json",
+        "entrypoint",
+        "package-file",
+        "package-link",
+        "link-target",
+    ),
 )
 def test_m2c_controlled_acp_launcher_rejects_authority_drift(
     tmp_path, target
 ) -> None:
+    linked = target in {"package-link", "link-target"}
     authority, failures = _load_explicit_tool_authority(
-        _fake_explicit_authority_environment(tmp_path / "authority")
+        _fake_explicit_authority_environment(
+            tmp_path / "authority", internal_bin_links=linked
+        )
     )
     assert failures == () and authority is not None
     launcher = _write_controlled_acp_launcher(authority, tmp_path / "runtime")
@@ -9757,8 +9807,23 @@ def test_m2c_controlled_acp_launcher_rejects_authority_drift(
         "package-json": authority.acp_package.root / "package.json",
         "entrypoint": authority.acp_package.entrypoint.path,
         "package-file": authority.acp_package.root / "lib" / "support.js",
+        "link-target": authority.acp_package.root
+        / "node_modules"
+        / "which"
+        / "bin"
+        / "node-which",
     }
-    targets[target].write_bytes(b"changed after seal\n")
+    if target == "package-link":
+        link = (
+            authority.acp_package.root
+            / "node_modules"
+            / ".bin"
+            / "node-which"
+        )
+        link.unlink()
+        link.symlink_to("../@anthropic-ai/sdk/bin/cli")
+    else:
+        targets[target].write_bytes(b"changed after seal\n")
 
     completed = subprocess.run(
         [str(launcher.path), "--version"],

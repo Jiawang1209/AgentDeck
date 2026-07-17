@@ -4,6 +4,17 @@
 
 ## 2026-07-17
 
+### Verify closed npm links in the controlled ACP launcher
+
+- Reproduced the Python package sealer inside the mode-0500 launcher: stable
+  non-following link reads, bounded link-text hashes, exact `.bin` shape,
+  lexical target closure, complete runtime/manifest equality, then sealed Node
+  plus the unchanged regular ACP entrypoint.
+- Normal unlinked and linked packages execute successfully; link/target drift
+  exits `126` without output. Loader/launcher/setup coverage passed `24 passed,
+  1 skipped, 266 deselected in 14.66s`; the skip remains the real designated
+  preflight.
+
 ### Close npm `.bin` link safety and drift boundaries
 
 - Added rejection coverage for links outside `.bin`, nested link names,

@@ -145,17 +145,17 @@ git commit -m "test: close npm bin symlink safety boundary"
 - Modify: `tests/test_m2c_live_acceptance.py`
 - Modify: `HISTORY.md`
 
-- [ ] Make `_fake_explicit_authority_environment` accept
+- [x] Make `_fake_explicit_authority_environment` accept
   `internal_bin_links=True`. Add a launcher normal-execution test using that
   package and drift cases for link text, link inode, and target content.
 
-- [ ] In the generated launcher, add a bounded `read_link` helper and a
+- [x] In the generated launcher, add a bounded `read_link` helper and a
   symlink branch that records the same runtime/manifest shape without following
   the link. Retain raw link text only process-locally for lexical closure
   validation after scan. Compare complete runtime and stable manifests before
   Node verification and exec.
 
-- [ ] Run:
+- [x] Run:
 
 ```bash
 PYTHONPATH="$PWD/src" conda run --no-capture-output -n agentdeck \
@@ -166,7 +166,7 @@ PYTHONPATH="$PWD/src" conda run --no-capture-output -n agentdeck \
 Expected: normal linked package returns `0.58.1`; every drift exits `126` with
 empty stdout/stderr; the real designated node remains skipped.
 
-- [ ] Update HISTORY and commit:
+- [x] Update HISTORY and commit:
 
 ```bash
 git add tests/test_m2c_live_acceptance.py HISTORY.md
