@@ -36,9 +36,10 @@ Focused permission/setup coverage passes `28 passed`; complete non-live M2c
 passes `337 passed, 2 skipped in 95.98s`; product/Conversation/contract/provider
 regressions pass `851 passed in 4.28s`. Compile, diff, `src/agentdeck/**`
 zero-change, process, worktree, temporary-root, and tracked-runtime-state audits
-pass. Documentation and the final frozen implementation commit are the current
-gate. After freeze, two fresh complete suites and a new installed-input audit
-are required before one newly authorized strict v6 preflight. No new
+pass. The harness-only implementation is frozen at
+`e83dcc482d2403f613485d06eff75ff99ffe733f`. Two fresh complete suites at that
+exact SHA and a new installed-input audit are required before one newly
+authorized strict v6 preflight. No new
 preflight/live authority exists yet. M2c remains **BLOCKED** and M3 remains
 locked.
 

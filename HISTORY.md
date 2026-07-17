@@ -26,6 +26,9 @@
   and non-retryable. This candidate requires a new frozen SHA, two fresh full
   suites, installed-input audit, and separately authorized strict v6 preflight;
   no new real authority has been consumed.
+- Froze the harness-only candidate at
+  `e83dcc482d2403f613485d06eff75ff99ffe733f`. No implementation edit may follow
+  without invalidating this candidate and restarting the two-suite gate.
 
 ### Design M2c first-attempt terminal observability
 

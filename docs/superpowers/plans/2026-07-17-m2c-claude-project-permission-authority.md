@@ -72,7 +72,7 @@ unchanged.
   reading or changing user settings.
 - [x] Record the exhausted old live authority and new frozen-SHA requirement.
 - [x] Keep authority v3/preflight v6 semantics explicit.
-- [ ] Commit user-visible acceptance behavior with HISTORY.
+- [x] Commit user-visible acceptance behavior with HISTORY.
 
 ## Task 5: Verify and freeze
 
@@ -81,7 +81,7 @@ unchanged.
 - [x] Run product/Conversation/contract/provider regressions.
 - [x] Run compile, diff, `src/agentdeck/**` zero-change, leakage, process,
   daemon, tmux, worktree, and temporary-root audits.
-- [ ] Commit the frozen implementation and record its full SHA.
+- [x] Commit the frozen implementation and record its full SHA.
 
 ## Task 6: Re-establish real authority
 

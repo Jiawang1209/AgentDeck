@@ -273,11 +273,11 @@ evidence is:
 
 Tool authority remains `m2c-tool-authority/v3`; designated preflight remains
 `m2c-live-preflight/v6`. The exhausted `79d8160e...` authority cannot be
-reused. The candidate must be committed and frozen, pass two complete suites
-in fresh detached worktrees, and undergo a fresh installed-input audit before
-a human may authorize one new strict v6 preflight. No preflight or live run has
-been executed for this candidate. M2c remains **BLOCKED** and M3 remains
-locked.
+reused. The candidate is frozen at
+`e83dcc482d2403f613485d06eff75ff99ffe733f`; it must pass two complete suites in
+fresh detached worktrees and undergo a fresh installed-input audit before a
+human may authorize one new strict v6 preflight. No preflight or live run has
+been executed for this candidate. M2c remains **BLOCKED** and M3 remains locked.
 
 ## Frozen authority
 
