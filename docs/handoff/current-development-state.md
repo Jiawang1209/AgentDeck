@@ -2,7 +2,7 @@
 
 Updated: 2026-07-17
 
-## Active goal — review and execute the AgentDeck V1 P0 Product Reset plan
+## Active goal — AgentDeck P0 Product Reset
 
 The user approved the complete ten-part AgentDeck V1 architecture-reset
 design and selected the evolutionary-kernel route: preserve and converge the
@@ -10,23 +10,24 @@ existing Conversation, ProjectView, daemon, ledger, approval, ACP/tmux,
 skill, memory, and learning foundations instead of continuing to patch the
 M2c mega-harness or starting a greenfield rewrite.
 
-Two new plans are authoritative:
+Two plans are authoritative for this route:
 
-- `docs/superpowers/plans/2026-07-17-agentdeck-v1-architecture-reset-program.md`
+- [AgentDeck V1 architecture-reset program](../superpowers/plans/2026-07-17-agentdeck-v1-architecture-reset-program.md)
   fixes the strictly ordered P0 Product Reset -> P1 Durable Mission Kernel ->
   P2 Conversation Product -> P3 official Codex/Claude adapters -> P4 reliable
   multi-Agent closure -> P5 learning/V1 release program.
-- `docs/superpowers/plans/2026-07-17-agentdeck-p0-product-reset.md` is the
-  immediately executable, task-level P0 plan. It writes the PRD,
+- [AgentDeck P0 Product Reset plan](../superpowers/plans/2026-07-17-agentdeck-p0-product-reset.md)
+  is the immediately executable, task-level P0 plan. It writes the PRD,
   architecture, SQLite/legacy migration design, current-capability inventory,
   M2c test migration matrix, V1 validation strategy, and deterministic
   baseline before any product-code change.
 
-This planning commit changes no product source or tests and does not execute
-P0, a provider call, ACP/tmux session, daemon, preflight, live Mission, merge,
-or push. The next gate is human review of the written plans, followed by
-explicit execution of P0. P1 implementation remains locked until P0 completes
-and its written evidence is reviewed.
+P0 is the sole current scope and is limited to documentation, current-
+capability inventory, migration design, and deterministic baseline evidence.
+It does not authorize product source or test changes, provider calls, ACP/tmux
+sessions, daemons, preflights, live Missions, merge, or push. P1 product
+implementation remains locked until the P0 exit criteria pass and the written
+P0 evidence is reviewed.
 
 The historical M2c attempts below remain immutable evidence. They are no
 longer the active development route, a release veto, or authority to rerun a

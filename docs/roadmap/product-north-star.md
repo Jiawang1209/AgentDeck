@@ -2,7 +2,28 @@
 
 Updated: 2026-07-17
 
-## Phase 3 M2 delivery status
+## Active architecture-reset route
+
+New development follows the approved, strictly ordered architecture-reset
+program:
+
+1. P0 Product Reset
+2. P1 Durable Mission Kernel
+3. P2 Conversation Product
+4. P3 official Codex/Claude adapters
+5. P4 reliable multi-Agent closure
+6. P5 learning/V1 release
+
+The authoritative program and current execution plan are
+[AgentDeck V1 architecture-reset program](../superpowers/plans/2026-07-17-agentdeck-v1-architecture-reset-program.md)
+and [AgentDeck P0 Product Reset](../superpowers/plans/2026-07-17-agentdeck-p0-product-reset.md).
+P0 is the sole current scope; later phases remain locked until their preceding
+phase exits and receives review. Prior M2 and M2c work remains preserved as
+historical capability and validation evidence. Old M2c status is not a release
+veto or live retry authority, and it cannot authorize rerunning any consumed
+preflight or live node.
+
+## Historical Phase 3 M2 delivery evidence
 
 The project-local authoritative daemon, disconnect-safe frozen Mission
 scheduler, explicit ACP/tmux supervision, exact governance pauses, crash
@@ -165,15 +186,24 @@ When the user returns, AgentDeck summarizes completed turns, current work, failu
 
 ## Delivery sequence
 
-1. Freeze the current natural-language Mission Golden Demo as the compatibility baseline.
-2. Introduce transport, agent-session, turn, update, and permission contracts without changing user behavior.
-3. Complete one real foreground ACP vertical slice. **Complete (2026-07-12);** this does not yet route Mission/workflow through ACP.
-4. Add the project daemon and default `agentdeck` conversation.
-5. Run a confirmed Codex-and-Claude Mission over ACP with permission bridging and recovery.
-6. Add global project roaming and opt-in notifications.
-7. Build a Hive-clear, CCB-visible, WispTerm-class observable workspace client
-   after the headless core is stable, backed exclusively by AgentDeck contracts
-   and ledger facts.
+1. **P0 Product Reset:** freeze the V1 product contract, inventory current
+   capabilities, design SQLite and legacy-state migration, classify historical
+   tests and evidence, and record a deterministic baseline. This phase is
+   documentation, inventory, migration design, and baseline evidence only.
+2. **P1 Durable Mission Kernel:** converge one authoritative project daemon and
+   Mission/Task/Attempt/Permission/Handoff/Evidence model after P0 exits and is
+   reviewed.
+3. **P2 Conversation Product:** make the natural-language project conversation
+   compose the durable kernel without creating a second authority system.
+4. **P3 official Codex/Claude adapters:** integrate governed official adapters
+   over the P1/P2 authority model, with ACP preferred and explicit fallbacks.
+5. **P4 reliable multi-Agent closure:** prove bounded heterogeneous-agent
+   execution, permission, recovery, handoff, and acceptance end to end.
+6. **P5 learning/V1 release:** complete safe skill and memory learning,
+   compatibility, release evidence, and the V1 product gate.
+
+Historical M1, M2, M2c, and M3 labels below and elsewhere remain useful
+capability evidence, but they do not reorder or bypass this P0-P5 sequence.
 
 ## Non-goals for the current product line
 

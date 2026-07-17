@@ -4,6 +4,15 @@
 
 ## 2026-07-17
 
+### Start the AgentDeck V1 architecture-reset program
+
+- Replaced the historical close-M2c-then-M3 active route with the approved
+  strictly ordered P0-P5 program. M2c remains preserved as legacy evidence but
+  is no longer a release veto or an authorized live retry target.
+- Made P0 documentation, inventory, migration design, and baseline evidence the
+  sole current scope; P1 product code, real providers, ACP/tmux sessions,
+  preflight/live runs, merge, and push remain out of scope.
+
 ### Plan the AgentDeck V1 architecture reset
 
 - Converted the approved ten-part product design into
