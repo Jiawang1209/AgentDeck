@@ -235,6 +235,16 @@ _LIVE_CLAUDE_STEP_POSITIONS = frozenset({1, 3})
 _LIVE_PERMISSION_EFFECTIVE_STATES = frozenset(
     {"pending", "approved", "denied", "expired"}
 )
+_LIVE_PERMISSION_PROGRESS_KEYS = {
+    "diagnostic_code",
+    "step_position",
+    "attempt_state",
+    "attempt_permission_count",
+    "mission_permission_count",
+    "effective_permission_states",
+    "reply_count",
+    "handoff_count",
+}
 
 
 class _PermissionContractError(RuntimeError):
@@ -2933,10 +2943,13 @@ def _live_ledger_diagnostic(
         canonical_handoff.get("status"), _LIVE_HANDOFF_STATUSES
     )
     attempt_terminal_stage = _closed_attempt_terminal_stage(attempt)
-    permission_states = [
-        _closed_enum(item.get("status"), _LIVE_PERMISSION_STATES)
-        for item in permissions
-    ]
+    try:
+        permission_facts = _attempt_permission_facts(durable, attempt)
+    except _PermissionContractError:
+        permission_facts = ()
+    permission_states = [item.effective_state for item in permission_facts]
+    if permission_records is not None and permissions and not permission_facts:
+        permission_states = ["unknown" for _item in permissions]
 
     if (
         code == "native_schema_task_authority_invalid"
@@ -2991,6 +3004,71 @@ def _live_ledger_diagnostic(
             permission_states if permission_records is not None else []
         ),
     }
+
+
+def _permission_progress_diagnostic(
+    state: object,
+    *,
+    code: str,
+    attempt_id: str,
+    step_position: int,
+) -> dict[str, object]:
+    closed = {
+        "diagnostic_code": code,
+        "step_position": step_position if step_position in {1, 3} else 0,
+        "attempt_state": "unknown",
+        "attempt_permission_count": -1,
+        "mission_permission_count": -1,
+        "effective_permission_states": [],
+        "reply_count": -1,
+        "handoff_count": -1,
+    }
+    if type(state) is not dict:
+        return closed
+    attempts = state.get("mission_attempts")
+    bindings = state.get("mission_permission_bindings")
+    replies = state.get("mission_worker_replies")
+    handoffs = state.get("mission_handoffs")
+    if any(
+        type(value) is not list or any(type(item) is not dict for item in value)
+        for value in (attempts, bindings, replies, handoffs)
+    ):
+        return closed
+    exact = [item for item in attempts if item.get("attempt_id") == attempt_id]
+    if len(exact) != 1:
+        return closed
+    attempt = exact[0]
+    try:
+        facts = _attempt_permission_facts(state, attempt)
+    except _PermissionContractError:
+        return closed
+    mission_id = attempt.get("mission_id")
+    closed.update(
+        {
+            "attempt_state": _closed_enum(
+                attempt.get("state"), _LIVE_ATTEMPT_STATES
+            ),
+            "attempt_permission_count": len(facts),
+            "mission_permission_count": sum(
+                item.get("mission_id") == mission_id for item in bindings
+            ),
+            "effective_permission_states": [
+                item.effective_state for item in facts
+            ],
+            "reply_count": sum(
+                item.get("mission_id") == mission_id
+                and item.get("attempt_id") == attempt_id
+                for item in replies
+            ),
+            "handoff_count": sum(
+                item.get("mission_id") == mission_id
+                and item.get("attempt_id") == attempt_id
+                for item in handoffs
+            ),
+        }
+    )
+    assert set(closed) == _LIVE_PERMISSION_PROGRESS_KEYS
+    return closed
 
 
 def _live_task_authority_checks(steps: object) -> dict[str, bool]:
@@ -3289,9 +3367,13 @@ def _live_failure(
     leader_terminal: object = None,
     preflight_blockers: object = None,
     preflight_failures: object = None,
+    permission_attempt_id: str | None = None,
+    permission_step_position: int | None = None,
 ) -> _LiveHarnessFailure:
     if store is not None and state_snapshot is not None:
         raise ValueError("live failure state source is ambiguous")
+    if (permission_attempt_id is None) != (permission_step_position is None):
+        raise ValueError("permission progress identity is incomplete")
     preflight_projection_supplied = (
         preflight_blockers is not None or preflight_failures is not None
     )
@@ -3324,6 +3406,13 @@ def _live_failure(
             code=code,
             task_authority=closed_task_authority,
             frozen_authority=closed_frozen_authority,
+        )
+    if permission_attempt_id is not None and permission_step_position is not None:
+        diagnostic["permission_progress"] = _permission_progress_diagnostic(
+            state,
+            code=code,
+            attempt_id=permission_attempt_id,
+            step_position=permission_step_position,
         )
     if capture is not None:
         diagnostic["pty"] = capture.diagnostic()
@@ -5445,35 +5534,73 @@ def _create_and_confirm_live_mission(
             _verify_all_executable_seals(executable_seals)
 
 
-def _confirm_pending_permission(root: Path, store: StateStore) -> None:
+def _confirm_pending_permission(
+    root: Path,
+    store: StateStore,
+    *,
+    mission_id: str,
+    attempt_id: str,
+    permission_id: str,
+) -> None:
     config = load_config(root)
     view = asdict(store.project_view(config))
     decision = view.get("mission_recovery", {}).get("decision")
     controls = decision.get("controls", []) if type(decision) is dict else []
-    _require_live(len(controls) == 1, "permission_control_missing", store=store)
-    preview_command = str(controls[0].get("command", ""))
-    preview = _json_project_command(shlex.split(preview_command), cwd=root)
-    _require_live(
-        set(preview) == {
+    expected_preview_identity = {
+        "mission_id": mission_id,
+        "attempt_id": attempt_id,
+        "permission_id": permission_id,
+        "decision": "approved",
+    }
+    if (
+        type(decision) is not dict
+        or decision.get("attempt_id") != attempt_id
+        or len(controls) != 1
+        or controls[0].get("kind") != "permission_preview"
+        or controls[0].get("enabled") is not True
+    ):
+        raise _live_failure("permission_preview_invalid", store=store)
+    try:
+        preview_argv = shlex.split(str(controls[0].get("command", "")))
+    except ValueError:
+        raise _live_failure("permission_preview_invalid", store=store) from None
+    expected_preview_argv = [
+        "agentdeck", "daemon", "permission-preview",
+        "--mission-id", mission_id,
+        "--attempt-id", attempt_id,
+        "--permission-id", permission_id,
+        "--decision", "approved",
+    ]
+    if preview_argv != expected_preview_argv:
+        raise _live_failure("permission_preview_invalid", store=store)
+    preview = _json_project_command(preview_argv, cwd=root)
+    if (
+        set(preview) != {
             "mode", "mission_id", "attempt_id", "permission_id", "decision",
             "preview_id", "confirmation_handle", "expires_at", "confirm_command",
         }
-        and type(preview.get("confirmation_handle")) is str
-        and str(preview["confirmation_handle"]).startswith("pcf_")
-        and "lse_" not in repr(preview),
-        "permission_preview_contract_invalid",
-        store=store,
-    )
+        or preview.get("mode") != "daemon_permission_preview"
+        or any(
+            preview.get(key) != value
+            for key, value in expected_preview_identity.items()
+        )
+        or type(preview.get("confirmation_handle")) is not str
+        or not str(preview["confirmation_handle"]).startswith("pcf_")
+        or "lse_" in repr(preview)
+    ):
+        raise _live_failure("permission_preview_invalid", store=store)
     confirmed = _json_project_command(
         shlex.split(str(preview["confirm_command"])), cwd=root
     )
-    _require_live(
-        confirmed.get("state") == "approved"
-        and confirmed.get("confirmation_handle") == preview["confirmation_handle"]
-        and "lse_" not in repr(confirmed),
-        "permission_confirmation_failed",
-        store=store,
-    )
+    expected_confirmation = {
+        "mode": "daemon_permission_confirmed",
+        **expected_preview_identity,
+        "preview_id": preview["preview_id"],
+        "confirmation_handle": preview["confirmation_handle"],
+        "state": "approved",
+    }
+    if confirmed != expected_confirmation or "lse_" in repr(confirmed):
+        raise _live_failure("permission_confirmation_invalid", store=store)
 
 
 async def _govern_live_worker(
@@ -10390,7 +10517,7 @@ def test_live_failure_prioritizes_any_permission_as_inconsistent(attempt_state: 
 
     assert diagnostic["ledger"]["classification"] == "permission_state_inconsistent"
     assert diagnostic["ledger"]["permission_count"] == 1
-    assert diagnostic["ledger"]["permission_states"] == ["pending"]
+    assert diagnostic["ledger"]["permission_states"] == ["unknown"]
 
 
 def test_live_failure_prioritizes_closed_missing_task_authority() -> None:

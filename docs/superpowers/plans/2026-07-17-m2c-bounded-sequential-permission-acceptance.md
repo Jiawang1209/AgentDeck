@@ -1176,7 +1176,7 @@ git commit -m "test: require exact M2c permission evidence"
 - Modify: `tests/test_m2c_live_acceptance.py:2490-2720,2995-3055,5044-5072`
 - Modify: `HISTORY.md`
 
-- [ ] **Step 1: Change confirmation to require exact caller identities**
+- [x] **Step 1: Change confirmation to require exact caller identities**
 
 Use this signature:
 
@@ -1272,7 +1272,7 @@ Use exact equality rather than partial `.get()` checks:
         raise _live_failure("permission_confirmation_invalid", store=store)
 ```
 
-- [ ] **Step 2: Add exact `permission_progress` construction**
+- [x] **Step 2: Add exact `permission_progress` construction**
 
 Add `_permission_progress_diagnostic(state, code, attempt_id,
 step_position)`. It calls `_attempt_permission_facts`, counts only replies and
@@ -1365,7 +1365,7 @@ Extend `_live_failure` with keyword-only `permission_attempt_id` and
 the same eight keys using `unknown`, `-1`, and empty lists. Never include the
 caught exception.
 
-- [ ] **Step 3: Make legacy permission states effective when lineage is valid**
+- [x] **Step 3: Make legacy permission states effective when lineage is valid**
 
 In `_live_ledger_diagnostic`, replace the current raw-state comprehension with:
 
@@ -1388,7 +1388,7 @@ permission without session/turn/binding/update lineage. Keep the new
 `test_permission_progress_projects_effective_states_without_leakage` as the
 positive proof that fully linked records project `approved` then `pending`.
 
-- [ ] **Step 4: Run diagnostic, confirmation, and leakage GREEN**
+- [x] **Step 4: Run diagnostic, confirmation, and leakage GREEN**
 
 ```bash
 PYTHONPATH="$PWD/src" conda run --no-capture-output -n agentdeck \
@@ -1399,7 +1399,10 @@ PYTHONPATH="$PWD/src" conda run --no-capture-output -n agentdeck \
 Expected: PASS. `_LIVE_LEDGER_KEYS` remains closed and the new
 `_LIVE_PERMISSION_PROGRESS_KEYS` is separately exact.
 
-- [ ] **Step 5: Commit GREEN**
+Observed: `46 passed, 314 deselected in 0.78s`; both closed key sets and
+leakage assertions passed.
+
+- [x] **Step 5: Commit GREEN**
 
 ```bash
 git add tests/test_m2c_live_acceptance.py HISTORY.md

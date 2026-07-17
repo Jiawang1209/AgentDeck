@@ -86,6 +86,20 @@
   identities, and one shows `_live_failure` lacks the closed permission
   projection.
 
+### Bind exact public confirmation and closed permission progress
+
+- Changed the harness permission confirmation helper to require exact caller
+  Mission, attempt, and permission identities; the sole enabled public preview
+  control, nine-field preview, and eight-field confirmed response must all bind
+  those identities plus the exact preview ID and confirmation handle.
+- Added the exact eight-field `permission_progress` diagnostic. It derives
+  effective permission states and current attempt/Mission/reply/handoff counts
+  without retaining raw IDs, prompts, targets, tools, paths, or provider data.
+- Updated the legacy compact ledger to use the same transition-derived states
+  when lineage is complete and `unknown` when intentionally incomplete.
+  Confirmation, projection, ledger, and leakage coverage passes `46 passed,
+  314 deselected in 0.78s`.
+
 ### Design bounded sequential ACP permission acceptance for M2c
 
 - Replaced the live harness assumption of exactly two Mission permissions with
