@@ -20,6 +20,17 @@
   295 deselected in 0.84s`. The future contract requires immediate closed
   `first_attempt_acp_prompt_ambiguous` evidence without raw reason or sentinels.
 
+### Add closed first-attempt terminal convergence
+
+- Added a harness-only wrapper over the existing bounded state wait. One
+  pending permission returns normally; durable failed/cancelled/interrupted or
+  ambiguous step-1 ACP attempts stop immediately with a finite admission,
+  receipt, prompt, update, parse, finish, or cleanup stage.
+- Added exact stage/classification and malformed-lineage/leakage coverage.
+  Focused terminal and diagnostic tests pass `55 passed, 257 deselected in
+  0.72s`. No product source, timeout, retry, provider, or authority schema
+  changed.
+
 ### Design the M2c preview-consumption convergence repair
 
 - Approved a harness-only correction for the observed admission/consumption

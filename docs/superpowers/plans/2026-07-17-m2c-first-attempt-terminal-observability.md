@@ -41,19 +41,19 @@ git worktrees, real installed inputs only after deterministic freeze.
 - Modify: `tests/test_m2c_live_acceptance.py`
 - Modify: `HISTORY.md`
 
-- [ ] Define one closed mapping for admission, receipt, five ACP completion
+- [x] Define one closed mapping for admission, receipt, five ACP completion
   stages, failed, cancelled, and interrupted.
-- [ ] Add a pure validator that requires one Mission, one first-attempt lineage,
+- [x] Add a pure validator that requires one Mission, one first-attempt lineage,
   exact transport/agent/step, no permission conflict, and a valid
   state/reason pair.
-- [ ] Add `_wait_for_first_permission_or_terminal_attempt()` as a wrapper around
+- [x] Add `_wait_for_first_permission_or_terminal_attempt()` as a wrapper around
   `_wait_for_state()`. It observes pending permission or terminal attempt in one
   predicate; it returns the snapshot only for permission and otherwise raises
   the mapped closed live failure.
-- [ ] Replace only the live harness's first `_wait_for_state()` call.
-- [ ] Do not modify timeout, sleep, retries, state, provider, transport, or
+- [x] Replace only the live harness's first `_wait_for_state()` call.
+- [x] Do not modify timeout, sleep, retries, state, provider, transport, or
   production source.
-- [ ] Run focused RED/GREEN and commit.
+- [x] Run focused RED/GREEN and commit.
 
 ## Task 3: Lock diagnostic and malformed-state safety
 
@@ -61,16 +61,16 @@ git worktrees, real installed inputs only after deterministic freeze.
 - Modify: `tests/test_m2c_live_acceptance.py`
 - Modify: `HISTORY.md`
 
-- [ ] Parameterize all seven ambiguity stages and three ordinary terminal
+- [x] Parameterize all seven ambiguity stages and three ordinary terminal
   states.
-- [ ] Cover duplicate attempts, cross-Mission attempt, terminal plus pending
+- [x] Cover duplicate attempts, cross-Mission attempt, terminal plus pending
   permission, malformed collections, arbitrary reason, missing receipt
   authority, and active attempt timeout.
-- [ ] Add `attempt_terminal_stage` to the exact ledger key contract with only
+- [x] Add `attempt_terminal_stage` to the exact ledger key contract with only
   allowlisted values; add `worker_attempt_ambiguous` to classifications.
-- [ ] Keep the existing forbidden-content matrix and explicitly forbid every
+- [x] Keep the existing forbidden-content matrix and explicitly forbid every
   raw source field/sentinel.
-- [ ] Run focused terminal/diagnostic tests and commit.
+- [x] Run focused terminal/diagnostic tests and commit.
 
 ## Task 4: Wider verification and freeze
 

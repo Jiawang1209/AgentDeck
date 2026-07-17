@@ -189,12 +189,37 @@ _LIVE_ACTIVE_ATTEMPT_STATES = frozenset(
 _LIVE_FAILED_ATTEMPT_STATES = frozenset(
     {"failed", "cancelled", "interrupted"}
 )
+_LIVE_AMBIGUITY_STAGES = {
+    "admission_outcome_unknown": "admission",
+    "receipt_persistence_unknown": "receipt",
+    "acp_completion_prompt_outcome_unknown": "acp_prompt",
+    "acp_completion_update_outcome_unknown": "acp_update",
+    "acp_completion_parse_outcome_unknown": "acp_parse",
+    "acp_completion_finish_outcome_unknown": "acp_finish",
+    "acp_completion_cleanup_outcome_unknown": "acp_cleanup",
+}
+_LIVE_ATTEMPT_TERMINAL_STAGES = frozenset(
+    {*_LIVE_AMBIGUITY_STAGES.values(), "worker_failed", "cancelled", "interrupted"}
+)
+_LIVE_ATTEMPT_TERMINAL_CODES = {
+    "admission": "first_attempt_admission_ambiguous",
+    "receipt": "first_attempt_receipt_ambiguous",
+    "acp_prompt": "first_attempt_acp_prompt_ambiguous",
+    "acp_update": "first_attempt_acp_update_ambiguous",
+    "acp_parse": "first_attempt_acp_parse_ambiguous",
+    "acp_finish": "first_attempt_acp_finish_ambiguous",
+    "acp_cleanup": "first_attempt_acp_cleanup_ambiguous",
+    "worker_failed": "first_attempt_failed",
+    "cancelled": "first_attempt_cancelled",
+    "interrupted": "first_attempt_interrupted",
+}
 _LIVE_DIAGNOSTIC_CLASSIFICATIONS = frozenset(
     {
         "leader_task_authority_missing",
         "leader_semantic_authority_missing",
         "worker_effect_not_requested",
         "worker_attempt_failed",
+        "worker_attempt_ambiguous",
         "worker_attempt_active",
         "permission_state_inconsistent",
     }
@@ -2509,15 +2534,18 @@ def _live_ledger_diagnostic(
         else []
     )
     handoff = handoff_matches[0] if len(handoff_matches) == 1 else {}
-    lineage_valid = (
+    attempt_lineage_valid = (
         mission_records is not None
         and attempt_records is not None
-        and reply_records is not None
-        and handoff_records is not None
         and mission_id is not None
         and attempt_id is not None
         and len(attempt_matches) == 1
         and len(mission_matches) == 1
+    )
+    lineage_valid = (
+        attempt_lineage_valid
+        and reply_records is not None
+        and handoff_records is not None
         and len(reply_matches) == 1
         and dispatch_keys_agree
         and reply_id is not None
@@ -2544,6 +2572,7 @@ def _live_ledger_diagnostic(
     handoff_status = _closed_enum(
         canonical_handoff.get("status"), _LIVE_HANDOFF_STATUSES
     )
+    attempt_terminal_stage = _closed_attempt_terminal_stage(attempt)
     permission_states = [
         _closed_enum(item.get("status"), _LIVE_PERMISSION_STATES)
         for item in permissions
@@ -2561,10 +2590,12 @@ def _live_ledger_diagnostic(
         and not all(frozen_authority.values())
     ):
         classification = "leader_semantic_authority_missing"
-    elif not collections_valid or not lineage_valid:
+    elif not collections_valid or not attempt_lineage_valid:
         classification = "permission_state_inconsistent"
     elif permissions:
         classification = "permission_state_inconsistent"
+    elif attempt_state == "ambiguous":
+        classification = "worker_attempt_ambiguous"
     elif attempt_state in _LIVE_ACTIVE_ATTEMPT_STATES:
         classification = "worker_attempt_active"
     elif attempt_state in _LIVE_FAILED_ATTEMPT_STATES:
@@ -2589,6 +2620,7 @@ def _live_ledger_diagnostic(
             attempt.get("configured_transport"), _LIVE_TRANSPORTS
         ),
         "attempt_state": attempt_state,
+        "attempt_terminal_stage": attempt_terminal_stage,
         "reply_state": reply_state,
         "handoff_state": handoff_state,
         "handoff_status": handoff_status,
@@ -3121,6 +3153,112 @@ def _wait_for_state(
             pass
         time.sleep(0.1)
     raise _live_failure(code, store=store, capture=capture)
+
+
+def _closed_attempt_terminal_stage(attempt: object) -> str:
+    if type(attempt) is not dict:
+        return "unknown"
+    state = attempt.get("state")
+    reason = attempt.get("terminal_reason")
+    blocker = attempt.get("blocker")
+    receipt = attempt.get("receipt_summary")
+    if state == "ambiguous":
+        if (
+            type(reason) is not str
+            or blocker != reason
+            or type(receipt) is not str
+            or not receipt
+        ):
+            return "unknown"
+        return _LIVE_AMBIGUITY_STAGES.get(reason, "unknown")
+    if state == "failed":
+        return (
+            "worker_failed"
+            if reason == "worker_failed" and blocker == reason
+            else "unknown"
+        )
+    if state in {"cancelled", "interrupted"}:
+        return (
+            state
+            if type(reason) is str and bool(reason) and blocker in {None, reason}
+            else "unknown"
+        )
+    return "none"
+
+
+def _first_permission_wait_status(state: object) -> str:
+    if type(state) is not dict:
+        return "invalid"
+    missions = state.get("missions")
+    attempts = state.get("mission_attempts")
+    permissions = state.get("permission_requests")
+    if (
+        type(missions) is not list
+        or len(missions) != 1
+        or type(missions[0]) is not dict
+        or type(missions[0].get("mission_id")) is not str
+        or type(attempts) is not list
+        or any(type(item) is not dict for item in attempts)
+        or type(permissions) is not list
+        or any(type(item) is not dict for item in permissions)
+    ):
+        return "invalid"
+    if not attempts:
+        return "waiting" if not permissions else "invalid"
+    if len(attempts) != 1:
+        return "invalid"
+    attempt = attempts[0]
+    if (
+        attempt.get("mission_id") != missions[0]["mission_id"]
+        or attempt.get("step_id") != "step_1"
+        or attempt.get("agent_id") != "claude-worker"
+        or attempt.get("configured_transport") != "acp"
+        or attempt.get("state") not in _LIVE_ATTEMPT_STATES
+    ):
+        return "invalid"
+    terminal = attempt.get("state") in {
+        "failed", "cancelled", "interrupted", "ambiguous"
+    }
+    if permissions:
+        return (
+            "permission"
+            if len(permissions) == 1
+            and permissions[0].get("status") == "pending"
+            and not terminal
+            else "invalid"
+        )
+    if terminal:
+        return "terminal"
+    if attempt.get("state") in {"completed", "succeeded"}:
+        return "invalid"
+    return "waiting"
+
+
+def _wait_for_first_permission_or_terminal_attempt(
+    store: StateStore,
+    *,
+    capture: _PtyTail | None = None,
+) -> dict[str, object]:
+    observed = _wait_for_state(
+        store,
+        lambda state: _first_permission_wait_status(state) != "waiting",
+        code="first_permission_timeout",
+        capture=capture,
+    )
+    status = _first_permission_wait_status(observed)
+    if status == "permission":
+        return observed
+    if status == "terminal":
+        attempt = observed["mission_attempts"][0]
+        stage = _closed_attempt_terminal_stage(attempt)
+        code = _LIVE_ATTEMPT_TERMINAL_CODES.get(stage)
+        if code is not None:
+            raise _live_failure(code, state_snapshot=observed, capture=capture)
+    raise _live_failure(
+        "first_attempt_terminal_contract_invalid",
+        state_snapshot=observed,
+        capture=capture,
+    )
 
 
 def _drain_pty(
@@ -5015,12 +5153,7 @@ def _run_live_acceptance_in_project_guarded(
             store=store,
             capture=capture,
         )
-        first_pending = _wait_for_state(
-            store,
-            lambda state: len(state.get("permission_requests", [])) == 1
-            and state["permission_requests"][0].get("status") == "pending",
-            code="first_permission_timeout",
-        )
+        first_pending = _wait_for_first_permission_or_terminal_attempt(store)
         _require_live(
             len(first_pending.get("mission_attempts", [])) == 1,
             "first_attempt_cardinality_invalid",
@@ -8471,7 +8604,21 @@ def _live_diagnostic_state(
     }
 
 
-def test_first_permission_wait_stops_on_durable_acp_prompt_ambiguity() -> None:
+@pytest.mark.parametrize(
+    ("reason", "expected_code", "expected_stage"),
+    [
+        ("admission_outcome_unknown", "first_attempt_admission_ambiguous", "admission"),
+        ("receipt_persistence_unknown", "first_attempt_receipt_ambiguous", "receipt"),
+        ("acp_completion_prompt_outcome_unknown", "first_attempt_acp_prompt_ambiguous", "acp_prompt"),
+        ("acp_completion_update_outcome_unknown", "first_attempt_acp_update_ambiguous", "acp_update"),
+        ("acp_completion_parse_outcome_unknown", "first_attempt_acp_parse_ambiguous", "acp_parse"),
+        ("acp_completion_finish_outcome_unknown", "first_attempt_acp_finish_ambiguous", "acp_finish"),
+        ("acp_completion_cleanup_outcome_unknown", "first_attempt_acp_cleanup_ambiguous", "acp_cleanup"),
+    ],
+)
+def test_first_permission_wait_stops_on_durable_acp_ambiguity(
+    reason: str, expected_code: str, expected_stage: str,
+) -> None:
     state = _live_diagnostic_state(
         attempt_state="ambiguous",
         reply_state="invalid",
@@ -8481,8 +8628,8 @@ def test_first_permission_wait_stops_on_durable_acp_prompt_ambiguity() -> None:
     attempt = state["mission_attempts"][0]
     assert type(attempt) is dict
     attempt["receipt_summary"] = "SECRET receipt /private/project"
-    attempt["blocker"] = "acp_completion_prompt_outcome_unknown"
-    attempt["terminal_reason"] = "acp_completion_prompt_outcome_unknown"
+    attempt["blocker"] = reason
+    attempt["terminal_reason"] = reason
 
     with pytest.raises(_LiveHarnessFailure) as error:
         _wait_for_first_permission_or_terminal_attempt(
@@ -8492,16 +8639,114 @@ def test_first_permission_wait_stops_on_durable_acp_prompt_ambiguity() -> None:
 
     rendered = str(error.value)
     diagnostic = json.loads(rendered)
-    assert diagnostic["code"] == "first_attempt_acp_prompt_ambiguous"
-    assert diagnostic["ledger"]["attempt_terminal_stage"] == "acp_prompt"
+    assert diagnostic["code"] == expected_code
+    assert diagnostic["ledger"]["attempt_terminal_stage"] == expected_stage
+    assert diagnostic["ledger"]["classification"] == "worker_attempt_ambiguous"
     for forbidden in (
         "SECRET",
         "/private/project",
-        "receipt",
         "terminal_reason",
-        "acp_completion_prompt_outcome_unknown",
+        reason,
     ):
         assert forbidden not in rendered
+
+
+@pytest.mark.parametrize(
+    ("state_name", "reason", "expected_code", "expected_stage"),
+    [
+        ("failed", "worker_failed", "first_attempt_failed", "worker_failed"),
+        ("cancelled", "human_stop", "first_attempt_cancelled", "cancelled"),
+        ("interrupted", "daemon_stop", "first_attempt_interrupted", "interrupted"),
+    ],
+)
+def test_first_permission_wait_stops_on_other_terminal_attempts(
+    state_name: str, reason: str, expected_code: str, expected_stage: str,
+) -> None:
+    state = _live_diagnostic_state(attempt_state=state_name)
+    attempt = state["mission_attempts"][0]
+    assert type(attempt) is dict
+    attempt["receipt_summary"] = "SECRET receipt /private/project"
+    attempt["blocker"] = reason
+    attempt["terminal_reason"] = reason
+
+    with pytest.raises(_LiveHarnessFailure) as error:
+        _wait_for_first_permission_or_terminal_attempt(_StaticLiveStore(state))
+
+    diagnostic = json.loads(str(error.value))
+    assert diagnostic["code"] == expected_code
+    assert diagnostic["ledger"]["attempt_terminal_stage"] == expected_stage
+    assert "SECRET" not in str(error.value)
+    assert "/private/project" not in str(error.value)
+
+
+def test_first_permission_wait_returns_exact_pending_permission() -> None:
+    state = _live_diagnostic_state(
+        attempt_state="running",
+        permissions=[{"status": "pending", "target": "SECRET /private/project"}],
+    )
+
+    observed = _wait_for_first_permission_or_terminal_attempt(
+        _StaticLiveStore(state)
+    )
+
+    assert observed is state
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    (
+        "duplicate_attempt",
+        "cross_mission",
+        "terminal_permission_conflict",
+        "arbitrary_reason",
+        "malformed_permissions",
+    ),
+)
+def test_first_permission_wait_rejects_malformed_terminal_facts(
+    mutation: str,
+) -> None:
+    state = _live_diagnostic_state(attempt_state="ambiguous")
+    attempt = state["mission_attempts"][0]
+    assert type(attempt) is dict
+    attempt["receipt_summary"] = "SECRET receipt /private/project"
+    attempt["blocker"] = "acp_completion_prompt_outcome_unknown"
+    attempt["terminal_reason"] = "acp_completion_prompt_outcome_unknown"
+    if mutation == "duplicate_attempt":
+        state["mission_attempts"].append(dict(attempt))
+    elif mutation == "cross_mission":
+        attempt["mission_id"] = "mis_crossed"
+    elif mutation == "terminal_permission_conflict":
+        state["permission_requests"] = [{"status": "pending"}]
+    elif mutation == "arbitrary_reason":
+        attempt["blocker"] = "SECRET arbitrary /private/project"
+        attempt["terminal_reason"] = "SECRET arbitrary /private/project"
+    else:
+        state["permission_requests"] = {"status": "pending"}
+
+    with pytest.raises(_LiveHarnessFailure) as error:
+        _wait_for_first_permission_or_terminal_attempt(_StaticLiveStore(state))
+
+    rendered = str(error.value)
+    assert json.loads(rendered)["code"] == "first_attempt_terminal_contract_invalid"
+    for forbidden in ("SECRET", "/private/project", "terminal_reason", "mis_"):
+        assert forbidden not in rendered
+
+
+def test_first_permission_wait_preserves_timeout_for_active_attempt(
+    monkeypatch,
+) -> None:
+    state = _live_diagnostic_state(attempt_state="running")
+
+    def fake_wait(store, predicate, *, code, capture=None):
+        assert predicate(store.load()) is False
+        raise _live_failure(code, store=store, capture=capture)
+
+    monkeypatch.setattr(sys.modules[__name__], "_wait_for_state", fake_wait)
+
+    with pytest.raises(_LiveHarnessFailure) as error:
+        _wait_for_first_permission_or_terminal_attempt(_StaticLiveStore(state))
+
+    assert json.loads(str(error.value))["code"] == "first_permission_timeout"
 
 
 _LIVE_LEDGER_KEYS = {
@@ -8511,6 +8756,7 @@ _LIVE_LEDGER_KEYS = {
     "agent_id",
     "configured_transport",
     "attempt_state",
+    "attempt_terminal_stage",
     "reply_state",
     "handoff_state",
     "handoff_status",
@@ -8526,6 +8772,7 @@ def test_live_diagnostic_classifications_are_exactly_locked() -> None:
             "leader_semantic_authority_missing",
             "worker_effect_not_requested",
             "worker_attempt_failed",
+            "worker_attempt_ambiguous",
             "worker_attempt_active",
             "permission_state_inconsistent",
         }
@@ -8557,6 +8804,7 @@ def test_live_failure_classifies_completed_effect_without_permission(
         "agent_id": "claude-worker",
         "configured_transport": "acp",
         "attempt_state": attempt_state,
+        "attempt_terminal_stage": "none",
         "reply_state": "validated",
         "handoff_state": "recorded",
         "handoff_status": "completed",
@@ -8667,6 +8915,7 @@ def test_live_failure_closes_malformed_ledger_values_without_leaking() -> None:
         "agent_id": "unknown",
         "configured_transport": "unknown",
         "attempt_state": "unknown",
+        "attempt_terminal_stage": "none",
         "reply_state": "unknown",
         "handoff_state": "unknown",
         "handoff_status": "unknown",
