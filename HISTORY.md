@@ -4,6 +4,30 @@
 
 ## 2026-07-17
 
+### Plan the AgentDeck V1 architecture reset
+
+- Converted the approved ten-part product design into
+  `docs/superpowers/plans/2026-07-17-agentdeck-v1-architecture-reset-program.md`.
+  The program fixes the V1 product contract, one authoritative project daemon,
+  Mission/Task/Attempt/Permission/Handoff/Evidence model, explicit Codex or
+  Claude Leader choice, ACP-first governed transport with CLI/PTY and tmux
+  fallback, one-confirmation autonomy, bounded recovery, layered validation,
+  SQLite migration, compatibility, and safe Hermes-like learning semantics.
+- Replaced the historical close-M2c-then-M3 development route with strictly
+  ordered P0 Product Reset, P1 Durable Mission Kernel, P2 Conversation
+  Product, P3 official Codex/Claude adapters, P4 reliable multi-Agent closure,
+  and P5 learning/V1 release phases. Old M2c evidence remains preserved but is
+  no longer a release veto or authority to retry a consumed live node.
+- Added
+  `docs/superpowers/plans/2026-07-17-agentdeck-p0-product-reset.md` as the
+  immediately executable plan with exact files, deterministic RED/GREEN
+  document checks, baseline commands, commit boundaries, exit criteria, and a
+  hard prohibition on product-source/test changes or real provider/ACP/tmux/
+  daemon/live work during P0.
+- Updated the active handoff to route the next action through review and
+  execution of P0. This planning slice does not execute P0, change product
+  behavior or tests, run a provider/preflight/live Mission, merge, or push.
+
 ### Clarify the Hive-informed product north star
 
 - Added Hive as a first-class experience and information-architecture

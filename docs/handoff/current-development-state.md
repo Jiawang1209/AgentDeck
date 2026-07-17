@@ -2,10 +2,44 @@
 
 Updated: 2026-07-17
 
-## Active goal — close M2c through bounded sequential permission acceptance
+## Active goal — review and execute the AgentDeck V1 P0 Product Reset plan
 
-The currently authoritative route is the approved bounded sequential
-permission design and plan dated 2026-07-17. It supersedes the historical next
+The user approved the complete ten-part AgentDeck V1 architecture-reset
+design and selected the evolutionary-kernel route: preserve and converge the
+existing Conversation, ProjectView, daemon, ledger, approval, ACP/tmux,
+skill, memory, and learning foundations instead of continuing to patch the
+M2c mega-harness or starting a greenfield rewrite.
+
+Two new plans are authoritative:
+
+- `docs/superpowers/plans/2026-07-17-agentdeck-v1-architecture-reset-program.md`
+  fixes the strictly ordered P0 Product Reset -> P1 Durable Mission Kernel ->
+  P2 Conversation Product -> P3 official Codex/Claude adapters -> P4 reliable
+  multi-Agent closure -> P5 learning/V1 release program.
+- `docs/superpowers/plans/2026-07-17-agentdeck-p0-product-reset.md` is the
+  immediately executable, task-level P0 plan. It writes the PRD,
+  architecture, SQLite/legacy migration design, current-capability inventory,
+  M2c test migration matrix, V1 validation strategy, and deterministic
+  baseline before any product-code change.
+
+This planning commit changes no product source or tests and does not execute
+P0, a provider call, ACP/tmux session, daemon, preflight, live Mission, merge,
+or push. The next gate is human review of the written plans, followed by
+explicit execution of P0. P1 implementation remains locked until P0 completes
+and its written evidence is reviewed.
+
+The historical M2c attempts below remain immutable evidence. They are no
+longer the active development route, a release veto, or authority to rerun a
+consumed live node.
+
+## Superseded M2c goal — bounded sequential permission acceptance
+
+> Everything under this superseded heading is retained only as historical M2c
+> evidence. Later same-level headings in that retained material do not override
+> the active P0 authority at the top of this file.
+
+At the time of this retained M2c evidence, the authoritative route was the
+approved bounded sequential permission design and plan dated 2026-07-17. It superseded the historical next
 actions below without rewriting their evidence. The exhausted `e83dcc48...`
 live run showed two permission base records in one step-1 Claude ACP attempt;
 the harness incorrectly assumed the first confirmation completed
