@@ -1623,7 +1623,7 @@ git commit -m "test: require bounded M2c completion evidence"
 - Modify: `tests/test_m2c_live_acceptance.py:5350-5635`
 - Modify: `HISTORY.md`
 
-- [ ] **Step 1: Implement the shared completion validator**
+- [x] **Step 1: Implement the shared completion validator**
 
 Add a frozen `_LiveCompletionEvidence` with attempt, reply, handoff,
 inter-stage-link, and permission counts:
@@ -1757,7 +1757,7 @@ add these exact linkage checks:
 
 A mismatch therefore uses a fixed code without printing the mismatched values.
 
-- [ ] **Step 2: Replace the first-stage exact-one flow**
+- [x] **Step 2: Replace the first-stage exact-one flow**
 
 After daemon admission:
 
@@ -1812,7 +1812,7 @@ The replacement call site is:
         )
 ```
 
-- [ ] **Step 3: Establish the revision takeover window without confirmation**
+- [x] **Step 3: Establish the revision takeover window without confirmation**
 
 Wait for the exact step-3 attempt and its first pending permission only after
 step-2's validated reply and canonical handoff. Preserve workbench validation,
@@ -1913,7 +1913,7 @@ after human ownership:
         )
 ```
 
-- [ ] **Step 4: Replace final exact-two assertions**
+- [x] **Step 4: Replace final exact-two assertions**
 
 After Mission completion, call `_validate_four_stage_completion(completed,
 events)`. Use its counts in sanitized PASS evidence. Delete:
@@ -1926,7 +1926,7 @@ and all(item.get("status") == "approved" for item in permissions)
 Do not replace it with raw `status == approved`; base records remain pending.
 The shared validator requires effective `approved` transitions.
 
-- [ ] **Step 5: Run integration GREEN**
+- [x] **Step 5: Run integration GREEN**
 
 ```bash
 PYTHONPATH="$PWD/src" conda run --no-capture-output -n agentdeck \
@@ -1937,7 +1937,9 @@ PYTHONPATH="$PWD/src" conda run --no-capture-output -n agentdeck \
 Expected: PASS. The real preflight/live nodes remain skipped because their
 explicit environment gates are absent.
 
-- [ ] **Step 6: Prove harness-only scope and commit**
+Observed: `27 passed, 345 deselected in 2.22s`; gated real nodes did not run.
+
+- [x] **Step 6: Prove harness-only scope and commit**
 
 ```bash
 test -z "$(git diff ba083d92..HEAD --name-only -- src/agentdeck)"
@@ -1947,6 +1949,9 @@ git commit -m "test: accept bounded sequential M2c permissions"
 ```
 
 Expected: source-scope command prints nothing; commit succeeds.
+
+Observed: source-scope output was empty, `git diff --check` passed, and conda
+Python compiled `tests/test_m2c_live_acceptance.py` successfully.
 
 ### Task 9: Synchronize durable SOP, validation, handoff, and history
 

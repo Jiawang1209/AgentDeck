@@ -112,6 +112,24 @@
 - The focused RED failed exactly as intended: `12 failed, 360 deselected in
   2.10s`, all at the missing `_validate_four_stage_completion` unit.
 
+### Accept bounded sequential permissions across both Claude phases
+
+- Implemented the shared four-stage completion validator with exact attempt,
+  reply, handoff, dispatch/reply linkage, three handoff-before-submit event
+  links, per-Claude 1–4 permission counts, whole-Mission 2–8 count, and
+  transition-derived approved state.
+- Replaced step 1's single-confirmation assumption with the bounded same-
+  attempt driver. Step 3 now waits for its own first pending permission,
+  preserves it during the takeover window, revalidates exact authority after
+  return-control, and then drives every remaining sequential permission.
+- Removed the exact-two/raw-status completion assertion and now derives
+  sanitized PASS counts from shared completion evidence. Permission-driver
+  failures carry the closed `permission_progress` projection.
+- Focused integration passes `27 passed, 345 deselected in 2.22s`; compile,
+  diff, and the `src/agentdeck/**` zero-change scope audit pass. No real
+  provider, preflight, live Mission, timeout increase, retry, or product-source
+  edit occurred.
+
 ### Design bounded sequential ACP permission acceptance for M2c
 
 - Replaced the live harness assumption of exactly two Mission permissions with

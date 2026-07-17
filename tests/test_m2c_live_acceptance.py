@@ -271,6 +271,15 @@ class _LiveAttemptBoundary:
     effective_permission_states: tuple[str, ...]
 
 
+@dataclass(frozen=True)
+class _LiveCompletionEvidence:
+    attempt_count: int
+    reply_count: int
+    handoff_count: int
+    inter_stage_link_count: int
+    permission_count: int
+
+
 def _permission_effective_state(
     permission: Mapping[str, object],
     transitions: list[dict[str, object]],
@@ -524,6 +533,125 @@ def _attempt_permission_boundary(
     if len(pending) == 1:
         return _LiveAttemptBoundary("permission", pending[0], **base)
     return _LiveAttemptBoundary("waiting", None, **base)
+
+
+def _validate_four_stage_completion(
+    state: object,
+    events: object,
+) -> _LiveCompletionEvidence:
+    if type(state) is not dict or type(events) is not list:
+        raise _live_failure("attempt_terminal_facts_invalid", state_snapshot={})
+    attempts = state.get("mission_attempts")
+    replies = state.get("mission_worker_replies")
+    handoffs = state.get("mission_handoffs")
+    if (
+        type(attempts) is not list
+        or len(attempts) != 4
+        or any(type(item) is not dict for item in attempts)
+        or [item.get("step_position") for item in attempts] != [1, 2, 3, 4]
+        or [item.get("agent_id") for item in attempts]
+        != ["claude-worker", "codex-worker", "claude-worker", "codex-worker"]
+        or any(item.get("state") != "succeeded" for item in attempts)
+    ):
+        raise _live_failure("attempt_terminal_facts_invalid", state_snapshot=state)
+    if (
+        type(replies) is not list
+        or len(replies) != 4
+        or any(
+            type(item) is not dict or item.get("state") != "validated"
+            for item in replies
+        )
+    ):
+        raise _live_failure("reply_facts_invalid", state_snapshot=state)
+    if (
+        type(handoffs) is not list
+        or len(handoffs) != 4
+        or any(
+            type(item) is not dict
+            or item.get("state") != "recorded"
+            or type(item.get("canonical_handoff")) is not dict
+            or item["canonical_handoff"].get("status") != "completed"
+            for item in handoffs
+        )
+    ):
+        raise _live_failure(
+            "canonical_handoff_facts_invalid", state_snapshot=state
+        )
+    mission_id = attempts[0].get("mission_id")
+    for index, attempt in enumerate(attempts):
+        reply = replies[index]
+        handoff = handoffs[index]
+        if (
+            attempt.get("mission_id") != mission_id
+            or reply.get("mission_id") != mission_id
+            or reply.get("attempt_id") != attempt.get("attempt_id")
+            or reply.get("dispatch_key") != attempt.get("dispatch_key")
+        ):
+            raise _live_failure("reply_facts_invalid", state_snapshot=state)
+        if (
+            handoff.get("mission_id") != mission_id
+            or handoff.get("attempt_id") != attempt.get("attempt_id")
+            or handoff.get("reply_id") != reply.get("reply_id")
+        ):
+            raise _live_failure(
+                "canonical_handoff_facts_invalid", state_snapshot=state
+            )
+    try:
+        claude_facts = [
+            _attempt_permission_facts(state, attempts[index]) for index in (0, 2)
+        ]
+    except _PermissionContractError as error:
+        raise _live_failure(error.code, state_snapshot=state) from None
+    counts = [len(items) for items in claude_facts]
+    if any(count == 0 for count in counts):
+        raise _live_failure("permission_bridge_missing", state_snapshot=state)
+    if (
+        any(count > _LIVE_MAX_PERMISSIONS_PER_CLAUDE_ATTEMPT for count in counts)
+        or sum(counts) > _LIVE_MAX_PERMISSIONS_PER_MISSION
+    ):
+        raise _live_failure("permission_limit_exceeded", state_snapshot=state)
+    if any(
+        item.effective_state != "approved"
+        for facts in claude_facts
+        for item in facts
+    ):
+        raise _live_failure("permission_transition_invalid", state_snapshot=state)
+    inter_stage_links = 0
+    for index in range(3):
+        predecessor = attempts[index]["attempt_id"]
+        successor = attempts[index + 1]["attempt_id"]
+        handoff_positions = [
+            position
+            for position, event in enumerate(events)
+            if type(event) is dict
+            and event.get("event_type") == "mission_handoff_evidence_recorded"
+            and type(event.get("payload")) is dict
+            and event["payload"].get("attempt_id") == predecessor
+        ]
+        submit_positions = [
+            position
+            for position, event in enumerate(events)
+            if type(event) is dict
+            and event.get("event_type") == "mission_attempt_submitted"
+            and type(event.get("payload")) is dict
+            and event["payload"].get("attempt_id") == successor
+        ]
+        if (
+            len(handoff_positions) != 1
+            or len(submit_positions) != 1
+            or handoff_positions[0] >= submit_positions[0]
+        ):
+            raise _live_failure(
+                "next_stage_started_before_handoff", state_snapshot=state
+            )
+        inter_stage_links += 1
+    return _LiveCompletionEvidence(
+        attempt_count=4,
+        reply_count=4,
+        handoff_count=4,
+        inter_stage_link_count=inter_stage_links,
+        permission_count=sum(counts),
+    )
 
 
 def _exact_live_steps() -> list[dict[str, str]]:
@@ -3626,7 +3754,11 @@ def _wait_for_attempt_boundary(
             )
         except _PermissionContractError as error:
             raise _live_failure(
-                error.code, state_snapshot=state, capture=capture
+                error.code,
+                state_snapshot=state,
+                capture=capture,
+                permission_attempt_id=attempt_id,
+                permission_step_position=step_position,
             ) from None
         last_kind = boundary.kind
         if boundary.kind not in {"waiting", "waiting_handoff"}:
@@ -3637,7 +3769,13 @@ def _wait_for_attempt_boundary(
         if last_kind == "waiting_handoff"
         else "permission_wait_timeout"
     )
-    raise _live_failure(code, store=store, capture=capture)
+    raise _live_failure(
+        code,
+        store=store,
+        capture=capture,
+        permission_attempt_id=attempt_id,
+        permission_step_position=step_position,
+    )
 
 
 def _drive_bounded_claude_attempt(
@@ -3670,11 +3808,17 @@ def _drive_bounded_claude_attempt(
                     "permission_bridge_missing",
                     state_snapshot=state,
                     capture=capture,
+                    permission_attempt_id=attempt_id,
+                    permission_step_position=step_position,
                 )
             return state
         if boundary.kind != "permission" or boundary.permission is None:
             raise _live_failure(
-                boundary.kind, state_snapshot=state, capture=capture
+                boundary.kind,
+                state_snapshot=state,
+                capture=capture,
+                permission_attempt_id=attempt_id,
+                permission_step_position=step_position,
             )
         permission = boundary.permission
         if (
@@ -3688,6 +3832,8 @@ def _drive_bounded_claude_attempt(
                 "permission_limit_exceeded",
                 state_snapshot=state,
                 capture=capture,
+                permission_attempt_id=attempt_id,
+                permission_step_position=step_position,
             )
         if verify_authority is not None:
             verify_authority()
@@ -3719,6 +3865,8 @@ def _drive_bounded_claude_attempt(
                 "permission_confirmation_invalid",
                 state_snapshot=post_state,
                 capture=capture,
+                permission_attempt_id=attempt_id,
+                permission_step_position=step_position,
             )
         handled.add(permission.permission_id)
 
@@ -5928,6 +6076,21 @@ def _run_live_acceptance_in_project_guarded(
             capture=capture,
         )
         first_pending = _wait_for_first_permission_or_terminal_attempt(store)
+        first_attempt = first_pending["mission_attempts"][0]
+
+        def confirm_exact(
+            exact_mission_id: str,
+            exact_attempt_id: str,
+            exact_permission_id: str,
+        ) -> None:
+            _confirm_pending_permission(
+                root,
+                store,
+                mission_id=exact_mission_id,
+                attempt_id=exact_attempt_id,
+                permission_id=exact_permission_id,
+            )
+
         _verify_live_claude_permission_settings(root, permission_settings)
         _require_live(
             len(first_pending.get("mission_attempts", [])) == 1,
@@ -5936,17 +6099,65 @@ def _run_live_acceptance_in_project_guarded(
         )
         _verify_all_executable_seals(all_seals)
         _verify_live_claude_permission_settings(root, permission_settings)
-        _confirm_pending_permission(root, store)
-        _verify_live_claude_permission_settings(root, permission_settings)
-        _verify_all_executable_seals(all_seals)
-        _wait_for_state(
+        _drive_bounded_claude_attempt(
             store,
-            lambda state: len(state.get("permission_requests", [])) == 2
-            and len(state.get("mission_attempts", [])) == 3
-            and state["permission_requests"][1].get("status") == "pending"
-            and state["mission_attempts"][1].get("state") == "succeeded",
-            code="third_stage_safe_window_timeout",
+            mission_id=mission_id,
+            attempt_id=str(first_attempt["attempt_id"]),
+            step_position=1,
+            confirm_permission=confirm_exact,
+            capture=capture,
+            initial_boundary=(
+                _attempt_permission_boundary(
+                    first_pending,
+                    mission_id=mission_id,
+                    attempt_id=str(first_attempt["attempt_id"]),
+                    step_position=1,
+                ),
+                first_pending,
+            ),
+            verify_authority=lambda: (
+                _verify_live_claude_permission_settings(root, permission_settings),
+                _verify_all_executable_seals(all_seals),
+            ),
         )
+        revision_started = _wait_for_state(
+            store,
+            lambda state: any(
+                type(item) is dict
+                and item.get("mission_id") == mission_id
+                and item.get("step_position") == 3
+                and item.get("agent_id") == "claude-worker"
+                and item.get("configured_transport") == "acp"
+                for item in state.get("mission_attempts", [])
+            ),
+            code="revision_attempt_start_timeout",
+            capture=capture,
+        )
+        revision_matches = [
+            item
+            for item in revision_started["mission_attempts"]
+            if item.get("mission_id") == mission_id
+            and item.get("step_position") == 3
+        ]
+        if len(revision_matches) != 1:
+            raise _live_failure(
+                "permission_lineage_invalid", state_snapshot=revision_started
+            )
+        revision_attempt = revision_matches[0]
+        revision_boundary, revision_state = _wait_for_attempt_boundary(
+            store,
+            mission_id=mission_id,
+            attempt_id=str(revision_attempt["attempt_id"]),
+            step_position=3,
+            capture=capture,
+        )
+        if revision_boundary.kind != "permission":
+            raise _live_failure(
+                revision_boundary.kind,
+                state_snapshot=revision_state,
+                capture=capture,
+            )
+        authority_before = revision_boundary.permission
         _verify_live_claude_permission_settings(root, permission_settings)
         config = load_config(root)
         view = asdict(store.project_view(config))
@@ -5994,6 +6205,25 @@ def _run_live_acceptance_in_project_guarded(
             "takeover_failed",
             store=store,
         )
+        while_owned = store.load()
+        try:
+            while_attempt = next(
+                item
+                for item in while_owned["mission_attempts"]
+                if item.get("attempt_id") == revision_attempt["attempt_id"]
+            )
+            while_facts = _attempt_permission_facts(
+                while_owned,
+                while_attempt,
+            )
+        except (KeyError, StopIteration, TypeError, _PermissionContractError):
+            raise _live_failure(
+                "takeover_authority_drift", state_snapshot=while_owned
+            ) from None
+        if authority_before not in while_facts:
+            raise _live_failure(
+                "takeover_authority_drift", state_snapshot=while_owned
+            )
         _verify_live_claude_permission_settings(root, permission_settings)
         _verify_all_executable_seals(all_seals)
         returned = asyncio.run(
@@ -6009,9 +6239,35 @@ def _run_live_acceptance_in_project_guarded(
             store=store,
         )
         _verify_live_claude_permission_settings(root, permission_settings)
-        _confirm_pending_permission(root, store)
-        _verify_live_claude_permission_settings(root, permission_settings)
-        _verify_all_executable_seals(all_seals)
+        returned_state = store.load()
+        try:
+            returned_boundary = _attempt_permission_boundary(
+                returned_state,
+                mission_id=mission_id,
+                attempt_id=str(revision_attempt["attempt_id"]),
+                step_position=3,
+            )
+        except _PermissionContractError:
+            raise _live_failure(
+                "takeover_authority_drift", state_snapshot=returned_state
+            ) from None
+        if returned_boundary.permission != authority_before:
+            raise _live_failure(
+                "takeover_authority_drift", state_snapshot=returned_state
+            )
+        _drive_bounded_claude_attempt(
+            store,
+            mission_id=mission_id,
+            attempt_id=str(revision_attempt["attempt_id"]),
+            step_position=3,
+            confirm_permission=confirm_exact,
+            capture=capture,
+            initial_boundary=(returned_boundary, returned_state),
+            verify_authority=lambda: (
+                _verify_live_claude_permission_settings(root, permission_settings),
+                _verify_all_executable_seals(all_seals),
+            ),
+        )
         completed = _wait_for_state(
             store,
             lambda state: state.get("missions")
@@ -6021,53 +6277,10 @@ def _run_live_acceptance_in_project_guarded(
         )
         _verify_live_claude_permission_settings(root, permission_settings)
         attempts = completed.get("mission_attempts", [])
-        handoffs = completed.get("mission_handoffs", [])
-        replies = completed.get("mission_worker_replies", [])
-        _require_live(
-            len(attempts) == 4
-            and all(item.get("state") == "succeeded" for item in attempts),
-            "attempt_terminal_facts_invalid",
-            store=store,
-        )
-        _require_live(
-            len(handoffs) == 4
-            and all(item.get("state") == "recorded" for item in handoffs),
-            "canonical_handoff_facts_invalid",
-            store=store,
-        )
-        _require_live(
-            len(replies) == 4
-            and all(item.get("state") == "validated" for item in replies),
-            "reply_facts_invalid",
-            store=store,
-        )
         events = store.all_events()
-        predecessor_links = 0
-        for index in range(1, 4):
-            predecessor = attempts[index - 1]["attempt_id"]
-            successor = attempts[index]["attempt_id"]
-            handoff_positions = [
-                position
-                for position, event in enumerate(events)
-                if event.get("event_type") == "mission_handoff_evidence_recorded"
-                and event.get("payload", {}).get("attempt_id") == predecessor
-            ]
-            submit_positions = [
-                position
-                for position, event in enumerate(events)
-                if event.get("event_type") == "mission_attempt_submitted"
-                and event.get("payload", {}).get("attempt_id") == successor
-            ]
-            _require_live(
-                len(handoff_positions) == len(submit_positions) == 1,
-                "inter_stage_event_cardinality_invalid",
-                store=store,
-            )
-            predecessor_links += int(handoff_positions[0] < submit_positions[0])
-        _require_live(
-            predecessor_links == 3,
-            "inter_stage_links_invalid",
-            store=store,
+        completion_evidence = _validate_four_stage_completion(
+            completed,
+            events,
         )
         expected = b"accepted-v2\n"
         try:
@@ -6080,19 +6293,12 @@ def _run_live_acceptance_in_project_guarded(
             store=store,
         )
         mission = completed["missions"][0]
-        permissions = completed.get("permission_requests", [])
         _require_live(
             mission.get("snapshot_hash")
             == mission.get("execution_snapshot", {}).get("execution_hash")
             and mission.get("daemon_admission", {}).get("state") == "admitted"
             and all(item.get("receipt_summary") for item in attempts),
             "snapshot_admission_receipt_disagreement",
-            store=store,
-        )
-        _require_live(
-            len(permissions) == 2
-            and all(item.get("status") == "approved" for item in permissions),
-            "permission_facts_invalid",
             store=store,
         )
         final_view = asdict(store.project_view(config))
@@ -6153,10 +6359,10 @@ def _run_live_acceptance_in_project_guarded(
             "frozen_agentdeck_commit": frozen_commit,
             "leader_model": preflight["leader_model"],
             "tools": preflight["tools"],
-            "attempt_count": len(attempts),
-            "canonical_handoff_count": len(handoffs),
-            "inter_stage_link_count": predecessor_links,
-            "permission_count": len(completed.get("permission_requests", [])),
+            "attempt_count": completion_evidence.attempt_count,
+            "canonical_handoff_count": completion_evidence.handoff_count,
+            "inter_stage_link_count": completion_evidence.inter_stage_link_count,
+            "permission_count": completion_evidence.permission_count,
             "artifact_byte_count": len(expected),
             "artifact_sha256": hashlib.sha256(expected).hexdigest(),
             "cleanup": cleanup_audit,
