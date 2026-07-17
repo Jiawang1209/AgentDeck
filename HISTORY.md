@@ -59,6 +59,16 @@
   `sha256:b194c3b4ccbfa3ba2b534bf9cb51e59ecbc077e2576c6eea8ba343f26cc83ffa`.
   Cleanup and residue audits were empty.
 
+### Identify the real M2c ACP prompt-stage blocker
+
+- Ran the same-authority live node exactly once. It crossed Mission and ACP
+  session admission, then failed `1 failed in 48.97s` with the new exact code
+  `first_attempt_acp_prompt_ambiguous`; no permission, reply, handoff, or
+  artifact effect occurred.
+- The authority was not retried. Cleanup and all residue audits were empty. The
+  next cycle will classify only the safe underlying `AcpTransport.prompt()`
+  failure category; raw adapter/provider output remains prohibited.
+
 ### Design the M2c preview-consumption convergence repair
 
 - Approved a harness-only correction for the observed admission/consumption

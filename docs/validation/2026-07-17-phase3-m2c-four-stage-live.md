@@ -118,6 +118,41 @@ The audit found no drift. The new v5 preflight ran exactly once on frozen
 Its detached worktree was removed and residue audits were empty. One
 same-SHA/model/digest live Mission is now authorized for this candidate.
 
+That live node ran exactly once and was not retried. It crossed Preview,
+prompt-3 convergence, daemon admission, and ACP session admission, then failed
+`1 failed in 48.97s` as:
+
+```json
+{
+  "stage": "live_acceptance",
+  "code": "first_attempt_acp_prompt_ambiguous",
+  "cardinalities": {
+    "plans": 1,
+    "missions": 1,
+    "mission_attempts": 1,
+    "permission_requests": 0,
+    "mission_worker_replies": 0,
+    "mission_handoffs": 0
+  },
+  "ledger": {
+    "agent_id": "claude-worker",
+    "configured_transport": "acp",
+    "step_position": 1,
+    "attempt_state": "ambiguous",
+    "attempt_terminal_stage": "acp_prompt",
+    "classification": "worker_attempt_ambiguous"
+  }
+}
+```
+
+The candidate successfully replaced the generic 180-second permission timeout
+with an exact durable ACP prompt-stage terminal. No permission, reply, handoff,
+or artifact effect occurred. Cleanup removed the detached checkout and
+disposable project; process, daemon, ACP, tmux, worktree, and temporary-root
+audits were empty. This authority is exhausted. M2c remains **BLOCKED** and M3
+remains locked pending a new minimal cycle that classifies the safe underlying
+`AcpTransport.prompt()` failure without retaining raw adapter output.
+
 ## Frozen authority
 
 - AgentDeck implementation:

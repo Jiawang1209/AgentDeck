@@ -79,6 +79,15 @@ ready authority v3 and empty blockers/failures. The digest is
 The checkout was removed and residue audits were empty. One same-authority live
 Mission is the next gate.
 
+That live node ran exactly once and failed `1 failed in 48.97s` as
+`first_attempt_acp_prompt_ambiguous`. It proved ACP session admission succeeded,
+then the first `prompt()` terminalized before permission with one durable
+ambiguous attempt and zero permissions, replies, handoffs, or effects. Cleanup
+and residue audits were empty; this authority is exhausted. The next minimal
+cycle must classify the safe underlying ACP prompt failure (for example closed
+timeout/EOF/protocol/process/auth categories) without retaining stderr, Prompt,
+paths, or provider output. M2c remains **BLOCKED** and M3 remains locked.
+
 ### Historical M2c authority cycles
 
 Before consuming the authorized designated preflight for frozen implementation

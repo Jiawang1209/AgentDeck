@@ -101,9 +101,9 @@ git worktrees, real installed inputs only after deterministic freeze.
   metadata-selected entrypoint, and both closed `.bin` links.
 - [x] Run exactly one v5 read-only preflight on the frozen SHA with Leader
   `gpt-5.5`.
-- [ ] On ready PASS only, run exactly one same-SHA/model/digest real four-stage
+- [x] On ready PASS only, run exactly one same-SHA/model/digest real four-stage
   Mission.
-- [ ] Never retry the same authority. Record PASS or the exact new terminal
+- [x] Never retry the same authority. Record PASS or the exact new terminal
   stage, complete cleanup, and start only the minimum next root-cause cycle.
 
 ## Task 7: Close M2c and transition to M3
