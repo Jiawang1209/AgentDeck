@@ -51,7 +51,7 @@ git commit -m "test: reproduce M2c preview consumption race"
 - Modify: `tests/test_m2c_live_acceptance.py`
 - Modify: `HISTORY.md`
 
-- [ ] In `_create_and_confirm_live_mission`, retain the existing daemon
+- [x] In `_create_and_confirm_live_mission`, retain the existing daemon
   admission wait, then call:
 
 ```python
@@ -59,11 +59,11 @@ _wait_for_pty_prompt(process, master, capture, 3)
 ```
 
   immediately before reading `store.all_events()`.
-- [ ] Keep the existing Mission-specific event filter and `len(consumed) == 1`
+- [x] Keep the existing Mission-specific event filter and `len(consumed) == 1`
   requirement byte-for-byte except for its new ordering.
-- [ ] Do not add sleeps, retries, new timeout values, event writes, production
+- [x] Do not add sleeps, retries, new timeout values, event writes, production
   changes, transcript capture, or alternate success paths.
-- [ ] Run the focused RED/GREEN test and relevant PTY/confirmation tests:
+- [x] Run the focused RED/GREEN test and relevant PTY/confirmation tests:
 
 ```bash
 PYTHONPATH="$PWD/src" conda run --no-capture-output -n agentdeck \
@@ -71,7 +71,7 @@ PYTHONPATH="$PWD/src" conda run --no-capture-output -n agentdeck \
   -k 'preview_consumption or preview_not_consumed or pty_prompt or frozen_authority' -q
 ```
 
-- [ ] Update HISTORY and commit:
+- [x] Update HISTORY and commit:
 
 ```bash
 git add tests/test_m2c_live_acceptance.py HISTORY.md
@@ -84,14 +84,14 @@ git commit -m "test: await M2c confirmation turn convergence"
 - Modify: `tests/test_m2c_live_acceptance.py`
 - Modify: `HISTORY.md`
 
-- [ ] Add or extend deterministic cases for zero, duplicate, and mismatched
+- [x] Add or extend deterministic cases for zero, duplicate, and mismatched
   Mission consumption events after prompt 3. Each invalid cardinality must fail
   only as `mission_preview_not_consumed_exactly_once`.
-- [ ] Reuse the existing prompt helper tests to prove process exit and timeout
+- [x] Reuse the existing prompt helper tests to prove process exit and timeout
   remain `bare_pty_exited` / `bare_pty_prompt_timeout`.
-- [ ] Assert diagnostics exclude raw prompt, request, path, stderr, provider
+- [x] Assert diagnostics exclude raw prompt, request, path, stderr, provider
   output, and injected secret sentinels.
-- [ ] Run focused confirmation/PTY/diagnostic coverage and commit any minimum
+- [x] Run focused confirmation/PTY/diagnostic coverage and commit any minimum
   missing test-only guard.
 
 ## Task 4: Wider deterministic verification and freeze

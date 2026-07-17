@@ -24,6 +24,16 @@
   `mission_preview_not_consumed_exactly_once`, proving it reads the ledger after
   prompt 2 and before the confirmation turn has converged.
 
+### Await M2c confirmation-turn convergence
+
+- Added the single harness ordering barrier: after durable daemon admission,
+  wait for prompt 3 before reading the consume ledger. Product source, timeout,
+  retry, and authority schemas remain unchanged.
+- The success, zero-event, duplicate-event, mismatched-Mission, frozen-authority,
+  and prompt-boundary set passed `9 passed, 286 deselected in 1.03s`. Invalid
+  cardinalities retain `mission_preview_not_consumed_exactly_once` and expose no
+  injected terminal or path sentinel.
+
 ### Record the one-shot M2c preview-consumption live blocker
 
 - Ran the one same-SHA/model/digest four-stage node exactly once. It failed `1

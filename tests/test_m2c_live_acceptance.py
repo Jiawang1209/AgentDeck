@@ -4610,6 +4610,7 @@ def _create_and_confirm_live_mission(
             code="mission_admission_timeout",
             capture=capture,
         )
+        _wait_for_pty_prompt(process, master, capture, 3)
         consumed = [
             event for event in store.all_events()
             if event.get("event_type") == "conversation_preview_consumed"
@@ -7489,10 +7490,35 @@ def test_live_mission_frozen_authority_blocks_real_confirmation_path(
     assert len(writes) == 1
     assert writes[0].endswith("共4轮。\n".encode("utf-8"))
     assert "确认执行当前预览".encode("utf-8") not in writes[0]
+    assert previewed == before
+    actual_state_after = store.load()
+    actual_events_after = store.all_events()
+    project_tree_after = _tree_snapshot(root)
+    assert actual_state_after == actual_state_before
+    assert actual_events_after == actual_events_before
+    assert project_tree_after == project_tree_before
+    for collection in (
+        "mission_attempts",
+        "permission_requests",
+        "mission_worker_replies",
+        "mission_handoffs",
+    ):
+        assert actual_state_after[collection] == (
+            [{"preexisting": True}] if mutation == collection else []
+        )
 
 
+@pytest.mark.parametrize(
+    ("consumed_missions", "expect_success"),
+    [
+        (("matching",), True),
+        ((), False),
+        (("matching", "matching"), False),
+        (("other",), False),
+    ],
+)
 def test_live_mission_waits_for_confirmation_turn_before_consumption_check(
-    tmp_path, monkeypatch,
+    tmp_path, monkeypatch, consumed_missions, expect_success,
 ) -> None:
     root, _config, store, previewed, _snapshot = _semantic_live_authority_fixture(
         tmp_path
@@ -7507,6 +7533,7 @@ def test_live_mission_waits_for_confirmation_turn_before_consumption_check(
     admitted["missions"][0]["daemon_admission"] = {"state": "admitted"}
     prompt_numbers: list[int] = []
     writes: list[bytes] = []
+    original_write = os.write
 
     class FakeProcess:
         pid = 987654
@@ -7528,15 +7555,24 @@ def test_live_mission_waits_for_confirmation_turn_before_consumption_check(
         assert baseline_turn_ids == frozenset()
         return previewed
 
-    def fake_wait_for_prompt(_process, _master, _capture, prompt_number):
+    def fake_wait_for_prompt(_process, _master, capture, prompt_number):
         prompt_numbers.append(prompt_number)
         if prompt_number == 3:
-            store.append_event(
-                EventRecord.create(
-                    "conversation_preview_consumed",
-                    {"mission_id": mission_id},
+            for consumed_mission in consumed_missions:
+                store.append_event(
+                    EventRecord.create(
+                        "conversation_preview_consumed",
+                        {
+                            "mission_id": (
+                                mission_id
+                                if consumed_mission == "matching"
+                                else "msn_other"
+                            )
+                        },
+                    )
                 )
-            )
+            if not expect_success:
+                capture.add(b"SECRET_PROMPT /private/fake/path\n")
 
     def fake_wait_for_state(_store, predicate, *, code, capture=None, **_kwargs):
         assert _store is store
@@ -7545,9 +7581,11 @@ def test_live_mission_waits_for_confirmation_turn_before_consumption_check(
         assert predicate(admitted) is True
         return admitted
 
-    def fake_write(_descriptor, payload):
-        writes.append(payload)
-        return len(payload)
+    def fake_write(descriptor, payload):
+        if descriptor == read_fd:
+            writes.append(payload)
+            return len(payload)
+        return original_write(descriptor, payload)
 
     def fake_stop_pty(_process, master, _scope):
         os.close(master)
@@ -7563,43 +7601,37 @@ def test_live_mission_waits_for_confirmation_turn_before_consumption_check(
     monkeypatch.setattr(module, "_stop_pty", fake_stop_pty)
     monkeypatch.setattr(os, "write", fake_write)
 
-    result = _create_and_confirm_live_mission(
-        root,
-        store,
-        env={},
-        openpty_factory=lambda: (read_fd, write_fd),
-        popen_factory=lambda *_args, **_kwargs: fake_process,
-        scope_sealer=lambda _pid: _ProcessGroupScope(
-            pgid=987654,
-            leader=_ProcessIdentity(
-                pid=987654,
+    def execute():
+        return _create_and_confirm_live_mission(
+            root,
+            store,
+            env={},
+            openpty_factory=lambda: (read_fd, write_fd),
+            popen_factory=lambda *_args, **_kwargs: fake_process,
+            scope_sealer=lambda _pid: _ProcessGroupScope(
                 pgid=987654,
-                birth_fingerprint="fixed-birth",
+                leader=_ProcessIdentity(
+                    pid=987654,
+                    pgid=987654,
+                    birth_fingerprint="fixed-birth",
+                ),
             ),
-        ),
-    )
+        )
 
-    assert result[0] == mission_id
-    assert result[2] == admitted
+    if expect_success:
+        result = execute()
+        assert result[0] == mission_id
+        assert result[2] == admitted
+    else:
+        with pytest.raises(_LiveHarnessFailure) as error:
+            execute()
+        diagnostic = json.loads(str(error.value))
+        assert diagnostic["code"] == "mission_preview_not_consumed_exactly_once"
+        assert "SECRET_PROMPT" not in str(error.value)
+        assert "/private/fake/path" not in str(error.value)
     assert prompt_numbers == [1, 2, 3]
     assert len(writes) == 2
     assert writes[1] == "确认执行当前预览\n".encode("utf-8")
-    assert previewed == before
-    actual_state_after = store.load()
-    actual_events_after = store.all_events()
-    project_tree_after = _tree_snapshot(root)
-    assert actual_state_after == actual_state_before
-    assert actual_events_after == actual_events_before
-    assert project_tree_after == project_tree_before
-    for collection in (
-        "mission_attempts",
-        "permission_requests",
-        "mission_worker_replies",
-        "mission_handoffs",
-    ):
-        assert actual_state_after[collection] == (
-            [{"preexisting": True}] if mutation == collection else []
-        )
 
 
 def test_live_failure_rejects_nonclosed_task_authority_without_stringifying() -> None:
