@@ -5972,7 +5972,7 @@ def test_m2c_strict_preflight_validator_rejects_open_failure_fields(
     assert "/private/path" not in repr(errors)
 
 
-def test_m2c_strict_preflight_v4_ready_uses_explicit_authority(
+def test_m2c_strict_preflight_v5_ready_uses_explicit_authority(
     tmp_path,
 ) -> None:
     project = tmp_path / "project"

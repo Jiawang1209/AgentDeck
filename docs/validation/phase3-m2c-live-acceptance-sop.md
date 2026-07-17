@@ -62,12 +62,17 @@ The package root, every directory, and every file must not be group- or
 world-writable. Do not discover a substitute through PATH, run install/login,
 or modify global settings as part of this SOP.
 
-The cross-process `m2c-tool-authority/v2` digest binds the exact Leader model,
+The cross-process `m2c-tool-authority/v3` digest binds the exact Leader model,
 Codex, Claude, Node, tmux, and complete ACP package-tree content. It excludes
 absolute paths, inode/device, owner, mode, mtime, xattrs, and temporary names so
 the same audited content can be reconstructed after the preflight checkout is
 removed. The canonical metadata-selected entrypoint path is also bound into the
-v2 digest. Each process separately retains and revalidates runtime facts.
+v3 digest. The complete tree may contain only npm-generated relative symlinks
+at `node_modules/.bin/{command}` whose lexical targets are regular files in the
+same sealed manifest. Traversal records link text and `lstat` identity without
+following, opening, or recursing through a link. The ACP entrypoint itself must
+remain a regular non-symlink file. Each process separately retains and
+revalidates runtime facts.
 
 ## 3. Run the separately authorized designated preflight once
 
@@ -89,14 +94,14 @@ PYTHONPATH="<absolute-detached-worktree>/src" \
   pytest tests/test_m2c_live_acceptance.py::test_m2c_explicit_authority_preflight_is_read_only -q -s
 ```
 
-The strict payload uses `schema_version=m2c-live-preflight/v4`. It contains only
+The strict payload uses `schema_version=m2c-live-preflight/v5`. It contains only
 the explicit Leader card, logical tool names, sanitized bounded versions, the
 fixed five-second timeout, unique allowlisted blockers, closed
 `tool + probe + code` failures, and this public authority card:
 
 ```json
 {
-  "schema_version": "m2c-tool-authority/v2",
+  "schema_version": "m2c-tool-authority/v3",
   "digest": "sha256:<64-lowercase-hex>",
   "source": "explicit",
   "ready": true

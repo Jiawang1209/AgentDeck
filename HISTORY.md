@@ -4,6 +4,24 @@
 
 ## 2026-07-17
 
+### Freeze M2c closed npm-link authority implementation
+
+- Completed the harness-only v3/v5 correction with zero `src/agentdeck/**`
+  changes. Focused strict/package/launcher coverage passed `37 passed, 254
+  deselected in 36.43s`; complete non-live M2c passed `289 passed, 2 skipped in
+  95.77s`; product regressions passed `851 passed in 4.86s`.
+- Compile, diff, source-scope, process, and temporary-root audits passed. The
+  next commit freezes this implementation for two fresh full suites. No real
+  preflight/live, provider, installed ACP/tmux execution, or daemon ran.
+
+### Advance real M2c package authority to v3 and preflight v5
+
+- Updated strict test naming and the SOP for the only accepted npm `.bin`
+  relative-link shape, non-following link-text/runtime sealing, regular internal
+  targets, and a still-regular metadata-selected ACP entrypoint.
+- Advanced durable acceptance instructions to authority v3/preflight v5 and
+  recorded deterministic implementation status without running any real tool.
+
 ### Verify closed npm links in the controlled ACP launcher
 
 - Reproduced the Python package sealer inside the mode-0500 launcher: stable

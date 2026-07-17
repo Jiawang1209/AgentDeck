@@ -59,6 +59,21 @@ only stable relative `.bin` links to regular manifest files are accepted,
 without following them; their text and runtime identity are sealed in authority
 v3 and strict preflight v5. M2c remains **BLOCKED** and M3 remains locked.
 
+The closed-link deterministic implementation is now present: Python package
+sealing and the generated mode-0500 launcher both record stable non-following
+link manifests, validate exact `.bin` lexical closure, and reject every unsafe
+location, target, chain, or link/target drift. Focused RED proved the installed
+layout gap; package, safety, and launcher GREEN sets passed `33`, `19`, and `24
+passed` respectively. Wider non-live/product regression and the new freeze
+cycle remain before any real v5 preflight.
+
+Those wider checks now pass: strict/package/launcher coverage is `37 passed,
+254 deselected in 36.43s`, complete non-live M2c is `289 passed, 2 skipped in
+95.77s`, and product regressions are `851 passed in 4.86s`. Compile, diff,
+`src/agentdeck/**` zero-change, process, and temporary-root audits passed. This
+documentation commit freezes the closed-link implementation; two complete
+detached-worktree suites remain before real preflight.
+
 The native-schema provenance persistence correction is implemented and frozen
 at `7a76ada81938be3ba0720a7c2f5a540b4beebb3e`. Semantic Mission previews now
 preserve the exact validated eleven-field generation envelope. StateStore

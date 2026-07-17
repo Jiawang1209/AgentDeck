@@ -183,11 +183,11 @@ git commit -m "test: verify npm bin links in controlled ACP launcher"
 - Modify: `HISTORY.md`
 - Modify: this plan
 
-- [ ] Update the SOP to require authority v3/preflight v5 and describe only the
+- [x] Update the SOP to require authority v3/preflight v5 and describe only the
   closed `.bin` exception. It must still prohibit entrypoint symlinks, external
   targets, PATH fallback, install/login, raw output, and user tmux access.
 
-- [ ] Run strict/fake designated coverage and complete non-live/product sets:
+- [x] Run strict/fake designated coverage and complete non-live/product sets:
 
 ```bash
 PYTHONPATH="$PWD/src" conda run --no-capture-output -n agentdeck \
@@ -202,7 +202,7 @@ PYTHONPATH="$PWD/src" conda run --no-capture-output -n agentdeck \
   tests/test_provider_openai_compatible.py -q
 ```
 
-- [ ] Run compile/diff/`src/agentdeck`/leakage/process/root audits, update all
+- [x] Run compile/diff/`src/agentdeck`/leakage/process/root audits, update all
   evidence docs, and commit a new frozen implementation SHA.
 
 ## Task 6: Double full suite, real preflight, and live gate
