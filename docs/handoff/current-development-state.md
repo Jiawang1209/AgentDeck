@@ -73,9 +73,14 @@ remains locked. The human-approved design is now written at
 binds designated preflight and live through one content-addressed authority
 covering model, Codex, Claude, tmux, Node, and the complete Claude Agent ACP
 package tree; it also projects only closed `tool + probe + code` diagnostics.
-The written spec awaits human review. After approval, the next gate is a
-detailed writing-plans TDD plan; no implementation, preflight, or live run is
-authorized yet.
+The human approved the written spec. The detailed, self-reviewed TDD plan is at
+`docs/superpowers/plans/2026-07-17-m2c-tool-authority-binding.md`; it divides
+the work into deterministic authority, package-tree, preflight-v3, live
+admission, diagnostic closure, controlled Node/ACP, SOP, and frozen
+verification commits. Inline RED/GREEN implementation is now authorized.
+No real designated preflight or live run is authorized during implementation;
+after one frozen SHA passes two full suites, the process must stop for a new
+separate human authorization naming the exact SHA and Leader model.
 
 ## Historical 75f provenance blocker evidence
 

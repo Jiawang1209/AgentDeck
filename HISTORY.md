@@ -4,6 +4,22 @@
 
 ## 2026-07-17
 
+### Plan M2c content-addressed authority RED/GREEN implementation
+
+- Converted the approved `m2c-tool-authority/v1` design into the task-by-task
+  TDD plan at
+  `docs/superpowers/plans/2026-07-17-m2c-tool-authority-binding.md`.
+- Locked eight implementation/verification tasks covering deterministic
+  authority identity, complete Claude Agent ACP package sealing, strict
+  `m2c-live-preflight/v3` diagnostics, pre-root live digest admission,
+  same-object authority reuse, controlled Node execution, SOP controls, and
+  unchanged-SHA double full-suite evidence.
+- The plan keeps all behavior inside the M2c harness and SOP, forbids changes
+  under `src/agentdeck/**`, and prohibits any real designated preflight or live
+  Mission until a new frozen SHA receives separate human authorization. No
+  provider, ACP/tmux Worker, preflight, live Mission, install, login, merge, or
+  push ran while writing or reviewing the plan.
+
 ### Approve M2c content-addressed tool authority design
 
 - Approved the harness-only solution for the exhausted `7a76ada...`
