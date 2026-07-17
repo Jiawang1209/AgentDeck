@@ -197,6 +197,27 @@
   retried. M2c remains **BLOCKED** and M3 remains locked until a separately
   authorized real four-stage Mission on the same SHA/model/digest passes.
 
+### Record the consumed bounded-permission live Mission
+
+- Consumed the separately authorized real implementation → review → revision
+  → acceptance Mission exactly once on frozen
+  `df25532d0bd4fb9c8dd57fd119607a05411d11db`, Leader `gpt-5.5`, and authority
+  digest `sha256:b194c3b4ccbfa3ba2b534bf9cb51e59ecbc077e2576c6eea8ba343f26cc83ffa`.
+- The run failed `1 failed in 69.69s` with the closed terminal result
+  `stage=live_acceptance`, `code=live_setup_failed`. The guarded wrapper
+  removed the disposable project and exposed no cardinalities, ledger,
+  permission progress, Leader terminal, PTY, or preflight diagnostics, so the
+  evidence cannot attribute a root cause to ACP, Leader, or a Worker.
+- Removed the detached checkout and confirmed empty process, daemon, ACP,
+  tmux, live-root, worktree, and repository-status residue. The live authority
+  is consumed and cannot be retried.
+- Read-only tracing identified an observability hypothesis: the new first
+  attempt directly projects `_attempt_permission_boundary()` outside the
+  closed conversion used by the bounded waiter. This is not yet proof of the
+  underlying exception. M2c remains **BLOCKED**, M3 remains locked, and the
+  next gate is the smallest closed-observability brainstorming/spec/plan/TDD
+  cycle without timeout inflation, retry, or raw exception persistence.
+
 ### Design bounded sequential ACP permission acceptance for M2c
 
 - Replaced the live harness assumption of exactly two Mission permissions with

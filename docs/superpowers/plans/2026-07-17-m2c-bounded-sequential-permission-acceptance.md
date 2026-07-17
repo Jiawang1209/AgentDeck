@@ -2359,7 +2359,7 @@ for a new sentence authorizing one real four-stage Mission on the same frozen
 implementation SHA, `gpt-5.5`, and exact authority digest. Preflight approval is
 not live approval.
 
-- [ ] **Step 4: Execute the real four-stage Mission exactly once**
+- [x] **Step 4: Execute the real four-stage Mission exactly once**
 
 Only after separate exact live authority:
 
@@ -2397,6 +2397,12 @@ test "$LIVE_RC" -eq 0
 Export the same six sealed explicit tool variables used by preflight. Run no
 second attempt regardless of result.
 
+Observed: the exact authorized node ran once and failed `1 failed in 69.69s`
+with `stage=live_acceptance`, `code=live_setup_failed`. The detached checkout
+was removed and process, daemon, ACP, tmux, live-root, worktree, and repository
+residue audits were empty. The authority is consumed; no second attempt ran or
+is permitted.
+
 - [ ] **Step 5: Close M2c only on real PASS**
 
 PASS requires four succeeded attempts, four validated replies, four canonical
@@ -2419,6 +2425,12 @@ On failure:
 3. do not retry, inflate timeout, rewrite evidence, or expand scope;
 4. start only the smallest evidence-led brainstorming cycle for the new exact
    terminal fact.
+
+Observed: the real node did not PASS, so this step remains open. M2c stays
+BLOCKED and M3 stays locked. The exact terminal fact is `live_setup_failed`;
+because the outer wrapper suppressed the unexpected inner exception and
+published no Mission facts, the next cycle must first close that observability
+gap rather than guess at an ACP or Worker defect.
 
 ## Plan self-review checklist
 

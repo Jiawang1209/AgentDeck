@@ -51,11 +51,20 @@ authority digest. It passed `1 passed in 17.39s` with `ready=true`,
 `blockers=[]`, `failures=[]`, schema `m2c-live-preflight/v6`, and authority
 `m2c-tool-authority/v3`. The detached checkout was removed; process, daemon,
 ACP, tmux, temporary-root, worktree, and repository-status audits are empty.
-This preflight authority is consumed and must not be rerun. No live Mission
-has run for this candidate. The next gate is a new, separate human
-authorization naming this same frozen SHA, Leader model, and exact digest for
-one real four-stage Mission. M2c remains **BLOCKED** and M3 remains locked. Do
-not retry the preflight, auto-approve, merge, push, install, change
+This preflight authority is consumed and must not be rerun. The separately
+authorized real four-stage Mission then ran exactly once on the same frozen
+SHA/model/digest and failed `1 failed in 69.69s` with the closed result
+`stage=live_acceptance`, `code=live_setup_failed`. The outer guarded wrapper
+removed the disposable project and intentionally suppressed the original
+unexpected exception; no Mission/attempt/permission cardinalities were
+available, so this evidence does not identify ACP, Leader, or a Worker as the
+root cause. The detached checkout was removed and process, daemon, ACP, tmux,
+live-root, worktree, and repository-status audits are empty. This live
+authority is consumed and must not be retried. M2c remains **BLOCKED** and M3
+remains locked. The only next gate is the smallest evidence-led
+brainstorming/spec/plan cycle that closes this `live_setup_failed`
+observability boundary before any new deterministic RED/GREEN and freeze. Do
+not increase timeouts, retry, auto-approve, merge, push, install, change
 authentication/global settings, or begin M3.
 
 The separately authorized live Mission on frozen

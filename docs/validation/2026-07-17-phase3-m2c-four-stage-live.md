@@ -574,3 +574,31 @@ authority is consumed and cannot be rerun. No real Mission ran. The next gate
 is a separate human authorization for one real four-stage Mission on this
 same frozen SHA, model, and digest. M2c remains **BLOCKED** and M3 remains
 locked.
+
+That separately authorized real Mission then ran exactly once on the same
+frozen SHA, Leader, and digest. It failed `1 failed in 69.69s` with the only
+closed terminal fact:
+
+```text
+stage=live_acceptance
+code=live_setup_failed
+```
+
+The failure came from `_run_live_acceptance_in_project()` converting an
+unexpected inner `Exception` into the path-free setup code after removing the
+disposable project. It exposed no cardinalities, ledger, permission progress,
+Leader terminal, PTY diagnostic, or preflight blocker. Therefore the evidence
+cannot honestly attribute the failure to ACP, Leader planning, a Worker,
+permission lineage, or cleanup. Read-only source tracing shows that the new
+first-attempt integration directly calls `_attempt_permission_boundary()`
+outside the conversion used by `_wait_for_attempt_boundary()`; an escaping
+`_PermissionContractError` is one plausible observability hypothesis, not a
+proven underlying cause.
+
+The detached live checkout was removed. Process, daemon, ACP, tmux, live-root,
+worktree, and repository-status audits were empty. This SHA/model/digest live
+authority is consumed at count `1/1` and cannot be retried. M2c remains
+**BLOCKED** and M3 remains locked. The next gate is a minimal
+brainstorming/spec/plan/TDD cycle for stage-specific, closed inner-exception
+observability; it must not inflate timeouts, retry, persist raw exceptions, or
+claim an ACP/product defect without deterministic evidence.
