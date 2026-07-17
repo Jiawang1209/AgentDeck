@@ -78,9 +78,18 @@ The human approved the written spec. The detailed, self-reviewed TDD plan is at
 the work into deterministic authority, package-tree, preflight-v3, live
 admission, diagnostic closure, controlled Node/ACP, SOP, and frozen
 verification commits. Inline RED/GREEN implementation is now authorized.
-No real designated preflight or live run is authorized during implementation;
-after one frozen SHA passes two full suites, the process must stop for a new
-separate human authorization naming the exact SHA and Leader model.
+Tasks 1-7 are now implemented in the M2c harness/SOP: deterministic authority,
+complete ACP package sealing, strict preflight v3, pre-root digest admission,
+closed failure projection, controlled Node/ACP execution, and the separately
+gated designated node. No `src/agentdeck/**` behavior changed. Focused
+RED/GREEN checks are passing, and the complete non-live M2c file passed
+`238 passed, 2 skipped in 67.79s`; the skips were exactly the gated real
+designated preflight and real live node. Product regressions, the frozen
+implementation commit, and unchanged-SHA double full suite remain before this
+slice is verified. No real designated preflight or live run is authorized
+during implementation. After one frozen SHA passes both full suites, the
+process must stop for a new separate human authorization naming the exact SHA
+and Leader model.
 
 ## Historical 75f provenance blocker evidence
 

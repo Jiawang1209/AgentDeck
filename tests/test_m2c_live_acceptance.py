@@ -1482,6 +1482,22 @@ def _strict_live_preflight(
     return payload
 
 
+def _explicit_authority_preflight_payload(
+    project: Path,
+    environ: Mapping[str, str],
+) -> dict[str, object]:
+    authority, failures = _load_explicit_tool_authority(environ)
+    if authority is None or failures:
+        raise _live_failure(
+            "preflight_blocked",
+            preflight_blockers=tuple(
+                dict.fromkeys(item.code for item in failures)
+            ),
+            preflight_failures=failures,
+        )
+    return _strict_live_preflight(project, authority)
+
+
 def _resolved_probe_seal(name: str, env_name: str) -> _ExecutableSeal | None:
     configured = os.environ.get(env_name)
     if configured is not None:
@@ -5438,6 +5454,80 @@ def test_m2c_strict_preflight_attributes_probe_write_without_leakage(
     assert str(tmp_path) not in repr(payload)
 
 
+def test_m2c_explicit_authority_preflight_helper_is_read_only_with_fake_tools(
+    tmp_path,
+) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    environment = _fake_explicit_authority_environment(tmp_path / "authority")
+    authority_before, failures = _load_explicit_tool_authority(environment)
+    assert failures == () and authority_before is not None
+    project_before = _tree_snapshot(project)
+
+    payload = _explicit_authority_preflight_payload(project, environment)
+
+    authority_after, after_failures = _load_explicit_tool_authority(environment)
+    assert after_failures == ()
+    assert authority_after == authority_before
+    assert _tree_snapshot(project) == project_before
+    assert _validate_strict_preflight_payload(payload) == []
+    assert payload["ready"] is True
+    assert payload["tool_authority"]["digest"] == authority_before.digest
+
+
+def test_m2c_designated_preflight_node_runs_only_with_fake_explicit_tools(
+    tmp_path,
+) -> None:
+    environment = dict(os.environ)
+    authority_environment = _fake_explicit_authority_environment(
+        tmp_path / "authority"
+    )
+    environment.update(authority_environment)
+    environment[STRICT_PREFLIGHT_ENV] = "1"
+    environment["PYTHONPATH"] = str(Path(__file__).resolve().parents[1] / "src")
+    environment["PYTEST_DISABLE_PLUGIN_AUTOLOAD"] = "1"
+    authority_before, failures = _load_explicit_tool_authority(
+        authority_environment
+    )
+    assert failures == () and authority_before is not None
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pytest",
+            f"{Path(__file__).resolve()}::test_m2c_explicit_authority_preflight_is_read_only",
+            "-q",
+            "-s",
+        ],
+        cwd=Path(__file__).resolve().parents[1],
+        env=environment,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+        timeout=30,
+    )
+
+    assert completed.returncode == 0
+    payload = json.loads(
+        next(
+            line
+            for line in completed.stdout.decode("utf-8").splitlines()
+            if line.startswith("{")
+        )
+    )
+    authority_after, after_failures = _load_explicit_tool_authority(
+        authority_environment
+    )
+    assert after_failures == () and authority_after == authority_before
+    assert payload["schema_version"] == STRICT_PREFLIGHT_SCHEMA_VERSION
+    assert payload["ready"] is True
+    assert payload["blockers"] == []
+    assert payload["failures"] == []
+    assert payload["tool_authority"]["digest"] == authority_before.digest
+
+
 @pytest.mark.parametrize(
     ("raw", "blocker"),
     [
@@ -5943,6 +6033,20 @@ def test_preflight_resolves_explicit_absolute_symlink(
         "tmux": "tmux",
     }
     assert _validate_preflight_payload(payload) == []
+
+
+@pytest.mark.skipif(
+    os.environ.get(STRICT_PREFLIGHT_ENV) != "1",
+    reason="requires separately authorized explicit M2c authority preflight",
+)
+def test_m2c_explicit_authority_preflight_is_read_only(tmp_path) -> None:
+    before = _tree_snapshot(tmp_path)
+
+    payload = _explicit_authority_preflight_payload(tmp_path, os.environ)
+
+    assert _validate_strict_preflight_payload(payload) == []
+    assert _tree_snapshot(tmp_path) == before
+    print(json.dumps(payload, sort_keys=True))
 
 
 def test_m2c_live_preflight_is_read_only(tmp_path, monkeypatch) -> None:

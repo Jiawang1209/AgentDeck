@@ -771,7 +771,7 @@ git commit -m "test: control M2c ACP Node execution"
 - Modify: `docs/handoff/current-development-state.md`
 - Modify: `HISTORY.md`
 
-- [ ] **Step 1: Add the dedicated strict node without executing it against real tools**
+- [x] **Step 1: Add the dedicated strict node without executing it against real tools**
 
 Add a dedicated explicit opt-in guard and node:
 
@@ -794,7 +794,7 @@ def test_m2c_explicit_authority_preflight_is_read_only(tmp_path):
 
 It must remain a normal collected node, skipped unless `AGENTDECK_M2C_STRICT_PREFLIGHT=1`, whose real execution is controlled by the SOP and explicit human authorization. During implementation, exercise it only with deterministic fake tools via a subprocess test that supplies a temporary environment, sets the guard to `1`, and confirms no writes outside the isolated roots.
 
-- [ ] **Step 2: Add deterministic subprocess RED/GREEN coverage**
+- [x] **Step 2: Add deterministic subprocess RED/GREEN coverage**
 
 Run the exact node in a copied temporary test module with fake executable/package inputs and assert:
 
@@ -810,7 +810,7 @@ assert payload["tool_authority"]["source"] == "explicit"
 
 Do not point this implementation test at installed Codex, Claude, Node, tmux, or Claude Agent ACP.
 
-- [ ] **Step 3: Rewrite the SOP inputs and commands**
+- [x] **Step 3: Rewrite the SOP inputs and commands**
 
 The designated preflight section must require exact absolute values for:
 
@@ -826,11 +826,11 @@ AGENTDECK_M2C_STRICT_PREFLIGHT=1
 
 The preflight command must select only `test_m2c_explicit_authority_preflight_is_read_only`. The operator records only frozen SHA, exact model, schema version, `ready`, closed blockers/failures, and authority digest. After cleanup, a later live authorization must name frozen SHA, exact model, and exact digest; the live environment additionally supplies `AGENTDECK_M2C_AUTHORITY_DIGEST`. Never copy raw stdout/stderr, paths, prompts, terminal content, or executable hashes into durable evidence.
 
-- [ ] **Step 4: Update handoff and HISTORY**
+- [x] **Step 4: Update handoff and HISTORY**
 
 Handoff must say implementation is not yet frozen until Task 8 completes, historical SHA `7a76ada81938be3ba0720a7c2f5a540b4beebb3e` remains exhausted at `1/1`, and no new real preflight/live is authorized. HISTORY must record the SOP/control change.
 
-- [ ] **Step 5: Run documentation and non-live harness checks**
+- [x] **Step 5: Run documentation and non-live harness checks**
 
 Run:
 
@@ -843,7 +843,7 @@ rg -n 'm2c-live-preflight/v3|AGENTDECK_M2C_AUTHORITY_DIGEST|test_m2c_explicit_au
 
 Expected: complete non-live M2c selection passes; compile exits `0`; all required control terms are found.
 
-- [ ] **Step 6: Commit Task 7**
+- [x] **Step 6: Commit Task 7**
 
 ```bash
 git add tests/test_m2c_live_acceptance.py \

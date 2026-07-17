@@ -17,8 +17,10 @@ package, performs login, changes global settings, or touches a user tmux
 socket/session. Capability probes run from the disposable project with a
 minimal environment and isolated `HOME`, `XDG_CONFIG_HOME`, `XDG_CACHE_HOME`,
 `XDG_DATA_HOME`, and `TMPDIR`. Live writes are confined to that disposable
-tree, including exact-name controlled launchers that bind name-based
-provider/tmux calls to the four validated executable paths.
+tree. Exact-name controlled launchers bind Codex, Claude, and tmux calls to
+their validated executables. Claude Agent ACP uses a specialized launcher that
+revalidates its complete package and executes its fixed entrypoint through the
+explicit sealed Node executable; it never resolves Node through ambient PATH.
 
 ## 1. Freeze and inspect the checkout
 
@@ -35,35 +37,82 @@ basenames, and sanitized bounded version strings. It never records executable
 paths, environment values, home paths, raw help output, terminal text, auth
 material, or provider transcripts.
 
-## 2. Run the read-only portable preflight
+## 2. Prepare one explicit content authority
 
-```bash
-AGENTDECK_M2C_LEADER_MODEL="<audited-model-id>" \
-conda run --no-capture-output -n agentdeck \
-  pytest tests/test_m2c_live_acceptance.py::test_m2c_live_preflight_is_read_only -q -s
+The designated preflight and a later live run must use the same logical inputs:
+
+```text
+AGENTDECK_M2C_LEADER_MODEL
+AGENTDECK_M2C_CODEX
+AGENTDECK_M2C_CLAUDE
+AGENTDECK_M2C_CLAUDE_ACP
+AGENTDECK_M2C_CLAUDE_ACP_PACKAGE
+AGENTDECK_M2C_NODE
+AGENTDECK_M2C_TMUX
 ```
 
-The probe has a five-second bound per command. It checks exact native flags
-`--output-schema` and `--output-last-message` for Codex, `--json-schema` plus
-JSON output capability for Claude, and version commands for
-`claude-agent-acp` and tmux. Probe output is bounded and never printed; the
-payload uses `schema_version=m2c-live-preflight/v2` and contains only:
+Every path must be an audited absolute local path. Executable inputs must be
+non-symlink regular executables. `AGENTDECK_M2C_CLAUDE_ACP_PACKAGE` must be the
+non-symlink package root containing the exact executable
+`dist/claude-agent-acp`; `AGENTDECK_M2C_CLAUDE_ACP` must name that same file.
+The package root, every directory, and every file must not be group- or
+world-writable. Do not discover a substitute through PATH, run install/login,
+or modify global settings as part of this SOP.
 
-- `ready`;
-- fixed allowlisted blocker codes;
-- the exact `leader_model` card
-  `{provider: codex-cli, model: <audited-model-id>, source: explicit,
-  ready: true}` when the input is valid;
-- executable basenames;
-- sanitized version strings;
-- the fixed probe timeout.
+The cross-process `m2c-tool-authority/v1` digest binds the exact Leader model,
+Codex, Claude, Node, tmux, and complete ACP package-tree content. It excludes
+absolute paths, inode/device, owner, mode, mtime, xattrs, and temporary names so
+the same audited content can be reconstructed after the preflight checkout is
+removed. Each process separately retains and revalidates those runtime facts.
 
-The Leader model is a required explicit identity, not a default. Missing,
-invalid, or changed input produces only `leader_model_missing`,
-`leader_model_invalid`, or `leader_model_drift` and forces `ready=false`.
-Rejected raw values are not echoed. Preflight validates and freezes the model
-identity only: it does not invoke the model, access a provider, or prove that
-the model is available to the current account.
+## 3. Run the separately authorized designated preflight once
+
+Human authorization must name the frozen SHA and exact Leader model before
+this command runs. Substitute the already audited absolute paths; do not use
+`command -v` inside the command.
+
+```bash
+AGENTDECK_M2C_STRICT_PREFLIGHT=1 \
+AGENTDECK_M2C_LEADER_MODEL="<audited-model-id>" \
+AGENTDECK_M2C_CODEX="<absolute-codex-path>" \
+AGENTDECK_M2C_CLAUDE="<absolute-claude-path>" \
+AGENTDECK_M2C_CLAUDE_ACP="<absolute-package-root>/dist/claude-agent-acp" \
+AGENTDECK_M2C_CLAUDE_ACP_PACKAGE="<absolute-package-root>" \
+AGENTDECK_M2C_NODE="<absolute-node-path>" \
+AGENTDECK_M2C_TMUX="<absolute-tmux-path>" \
+PYTHONPATH=src conda run --no-capture-output -n agentdeck \
+  pytest tests/test_m2c_live_acceptance.py::test_m2c_explicit_authority_preflight_is_read_only -q -s
+```
+
+The strict payload uses `schema_version=m2c-live-preflight/v3`. It contains only
+the explicit Leader card, logical tool names, sanitized bounded versions, the
+fixed five-second timeout, unique allowlisted blockers, closed
+`tool + probe + code` failures, and this public authority card:
+
+```json
+{
+  "schema_version": "m2c-tool-authority/v1",
+  "digest": "sha256:<64-lowercase-hex>",
+  "source": "explicit",
+  "ready": true
+}
+```
+
+Record only frozen SHA, exact model ID, schema version, `ready`, blockers,
+failures, and the final authority digest. Never persist raw stdout/stderr,
+prompts, terminal content, environment values, absolute paths, member hashes,
+or authentication material. The pytest node may pass its response contract
+while returning `ready=false`; that result is BLOCKED and cannot authorize
+live. Only `ready=true`, `blockers=[]`, and `failures=[]` may proceed to a new,
+separate human live authorization naming SHA, model, and exact digest.
+
+The older `test_m2c_live_preflight_is_read_only` remains a PATH-compatible
+developer regression using `m2c-live-preflight/v2`. It is not designated
+authority and can never authorize live.
+
+The Leader model is a required explicit identity, not a default. Preflight
+validates identity only: it does not invoke the model, access a provider, or
+prove model availability to the account.
 
 Codex CLI initializes per-process arg0 helper aliases even for `--version` and
 `exec --help`. For those two capability probes only, the harness sets
@@ -87,38 +136,17 @@ fixed `probe_scope_unverified`; a residual produces
 `probe_residual_process`. Both force `ready=false`, and no unsealed PID/PGID is
 signalled. The opaque marker is never returned in probe output or diagnostics.
 
-The test snapshots both the disposable project and every actual isolated probe
-root before and after probing, including file bytes, kinds, and directory/file
-mtimes. Any probe write, including a create-then-delete mutation, produces the
-fixed `probe_wrote_files` blocker and forces `ready=false`. It also
-deterministically rejects a relative path and a symlink path without executing
-either. The portable test passes when this contract is honored even if the
-product result is `ready=false`; that result is still a setup blocker, not M2c
-PASS.
+The strict test snapshots the disposable project, every isolated probe root,
+every explicit executable seal, and the complete ACP package before and after
+each probe. Any create, delete, content, kind, mode, or directory mutation is
+attributed to the exact tool/probe as `probe_wrote_files` and forces
+`ready=false`. Process groups, birth identities, descendants, and the opaque
+scope marker retain the bounded cleanup behavior described below.
 
-## 3. Validate exact model and executable inputs
-
-The preflight and live test require the exact model variable below. The live
-test also requires all four executable variables. A different model value is
-a new execution authority and requires a new read-only preflight plus separate
-human authorization.
-
-```text
-AGENTDECK_M2C_LEADER_MODEL
-```
-
-Each executable value must be an
-absolute, non-symlink, regular executable with the expected basename. Missing,
-relative, directory, non-executable, symlink, or replaced identity evidence
-fails before project initialization. Initial validation seals path, device,
-inode, owner, mode, size, mtime, and content SHA-256. Every probe, launcher,
-bare/daemon boundary, pane observation, and cleanup use revalidates that seal
-before and after use. Each private mode-`0500` controlled launcher also opens
-the original with `O_NOFOLLOW`, hashes and compares fd metadata, rechecks the
-path inode, and only then executes it. This preserves Node/npm package-relative
-imports while rejecting replacement completed before an invocation. A second
-four-tool gate runs immediately before project initialization; drift returns
-only fixed `executable_identity_drift` and the changed path is not executed.
+Every live launcher and cleanup boundary revalidates path, device, inode,
+owner, mode, size, mtime, and content SHA-256. The private mode-`0500` ACP
+launcher additionally re-walks the complete package, verifies the fixed
+entrypoint, verifies exact Node, and directly calls Node with that entrypoint.
 
 macOS does not expose `fexecve` through this Python runtime. Therefore the
 final verified `lstat` to `execve(path)` interval is a documented platform
@@ -127,31 +155,30 @@ identity/hash mismatch fails closed with exit 126, and it never falls back to
 an unverified executable or a single-file copy that would break
 `claude-agent-acp` ESM-relative imports.
 
-```text
-AGENTDECK_M2C_CODEX
-AGENTDECK_M2C_CLAUDE
-AGENTDECK_M2C_CLAUDE_ACP
-AGENTDECK_M2C_TMUX
-```
-
-Resolve and inspect these paths yourself before opt-in. Do not run install or
-login commands as part of this SOP.
-
 ## 4. Run the real gate once
+
+This requires a second human authorization naming the same frozen SHA, exact
+model, and exact digest produced by the ready designated preflight.
 
 ```bash
 AGENTDECK_M2C_LIVE=1 \
 AGENTDECK_M2C_LEADER_MODEL="<audited-model-id>" \
-AGENTDECK_M2C_CODEX="$(command -v codex)" \
-AGENTDECK_M2C_CLAUDE="$(command -v claude)" \
-AGENTDECK_M2C_CLAUDE_ACP="$(command -v claude-agent-acp)" \
-AGENTDECK_M2C_TMUX="$(command -v tmux)" \
-conda run --no-capture-output -n agentdeck \
+AGENTDECK_M2C_CODEX="<absolute-codex-path>" \
+AGENTDECK_M2C_CLAUDE="<absolute-claude-path>" \
+AGENTDECK_M2C_CLAUDE_ACP="<absolute-package-root>/dist/claude-agent-acp" \
+AGENTDECK_M2C_CLAUDE_ACP_PACKAGE="<absolute-package-root>" \
+AGENTDECK_M2C_NODE="<absolute-node-path>" \
+AGENTDECK_M2C_TMUX="<absolute-tmux-path>" \
+AGENTDECK_M2C_AUTHORITY_DIGEST="sha256:<approved-64-lowercase-hex>" \
+PYTHONPATH=src conda run --no-capture-output -n agentdeck \
   pytest tests/test_m2c_live_acceptance.py::test_real_four_stage_m2c_acceptance -q -s
 ```
 
-If `command -v` returns a symlink, the test intentionally blocks. Supply the
-audited absolute regular executable instead; do not weaken the path check.
+Live validates digest grammar, loads every explicit input, recomputes content
+identity, and compares the approved digest before creating its disposable
+root. Missing or drifted identity fails closed. It then passes the same
+in-memory authority object to the internal strict preflight; it does not reread
+environment variables, resolve PATH, or select another Node/package/model.
 
 The gate creates a fresh disposable project outside the checkout, initializes
 only project-local AgentDeck state, and sends one natural-language request via

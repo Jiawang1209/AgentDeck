@@ -4,6 +4,24 @@
 
 ## 2026-07-17
 
+### Add the designated M2c explicit-authority preflight surface
+
+- Added the separately gated
+  `test_m2c_explicit_authority_preflight_is_read_only` node and a shared helper
+  that loads only explicit authority inputs and returns strict
+  `m2c-live-preflight/v3` output.
+- The real node is skipped unless `AGENTDECK_M2C_STRICT_PREFLIGHT=1`; ordinary
+  regression executes the exact node body in a child process using only
+  disposable fake tools. Focused coverage passed `2` with the real node
+  correctly skipped once.
+- Rewrote the SOP around SHA/model-bound preflight authorization, later
+  SHA/model/digest-bound live authorization, full ACP package plus explicit
+  Node inputs, and closed evidence. Removed `command -v` as live authority.
+  The complete non-live M2c file passed `238 passed, 2 skipped in 67.79s`;
+  the two skips were exactly the real designated preflight and real live node.
+  No real designated preflight, live Mission, installed tool, merge, or push
+  ran.
+
 ### Execute M2c Claude Agent ACP through sealed Node and package
 
 - Added a dedicated mode-`0500` ACP launcher that revalidates the full package
