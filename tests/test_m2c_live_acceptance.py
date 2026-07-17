@@ -252,6 +252,15 @@ class _LivePermissionFact:
     effective_state: str
 
 
+@dataclass(frozen=True)
+class _LiveAttemptBoundary:
+    kind: str
+    permission: _LivePermissionFact | None
+    attempt_permission_count: int
+    mission_permission_count: int
+    effective_permission_states: tuple[str, ...]
+
+
 def _permission_effective_state(
     permission: Mapping[str, object],
     transitions: list[dict[str, object]],
@@ -409,6 +418,102 @@ def _attempt_permission_facts(
     ):
         raise _PermissionContractError("permission_transition_invalid")
     return tuple(facts)
+
+
+def _attempt_permission_boundary(
+    state: object,
+    *,
+    mission_id: str,
+    attempt_id: str,
+    step_position: int,
+) -> _LiveAttemptBoundary:
+    if type(state) is not dict or step_position not in _LIVE_CLAUDE_STEP_POSITIONS:
+        raise _PermissionContractError("permission_lineage_invalid")
+    attempts = state.get("mission_attempts")
+    replies = state.get("mission_worker_replies")
+    handoffs = state.get("mission_handoffs")
+    bindings = state.get("mission_permission_bindings")
+    if any(
+        type(value) is not list or any(type(item) is not dict for item in value)
+        for value in (attempts, replies, handoffs, bindings)
+    ):
+        raise _PermissionContractError("permission_lineage_invalid")
+    exact = [
+        item for item in attempts
+        if item.get("mission_id") == mission_id
+        and item.get("attempt_id") == attempt_id
+    ]
+    if len(exact) != 1:
+        raise _PermissionContractError("permission_lineage_invalid")
+    attempt = exact[0]
+    if (
+        attempt.get("step_id") != f"step_{step_position}"
+        or attempt.get("step_position") != step_position
+        or attempt.get("agent_id") != "claude-worker"
+        or attempt.get("configured_transport") != "acp"
+    ):
+        raise _PermissionContractError("permission_lineage_invalid")
+    facts = _attempt_permission_facts(state, attempt)
+    mission_permission_count = sum(
+        item.get("mission_id") == mission_id for item in bindings
+    )
+    effective = tuple(item.effective_state for item in facts)
+    pending = [item for item in facts if item.effective_state == "pending"]
+    reply_matches = [
+        item for item in replies
+        if item.get("mission_id") == mission_id
+        and item.get("attempt_id") == attempt_id
+        and item.get("dispatch_key") == attempt.get("dispatch_key")
+    ]
+    reply_id = (
+        reply_matches[0].get("reply_id") if len(reply_matches) == 1 else None
+    )
+    handoff_matches = [
+        item for item in handoffs
+        if item.get("mission_id") == mission_id
+        and item.get("attempt_id") == attempt_id
+        and item.get("reply_id") == reply_id
+    ]
+    completed = (
+        attempt.get("state") == "succeeded"
+        and len(reply_matches) == 1
+        and reply_matches[0].get("state") == "validated"
+        and len(handoff_matches) == 1
+        and handoff_matches[0].get("state") == "recorded"
+        and type(handoff_matches[0].get("canonical_handoff")) is dict
+        and handoff_matches[0]["canonical_handoff"].get("status") == "completed"
+    )
+    later_attempt = any(
+        item.get("mission_id") == mission_id
+        and type(item.get("step_position")) is int
+        and item["step_position"] > step_position
+        for item in attempts
+    )
+    base = {
+        "attempt_permission_count": len(facts),
+        "mission_permission_count": mission_permission_count,
+        "effective_permission_states": effective,
+    }
+    if (
+        len(facts) > _LIVE_MAX_PERMISSIONS_PER_CLAUDE_ATTEMPT
+        or mission_permission_count > _LIVE_MAX_PERMISSIONS_PER_MISSION
+    ):
+        return _LiveAttemptBoundary("permission_limit_exceeded", None, **base)
+    if later_attempt and not completed:
+        return _LiveAttemptBoundary(
+            "next_stage_started_before_handoff", None, **base
+        )
+    if completed:
+        return _LiveAttemptBoundary("completed", None, **base)
+    if attempt.get("state") == "succeeded":
+        return _LiveAttemptBoundary("waiting_handoff", None, **base)
+    if attempt.get("state") in {"failed", "cancelled", "interrupted", "ambiguous"}:
+        return _LiveAttemptBoundary(
+            "attempt_terminal_before_handoff", None, **base
+        )
+    if len(pending) == 1:
+        return _LiveAttemptBoundary("permission", pending[0], **base)
+    return _LiveAttemptBoundary("waiting", None, **base)
 
 
 def _exact_live_steps() -> list[dict[str, str]]:
@@ -3408,6 +3513,125 @@ def _wait_for_state(
             pass
         time.sleep(0.1)
     raise _live_failure(code, store=store, capture=capture)
+
+
+def _wait_for_attempt_boundary(
+    store: StateStore,
+    *,
+    mission_id: str,
+    attempt_id: str,
+    step_position: int,
+    timeout: float = 180,
+    capture: _PtyTail | None = None,
+) -> tuple[_LiveAttemptBoundary, dict[str, object]]:
+    deadline = time.monotonic() + timeout
+    last_kind = "waiting"
+    while time.monotonic() < deadline:
+        state = store.load()
+        try:
+            boundary = _attempt_permission_boundary(
+                state,
+                mission_id=mission_id,
+                attempt_id=attempt_id,
+                step_position=step_position,
+            )
+        except _PermissionContractError as error:
+            raise _live_failure(
+                error.code, state_snapshot=state, capture=capture
+            ) from None
+        last_kind = boundary.kind
+        if boundary.kind not in {"waiting", "waiting_handoff"}:
+            return boundary, state
+        time.sleep(0.1)
+    code = (
+        "handoff_missing_after_attempt_success"
+        if last_kind == "waiting_handoff"
+        else "permission_wait_timeout"
+    )
+    raise _live_failure(code, store=store, capture=capture)
+
+
+def _drive_bounded_claude_attempt(
+    store: StateStore,
+    *,
+    mission_id: str,
+    attempt_id: str,
+    step_position: int,
+    confirm_permission: Any,
+    timeout: float = 180,
+    capture: _PtyTail | None = None,
+    initial_boundary: tuple[_LiveAttemptBoundary, dict[str, object]] | None = None,
+    verify_authority: Any = None,
+) -> dict[str, object]:
+    handled: set[str] = set()
+    current = initial_boundary
+    while True:
+        boundary, state = current or _wait_for_attempt_boundary(
+            store,
+            mission_id=mission_id,
+            attempt_id=attempt_id,
+            step_position=step_position,
+            timeout=timeout,
+            capture=capture,
+        )
+        current = None
+        if boundary.kind == "completed":
+            if not handled and boundary.attempt_permission_count == 0:
+                raise _live_failure(
+                    "permission_bridge_missing",
+                    state_snapshot=state,
+                    capture=capture,
+                )
+            return state
+        if boundary.kind != "permission" or boundary.permission is None:
+            raise _live_failure(
+                boundary.kind, state_snapshot=state, capture=capture
+            )
+        permission = boundary.permission
+        if (
+            permission.permission_id in handled
+            or boundary.attempt_permission_count
+            > _LIVE_MAX_PERMISSIONS_PER_CLAUDE_ATTEMPT
+            or boundary.mission_permission_count
+            > _LIVE_MAX_PERMISSIONS_PER_MISSION
+        ):
+            raise _live_failure(
+                "permission_limit_exceeded",
+                state_snapshot=state,
+                capture=capture,
+            )
+        if verify_authority is not None:
+            verify_authority()
+        confirm_permission(mission_id, attempt_id, permission.permission_id)
+        if verify_authority is not None:
+            verify_authority()
+        post_state = store.load()
+        post_attempts = [
+            item
+            for item in post_state.get("mission_attempts", [])
+            if type(item) is dict and item.get("attempt_id") == attempt_id
+        ]
+        try:
+            post_facts = (
+                _attempt_permission_facts(post_state, post_attempts[0])
+                if len(post_attempts) == 1
+                else ()
+            )
+        except _PermissionContractError:
+            post_facts = ()
+        post_matches = [
+            item
+            for item in post_facts
+            if item.permission_id == permission.permission_id
+            and item.effective_state == "approved"
+        ]
+        if len(post_matches) != 1:
+            raise _live_failure(
+                "permission_confirmation_invalid",
+                state_snapshot=post_state,
+                capture=capture,
+            )
+        handled.add(permission.permission_id)
 
 
 def _closed_attempt_terminal_stage(attempt: object) -> str:

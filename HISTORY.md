@@ -59,6 +59,20 @@
   in 1.40s`, all at the missing `_drive_bounded_claude_attempt` unit. No older
   harness or product regression failed first.
 
+### Drive one bounded Claude attempt through sequential permissions
+
+- Added a closed attempt boundary classifier over one coherent durable state
+  snapshot. It distinguishes waiting, handoff convergence, one current
+  permission, durable completion, fixed 4/8 limit failures, successor-before-
+  handoff, and terminal-before-handoff without exposing raw state values.
+- Added one bounded wait and an injectable driver that confirms each exact
+  permission separately, requires its approved transition to become durable,
+  and continues observing the same attempt until validated reply plus canonical
+  handoff completion.
+- Bounded-driver and existing first-permission terminal regressions pass `23
+  passed, 328 deselected in 0.74s`. No timeout constant or product source
+  changed.
+
 ### Design bounded sequential ACP permission acceptance for M2c
 
 - Replaced the live harness assumption of exactly two Mission permissions with

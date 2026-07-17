@@ -701,7 +701,7 @@ git commit -m "test: require bounded M2c permission progression"
 - Modify: `tests/test_m2c_live_acceptance.py:3213-3345`
 - Modify: `HISTORY.md`
 
-- [ ] **Step 1: Add a closed boundary value**
+- [x] **Step 1: Add a closed boundary value**
 
 ```python
 @dataclass(frozen=True)
@@ -717,7 +717,7 @@ Allowed `kind` values are `waiting`, `waiting_handoff`, `permission`,
 `completed`, and the fixed diagnostic codes from the design. No arbitrary
 string from state may become a kind.
 
-- [ ] **Step 2: Implement one coherent-snapshot boundary classifier**
+- [x] **Step 2: Implement one coherent-snapshot boundary classifier**
 
 Add `_attempt_permission_boundary(state, mission_id, attempt_id,
 step_position)` with this closed classifier:
@@ -831,7 +831,7 @@ def _attempt_permission_boundary(
     return _LiveAttemptBoundary("waiting", None, **base)
 ```
 
-- [ ] **Step 3: Implement one bounded wait loop with terminal-specific timeout**
+- [x] **Step 3: Implement one bounded wait loop with terminal-specific timeout**
 
 ```python
 def _wait_for_attempt_boundary(
@@ -873,7 +873,7 @@ def _wait_for_attempt_boundary(
 This is the only timer for one boundary wait. Do not call `_wait_for_state`
 inside it and do not add a sleep outside it.
 
-- [ ] **Step 4: Implement the driver with injectable exact confirmation**
+- [x] **Step 4: Implement the driver with injectable exact confirmation**
 
 ```python
 def _drive_bounded_claude_attempt(
@@ -968,7 +968,7 @@ before adding the ID to `handled`:
 This closes a confirmation function that returns without committing the exact
 approved transition.
 
-- [ ] **Step 5: Run driver GREEN and first-permission regressions**
+- [x] **Step 5: Run driver GREEN and first-permission regressions**
 
 ```bash
 PYTHONPATH="$PWD/src" conda run --no-capture-output -n agentdeck \
@@ -979,7 +979,9 @@ PYTHONPATH="$PWD/src" conda run --no-capture-output -n agentdeck \
 Expected: PASS, including the old terminal-aware first-permission tests. No
 timeout constant changes.
 
-- [ ] **Step 6: Commit GREEN**
+Observed: `23 passed, 328 deselected in 0.74s`; no timeout constant changed.
+
+- [x] **Step 6: Commit GREEN**
 
 ```bash
 git add tests/test_m2c_live_acceptance.py HISTORY.md
