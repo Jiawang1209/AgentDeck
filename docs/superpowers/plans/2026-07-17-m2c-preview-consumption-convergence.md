@@ -26,18 +26,18 @@ deterministic freeze.
 - Modify: `tests/test_m2c_live_acceptance.py`
 - Modify: `HISTORY.md`
 
-- [ ] Add a deterministic `_create_and_confirm_live_mission` test fixture with
+- [x] Add a deterministic `_create_and_confirm_live_mission` test fixture with
   a valid frozen four-step Preview and already-admitted Mission.
-- [ ] Make the fake `_wait_for_pty_prompt(..., 3)` append exactly one matching
+- [x] Make the fake `_wait_for_pty_prompt(..., 3)` append exactly one matching
   `conversation_preview_consumed` event. Earlier prompt counts must not append
   it.
-- [ ] Assert the complete helper succeeds only when prompt calls are
+- [x] Assert the complete helper succeeds only when prompt calls are
   `[1, 2, 3]`; before the implementation change, observe RED because the
   current helper reads the ledger after prompt 2.
-- [ ] Assert the RED diagnostic remains
+- [x] Assert the RED diagnostic remains
   `mission_preview_not_consumed_exactly_once` and contains no fake prompt,
   path, or terminal sentinel.
-- [ ] Record the exact RED result in HISTORY and commit:
+- [x] Record the exact RED result in HISTORY and commit:
 
 ```bash
 git add tests/test_m2c_live_acceptance.py HISTORY.md \

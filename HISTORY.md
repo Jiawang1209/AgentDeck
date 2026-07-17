@@ -14,6 +14,16 @@
   changes. Added a per-test/per-commit TDD plan; M2c remains blocked and M3
   remains locked until a new frozen double-suite, preflight, and real live PASS.
 
+### Reproduce the M2c preview-consumption ordering race
+
+- Added a deterministic live-harness fixture in which daemon admission is
+  already durable while the matching consume event becomes visible only at the
+  third prompt completion barrier.
+- The unchanged harness failed RED exactly as expected: `1 failed, 291
+  deselected in 3.92s` with
+  `mission_preview_not_consumed_exactly_once`, proving it reads the ledger after
+  prompt 2 and before the confirmation turn has converged.
+
 ### Record the one-shot M2c preview-consumption live blocker
 
 - Ran the one same-SHA/model/digest four-stage node exactly once. It failed `1

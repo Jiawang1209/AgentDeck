@@ -51,6 +51,7 @@ from agentdeck.mission_authority import (
     validated_compiled_semantic_plan,
 )
 from agentdeck.mission_orchestration import build_execution_snapshot
+from agentdeck.models import EventRecord
 from agentdeck.semantic_planning import (
     compile_semantic_plan,
     compile_worker_task,
@@ -7488,6 +7489,101 @@ def test_live_mission_frozen_authority_blocks_real_confirmation_path(
     assert len(writes) == 1
     assert writes[0].endswith("共4轮。\n".encode("utf-8"))
     assert "确认执行当前预览".encode("utf-8") not in writes[0]
+
+
+def test_live_mission_waits_for_confirmation_turn_before_consumption_check(
+    tmp_path, monkeypatch,
+) -> None:
+    root, _config, store, previewed, _snapshot = _semantic_live_authority_fixture(
+        tmp_path
+    )
+    mission_id = str(previewed["missions"][0]["mission_id"])
+    previewed["plans"][0]["leader_generation"] = {
+        "constraint_mode": "native_json_schema"
+    }
+    store.save(previewed)
+    admitted = copy.deepcopy(previewed)
+    admitted["missions"][0]["execution_snapshot"] = {"sealed": True}
+    admitted["missions"][0]["daemon_admission"] = {"state": "admitted"}
+    prompt_numbers: list[int] = []
+    writes: list[bytes] = []
+
+    class FakeProcess:
+        pid = 987654
+
+    fake_process = FakeProcess()
+
+    def fake_wait_for_preview(
+        _store,
+        process,
+        master,
+        capture,
+        *,
+        baseline_turn_ids,
+        **_kwargs,
+    ):
+        assert process is fake_process
+        assert master == read_fd
+        assert isinstance(capture, _PtyTail)
+        assert baseline_turn_ids == frozenset()
+        return previewed
+
+    def fake_wait_for_prompt(_process, _master, _capture, prompt_number):
+        prompt_numbers.append(prompt_number)
+        if prompt_number == 3:
+            store.append_event(
+                EventRecord.create(
+                    "conversation_preview_consumed",
+                    {"mission_id": mission_id},
+                )
+            )
+
+    def fake_wait_for_state(_store, predicate, *, code, capture=None, **_kwargs):
+        assert _store is store
+        assert code == "mission_admission_timeout"
+        assert isinstance(capture, _PtyTail)
+        assert predicate(admitted) is True
+        return admitted
+
+    def fake_write(_descriptor, payload):
+        writes.append(payload)
+        return len(payload)
+
+    def fake_stop_pty(_process, master, _scope):
+        os.close(master)
+        return []
+
+    read_fd, write_fd = os.pipe()
+    module = sys.modules[__name__]
+    monkeypatch.setattr(
+        module, "_wait_for_mission_preview", fake_wait_for_preview
+    )
+    monkeypatch.setattr(module, "_wait_for_pty_prompt", fake_wait_for_prompt)
+    monkeypatch.setattr(module, "_wait_for_state", fake_wait_for_state)
+    monkeypatch.setattr(module, "_stop_pty", fake_stop_pty)
+    monkeypatch.setattr(os, "write", fake_write)
+
+    result = _create_and_confirm_live_mission(
+        root,
+        store,
+        env={},
+        openpty_factory=lambda: (read_fd, write_fd),
+        popen_factory=lambda *_args, **_kwargs: fake_process,
+        scope_sealer=lambda _pid: _ProcessGroupScope(
+            pgid=987654,
+            leader=_ProcessIdentity(
+                pid=987654,
+                pgid=987654,
+                birth_fingerprint="fixed-birth",
+            ),
+        ),
+    )
+
+    assert result[0] == mission_id
+    assert result[2] == admitted
+    assert prompt_numbers == [1, 2, 3]
+    assert len(writes) == 2
+    assert writes[1] == "确认执行当前预览\n".encode("utf-8")
     assert previewed == before
     actual_state_after = store.load()
     actual_events_after = store.all_events()
