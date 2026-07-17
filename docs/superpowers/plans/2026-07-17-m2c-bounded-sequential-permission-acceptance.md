@@ -510,7 +510,7 @@ git commit -m "test: derive M2c permission lineage"
 - Modify: `tests/test_m2c_live_acceptance.py:9186-9550`
 - Modify: `HISTORY.md`
 
-- [ ] **Step 1: Add a scripted store that advances only after confirmation**
+- [x] **Step 1: Add a scripted store that advances only after confirmation**
 
 ```python
 class _ScriptedPermissionStore:
@@ -527,7 +527,7 @@ class _ScriptedPermissionStore:
         self.index += 1
 ```
 
-- [ ] **Step 2: Add the exact regression for the real failure**
+- [x] **Step 2: Add the exact regression for the real failure**
 
 ```python
 def test_bounded_claude_attempt_confirms_two_permissions_before_handoff() -> None:
@@ -567,7 +567,7 @@ This is the causal RED: after the first confirmation the driver must stay on
 step 1, discover the second step-1 permission, confirm it independently, and
 return only after reply plus handoff.
 
-- [ ] **Step 3: Add bounds, handoff, bridge, terminal, and ordering RED cases**
+- [x] **Step 3: Add bounds, handoff, bridge, terminal, and ordering RED cases**
 
 Add parameterized tests that assert these exact failures:
 
@@ -676,7 +676,7 @@ For `ninth_mission_permission`, initialize step 1 with four permissions before
 adding the five step-3 records; the expected failure remains
 `permission_limit_exceeded` before any confirmation call.
 
-- [ ] **Step 4: Run RED and commit**
+- [x] **Step 4: Run RED and commit**
 
 ```bash
 PYTHONPATH="$PWD/src" conda run --no-capture-output -n agentdeck \
@@ -685,6 +685,9 @@ PYTHONPATH="$PWD/src" conda run --no-capture-output -n agentdeck \
 ```
 
 Expected: FAIL because `_drive_bounded_claude_attempt` does not exist.
+
+Observed: `6 failed, 345 deselected in 1.40s`; all six failures were the exact
+missing `_drive_bounded_claude_attempt` symbol.
 
 ```bash
 git add tests/test_m2c_live_acceptance.py HISTORY.md

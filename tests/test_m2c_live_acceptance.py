@@ -9376,6 +9376,20 @@ class _StaticLiveStore:
         return self.state
 
 
+class _ScriptedPermissionStore:
+    def __init__(self, snapshots: list[dict[str, object]]):
+        self.snapshots = snapshots
+        self.index = 0
+
+    def load(self) -> dict[str, object]:
+        return copy.deepcopy(self.snapshots[self.index])
+
+    def advance(self) -> None:
+        if self.index + 1 >= len(self.snapshots):
+            raise AssertionError("permission script exhausted")
+        self.index += 1
+
+
 def _sequential_permission_state(
     *,
     step_position: int = 1,
@@ -9495,6 +9509,81 @@ def _sequential_permission_state(
         state["mission_worker_replies"] = []
         state["mission_handoffs"] = []
     return state
+
+
+def _bounded_driver_failure_fixture(
+    mutation: str,
+) -> tuple[_StaticLiveStore, dict[str, object]]:
+    permission_count = 1
+    attempt_state = "running"
+    include_completion = False
+    if mutation == "fifth_attempt_permission":
+        permission_count = 5
+    elif mutation == "ninth_mission_permission":
+        permission_count = 4
+    elif mutation == "failed_attempt":
+        attempt_state = "failed"
+    elif mutation == "no_permission_completion":
+        permission_count = 0
+        attempt_state = "succeeded"
+        include_completion = True
+    effective_states = tuple("approved" for _ in range(permission_count))
+    if mutation == "fifth_attempt_permission":
+        effective_states = ("approved", "approved", "approved", "approved", "pending")
+    state = _sequential_permission_state(
+        effective_states=effective_states,
+        attempt_state=attempt_state,
+        include_completion=include_completion,
+    )
+    if mutation == "later_attempt_before_handoff":
+        later = dict(state["mission_attempts"][0])
+        later.update(
+            {
+                "attempt_id": "mat_000000000002",
+                "step_id": "step_2",
+                "step_position": 2,
+                "agent_id": "codex-worker",
+                "configured_transport": "tmux",
+            }
+        )
+        state["mission_attempts"].append(later)
+    elif mutation == "ninth_mission_permission":
+        revision = _sequential_permission_state(
+            step_position=3,
+            effective_states=("approved", "approved", "approved", "pending"),
+        )
+        for name in (
+            "agent_sessions",
+            "protocol_turns",
+            "transport_updates",
+            "permission_requests",
+            "mission_permission_bindings",
+            "protocol_state_transitions",
+        ):
+            state[name].extend(revision[name])
+        extra = _sequential_permission_state(
+            step_position=3, effective_states=("pending",)
+        )
+        for name in (
+            "transport_updates",
+            "permission_requests",
+            "mission_permission_bindings",
+        ):
+            item = copy.deepcopy(extra[name][0])
+            if name == "transport_updates":
+                item["sequence"] = 4
+                item["payload"]["permission_id"] = "prm_step3_4"
+            elif name == "permission_requests":
+                item["permission_id"] = "prm_step3_4"
+            else:
+                item["permission_id"] = "prm_step3_4"
+            state[name].append(item)
+    return _StaticLiveStore(state), {
+        "mission_id": "mis_0123456789ab",
+        "attempt_id": "mat_000000000001",
+        "step_position": 1,
+        "confirm_permission": lambda *_args: None,
+    }
 
 
 def _live_diagnostic_state(
@@ -9624,6 +9713,61 @@ def test_attempt_permission_facts_fail_closed(
     assert error.value.code == expected_code
     assert "SECRET" not in str(error.value)
     assert "/private" not in str(error.value)
+
+
+def test_bounded_claude_attempt_confirms_two_permissions_before_handoff() -> None:
+    first = _sequential_permission_state(effective_states=("pending",))
+    second = _sequential_permission_state(
+        effective_states=("approved", "pending")
+    )
+    completed = _sequential_permission_state(
+        effective_states=("approved", "approved"),
+        attempt_state="succeeded",
+        include_completion=True,
+    )
+    store = _ScriptedPermissionStore([first, second, completed])
+    confirmations: list[tuple[str, str, str]] = []
+
+    def confirm(mission_id: str, attempt_id: str, permission_id: str) -> None:
+        confirmations.append((mission_id, attempt_id, permission_id))
+        store.advance()
+
+    result = _drive_bounded_claude_attempt(
+        store,
+        mission_id="mis_0123456789ab",
+        attempt_id="mat_000000000001",
+        step_position=1,
+        confirm_permission=confirm,
+        timeout=0.5,
+    )
+
+    assert result["mission_attempts"][0]["state"] == "succeeded"
+    assert [item[2] for item in confirmations] == [
+        "prm_step1_0",
+        "prm_step1_1",
+    ]
+
+
+@pytest.mark.parametrize(
+    ("mutation", "expected_code"),
+    (
+        ("fifth_attempt_permission", "permission_limit_exceeded"),
+        ("ninth_mission_permission", "permission_limit_exceeded"),
+        ("no_permission_completion", "permission_bridge_missing"),
+        ("later_attempt_before_handoff", "next_stage_started_before_handoff"),
+        ("failed_attempt", "attempt_terminal_before_handoff"),
+    ),
+)
+def test_bounded_claude_attempt_fails_closed(
+    mutation: str, expected_code: str,
+) -> None:
+    store, kwargs = _bounded_driver_failure_fixture(mutation)
+    with pytest.raises(_LiveHarnessFailure) as error:
+        _drive_bounded_claude_attempt(store, timeout=0.1, **kwargs)
+    rendered = str(error.value)
+    assert json.loads(rendered)["code"] == expected_code
+    assert "SECRET" not in rendered
+    assert "/private" not in rendered
 
 
 @pytest.mark.parametrize(

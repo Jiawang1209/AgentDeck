@@ -46,6 +46,19 @@
   0.31s`, retaining latest transport-ordered permission authority. No
   `src/agentdeck/**` product source changed.
 
+### Require bounded per-attempt M2c permission progression
+
+- Added a scripted durable store proving that a Claude ACP attempt remains on
+  the same Mission step after its first explicit confirmation, discovers a
+  second transport-ordered permission, confirms it independently, and may
+  complete only after a validated reply and canonical handoff.
+- Added RED coverage for the four-per-attempt and eight-per-Mission acceptance
+  bounds, missing permission bridge, successor attempt before handoff, terminal
+  attempt before handoff, and closed diagnostic leakage.
+- The bounded-driver RED failed exactly as intended: `6 failed, 345 deselected
+  in 1.40s`, all at the missing `_drive_bounded_claude_attempt` unit. No older
+  harness or product regression failed first.
+
 ### Design bounded sequential ACP permission acceptance for M2c
 
 - Replaced the live harness assumption of exactly two Mission permissions with
