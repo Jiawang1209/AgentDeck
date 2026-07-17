@@ -4,6 +4,15 @@
 
 ## 2026-07-17
 
+### Plan closed npm `.bin` symlink authority implementation
+
+- Added a self-reviewed TDD plan for non-following symlink manifests, lexical
+  package closure, runtime drift, controlled-launcher parity, authority
+  v3/preflight v5, a new frozen double-suite cycle, and resumed real acceptance.
+- The plan keeps the actual ACP entrypoint regular, accepts no link outside the
+  exact npm `.bin` shape, and does not authorize product-source changes,
+  installation, login, merge, or push.
+
 ### Design closed npm `.bin` symlink authority for real M2c ACP package
 
 - The pre-command real package audit found two npm-generated internal links
