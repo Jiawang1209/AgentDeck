@@ -85,10 +85,10 @@ unchanged.
 
 ## Task 6: Re-establish real authority
 
-- [ ] Run complete suite A in a fresh detached worktree at the frozen SHA.
-- [ ] Run complete suite B in a second fresh detached worktree at the same SHA.
-- [ ] Remove both worktrees and prove zero residue.
-- [ ] Re-audit exact installed inputs and closed Claude login readiness.
+- [x] Run complete suite A in a fresh detached worktree at the frozen SHA.
+- [x] Run complete suite B in a second fresh detached worktree at the same SHA.
+- [x] Remove both worktrees and prove zero residue.
+- [x] Re-audit exact installed inputs and closed Claude login readiness.
 - [ ] Run exactly one designated strict v6 preflight.
 - [ ] If and only if ready, obtain a separate SHA/model/digest live authority.
 - [ ] Execute one real four-stage Mission; never retry that authority.

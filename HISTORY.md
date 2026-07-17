@@ -29,6 +29,17 @@
 - Froze the harness-only candidate at
   `e83dcc482d2403f613485d06eff75ff99ffe733f`. No implementation edit may follow
   without invalidating this candidate and restarting the two-suite gate.
+- Two authoritative serial full suites in separate fresh detached worktrees
+  passed `4428 passed, 3 skipped in 267.02s` and `4428 passed, 3 skipped in
+  251.95s`. Preliminary parallel direct-interpreter probes were rejected as
+  invalid evidence because they lacked the conda child PATH and contended on
+  fixed launcher bounds; all checkouts/resources were removed.
+- A read-only input audit reconstructed unchanged authority v3 digest
+  `sha256:b194c3b4ccbfa3ba2b534bf9cb51e59ecbc077e2576c6eea8ba343f26cc83ffa`
+  with no loader failures and closed Claude login readiness. A different tmux
+  selected only by conda PATH was rejected rather than substituted. One newly
+  authorized strict v6 preflight is now the next gate; none has run for this
+  candidate.
 
 ### Design M2c first-attempt terminal observability
 

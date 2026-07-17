@@ -43,6 +43,28 @@ authorized strict v6 preflight. No new
 preflight/live authority exists yet. M2c remains **BLOCKED** and M3 remains
 locked.
 
+Both authoritative full suites now pass in separate fresh detached worktrees
+at frozen `e83dcc48...`: `4428 passed, 3 skipped in 267.02s` and `4428 passed,
+3 skipped in 251.95s`. They were run serially through the required `agentdeck`
+conda environment; the three skips were exactly the opt-in real ACP,
+designated preflight, and real four-stage Mission nodes. Two earlier parallel
+direct-interpreter probes were discarded as evidence after traceback proved
+their child PATH omitted the conda `agentdeck` command and concurrent load
+exceeded fixed five-second launcher bounds; they did not change the frozen
+checkout. All four temporary worktrees and their process/daemon/ACP/temp roots
+were removed.
+
+The follow-up read-only input audit resolved the same explicit local Codex,
+local Node, Homebrew tmux, Claude, and metadata-selected Claude ACP entrypoint
+as the last ready authority. It reconstructed authority v3 digest
+`sha256:b194c3b4ccbfa3ba2b534bf9cb51e59ecbc077e2576c6eea8ba343f26cc83ffa`
+with no loader failures; closed Claude auth readiness remains exit-zero and
+logged-in. A conda-PATH tmux candidate produced a different digest and was
+rejected rather than silently substituted. The next gate is one newly
+authorized strict v6 preflight naming frozen SHA `e83dcc48...`, Leader
+`gpt-5.5`, and the exact `b194c3...` digest. No designated preflight has run for
+this candidate.
+
 The exhausted authority at frozen `284d8f62...` reached Mission Preview and
 daemon admission, then the live harness read the consume ledger before the
 synchronous confirmation turn had completed. Product tracing proved the event

@@ -279,6 +279,25 @@ fresh detached worktrees and undergo a fresh installed-input audit before a
 human may authorize one new strict v6 preflight. No preflight or live run has
 been executed for this candidate. M2c remains **BLOCKED** and M3 remains locked.
 
+The two authoritative full suites at frozen `e83dcc48...` passed in separate
+fresh detached worktrees: `4428 passed, 3 skipped in 267.02s` and `4428 passed,
+3 skipped in 251.95s`. They ran serially through `conda run
+--no-capture-output -n agentdeck`; the skips were only the three explicit real
+nodes. Preliminary parallel direct-interpreter probes were discarded because
+their tracebacks proved an invalid child PATH and fixed-bound resource
+contention, not a candidate result. No implementation edit followed. Every
+checkout and temporary process/resource root was removed.
+
+A read-only post-suite audit reconstructed the same exact logical inputs as the
+previous ready v6 authority and produced authority v3 digest
+`sha256:b194c3b4ccbfa3ba2b534bf9cb51e59ecbc077e2576c6eea8ba343f26cc83ffa`
+with no loader failures. Claude closed auth readiness remains exit-zero and
+logged-in. A different tmux selected only by conda PATH produced a different
+digest and was rejected; no fallback or silent substitution occurred. This
+audit is not the designated preflight. The next operation requires explicit
+human authorization for exactly one strict v6 preflight on frozen
+`e83dcc48...`, Leader `gpt-5.5`, and digest `b194c3...`.
+
 ## Frozen authority
 
 - AgentDeck implementation:
