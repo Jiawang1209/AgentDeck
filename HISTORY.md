@@ -4,6 +4,16 @@
 
 ## 2026-07-17
 
+### Design the M2c preview-consumption convergence repair
+
+- Approved a harness-only correction for the observed admission/consumption
+  ordering race: daemon admission remains the execution gate, the third bare
+  prompt becomes the bounded confirmation-turn completion barrier, and the
+  durable ledger must then contain exactly one Mission-specific consume event.
+- Rejected sleep, event fabrication, timeout inflation, retry, and product-code
+  changes. Added a per-test/per-commit TDD plan; M2c remains blocked and M3
+  remains locked until a new frozen double-suite, preflight, and real live PASS.
+
 ### Record the one-shot M2c preview-consumption live blocker
 
 - Ran the one same-SHA/model/digest four-stage node exactly once. It failed `1
