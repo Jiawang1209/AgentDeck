@@ -89,6 +89,21 @@
   suites, human-controlled login, one new v6 preflight, and only then a newly
   authorized real Mission.
 
+### Reject logged-out Claude before M2c live admission
+
+- RED proved strict preflight v5 returned `ready=true` even when the exact fake
+  Claude executable reported logged out. The behavior test failed exactly at
+  the readiness assertion.
+- Added a bounded exact-executable `auth status --json` probe with an allowlisted
+  host auth-context projection and duplicate-safe closed parser. Only
+  exit-zero JSON boolean `loggedIn=true` is ready; all other well-scoped
+  outcomes emit `claude/auth-status/claude_auth_unavailable`.
+- Strict preflight advances to v6 while authority stays v3. Focused coverage
+  selected 11 auth/v6 cases and passed, including leakage, malformed output,
+  nonzero claims, digest independence, and guarded-live blocker projection.
+  No product source, provider, ACP transport, retry, timeout, login, or global
+  configuration behavior changed.
+
 ### Design the M2c preview-consumption convergence repair
 
 - Approved a harness-only correction for the observed admission/consumption

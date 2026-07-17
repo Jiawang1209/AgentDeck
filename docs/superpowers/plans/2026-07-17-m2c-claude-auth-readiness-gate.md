@@ -17,11 +17,11 @@ strict preflight contract to v6 while retaining authority v3.
 
 - Modify: `tests/test_m2c_live_acceptance.py`
 
-- [ ] Add a fake Claude auth-status branch with configurable logged-in state.
-- [ ] Add a test that supplies `loggedIn=false` and expects the exact closed
+- [x] Add a fake Claude auth-status branch with configurable logged-in state.
+- [x] Add a test that supplies `loggedIn=false` and expects the exact closed
   `claude/auth-status/claude_auth_unavailable` failure.
-- [ ] Run only that test and record the current false-ready failure.
-- [ ] Commit the RED test without implementation.
+- [x] Run only that test and record the current false-ready failure.
+- [x] Commit the RED test without implementation.
 
 ## Task 2: Implement closed auth readiness
 
@@ -29,18 +29,18 @@ strict preflight contract to v6 while retaining authority v3.
 
 - Modify: `tests/test_m2c_live_acceptance.py`
 
-- [ ] Add `claude_auth_unavailable` and `auth-status` to the closed enums.
-- [ ] Add an allowlisted auth environment projector; never emit values.
-- [ ] Add a duplicate-key-rejecting bounded JSON parser that returns only a
+- [x] Add `claude_auth_unavailable` and `auth-status` to the closed enums.
+- [x] Add an allowlisted auth environment projector; never emit values.
+- [x] Add a duplicate-key-rejecting bounded JSON parser that returns only a
   boolean readiness decision.
-- [ ] Run `auth status --json` through `_run_attributed_probe()` using the exact
+- [x] Run `auth status --json` through `_run_attributed_probe()` using the exact
   Claude seal.
-- [ ] Preserve existing process/write/identity failures and add the auth blocker
+- [x] Preserve existing process/write/identity failures and add the auth blocker
   only when no lower-level attributed failure already explains the probe.
-- [ ] Mark the Claude tool card and whole payload unready on auth failure.
-- [ ] Pass the same host authentication context through the designated
+- [x] Mark the Claude tool card and whole payload unready on auth failure.
+- [x] Pass the same host authentication context through the designated
   preflight helper and guarded live entry.
-- [ ] Advance `STRICT_PREFLIGHT_SCHEMA_VERSION` to v6; do not change authority
+- [x] Advance `STRICT_PREFLIGHT_SCHEMA_VERSION` to v6; do not change authority
   v3 or its digest payload.
 
 ## Task 3: Close parser, leakage, and admission cases
@@ -49,15 +49,15 @@ strict preflight contract to v6 while retaining authority v3.
 
 - Modify: `tests/test_m2c_live_acceptance.py`
 
-- [ ] Cover true, false, malformed, duplicate-key, missing, wrong-typed, and
+- [x] Cover true, false, malformed, duplicate-key, missing, wrong-typed, and
   nonzero-success-claim results.
-- [ ] Prove arbitrary account/secret/path fields never appear in payloads or
+- [x] Prove arbitrary account/secret/path fields never appear in payloads or
   `_LiveHarnessFailure` diagnostics.
-- [ ] Prove the fake designated preflight stays read-only.
-- [ ] Prove the guarded live entry returns the exact auth blocker before project
+- [x] Prove the fake designated preflight stays read-only.
+- [x] Prove the guarded live entry returns the exact auth blocker before project
   execution effects.
-- [ ] Prove changing auth state cannot change the authority digest.
-- [ ] Run focused and aggregate tests until GREEN.
+- [x] Prove changing auth state cannot change the authority digest.
+- [x] Run focused and aggregate tests until GREEN.
 - [ ] Commit the minimal harness implementation and tests.
 
 ## Task 4: Synchronize durable contracts and history
@@ -69,11 +69,11 @@ strict preflight contract to v6 while retaining authority v3.
 - Modify: `docs/handoff/current-development-state.md`
 - Modify: `HISTORY.md`
 
-- [ ] Document strict preflight v6 and the closed auth-status probe.
-- [ ] Mark all prior v5 authority as exhausted/non-authorizing for v6.
-- [ ] Record that login remains human-controlled and never occurs in the
+- [x] Document strict preflight v6 and the closed auth-status probe.
+- [x] Mark all prior v5 authority as exhausted/non-authorizing for v6.
+- [x] Record that login remains human-controlled and never occurs in the
   harness.
-- [ ] Record only schema, model, SHA, readiness, blockers/failures, and digest;
+- [x] Record only schema, model, SHA, readiness, blockers/failures, and digest;
   never auth output/material.
 - [ ] Commit documentation in the same GREEN slice if user-visible semantics
   changed, or as an immediately following evidence commit.

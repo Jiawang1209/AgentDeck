@@ -165,6 +165,25 @@ Claude authentication first. After that, the next repair cycle must add a
 read-only, closed auth-readiness gate so version/help probes can never again
 claim a logged-out Claude Worker is ready.
 
+## Claude authentication readiness candidate
+
+The approved harness-only correction is now implemented. Strict preflight v6
+runs the exact authority-v3 Claude executable with bounded
+`auth status --json`, accepts only exit-zero `loggedIn=true`, and otherwise
+emits the closed `claude/auth-status/claude_auth_unavailable` failure. Duplicate
+keys, malformed/missing/wrong-typed results, nonzero success claims, and
+logged-out state all fail closed. Account fields, auth method, subscription,
+environment values, raw output, secrets, and paths never enter the payload.
+
+RED proved v5 incorrectly returned `ready=true` for a fake logged-out Claude:
+`1 failed` at the readiness assertion. Focused GREEN covers 11 selected auth
+and v6 cases, including login-state independence from the authority digest and
+guarded live projection. No `src/agentdeck/**`, provider, ACP transport, retry,
+timeout, or global authentication behavior changed. Complete deterministic and
+double-full-suite verification remain before freezing this candidate. Human
+Claude login remains required before the one new real v6 preflight. Every v5
+preflight above is exhausted historical evidence and cannot authorize v6 live.
+
 ## Frozen authority
 
 - AgentDeck implementation:

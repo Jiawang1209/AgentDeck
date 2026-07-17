@@ -98,6 +98,18 @@ was performed. Human Claude login is now required. After login, continue with
 an auth-readiness preflight design/TDD cycle so logged-out state becomes a
 preflight blocker instead of consuming live authority.
 
+That harness-only correction is now implemented under strict preflight v6.
+The exact sealed Claude executable runs only bounded `auth status --json`;
+readiness requires exit-zero `loggedIn=true`, while every logged-out, malformed,
+duplicate-key, missing/wrong-typed, or nonzero result becomes the closed
+`claude/auth-status/claude_auth_unavailable` failure. No raw response, account
+field, environment value, secret, or path is projected. Authority remains v3
+and its digest is independent of mutable login state. RED reproduced the v5
+false-ready result; focused v6/auth GREEN selected 11 cases and passed. The
+complete deterministic/full verification and frozen SHA remain next. Human
+login is still required before a single new real v6 preflight; old v5 evidence
+cannot authorize it. M2c remains **BLOCKED** and M3 remains locked.
+
 ### Historical M2c authority cycles
 
 Before consuming the authorized designated preflight for frozen implementation

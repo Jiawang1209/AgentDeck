@@ -70,7 +70,7 @@ PROBE_OUTPUT_LIMIT = 256 * 1024
 LEADER_MODEL_ENV = "AGENTDECK_M2C_LEADER_MODEL"
 LEADER_MODEL_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,95}\Z")
 AUTHORITY_SCHEMA_VERSION = "m2c-tool-authority/v3"
-STRICT_PREFLIGHT_SCHEMA_VERSION = "m2c-live-preflight/v5"
+STRICT_PREFLIGHT_SCHEMA_VERSION = "m2c-live-preflight/v6"
 STRICT_PREFLIGHT_ENV = "AGENTDECK_M2C_STRICT_PREFLIGHT"
 NODE_ENV = "AGENTDECK_M2C_NODE"
 ACP_PACKAGE_ENV = "AGENTDECK_M2C_CLAUDE_ACP_PACKAGE"
@@ -98,6 +98,7 @@ BLOCKER_CODES = frozenset(
         "codex_native_schema_unavailable",
         "claude_unavailable",
         "claude_native_schema_unavailable",
+        "claude_auth_unavailable",
         "claude_agent_acp_unavailable",
         "tmux_unavailable",
         "probe_wrote_files",
@@ -130,6 +131,7 @@ PREFLIGHT_FAILURE_PROBES = frozenset(
         "package-tree",
         "version",
         "help",
+        "auth-status",
         "process-scope",
         "filesystem-snapshot",
         "binding",
@@ -452,6 +454,42 @@ def _probe_environment(
         "LANG": "C",
         "LC_ALL": "C",
     }
+
+
+_CLAUDE_AUTH_CONTEXT_KEYS = (
+    "HOME",
+    "USER",
+    "LOGNAME",
+    "XDG_CONFIG_HOME",
+    "CLAUDE_CONFIG_DIR",
+    "ANTHROPIC_API_KEY",
+    "ANTHROPIC_AUTH_TOKEN",
+    "CLAUDE_CODE_OAUTH_TOKEN",
+)
+
+
+def _claude_auth_probe_environment(
+    base: Mapping[str, str], source: Mapping[str, str]
+) -> dict[str, str]:
+    environment = dict(base)
+    for key in _CLAUDE_AUTH_CONTEXT_KEYS:
+        value = source.get(key)
+        if value:
+            environment[key] = value
+    return environment
+
+
+def _claude_auth_ready(outcome: _ProbeOutcome) -> bool:
+    if not outcome.ok:
+        return False
+    try:
+        value = json.loads(
+            outcome.output.decode("utf-8", errors="strict"),
+            object_pairs_hook=_unique_json_object,
+        )
+    except (UnicodeDecodeError, json.JSONDecodeError, ValueError):
+        return False
+    return type(value) is dict and value.get("loggedIn") is True
 
 
 def _seal_executable(value: str | None) -> _ExecutableSeal | None:
@@ -1619,6 +1657,7 @@ def _strict_live_preflight(
     authority: _ToolAuthority,
     *,
     isolation: _ProbeIsolation | None = None,
+    auth_environ: Mapping[str, str] | None = None,
 ) -> dict[str, object]:
     isolation = isolation or _prepare_probe_isolation(project)
     failures: list[_PreflightFailure] = []
@@ -1649,6 +1688,7 @@ def _strict_live_preflight(
         isolation,
         tuple(seal.path for seal in authority.executable_seals().values()),
     )
+    auth_environ = os.environ if auth_environ is None else auth_environ
     probe_specs = (
         ("codex", authority.codex, ("--version",), ("exec", "--help"), "codex_unavailable", "codex_native_schema_unavailable"),
         ("claude", authority.claude, ("--version",), ("--help",), "claude_unavailable", "claude_native_schema_unavailable"),
@@ -1698,6 +1738,30 @@ def _strict_live_preflight(
                     _option_names(help_outcome.output)
                 ):
                     add((_PreflightFailure(name, "help", capability),))
+            if name == "claude":
+                auth_outcome, auth_failures = _run_attributed_probe(
+                    tool=name,
+                    probe="auth-status",
+                    seal=seal,
+                    args=("auth", "status", "--json"),
+                    cwd=project,
+                    env=_claude_auth_probe_environment(
+                        probe_env, auth_environ
+                    ),
+                    isolation=isolation,
+                    authority=authority,
+                )
+                add(auth_failures)
+                if not auth_failures and not _claude_auth_ready(auth_outcome):
+                    add(
+                        (
+                            _PreflightFailure(
+                                "claude",
+                                "auth-status",
+                                "claude_auth_unavailable",
+                            ),
+                        )
+                    )
         tool_cards.append(
             _strict_tool_card(
                 name,
@@ -1744,7 +1808,9 @@ def _explicit_authority_preflight_payload(
             ),
             preflight_failures=failures,
         )
-    return _strict_live_preflight(project, authority)
+    return _strict_live_preflight(
+        project, authority, auth_environ=environ
+    )
 
 
 def _resolved_probe_seal(name: str, env_name: str) -> _ExecutableSeal | None:
@@ -5913,6 +5979,8 @@ def _fake_explicit_authority_environment(
     *,
     internal_bin_links: bool = False,
     claude_logged_in: bool = True,
+    claude_auth_payload: str | None = None,
+    claude_auth_exit: int | None = None,
 ) -> dict[str, str]:
     binary = root / "bin"
     binary.mkdir(parents=True)
@@ -5926,6 +5994,14 @@ def _fake_explicit_authority_environment(
         ),
         ACP_PACKAGE_ENV: str(package),
     }
+    auth_payload = (
+        json.dumps({"loggedIn": claude_logged_in}, separators=(",", ":"))
+        if claude_auth_payload is None
+        else claude_auth_payload
+    )
+    auth_exit = (
+        0 if claude_logged_in else 1
+    ) if claude_auth_exit is None else claude_auth_exit
     for name, environment_name in (
         ("codex", "AGENTDECK_M2C_CODEX"),
         ("claude", "AGENTDECK_M2C_CLAUDE"),
@@ -5942,8 +6018,8 @@ def _fake_explicit_authority_environment(
             "claude": (
                 "#!/bin/sh\n"
                 "if [ \"$1\" = auth ] && [ \"$2\" = status ] && [ \"$3\" = --json ]; then "
-                f"echo '{{\"loggedIn\":{str(claude_logged_in).lower()}}}'; "
-                f"exit {0 if claude_logged_in else 1}; "
+                f"printf '%s\\n' {shlex.quote(auth_payload)}; "
+                f"exit {auth_exit}; "
                 "elif [ \"$1\" = --help ]; then echo --json-schema --output-format; "
                 "else echo claude 2.1.211; fi\n"
             ),
@@ -6113,7 +6189,7 @@ def test_m2c_strict_preflight_validator_rejects_open_failure_fields(
     assert "/private/path" not in repr(errors)
 
 
-def test_m2c_strict_preflight_v5_ready_uses_explicit_authority(
+def test_m2c_strict_preflight_v6_ready_uses_explicit_authority(
     tmp_path,
 ) -> None:
     project = tmp_path / "project"
@@ -6158,6 +6234,111 @@ def test_m2c_strict_preflight_rejects_logged_out_claude(tmp_path) -> None:
             "code": "claude_auth_unavailable",
         }
     ]
+
+
+@pytest.mark.parametrize(
+    ("payload", "exit_code"),
+    (
+        ('{"loggedIn":false}', 0),
+        ('{"loggedIn":true}', 1),
+        ('{"loggedIn":true,"loggedIn":true}', 0),
+        ('{"authMethod":"none"}', 0),
+        ('{"loggedIn":"true"}', 0),
+        ("{", 0),
+    ),
+)
+def test_m2c_strict_preflight_fails_closed_on_invalid_claude_auth_status(
+    tmp_path, payload, exit_code
+) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    authority, failures = _load_explicit_tool_authority(
+        _fake_explicit_authority_environment(
+            tmp_path / "authority",
+            claude_auth_payload=payload,
+            claude_auth_exit=exit_code,
+        )
+    )
+    assert failures == () and authority is not None
+
+    response = _strict_live_preflight(project, authority)
+
+    assert response["ready"] is False
+    assert response["blockers"] == ["claude_auth_unavailable"]
+    assert response["failures"] == [
+        {
+            "tool": "claude",
+            "probe": "auth-status",
+            "code": "claude_auth_unavailable",
+        }
+    ]
+    assert payload not in repr(response)
+
+
+def test_m2c_strict_preflight_discards_claude_auth_details(tmp_path) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    sentinel = "SECRET-account@example.test-/private/auth/path"
+    authority, failures = _load_explicit_tool_authority(
+        _fake_explicit_authority_environment(
+            tmp_path / "authority",
+            claude_auth_payload=json.dumps(
+                {
+                    "loggedIn": True,
+                    "authMethod": sentinel,
+                    "subscriptionType": sentinel,
+                }
+            ),
+            claude_auth_exit=0,
+        )
+    )
+    assert failures == () and authority is not None
+
+    response = _strict_live_preflight(project, authority)
+
+    assert response["ready"] is True
+    assert response["blockers"] == []
+    assert response["failures"] == []
+    assert sentinel not in repr(response)
+
+
+def test_m2c_claude_auth_state_does_not_change_tool_authority_digest(
+    tmp_path,
+) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    environment = _fake_explicit_authority_environment(tmp_path / "authority")
+    claude = Path(environment["AGENTDECK_M2C_CLAUDE"])
+    claude.write_text(
+        "#!/bin/sh\n"
+        "if [ \"$1\" = auth ] && [ \"$2\" = status ]; then "
+        "if [ -n \"$CLAUDE_CODE_OAUTH_TOKEN\" ]; then "
+        "echo '{\"loggedIn\":true}'; exit 0; "
+        "else echo '{\"loggedIn\":false}'; exit 1; fi; "
+        "elif [ \"$1\" = --help ]; then echo --json-schema --output-format; "
+        "else echo claude 2.1.211; fi\n",
+        encoding="utf-8",
+    )
+    claude.chmod(0o700)
+    authority, failures = _load_explicit_tool_authority(environment)
+    assert failures == () and authority is not None
+
+    logged_out = _strict_live_preflight(
+        project, authority, auth_environ={}
+    )
+    logged_in = _strict_live_preflight(
+        project,
+        authority,
+        auth_environ={"CLAUDE_CODE_OAUTH_TOKEN": "SECRET-auth-token"},
+    )
+
+    assert logged_out["ready"] is False
+    assert logged_out["blockers"] == ["claude_auth_unavailable"]
+    assert logged_in["ready"] is True
+    assert logged_in["blockers"] == []
+    assert logged_out["tool_authority"]["digest"] == authority.digest
+    assert logged_in["tool_authority"]["digest"] == authority.digest
+    assert "SECRET-auth-token" not in repr((logged_out, logged_in))
 
 
 def test_m2c_strict_preflight_attributes_probe_write_without_leakage(
@@ -7150,6 +7331,51 @@ def test_live_guarded_projects_valid_strict_preflight_blocker(
                 "tool": "codex",
                 "probe": "version",
                 "code": "codex_unavailable",
+            }
+        ],
+    }
+    assert not parent.exists()
+
+
+def test_live_guarded_projects_logged_out_claude_blocker(
+    tmp_path, monkeypatch
+) -> None:
+    authority, failures = _load_explicit_tool_authority(
+        _fake_explicit_authority_environment(tmp_path / "authority")
+    )
+    assert failures == () and authority is not None
+    parent = tmp_path / "agentdeck-m2c-live-auth-blocked"
+    parent.mkdir()
+    payload = _valid_strict_preflight_payload(authority)
+    payload["ready"] = False
+    payload["tools"][1]["ready"] = False
+    payload["blockers"] = ["claude_auth_unavailable"]
+    payload["failures"] = [
+        {
+            "tool": "claude",
+            "probe": "auth-status",
+            "code": "claude_auth_unavailable",
+        }
+    ]
+    assert _validate_strict_preflight_payload(payload) == []
+    monkeypatch.setattr(
+        sys.modules[__name__],
+        "_strict_live_preflight",
+        lambda _project, supplied: payload if supplied is authority else {},
+    )
+
+    with pytest.raises(_LiveHarnessFailure) as raised:
+        _run_live_acceptance_in_project(authority, parent)
+
+    assert json.loads(str(raised.value)) == {
+        "stage": "live_acceptance",
+        "code": "preflight_blocked",
+        "preflight_blockers": ["claude_auth_unavailable"],
+        "preflight_failures": [
+            {
+                "tool": "claude",
+                "probe": "auth-status",
+                "code": "claude_auth_unavailable",
             }
         ],
     }

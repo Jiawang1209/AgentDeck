@@ -17,7 +17,11 @@ package, performs login, changes global settings, or touches a user tmux
 socket/session. Capability probes run from the disposable project with a
 minimal environment and isolated `HOME`, `XDG_CONFIG_HOME`, `XDG_CACHE_HOME`,
 `XDG_DATA_HOME`, and `TMPDIR`. Live writes are confined to that disposable
-tree. Exact-name controlled launchers bind Codex, Claude, and tmux calls to
+tree. The sole auth-readiness exception runs the exact sealed Claude CLI's
+read-only `auth status --json` command with an allowlisted projection of the
+host authentication context that live would receive; it returns only a closed
+readiness result and never retains an environment value or raw auth response.
+Exact-name controlled launchers bind Codex, Claude, and tmux calls to
 their validated executables. Claude Agent ACP uses a specialized launcher that
 revalidates its complete package and executes its fixed entrypoint through the
 explicit sealed Node executable; it never resolves Node through ambient PATH.
@@ -94,7 +98,7 @@ PYTHONPATH="<absolute-detached-worktree>/src" \
   pytest tests/test_m2c_live_acceptance.py::test_m2c_explicit_authority_preflight_is_read_only -q -s
 ```
 
-The strict payload uses `schema_version=m2c-live-preflight/v5`. It contains only
+The strict payload uses `schema_version=m2c-live-preflight/v6`. It contains only
 the explicit Leader card, logical tool names, sanitized bounded versions, the
 fixed five-second timeout, unique allowlisted blockers, closed
 `tool + probe + code` failures, and this public authority card:
@@ -123,6 +127,17 @@ authority and can never authorize live.
 The Leader model is a required explicit identity, not a default. Preflight
 validates identity only: it does not invoke the model, access a provider, or
 prove model availability to the account.
+
+The exact sealed Claude executable additionally runs `auth status --json`
+under the same bounded process/output controls. The parser rejects duplicate
+JSON keys and accepts readiness only when the process exits zero and
+`loggedIn` is the JSON boolean `true`. Logged-out, nonzero, malformed, missing,
+or wrong-typed results produce only
+`claude/auth-status/claude_auth_unavailable`. `authMethod`, subscription/account
+fields, stderr, raw JSON, paths, and authentication material are discarded.
+This command never performs login or changes configuration. Authentication
+must be restored by the human before the designated preflight. All v5
+preflights are historical and cannot authorize a v6 live Mission.
 
 Codex CLI initializes per-process arg0 helper aliases even for `--version` and
 `exec --help`. For those two capability probes only, the harness sets
