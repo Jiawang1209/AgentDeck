@@ -2289,13 +2289,17 @@ Expected: clean worktree. Do not execute designated preflight yet.
 - Modify after each gate: `HISTORY.md`, `docs/handoff/current-development-state.md`,
   `docs/validation/2026-07-17-phase3-m2c-four-stage-live.md`, and this plan
 
-- [ ] **Step 1: Stop and request the unique read-only preflight authority**
+- [x] **Step 1: Stop and request the unique read-only preflight authority**
 
 Ask the human to name the exact frozen implementation SHA, Leader model
 `gpt-5.5`, and reconstructed authority digest. Do not infer authorization from
 spec approval, plan approval, test approval, or old live authority.
 
-- [ ] **Step 2: Run designated strict v6 preflight exactly once**
+Observed: the human explicitly authorized one read-only strict v6 preflight on
+frozen `df25532d0bd4fb9c8dd57fd119607a05411d11db`, Leader `gpt-5.5`, and
+digest `sha256:b194c3b4ccbfa3ba2b534bf9cb51e59ecbc077e2576c6eea8ba343f26cc83ffa`.
+
+- [x] **Step 2: Run designated strict v6 preflight exactly once**
 
 Only after the exact authorization, export the already-audited explicit tool
 paths/package root/Node/model/digest. Recover the Task 10 frozen commit by its
@@ -2342,7 +2346,13 @@ inside this command.
 Expected: one test PASS with `ready=true`, `blockers=[]`, and `failures=[]`.
 Any other result consumes this preflight authority and blocks live.
 
-- [ ] **Step 3: Record preflight and request separate live authority**
+Observed: the designated node ran exactly once and passed `1 passed in
+17.39s`; its closed response was `ready=true`, `blockers=[]`, `failures=[]`,
+schema `m2c-live-preflight/v6`, ready authority `m2c-tool-authority/v3`, exact
+Leader `gpt-5.5`, and the authorized digest. The checkout and all audited
+residue were removed. This preflight authority is consumed.
+
+- [x] **Step 3: Record preflight and request separate live authority**
 
 Commit the exact closed preflight result and cleanup audit. Then stop and ask
 for a new sentence authorizing one real four-stage Mission on the same frozen

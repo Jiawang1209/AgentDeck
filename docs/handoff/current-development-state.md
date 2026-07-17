@@ -45,12 +45,18 @@ empty. The explicit installed-input audit preserved Leader `gpt-5.5`,
 `m2c-tool-authority/v3`, `m2c-live-preflight/v6`, digest
 `sha256:b194c3b4ccbfa3ba2b534bf9cb51e59ecbc077e2576c6eea8ba343f26cc83ffa`,
 `loader_failures=[]`, and `claude_auth_ready=true` without PATH substitution.
-No designated preflight or live Mission has run for this candidate; no prior
-authority carries forward. The next gate is a separate human authorization
-naming this exact SHA, model, and digest for one read-only strict v6 preflight.
-M2c remains **BLOCKED** and M3 remains locked. Do not retry `e83dcc48...`,
-auto-approve, merge, push, install, change authentication/global settings, or
-begin M3.
+The separately authorized strict v6 preflight then ran exactly once at frozen
+`df25532d0bd4fb9c8dd57fd119607a05411d11db`, Leader `gpt-5.5`, and the exact
+authority digest. It passed `1 passed in 17.39s` with `ready=true`,
+`blockers=[]`, `failures=[]`, schema `m2c-live-preflight/v6`, and authority
+`m2c-tool-authority/v3`. The detached checkout was removed; process, daemon,
+ACP, tmux, temporary-root, worktree, and repository-status audits are empty.
+This preflight authority is consumed and must not be rerun. No live Mission
+has run for this candidate. The next gate is a new, separate human
+authorization naming this same frozen SHA, Leader model, and exact digest for
+one real four-stage Mission. M2c remains **BLOCKED** and M3 remains locked. Do
+not retry the preflight, auto-approve, merge, push, install, change
+authentication/global settings, or begin M3.
 
 The separately authorized live Mission on frozen
 `79d8160eb60ad4e8bfb37ff43615f099afd9edc5`, Leader `gpt-5.5`, and authority

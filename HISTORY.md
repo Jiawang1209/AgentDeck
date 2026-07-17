@@ -182,6 +182,21 @@
   remains locked pending separate human authorization naming the exact frozen
   SHA, model, and digest for one read-only strict v6 preflight.
 
+### Pass the unique bounded-permission strict v6 preflight
+
+- Consumed the separately authorized read-only preflight exactly once on
+  frozen `df25532d0bd4fb9c8dd57fd119607a05411d11db`, Leader `gpt-5.5`, and
+  authority digest
+  `sha256:b194c3b4ccbfa3ba2b534bf9cb51e59ecbc077e2576c6eea8ba343f26cc83ffa`.
+- The designated node passed `1 passed in 17.39s` with
+  `m2c-live-preflight/v6`, `ready=true`, `blockers=[]`, `failures=[]`, and
+  ready `m2c-tool-authority/v3`. No fallback or PATH substitution occurred.
+- Removed the detached preflight checkout and confirmed empty process, daemon,
+  ACP, tmux, preflight-root, worktree, and repository-status residue.
+- Ran no live Mission. This preflight authority is exhausted and must not be
+  retried. M2c remains **BLOCKED** and M3 remains locked until a separately
+  authorized real four-stage Mission on the same SHA/model/digest passes.
+
 ### Design bounded sequential ACP permission acceptance for M2c
 
 - Replaced the live harness assumption of exactly two Mission permissions with

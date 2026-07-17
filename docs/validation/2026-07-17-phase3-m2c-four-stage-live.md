@@ -547,7 +547,30 @@ claude_auth_ready=true
 ```
 
 No PATH candidate was substituted and no path, executable hash, auth payload,
-prompt, stderr, or credential is retained here. No designated preflight or
-live Mission ran. The next gate is separate human authorization naming this
-exact frozen SHA, Leader model, and digest for one read-only strict v6
-preflight. M2c remains **BLOCKED** and M3 remains locked.
+prompt, stderr, or credential is retained here.
+
+The separately authorized designated strict v6 preflight then ran exactly once
+on frozen `df25532d0bd4fb9c8dd57fd119607a05411d11db`, Leader `gpt-5.5`, and
+authority digest
+`sha256:b194c3b4ccbfa3ba2b534bf9cb51e59ecbc077e2576c6eea8ba343f26cc83ffa`.
+It passed `1 passed in 17.39s` and returned the closed result:
+
+```text
+schema_version=m2c-live-preflight/v6
+ready=true
+blockers=[]
+failures=[]
+leader_model.provider=codex-cli
+leader_model.model=gpt-5.5
+leader_model.ready=true
+tool_authority.schema_version=m2c-tool-authority/v3
+tool_authority.ready=true
+tool_authority.digest=sha256:b194c3b4ccbfa3ba2b534bf9cb51e59ecbc077e2576c6eea8ba343f26cc83ffa
+```
+
+The detached checkout was removed. Process, daemon, ACP, tmux, preflight-root,
+worktree, and repository-status audits were empty. This one preflight
+authority is consumed and cannot be rerun. No real Mission ran. The next gate
+is a separate human authorization for one real four-stage Mission on this
+same frozen SHA, model, and digest. M2c remains **BLOCKED** and M3 remains
+locked.
