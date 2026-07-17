@@ -4,6 +4,20 @@
 
 ## 2026-07-17
 
+### Design closed npm `.bin` symlink authority for real M2c ACP package
+
+- The pre-command real package audit found two npm-generated internal links
+  under `node_modules/.bin`, both targeting regular executable files inside the
+  same package tree. Frozen authority `582fc2c7...` rejects every symlink, so it
+  cannot represent the official installed package.
+- The designated preflight was not started and no one-shot authority was
+  consumed. No provider, ACP/tmux session, daemon, install, login, or global
+  change ran.
+- Under the user's delegated M2c completion authority, selected a narrow design
+  that accepts only stable relative `.bin` links with lexically closed regular
+  targets already in the manifest. Link text and runtime identity enter
+  `m2c-tool-authority/v3`; strict preflight advances to v5.
+
 ### Verify frozen M2c ACP entrypoint authority on two complete suites
 
 - Froze implementation authority at

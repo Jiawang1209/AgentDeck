@@ -49,6 +49,16 @@ freeze; process and temporary-root audits were empty. The next action is the
 one real v4 read-only preflight using Leader `gpt-5.5` and the installed
 metadata-selected package entrypoint.
 
+That pre-command package audit found two npm-generated internal symlinks under
+`node_modules/.bin`; both resolve lexically to regular executable files already
+inside the same package. Because frozen `582fc2c7...` rejects every symlink, the
+real preflight was not started and its one-shot authority was not consumed.
+The user's delegated completion goal approved a minimal closed-link correction
+at `docs/superpowers/specs/2026-07-17-m2c-acp-package-internal-symlink-authority-design.md`:
+only stable relative `.bin` links to regular manifest files are accepted,
+without following them; their text and runtime identity are sealed in authority
+v3 and strict preflight v5. M2c remains **BLOCKED** and M3 remains locked.
+
 The native-schema provenance persistence correction is implemented and frozen
 at `7a76ada81938be3ba0720a7c2f5a540b4beebb3e`. Semantic Mission previews now
 preserve the exact validated eleven-field generation envelope. StateStore

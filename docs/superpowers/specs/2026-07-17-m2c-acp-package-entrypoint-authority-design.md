@@ -5,6 +5,12 @@
 **Milestone:** Phase 3 M2c real four-stage acceptance closure
 **Scope:** M2c acceptance harness and its durable evidence only
 
+> **Symlink rule superseded:** The general package rule that rejects every
+> symlink cannot represent ordinary npm `.bin` layout. The only accepted
+> exception is defined by
+> `2026-07-17-m2c-acp-package-internal-symlink-authority-design.md`; entrypoint
+> selection and all other package safety rules in this document remain active.
+
 ## 1. Purpose
 
 AgentDeck's product north star requires a real Codex-and-Claude Mission to run
