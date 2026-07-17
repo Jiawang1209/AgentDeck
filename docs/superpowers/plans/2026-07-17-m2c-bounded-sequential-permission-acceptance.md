@@ -995,7 +995,7 @@ git commit -m "test: drive bounded M2c permission progression"
 - Modify: `tests/test_m2c_live_acceptance.py:2490-2720,5044-5072,9415-9805`
 - Modify: `HISTORY.md`
 
-- [ ] **Step 1: Add exact public-control binding tests**
+- [x] **Step 1: Add exact public-control binding tests**
 
 Monkeypatch `_json_project_command` and the ProjectView decision so the test
 can independently drift the control command, preview response, and confirmation
@@ -1118,7 +1118,7 @@ def _permission_confirmation_fixture(tmp_path, monkeypatch, drift: str):
     return root, store
 ```
 
-- [ ] **Step 2: Add effective diagnostic RED**
+- [x] **Step 2: Add effective diagnostic RED**
 
 ```python
 def test_permission_progress_projects_effective_states_without_leakage() -> None:
@@ -1149,7 +1149,7 @@ def test_permission_progress_projects_effective_states_without_leakage() -> None
         assert forbidden not in rendered
 ```
 
-- [ ] **Step 3: Run RED and commit**
+- [x] **Step 3: Run RED and commit**
 
 ```bash
 PYTHONPATH="$PWD/src" conda run --no-capture-output -n agentdeck \
@@ -1159,6 +1159,10 @@ PYTHONPATH="$PWD/src" conda run --no-capture-output -n agentdeck \
 
 Expected: FAIL because the current confirmation helper accepts no exact
 identities and `_live_failure` has no closed permission projection.
+
+Observed: `9 failed, 351 deselected in 4.14s`; eight exact-lineage cases failed
+at the old helper signature and the projection case failed at the old
+`_live_failure` signature.
 
 ```bash
 git add tests/test_m2c_live_acceptance.py HISTORY.md

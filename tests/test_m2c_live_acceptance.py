@@ -9614,6 +9614,88 @@ class _ScriptedPermissionStore:
         self.index += 1
 
 
+@dataclass
+class _PermissionProjectViewFixture:
+    mission_recovery: dict[str, object]
+
+
+def _permission_confirmation_fixture(tmp_path, monkeypatch, drift: str):
+    root = tmp_path / "project"
+    root.mkdir()
+    store = StateStore(root)
+    mission_id = "mis_0123456789ab"
+    attempt_id = "mat_000000000001"
+    permission_id = "prm_step1_0"
+    preview = {
+        "mode": "daemon_permission_preview",
+        "mission_id": mission_id,
+        "attempt_id": attempt_id,
+        "permission_id": permission_id,
+        "decision": "approved",
+        "preview_id": "gov_0123456789ab",
+        "confirmation_handle": "pcf_" + "2" * 24,
+        "expires_at": "2026-07-17T12:00:00+00:00",
+        "confirm_command": (
+            "agentdeck daemon permission-confirm --handle pcf_" + "2" * 24
+        ),
+    }
+    confirmed = {
+        "mode": "daemon_permission_confirmed",
+        "mission_id": mission_id,
+        "attempt_id": attempt_id,
+        "permission_id": permission_id,
+        "decision": "approved",
+        "preview_id": preview["preview_id"],
+        "confirmation_handle": preview["confirmation_handle"],
+        "state": "approved",
+    }
+    if drift == "preview_attempt":
+        preview["attempt_id"] = "mat_crossed"
+    elif drift == "preview_permission":
+        preview["permission_id"] = "prm_crossed"
+    elif drift == "confirm_mission":
+        confirmed["mission_id"] = "mis_crossed"
+    elif drift == "confirm_attempt":
+        confirmed["attempt_id"] = "mat_crossed"
+    elif drift == "confirm_permission":
+        confirmed["permission_id"] = "prm_crossed"
+    elif drift == "confirm_preview":
+        confirmed["preview_id"] = "gov_crossed"
+    elif drift == "confirm_handle":
+        confirmed["confirmation_handle"] = "pcf_" + "3" * 24
+    control_permission = (
+        "prm_crossed" if drift == "control_permission" else permission_id
+    )
+    command = (
+        "agentdeck daemon permission-preview "
+        f"--mission-id {mission_id} --attempt-id {attempt_id} "
+        f"--permission-id {control_permission} --decision approved"
+    )
+    view = _PermissionProjectViewFixture(
+        mission_recovery={
+            "decision": {
+                "attempt_id": attempt_id,
+                "controls": [
+                    {
+                        "kind": "permission_preview",
+                        "command": command,
+                        "enabled": True,
+                    }
+                ],
+            }
+        }
+    )
+    monkeypatch.setattr(store, "project_view", lambda _config: view)
+    monkeypatch.setattr(sys.modules[__name__], "load_config", lambda _root: object())
+    responses = iter((preview, confirmed))
+    monkeypatch.setattr(
+        sys.modules[__name__],
+        "_json_project_command",
+        lambda *_args, **_kwargs: next(responses),
+    )
+    return root, store
+
+
 def _sequential_permission_state(
     *,
     step_position: int = 1,
@@ -9992,6 +10074,62 @@ def test_bounded_claude_attempt_fails_closed(
     assert json.loads(rendered)["code"] == expected_code
     assert "SECRET" not in rendered
     assert "/private" not in rendered
+
+
+@pytest.mark.parametrize(
+    ("drift", "expected_code"),
+    (
+        ("control_permission", "permission_preview_invalid"),
+        ("preview_attempt", "permission_preview_invalid"),
+        ("preview_permission", "permission_preview_invalid"),
+        ("confirm_mission", "permission_confirmation_invalid"),
+        ("confirm_attempt", "permission_confirmation_invalid"),
+        ("confirm_permission", "permission_confirmation_invalid"),
+        ("confirm_preview", "permission_confirmation_invalid"),
+        ("confirm_handle", "permission_confirmation_invalid"),
+    ),
+)
+def test_confirm_pending_permission_requires_exact_lineage(
+    tmp_path, monkeypatch, drift: str, expected_code: str,
+) -> None:
+    root, store = _permission_confirmation_fixture(tmp_path, monkeypatch, drift)
+    with pytest.raises(_LiveHarnessFailure) as error:
+        _confirm_pending_permission(
+            root,
+            store,
+            mission_id="mis_0123456789ab",
+            attempt_id="mat_000000000001",
+            permission_id="prm_step1_0",
+        )
+    assert json.loads(str(error.value))["code"] == expected_code
+
+
+def test_permission_progress_projects_effective_states_without_leakage() -> None:
+    state = _sequential_permission_state(
+        effective_states=("approved", "pending")
+    )
+    rendered = str(
+        _live_failure(
+            "permission_wait_timeout",
+            state_snapshot=state,
+            permission_attempt_id="mat_000000000001",
+            permission_step_position=1,
+        )
+    )
+    diagnostic = json.loads(rendered)
+    assert diagnostic["permission_progress"] == {
+        "diagnostic_code": "permission_wait_timeout",
+        "step_position": 1,
+        "attempt_state": "running",
+        "attempt_permission_count": 2,
+        "mission_permission_count": 2,
+        "effective_permission_states": ["approved", "pending"],
+        "reply_count": 0,
+        "handoff_count": 0,
+    }
+    assert diagnostic["ledger"]["permission_states"] == ["approved", "pending"]
+    for forbidden in ("SECRET", "/private", "tool_", "prompt", "target"):
+        assert forbidden not in rendered
 
 
 @pytest.mark.parametrize(

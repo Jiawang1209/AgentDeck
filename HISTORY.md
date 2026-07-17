@@ -73,6 +73,19 @@
   passed, 328 deselected in 0.74s`. No timeout constant or product source
   changed.
 
+### Require exact public permission evidence and closed diagnostics
+
+- Added RED coverage that independently drifts the public permission-preview
+  control, preview Mission/attempt/permission identity, and confirmation
+  Mission/attempt/permission/preview/handle identity.
+- Added a RED diagnostic contract requiring transition-derived effective
+  permission states and exact attempt/Mission/reply/handoff cardinalities while
+  excluding targets, prompts, tool IDs, paths, and raw payloads.
+- The focused run failed exactly as intended: `9 failed, 351 deselected in
+  4.14s`; eight failures show `_confirm_pending_permission` lacks exact caller
+  identities, and one shows `_live_failure` lacks the closed permission
+  projection.
+
 ### Design bounded sequential ACP permission acceptance for M2c
 
 - Replaced the live harness assumption of exactly two Mission permissions with
