@@ -100,6 +100,18 @@
   Confirmation, projection, ledger, and leakage coverage passes `46 passed,
   314 deselected in 0.78s`.
 
+### Require shared bounded four-stage completion evidence
+
+- Added a complete deterministic implementation → review → revision →
+  acceptance fixture with four succeeded attempts, four validated replies,
+  four canonical handoffs, and three ordered handoff-before-submit links.
+- Added RED coverage accepting independent bounded Claude permission counts
+  `(1,1)`, `(2,1)`, `(1,3)`, and `(4,4)`, while rejecting a missing bridge,
+  per-attempt/whole-Mission limit overflow, missing reply/handoff, and early
+  successor submission.
+- The focused RED failed exactly as intended: `12 failed, 360 deselected in
+  2.10s`, all at the missing `_validate_four_stage_completion` unit.
+
 ### Design bounded sequential ACP permission acceptance for M2c
 
 - Replaced the live harness assumption of exactly two Mission permissions with

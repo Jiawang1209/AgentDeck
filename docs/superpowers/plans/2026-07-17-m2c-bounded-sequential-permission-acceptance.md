@@ -1416,7 +1416,7 @@ git commit -m "test: bind exact M2c permission evidence"
 - Modify: `tests/test_m2c_live_acceptance.py:5450-5635,9805-10150`
 - Modify: `HISTORY.md`
 
-- [ ] **Step 1: Add a complete four-stage state fixture**
+- [x] **Step 1: Add a complete four-stage state fixture**
 
 Build four succeeded attempts with agents
 `claude-worker/codex-worker/claude-worker/codex-worker`, four validated replies,
@@ -1553,7 +1553,7 @@ def _four_stage_completion_failure_fixture(
 All Claude permission records therefore use the exact lineage fixture from Task
 1. A zero-count Claude phase has an exact ACP attempt but no permission binding.
 
-- [ ] **Step 2: Add completion tests that reject exact-two hard-coding**
+- [x] **Step 2: Add completion tests that reject exact-two hard-coding**
 
 ```python
 @pytest.mark.parametrize(
@@ -1598,7 +1598,7 @@ def test_four_stage_completion_fails_closed(
     assert json.loads(str(error.value))["code"] == expected_code
 ```
 
-- [ ] **Step 3: Run RED and commit**
+- [x] **Step 3: Run RED and commit**
 
 ```bash
 PYTHONPATH="$PWD/src" conda run --no-capture-output -n agentdeck \
@@ -1607,6 +1607,9 @@ PYTHONPATH="$PWD/src" conda run --no-capture-output -n agentdeck \
 ```
 
 Expected: FAIL because `_validate_four_stage_completion` does not exist.
+
+Observed: `12 failed, 360 deselected in 2.10s`; every failure was the missing
+shared completion validator.
 
 ```bash
 git add tests/test_m2c_live_acceptance.py HISTORY.md

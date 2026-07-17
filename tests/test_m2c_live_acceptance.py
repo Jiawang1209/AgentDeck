@@ -10019,6 +10019,132 @@ def _bounded_driver_failure_fixture(
     }
 
 
+def _four_stage_completion_fixture(
+    *,
+    implementation_permissions: int,
+    revision_permissions: int,
+) -> tuple[dict[str, object], list[dict[str, object]]]:
+    mission_id = "mis_0123456789ab"
+    state = _sequential_permission_state(
+        step_position=1,
+        effective_states=tuple(
+            "approved" for _ in range(implementation_permissions)
+        ),
+        attempt_state="succeeded",
+        include_completion=True,
+    )
+    state["missions"][0]["status"] = "completed"
+    implementation_protocol = {
+        name: copy.deepcopy(state[name])
+        for name in (
+            "agent_sessions",
+            "protocol_turns",
+            "transport_updates",
+            "permission_requests",
+            "mission_permission_bindings",
+            "protocol_state_transitions",
+        )
+    }
+    revision = _sequential_permission_state(
+        step_position=3,
+        effective_states=tuple("approved" for _ in range(revision_permissions)),
+        attempt_state="succeeded",
+        include_completion=True,
+    )
+    agents = ("claude-worker", "codex-worker", "claude-worker", "codex-worker")
+    transports = ("acp", "tmux", "acp", "tmux")
+    attempts: list[dict[str, object]] = []
+    replies: list[dict[str, object]] = []
+    handoffs: list[dict[str, object]] = []
+    for position, (agent_id, transport) in enumerate(
+        zip(agents, transports, strict=True), start=1
+    ):
+        attempt_id = f"mat_00000000000{position}"
+        dispatch_key = f"dsp_step_{position}"
+        reply_id = f"mrp_step_{position}"
+        attempts.append(
+            {
+                "mission_id": mission_id,
+                "attempt_id": attempt_id,
+                "step_id": f"step_{position}",
+                "step_position": position,
+                "agent_id": agent_id,
+                "configured_transport": transport,
+                "dispatch_key": dispatch_key,
+                "state": "succeeded",
+                "receipt_summary": "closed",
+            }
+        )
+        replies.append(
+            {
+                "mission_id": mission_id,
+                "attempt_id": attempt_id,
+                "reply_id": reply_id,
+                "dispatch_key": dispatch_key,
+                "state": "validated",
+            }
+        )
+        handoffs.append(
+            {
+                "mission_id": mission_id,
+                "attempt_id": attempt_id,
+                "reply_id": reply_id,
+                "state": "recorded",
+                "canonical_handoff": {
+                    "status": "completed",
+                    "summary": "closed",
+                    "verification": "closed",
+                    "risks": "none",
+                    "next_steps": "continue",
+                },
+            }
+        )
+    state["mission_attempts"] = attempts
+    state["mission_worker_replies"] = replies
+    state["mission_handoffs"] = handoffs
+    for name, values in implementation_protocol.items():
+        state[name] = values + copy.deepcopy(revision[name])
+    events: list[dict[str, object]] = []
+    for index in range(3):
+        events.extend(
+            [
+                {
+                    "event_type": "mission_handoff_evidence_recorded",
+                    "payload": {"attempt_id": attempts[index]["attempt_id"]},
+                },
+                {
+                    "event_type": "mission_attempt_submitted",
+                    "payload": {"attempt_id": attempts[index + 1]["attempt_id"]},
+                },
+            ]
+        )
+    return state, events
+
+
+def _four_stage_completion_failure_fixture(
+    mutation: str,
+) -> tuple[dict[str, object], list[dict[str, object]]]:
+    counts = {
+        "implementation_zero": (0, 1),
+        "revision_zero": (1, 0),
+        "implementation_five": (5, 1),
+        "revision_five": (1, 5),
+        "total_nine": (4, 5),
+    }
+    implementation, revision = counts.get(mutation, (1, 1))
+    state, events = _four_stage_completion_fixture(
+        implementation_permissions=implementation,
+        revision_permissions=revision,
+    )
+    if mutation == "reply_missing":
+        state["mission_worker_replies"].pop()
+    elif mutation == "handoff_missing":
+        state["mission_handoffs"].pop()
+    elif mutation == "submit_before_handoff":
+        events[0], events[1] = events[1], events[0]
+    return state, events
+
+
 def _live_diagnostic_state(
     *,
     mission_status: object = "running",
@@ -10257,6 +10383,48 @@ def test_permission_progress_projects_effective_states_without_leakage() -> None
     assert diagnostic["ledger"]["permission_states"] == ["approved", "pending"]
     for forbidden in ("SECRET", "/private", "tool_", "prompt", "target"):
         assert forbidden not in rendered
+
+
+@pytest.mark.parametrize(
+    ("implementation_permissions", "revision_permissions"),
+    ((1, 1), (2, 1), (1, 3), (4, 4)),
+)
+def test_four_stage_completion_accepts_bounded_permission_counts(
+    implementation_permissions: int,
+    revision_permissions: int,
+) -> None:
+    state, events = _four_stage_completion_fixture(
+        implementation_permissions=implementation_permissions,
+        revision_permissions=revision_permissions,
+    )
+    evidence = _validate_four_stage_completion(state, events)
+    assert evidence.permission_count == (
+        implementation_permissions + revision_permissions
+    )
+    assert evidence.attempt_count == 4
+    assert evidence.handoff_count == 4
+
+
+@pytest.mark.parametrize(
+    ("mutation", "expected_code"),
+    (
+        ("implementation_zero", "permission_bridge_missing"),
+        ("revision_zero", "permission_bridge_missing"),
+        ("implementation_five", "permission_limit_exceeded"),
+        ("revision_five", "permission_limit_exceeded"),
+        ("total_nine", "permission_limit_exceeded"),
+        ("reply_missing", "reply_facts_invalid"),
+        ("handoff_missing", "canonical_handoff_facts_invalid"),
+        ("submit_before_handoff", "next_stage_started_before_handoff"),
+    ),
+)
+def test_four_stage_completion_fails_closed(
+    mutation: str, expected_code: str,
+) -> None:
+    state, events = _four_stage_completion_failure_fixture(mutation)
+    with pytest.raises(_LiveHarnessFailure) as error:
+        _validate_four_stage_completion(state, events)
+    assert json.loads(str(error.value))["code"] == expected_code
 
 
 @pytest.mark.parametrize(
