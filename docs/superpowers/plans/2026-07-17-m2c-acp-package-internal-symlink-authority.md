@@ -213,7 +213,7 @@ PYTHONPATH="$PWD/src" conda run --no-capture-output -n agentdeck \
 - Modify: `docs/validation/2026-07-17-phase3-m2c-four-stage-live.md`
 - Modify: both roadmaps only after live PASS
 
-- [ ] Run two complete suites on two fresh detached worktrees at the unchanged
+- [x] Run two complete suites on two fresh detached worktrees at the unchanged
   new frozen SHA, each with its own absolute `PYTHONPATH`; remove both and audit
   zero residue.
 

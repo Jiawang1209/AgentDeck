@@ -4,6 +4,18 @@
 
 ## 2026-07-17
 
+### Verify frozen M2c closed-link authority on two complete suites
+
+- Froze implementation authority at
+  `284d8f62a9121a0d0351938aee1f716b3ebd198e`. Two fresh detached worktrees on
+  that unchanged SHA passed `4380 passed, 3 skipped in 205.38s` and `4380
+  passed, 3 skipped in 209.27s`.
+- The skips were exactly the opt-in real ACP, designated v5 preflight, and real
+  four-stage Mission. Both worktrees were removed; frozen implementation/SOP
+  remained unchanged; process and temporary-root audits were empty.
+- Deterministic authority v3 is verified. The next gate is the one real v5
+  preflight against the installed package and its two closed npm links.
+
 ### Freeze M2c closed npm-link authority implementation
 
 - Completed the harness-only v3/v5 correction with zero `src/agentdeck/**`

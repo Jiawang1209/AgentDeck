@@ -74,6 +74,15 @@ Those wider checks now pass: strict/package/launcher coverage is `37 passed,
 documentation commit freezes the closed-link implementation; two complete
 detached-worktree suites remain before real preflight.
 
+The new closed-link implementation authority is frozen at
+`284d8f62a9121a0d0351938aee1f716b3ebd198e`. Two fresh detached worktrees on
+that unchanged SHA passed `4380 passed, 3 skipped in 205.38s` and `4380 passed,
+3 skipped in 209.27s`. The skips were exactly the opt-in real ACP, designated
+v5 preflight, and real four-stage Mission. Both worktrees were removed;
+implementation/SOP diff from freeze is empty; process and temporary-root audits
+found no residue. The one real installed-package v5 preflight is now the next
+gate.
+
 The native-schema provenance persistence correction is implemented and frozen
 at `7a76ada81938be3ba0720a7c2f5a540b4beebb3e`. Semantic Mission previews now
 preserve the exact validated eleven-field generation envelope. StateStore
