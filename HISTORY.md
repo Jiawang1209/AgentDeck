@@ -103,6 +103,10 @@
   nonzero claims, digest independence, and guarded-live blocker projection.
   No product source, provider, ACP transport, retry, timeout, login, or global
   configuration behavior changed.
+- The first complete M2c run exposed one test-only assertion collision: the
+  malformed input `{` was incorrectly required not to occur anywhere in a
+  Python dictionary `repr`. Removed only that impossible single-character
+  assertion; the dedicated account/secret/path leakage test remains intact.
 
 ### Design the M2c preview-consumption convergence repair
 

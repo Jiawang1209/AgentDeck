@@ -6272,7 +6272,6 @@ def test_m2c_strict_preflight_fails_closed_on_invalid_claude_auth_status(
             "code": "claude_auth_unavailable",
         }
     ]
-    assert payload not in repr(response)
 
 
 def test_m2c_strict_preflight_discards_claude_auth_details(tmp_path) -> None:
