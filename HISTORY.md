@@ -4,6 +4,29 @@
 
 ## 2026-07-17
 
+### Define the evolutionary V1 kernel reset
+
+- Defined one ProjectDaemon as the only product-state writer and mapped the V1
+  domain around Project, Conversation, immutable Mission versions,
+  AuthorizationEnvelope, Task DAGs, Attempts, AgentSessions, Permissions,
+  Handoffs, Evidence, Verification, and evidence-derived learning suggestions.
+- Separated Leader proposals and Worker task/event adapters from Mission state
+  transitions, governance, dispatch authority, and AgentDeck-owned deterministic
+  Verification, while preserving explicit Agent, model, role, and transport
+  provenance.
+- Fixed ACP as the preferred structured transport, CLI/PTY as an ordered and
+  governed fallback only after durable safe-effect proof, and tmux as an
+  observation/takeover surface rather than Mission authority.
+- Carried one-confirmation governance, exact permission lineage, all-facts state
+  precedence, bounded recovery, absorbing terminal states, mandatory
+  Verification grades, and safe previewed Memory/Skill/Improvement Mission
+  learning into the target dependency boundaries.
+- Defined tested vertical-slice migration and compatibility through one
+  ProjectView/application path, with SQLite mechanics deferred to the dedicated
+  migration design. This is a documentation-only architecture decision and
+  does not implement the daemon, kernel, adapters, transports, migration, or
+  learning behavior.
+
 ### Freeze the AgentDeck V1 product requirements
 
 - Defined the complete bare-`agentdeck` user journey: restore or initialize a
