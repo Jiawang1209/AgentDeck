@@ -53,17 +53,21 @@ AGENTDECK_M2C_TMUX
 
 Every path must be an audited absolute local path. Executable inputs must be
 non-symlink regular executables. `AGENTDECK_M2C_CLAUDE_ACP_PACKAGE` must be the
-non-symlink package root containing the exact executable
-`dist/claude-agent-acp`; `AGENTDECK_M2C_CLAUDE_ACP` must name that same file.
+non-symlink package root. Its sealed `package.json` must declare the official
+`claude-agent-acp` npm bin as a safe package-relative executable;
+`AGENTDECK_M2C_CLAUDE_ACP` must name that same metadata-selected file. The
+currently audited `0.58.1` package declares `dist/index.js`; this is package
+evidence, not a universal hard-coded filename.
 The package root, every directory, and every file must not be group- or
 world-writable. Do not discover a substitute through PATH, run install/login,
 or modify global settings as part of this SOP.
 
-The cross-process `m2c-tool-authority/v1` digest binds the exact Leader model,
+The cross-process `m2c-tool-authority/v2` digest binds the exact Leader model,
 Codex, Claude, Node, tmux, and complete ACP package-tree content. It excludes
 absolute paths, inode/device, owner, mode, mtime, xattrs, and temporary names so
 the same audited content can be reconstructed after the preflight checkout is
-removed. Each process separately retains and revalidates those runtime facts.
+removed. The canonical metadata-selected entrypoint path is also bound into the
+v2 digest. Each process separately retains and revalidates runtime facts.
 
 ## 3. Run the separately authorized designated preflight once
 
@@ -76,22 +80,23 @@ AGENTDECK_M2C_STRICT_PREFLIGHT=1 \
 AGENTDECK_M2C_LEADER_MODEL="<audited-model-id>" \
 AGENTDECK_M2C_CODEX="<absolute-codex-path>" \
 AGENTDECK_M2C_CLAUDE="<absolute-claude-path>" \
-AGENTDECK_M2C_CLAUDE_ACP="<absolute-package-root>/dist/claude-agent-acp" \
+AGENTDECK_M2C_CLAUDE_ACP="<audited-absolute-package-root>/dist/index.js" \
 AGENTDECK_M2C_CLAUDE_ACP_PACKAGE="<absolute-package-root>" \
 AGENTDECK_M2C_NODE="<absolute-node-path>" \
 AGENTDECK_M2C_TMUX="<absolute-tmux-path>" \
-PYTHONPATH=src conda run --no-capture-output -n agentdeck \
+PYTHONPATH="<absolute-detached-worktree>/src" \
+  conda run --no-capture-output -n agentdeck \
   pytest tests/test_m2c_live_acceptance.py::test_m2c_explicit_authority_preflight_is_read_only -q -s
 ```
 
-The strict payload uses `schema_version=m2c-live-preflight/v3`. It contains only
+The strict payload uses `schema_version=m2c-live-preflight/v4`. It contains only
 the explicit Leader card, logical tool names, sanitized bounded versions, the
 fixed five-second timeout, unique allowlisted blockers, closed
 `tool + probe + code` failures, and this public authority card:
 
 ```json
 {
-  "schema_version": "m2c-tool-authority/v1",
+  "schema_version": "m2c-tool-authority/v2",
   "digest": "sha256:<64-lowercase-hex>",
   "source": "explicit",
   "ready": true
@@ -165,12 +170,13 @@ AGENTDECK_M2C_LIVE=1 \
 AGENTDECK_M2C_LEADER_MODEL="<audited-model-id>" \
 AGENTDECK_M2C_CODEX="<absolute-codex-path>" \
 AGENTDECK_M2C_CLAUDE="<absolute-claude-path>" \
-AGENTDECK_M2C_CLAUDE_ACP="<absolute-package-root>/dist/claude-agent-acp" \
+AGENTDECK_M2C_CLAUDE_ACP="<audited-absolute-package-root>/dist/index.js" \
 AGENTDECK_M2C_CLAUDE_ACP_PACKAGE="<absolute-package-root>" \
 AGENTDECK_M2C_NODE="<absolute-node-path>" \
 AGENTDECK_M2C_TMUX="<absolute-tmux-path>" \
 AGENTDECK_M2C_AUTHORITY_DIGEST="sha256:<approved-64-lowercase-hex>" \
-PYTHONPATH=src conda run --no-capture-output -n agentdeck \
+PYTHONPATH="<absolute-detached-worktree>/src" \
+  conda run --no-capture-output -n agentdeck \
   pytest tests/test_m2c_live_acceptance.py::test_real_four_stage_m2c_acceptance -q -s
 ```
 

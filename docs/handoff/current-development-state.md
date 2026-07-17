@@ -23,6 +23,16 @@ response to `m2c-live-preflight/v4`. M2c remains **BLOCKED** and M3 remains
 locked until a new RED/GREEN, frozen SHA, double full suite, real preflight,
 and real four-stage Mission all pass.
 
+The metadata-bound deterministic implementation is now present on this feature
+branch: official object/string npm bin selection, duplicate-safe bounded JSON,
+strict package-relative path validation, full package/runtime drift sealing,
+explicit environment binding, authority v2, preflight v4, and the controlled
+Node launcher all use the same selected entrypoint. Focused RED first proved
+the real mismatch (`3 failed`); GREEN and safety/loader/launcher matrices then
+passed `16`, `31`, and `21 passed` respectively, with the one real designated
+node still skipped. The complete non-live and product regressions remain before
+freeze. No real preflight/live or installed tool execution has run.
+
 The native-schema provenance persistence correction is implemented and frozen
 at `7a76ada81938be3ba0720a7c2f5a540b4beebb3e`. Semantic Mission previews now
 preserve the exact validated eleven-field generation envelope. StateStore

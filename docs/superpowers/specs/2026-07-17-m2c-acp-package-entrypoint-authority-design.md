@@ -1,7 +1,7 @@
 # M2c ACP Package Entrypoint Authority Design
 
 **Date:** 2026-07-17
-**Status:** Human-approved design; implementation not started
+**Status:** Implemented through deterministic RED/GREEN; freeze verification pending
 **Milestone:** Phase 3 M2c real four-stage acceptance closure
 **Scope:** M2c acceptance harness and its durable evidence only
 

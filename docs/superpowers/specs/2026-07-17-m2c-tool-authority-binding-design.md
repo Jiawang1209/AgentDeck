@@ -5,6 +5,13 @@
 **Milestone:** Phase 3 M2c live acceptance closure
 **Scope:** M2c acceptance harness and SOP only
 
+> **Superseded entrypoint rule:** Section 6.1's fixed
+> `dist/claude-agent-acp` requirement does not match the official installed npm
+> package. Entrypoint selection, authority versioning, and strict preflight
+> evolution are superseded by
+> `2026-07-17-m2c-acp-package-entrypoint-authority-design.md`. Historical v1/v3
+> rationale below remains unchanged as implementation provenance.
+
 ## 1. Purpose
 
 AgentDeck's product model remains simple at the user level:

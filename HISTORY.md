@@ -4,6 +4,18 @@
 
 ## 2026-07-17
 
+### Advance strict M2c acceptance to authority v2 and preflight v4
+
+- Updated strict contract names and the SOP to derive the official ACP command
+  from sealed npm metadata, bind its relative path into authority v2, and
+  require the current audited `0.58.1` entry `dist/index.js` without treating it
+  as a universal filename.
+- Marked the earlier fixed-entrypoint v1/v3 design subsection superseded while
+  preserving historical rationale. Handoff and the new design now record that
+  deterministic implementation is present but not frozen or live-accepted.
+- Strict/fake designated coverage passed `7 passed, 1 skipped, 260 deselected
+  in 13.44s`; the only skip is the separately gated real preflight node.
+
 ### Execute M2c ACP through the metadata-selected authority
 
 - Extended explicit binding coverage across an external same-content file, an

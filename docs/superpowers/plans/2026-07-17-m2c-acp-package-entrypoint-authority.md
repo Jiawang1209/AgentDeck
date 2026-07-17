@@ -285,13 +285,13 @@ git commit -m "test: execute M2c ACP through metadata authority"
 - Modify: `docs/handoff/current-development-state.md`
 - Modify: `HISTORY.md`
 
-- [ ] **Step 1: Update strict contract expectations**
+- [x] **Step 1: Update strict contract expectations**
 
 Rename v3-specific test names to v4, assert the nested authority is v2, and
 retain the exact public fields, closed blocker/failure vocabulary, read-only
 snapshots, skip gates, and transcript-free diagnostics.
 
-- [ ] **Step 2: Run designated-node fake-tool regression**
+- [x] **Step 2: Run designated-node fake-tool regression**
 
 ```bash
 PYTHONPATH="$WORKTREE/src" conda run --no-capture-output -n agentdeck \
@@ -302,7 +302,7 @@ PYTHONPATH="$WORKTREE/src" conda run --no-capture-output -n agentdeck \
 Expected: fake-tool node passes; the actual real node remains skipped without
 `AGENTDECK_M2C_STRICT_PREFLIGHT=1`.
 
-- [ ] **Step 3: Update written contracts**
+- [x] **Step 3: Update written contracts**
 
 The SOP must instruct operators to use the exact metadata-selected
 `dist/index.js` for the currently audited package without hard-coding it as a
@@ -311,7 +311,7 @@ preflight v4, exact digest reuse, absolute `PYTHONPATH`, and separate closed
 evidence. Mark section 6.1 of the earlier authority spec superseded by the new
 design; do not rewrite historical evidence.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add tests/test_m2c_live_acceptance.py \
