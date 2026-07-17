@@ -4,6 +4,29 @@
 
 ## 2026-07-17
 
+### Verify the frozen M2c tool-authority binding implementation
+
+- Froze implementation authority at
+  `fda1a69194e67b50afe0c2b9f4e7f29c195af400`. Two fresh detached worktrees on
+  that unchanged SHA passed the complete suite: `4329 passed, 3 skipped in
+  204.59s` and `4329 passed, 3 skipped in 206.95s`. The skips were the three
+  existing/added opt-in real ACP, designated preflight, and live Mission nodes.
+- Discarded an earlier non-counting verification attempt that used relative
+  `PYTHONPATH=src`: daemon subprocess cwd changed its meaning and one existing
+  acceptance admission returned false. The same node passed `1 passed in
+  11.26s` with the frozen worktree's absolute `PYTHONPATH`, confirming a test
+  invocation error; the contaminated worktree was removed and suite 1 was
+  restarted from a fresh checkout. No implementation change followed freeze.
+- Both detached worktrees were removed. Final audits found the feature branch
+  at the frozen implementation plus documentation evidence only, zero matching
+  pytest/AgentDeck daemon processes, and zero authority-suite, live, or
+  four-stage temporary roots. No real designated preflight, live Mission,
+  provider, ACP/tmux Worker, install, login, merge, or push ran.
+- M2c remains **BLOCKED** and M3 remains locked. The next gate is separate human
+  authorization naming frozen SHA `fda1a691...` and the exact Leader model for
+  one designated read-only preflight. A later live authorization must
+  separately name the same SHA, model, and returned authority digest.
+
 ### Freeze the M2c tool-authority binding implementation
 
 - Completed the harness-only authority slice without changing

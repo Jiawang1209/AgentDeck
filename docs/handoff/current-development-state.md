@@ -88,11 +88,28 @@ designated preflight and real live node. The focused authority matrix passed
 `44`, and product/conversation/contract/provider regressions passed `851`.
 Compile, whole-slice diff, `src/agentdeck/**` zero-change, durable-evidence,
 process, and live-root residual audits passed. This documentation commit
-freezes the implementation; two fresh detached-worktree full suites on its
-unchanged SHA remain before the slice is verified. No real designated
-preflight or live run is authorized during implementation. After that frozen
-SHA passes both full suites, the process must stop for a new separate human
-authorization naming the exact SHA and Leader model.
+froze the implementation at
+`fda1a69194e67b50afe0c2b9f4e7f29c195af400`. Two fresh detached worktrees on
+that unchanged SHA passed the complete suite: `4329 passed, 3 skipped in
+204.59s` and `4329 passed, 3 skipped in 206.95s`. The three skips were exactly
+the opt-in real ACP, designated M2c preflight, and real four-stage M2c nodes.
+
+An earlier verification attempt using relative `PYTHONPATH=src` was discarded:
+a daemon subprocess changed cwd to its disposable project and could not resolve
+that relative source path, so an existing daemon acceptance admission returned
+false. The exact node passed `1 passed in 11.26s` when only the source path was
+made absolute. The contaminated detached worktree was removed, a fresh one was
+created, and both counted full suites then passed. This changed no implementation.
+
+Both verification worktrees were removed. Final audits found no matching
+pytest/AgentDeck daemon process and no authority-suite, live, or four-stage
+temporary root. No real designated preflight, live Mission, provider,
+ACP/tmux Worker, install, login, global change, merge, or push ran. M2c remains
+**BLOCKED** and M3 remains locked. The next gate requires separate human
+authorization naming frozen SHA `fda1a691...` and the exact Leader model for
+one designated read-only preflight. If and only if that result is
+`ready=true`, `blockers=[]`, and `failures=[]`, a later live authorization must
+separately name the same SHA, model, and exact returned authority digest.
 
 ## Historical 75f provenance blocker evidence
 

@@ -918,23 +918,25 @@ git rev-parse HEAD
 
 Record the returned SHA as `FROZEN_SHA`. No later implementation edit may occur without creating a new frozen SHA and restarting both full suites.
 
-- [ ] **Step 6: Run full suite 1 on an isolated checkout**
+- [x] **Step 6: Run full suite 1 on an isolated checkout**
 
 Create a detached temporary worktree at `FROZEN_SHA`, install nothing, and run:
 
 ```bash
-conda run -n agentdeck pytest -q
+env -u AGENTDECK_M2C_LIVE -u AGENTDECK_M2C_STRICT_PREFLIGHT \
+  PYTHONPATH="<absolute-detached-worktree>/src" \
+  conda run --no-capture-output -n agentdeck pytest -q
 ```
 
 Expected: full suite passes with only known opt-in skips. Record counts and duration; remove the detached worktree.
 
-- [ ] **Step 7: Run full suite 2 on a fresh isolated checkout**
+- [x] **Step 7: Run full suite 2 on a fresh isolated checkout**
 
 Create a second fresh detached worktree at the same `FROZEN_SHA` and run the identical command.
 
 Expected: full suite passes with the same code SHA and expected skip set. Record counts and duration; remove the detached worktree.
 
-- [ ] **Step 8: Commit verification evidence and stop**
+- [x] **Step 8: Commit verification evidence and stop**
 
 Update HISTORY and handoff with frozen SHA, both full-suite results, compile/diff/scope/leakage/cleanup results, and these exact gates:
 
