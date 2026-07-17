@@ -7027,6 +7027,37 @@ def test_live_config_uses_only_explicit_model_seal(tmp_path) -> None:
     assert observed == ["gpt-5.5", "gpt-5.5-codex:high"]
 
 
+def test_live_config_pins_exact_project_local_claude_permission_mode(
+    tmp_path,
+) -> None:
+    @dataclass(frozen=True)
+    class PathOnly:
+        path: Path
+
+    root = tmp_path / "project"
+    (root / ".agentdeck").mkdir(parents=True)
+    paths = {
+        name: PathOnly(Path("/bin/true"))
+        for name, _env, _help, _version in TOOL_SPECS
+    }
+
+    seal = _write_live_config(
+        root,
+        paths,
+        session_name="m2c-permission-mode",
+        leader_model=_LeaderModelSeal("gpt-5.5"),
+    )
+
+    settings_dir = root / ".claude"
+    settings = settings_dir / "settings.local.json"
+    assert settings.read_bytes() == (
+        b'{"permissions":{"defaultMode":"default"}}\n'
+    )
+    assert stat.S_IMODE(settings_dir.lstat().st_mode) == 0o700
+    assert stat.S_IMODE(settings.lstat().st_mode) == 0o600
+    _verify_live_claude_permission_settings(root, seal)
+
+
 def test_live_config_rejects_unvalidated_model_seal_before_write(
     tmp_path,
 ) -> None:
