@@ -329,7 +329,7 @@ git commit -m "docs: bind M2c acceptance to npm package metadata"
 - Modify: `HISTORY.md`
 - Modify: this plan (checkboxes only)
 
-- [ ] **Step 1: Run focused and non-live verification**
+- [x] **Step 1: Run focused and non-live verification**
 
 ```bash
 PYTHONPATH="$WORKTREE/src" conda run --no-capture-output -n agentdeck \
@@ -345,7 +345,7 @@ PYTHONPATH="$WORKTREE/src" conda run --no-capture-output -n agentdeck \
 python -m compileall tests/test_m2c_live_acceptance.py
 ```
 
-- [ ] **Step 2: Audit scope and freeze**
+- [x] **Step 2: Audit scope and freeze**
 
 ```bash
 git diff 766d4a19..HEAD --check

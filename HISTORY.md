@@ -4,6 +4,18 @@
 
 ## 2026-07-17
 
+### Freeze the M2c metadata-selected ACP entrypoint implementation
+
+- Completed the harness-only npm metadata correction without changing
+  `src/agentdeck/**`. Focused authority/package/launcher verification passed
+  `61 passed, 1 skipped in 20.78s`; complete non-live M2c passed `266 passed,
+  2 skipped in 64.78s`; product/Conversation/contract/provider regression
+  passed `851 passed in 4.91s`.
+- Compile, diff, source-scope, durable-wording, process, and temporary-root
+  audits passed. The next commit freezes this exact implementation; two fresh
+  detached-worktree full suites remain before any real preflight. No provider,
+  installed ACP/tmux execution, daemon, real preflight/live, merge, or push ran.
+
 ### Advance strict M2c acceptance to authority v2 and preflight v4
 
 - Updated strict contract names and the SOP to derive the official ACP command

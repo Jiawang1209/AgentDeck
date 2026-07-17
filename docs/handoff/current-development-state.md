@@ -30,8 +30,14 @@ explicit environment binding, authority v2, preflight v4, and the controlled
 Node launcher all use the same selected entrypoint. Focused RED first proved
 the real mismatch (`3 failed`); GREEN and safety/loader/launcher matrices then
 passed `16`, `31`, and `21 passed` respectively, with the one real designated
-node still skipped. The complete non-live and product regressions remain before
-freeze. No real preflight/live or installed tool execution has run.
+node still skipped. The wider checks now pass: focused authority/package/launcher
+coverage is `61 passed, 1 skipped in 20.78s`, complete non-live M2c is `266
+passed, 2 skipped in 64.78s`, and product/Conversation/contract/provider
+coverage is `851 passed in 4.91s`. Compile, diff, `src/agentdeck/**` zero-change,
+durable-wording, process, and temporary-root audits passed. This documentation
+commit freezes the implementation; two fresh detached-worktree full suites on
+its unchanged SHA remain before the one real v4 preflight. No real preflight,
+live Mission, provider, installed ACP/tmux execution, or daemon has run.
 
 The native-schema provenance persistence correction is implemented and frozen
 at `7a76ada81938be3ba0720a7c2f5a540b4beebb3e`. Semantic Mission previews now
