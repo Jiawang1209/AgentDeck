@@ -83,6 +83,14 @@ implementation/SOP diff from freeze is empty; process and temporary-root audits
 found no residue. The one real installed-package v5 preflight is now the next
 gate.
 
+The designated v5 preflight then ran exactly once on frozen `284d8f62...` with
+Leader `gpt-5.5` and passed `1 passed in 16.32s`: `ready=true`, `blockers=[]`,
+`failures=[]`, authority v3 digest
+`sha256:b194c3b4ccbfa3ba2b534bf9cb51e59ecbc077e2576c6eea8ba343f26cc83ffa`,
+and all five tools ready. Its detached worktree was removed and residue audits
+were empty. The one same-SHA/model/digest real four-stage Mission is now the
+only remaining M2c gate.
+
 The native-schema provenance persistence correction is implemented and frozen
 at `7a76ada81938be3ba0720a7c2f5a540b4beebb3e`. Semantic Mission previews now
 preserve the exact validated eleven-field generation envelope. StateStore

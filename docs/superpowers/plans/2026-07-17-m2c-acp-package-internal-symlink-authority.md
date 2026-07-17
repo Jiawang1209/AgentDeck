@@ -217,7 +217,7 @@ PYTHONPATH="$PWD/src" conda run --no-capture-output -n agentdeck \
   new frozen SHA, each with its own absolute `PYTHONPATH`; remove both and audit
   zero residue.
 
-- [ ] Re-audit installed regular tools, package metadata, both internal links,
+- [x] Re-audit installed regular tools, package metadata, both internal links,
   their closed targets, modes, and ownership. Run exactly one real v5
   designated preflight using Leader `gpt-5.5`.
 

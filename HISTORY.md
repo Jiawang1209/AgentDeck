@@ -4,6 +4,16 @@
 
 ## 2026-07-17
 
+### Pass the real M2c authority-v3 designated preflight
+
+- Ran the designated v5 read-only preflight exactly once on frozen
+  `284d8f62...` with Leader `gpt-5.5`. It passed `1 passed in 16.32s` with
+  `ready=true`, empty blockers/failures, and authority digest
+  `sha256:b194c3b4ccbfa3ba2b534bf9cb51e59ecbc077e2576c6eea8ba343f26cc83ffa`.
+- All five tools were ready with sanitized versions. The detached checkout was
+  removed and residue audits were empty. No model call, ACP/tmux session,
+  AgentDeck project, daemon, install, login, or global change ran.
+
 ### Verify frozen M2c closed-link authority on two complete suites
 
 - Froze implementation authority at
