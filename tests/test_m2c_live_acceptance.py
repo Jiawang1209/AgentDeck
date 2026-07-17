@@ -229,6 +229,186 @@ _LIVE_DIAGNOSTIC_CLASSIFICATIONS = frozenset(
         "permission_state_inconsistent",
     }
 )
+_LIVE_MAX_PERMISSIONS_PER_CLAUDE_ATTEMPT = 4
+_LIVE_MAX_PERMISSIONS_PER_MISSION = 8
+_LIVE_CLAUDE_STEP_POSITIONS = frozenset({1, 3})
+_LIVE_PERMISSION_EFFECTIVE_STATES = frozenset(
+    {"pending", "approved", "denied", "expired"}
+)
+
+
+class _PermissionContractError(RuntimeError):
+    def __init__(self, code: str):
+        self.code = code
+        super().__init__(code)
+
+
+@dataclass(frozen=True)
+class _LivePermissionFact:
+    permission_id: str
+    session_id: str
+    turn_id: str
+    sequence: int
+    effective_state: str
+
+
+def _permission_effective_state(
+    permission: Mapping[str, object],
+    transitions: list[dict[str, object]],
+) -> str:
+    permission_id = permission.get("permission_id")
+    if type(permission_id) is not str or permission.get("status") != "pending":
+        raise _PermissionContractError("permission_transition_invalid")
+    matches = [
+        item
+        for item in transitions
+        if item.get("entity_type") == "permission"
+        and item.get("entity_id") == permission_id
+    ]
+    if not matches:
+        return "pending"
+    if (
+        len(matches) != 1
+        or matches[0].get("from_state") != "pending"
+        or matches[0].get("to_state") not in {"approved", "denied", "expired"}
+    ):
+        raise _PermissionContractError("permission_transition_invalid")
+    return str(matches[0]["to_state"])
+
+
+def _attempt_permission_facts(
+    state: object, attempt: object,
+) -> tuple[_LivePermissionFact, ...]:
+    if type(state) is not dict or type(attempt) is not dict:
+        raise _PermissionContractError("permission_lineage_invalid")
+    names = (
+        "mission_permission_bindings",
+        "permission_requests",
+        "agent_sessions",
+        "protocol_turns",
+        "transport_updates",
+        "protocol_state_transitions",
+    )
+    collections: dict[str, list[dict[str, object]]] = {}
+    for name in names:
+        value = state.get(name)
+        if type(value) is not list or any(type(item) is not dict for item in value):
+            raise _PermissionContractError("permission_lineage_invalid")
+        collections[name] = value
+    mission_id = attempt.get("mission_id")
+    attempt_id = attempt.get("attempt_id")
+    agent_id = attempt.get("agent_id")
+    dispatch_key = attempt.get("dispatch_key")
+    if any(type(value) is not str or not value for value in (
+        mission_id, attempt_id, agent_id, dispatch_key,
+    )):
+        raise _PermissionContractError("permission_lineage_invalid")
+    bindings = [
+        item for item in collections["mission_permission_bindings"]
+        if item.get("attempt_id") == attempt_id
+    ]
+    facts: list[_LivePermissionFact] = []
+    sequences: set[int] = set()
+    for binding in bindings:
+        if binding.get("mission_id") != mission_id:
+            raise _PermissionContractError("permission_lineage_invalid")
+        permission_id = binding.get("permission_id")
+        permissions = [
+            item for item in collections["permission_requests"]
+            if item.get("permission_id") == permission_id
+        ]
+        if type(permission_id) is not str or len(permissions) != 1:
+            raise _PermissionContractError("permission_lineage_invalid")
+        permission = permissions[0]
+        sessions = [
+            item for item in collections["agent_sessions"]
+            if item.get("session_id") == permission.get("session_id")
+        ]
+        turns = [
+            item for item in collections["protocol_turns"]
+            if item.get("turn_id") == permission.get("turn_id")
+        ]
+        if (
+            len(sessions) != 1
+            or sessions[0].get("agent_id") != agent_id
+            or len(turns) != 1
+            or turns[0].get("session_id") != permission.get("session_id")
+            or turns[0].get("message_id") != dispatch_key
+        ):
+            raise _PermissionContractError("permission_lineage_invalid")
+        updates = [
+            item for item in collections["transport_updates"]
+            if item.get("kind") == "permission_request"
+            and type(item.get("payload")) is dict
+            and item["payload"].get("permission_id") == permission_id
+        ]
+        if (
+            len(updates) != 1
+            or updates[0].get("session_id") != permission.get("session_id")
+            or updates[0].get("turn_id") != permission.get("turn_id")
+            or type(updates[0].get("sequence")) is not int
+            or updates[0]["sequence"] in sequences
+        ):
+            raise _PermissionContractError("permission_order_ambiguous")
+        sequence = int(updates[0]["sequence"])
+        sequences.add(sequence)
+        effective = _permission_effective_state(
+            permission, collections["protocol_state_transitions"]
+        )
+        facts.append(
+            _LivePermissionFact(
+                permission_id,
+                str(permission["session_id"]),
+                str(permission["turn_id"]),
+                sequence,
+                effective,
+            )
+        )
+    facts.sort(key=lambda item: item.sequence)
+    if sum(item.effective_state == "pending" for item in facts) > 1:
+        raise _PermissionContractError("permission_order_ambiguous")
+    bound_ids = [item.get("permission_id") for item in bindings]
+    if (
+        any(type(item) is not str for item in bound_ids)
+        or len(bound_ids) != len(set(bound_ids))
+    ):
+        raise _PermissionContractError("permission_lineage_invalid")
+    bound_id_set = set(bound_ids)
+    attempt_turn_ids = {
+        item.get("turn_id")
+        for item in collections["protocol_turns"]
+        if item.get("message_id") == dispatch_key
+    }
+    permission_updates = [
+        item
+        for item in collections["transport_updates"]
+        if item.get("kind") == "permission_request"
+        and item.get("turn_id") in attempt_turn_ids
+    ]
+    update_permission_ids = [
+        item.get("payload", {}).get("permission_id")
+        if type(item.get("payload")) is dict
+        else None
+        for item in permission_updates
+    ]
+    if (
+        len(update_permission_ids) != len(bound_ids)
+        or set(update_permission_ids) != bound_id_set
+    ):
+        raise _PermissionContractError("permission_lineage_invalid")
+    permission_transitions = [
+        item
+        for item in collections["protocol_state_transitions"]
+        if item.get("entity_type") == "permission"
+        and item.get("entity_id") in bound_id_set
+    ]
+    if any(
+        sum(item.get("entity_id") == permission_id for item in permission_transitions)
+        > 1
+        for permission_id in bound_id_set
+    ):
+        raise _PermissionContractError("permission_transition_invalid")
+    return tuple(facts)
 
 
 def _exact_live_steps() -> list[dict[str, str]]:

@@ -274,7 +274,7 @@ git commit -m "test: require bounded M2c permission lineage"
 - Modify: `tests/test_m2c_live_acceptance.py:170-220,2460-2750`
 - Modify: `HISTORY.md:6-40`
 
-- [ ] **Step 1: Add acceptance-only bounds and closed types**
+- [x] **Step 1: Add acceptance-only bounds and closed types**
 
 ```python
 _LIVE_MAX_PERMISSIONS_PER_CLAUDE_ATTEMPT = 4
@@ -300,7 +300,7 @@ class _LivePermissionFact:
     effective_state: str
 ```
 
-- [ ] **Step 2: Add a pure effective-state projector**
+- [x] **Step 2: Add a pure effective-state projector**
 
 The implementation must accept exactly one immutable `pending` base record and
 zero or one legal terminal transition. It must never use raw transition details
@@ -331,7 +331,7 @@ def _permission_effective_state(
     return str(matches[0]["to_state"])
 ```
 
-- [ ] **Step 3: Implement exact attempt permission projection**
+- [x] **Step 3: Implement exact attempt permission projection**
 
 Implement `_attempt_permission_facts(state, attempt)` with these explicit
 checks, in this order:
@@ -479,7 +479,7 @@ Insert these closed set/cardinality checks before returning `facts`:
 
 These checks return only the fixed codes and never include raw IDs or values.
 
-- [ ] **Step 4: Run focused GREEN and product governance regression**
+- [x] **Step 4: Run focused GREEN and product governance regression**
 
 ```bash
 PYTHONPATH="$PWD/src" conda run --no-capture-output -n agentdeck \
@@ -493,7 +493,10 @@ PYTHONPATH="$PWD/src" conda run --no-capture-output -n agentdeck \
 Expected: both commands PASS. The product test must still prove that the latest
 transport-ordered permission is authoritative.
 
-- [ ] **Step 5: Commit GREEN**
+Observed: lineage `6 passed, 339 deselected in 0.75s`; daemon governance `1
+passed, 39 deselected in 0.31s`.
+
+- [x] **Step 5: Commit GREEN**
 
 ```bash
 git add tests/test_m2c_live_acceptance.py HISTORY.md

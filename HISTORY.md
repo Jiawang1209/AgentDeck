@@ -33,6 +33,19 @@
   `_PermissionContractError` do not exist. No product or existing harness
   failure preceded the missing unit.
 
+### Derive exact M2c permission facts from append-only state
+
+- Added acceptance-only 4-per-Claude-attempt and 8-per-Mission bounds plus a
+  closed permission fact/error vocabulary for the live harness.
+- Implemented a pure effective-state projector that accepts only an immutable
+  `pending` permission base plus zero or one legal terminal transition, and an
+  exact attempt projection bound through Mission, attempt, AgentSession,
+  ProtocolTurn, dispatch key, and transport sequence.
+- The focused lineage suite passes `6 passed, 339 deselected in 0.75s`; the
+  existing daemon governance regression passes `1 passed, 39 deselected in
+  0.31s`, retaining latest transport-ordered permission authority. No
+  `src/agentdeck/**` product source changed.
+
 ### Design bounded sequential ACP permission acceptance for M2c
 
 - Replaced the live harness assumption of exactly two Mission permissions with
