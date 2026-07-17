@@ -36,6 +36,19 @@ empty. A new real installed-input audit and the one new v5 preflight are now the
 next gate. The old preflight/live authority documented below is exhausted and
 will not be reused.
 
+The installed-input audit then confirmed the same five regular executable
+inputs, metadata-selected `dist/index.js`, and both closed package-internal npm
+links. The new designated v5 preflight ran exactly once on frozen
+`690f0baf...` with Leader `gpt-5.5` and passed `1 passed in 15.92s`:
+`ready=true`, `blockers=[]`, `failures=[]`, authority v3, digest
+`sha256:b194c3b4ccbfa3ba2b534bf9cb51e59ecbc077e2576c6eea8ba343f26cc83ffa`.
+The digest matches the previous tool authority because installed content is
+unchanged; the acceptance authorization additionally binds the new frozen git
+SHA. The detached preflight worktree was removed and residue audits were empty.
+
+Exactly one same-SHA/model/digest real four-stage Mission is now the remaining
+M2c gate for this candidate.
+
 ## Frozen authority
 
 - AgentDeck implementation:

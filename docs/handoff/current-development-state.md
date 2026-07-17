@@ -37,6 +37,14 @@ unchanged; process, daemon, worktree, and temporary-root audits were empty. The
 next gate is a read-only installed-input audit followed by one new real v5
 preflight using Leader `gpt-5.5`.
 
+That audit found no drift. The new designated v5 preflight ran exactly once on
+frozen `690f0baf...` and passed `1 passed in 15.92s` with `ready=true`, empty
+blockers/failures, authority v3, and digest
+`sha256:b194c3b4ccbfa3ba2b534bf9cb51e59ecbc077e2576c6eea8ba343f26cc83ffa`.
+Its detached worktree was removed and residue audits were empty. The one
+same-SHA/model/digest real four-stage Mission is now the only remaining M2c
+gate for this candidate.
+
 ### Historical M2c authority cycles
 
 Before consuming the authorized designated preflight for frozen implementation

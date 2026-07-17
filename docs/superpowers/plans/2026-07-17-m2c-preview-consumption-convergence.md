@@ -124,11 +124,11 @@ git commit -m "test: await M2c confirmation turn convergence"
 
 ## Task 6: New one-shot preflight and live acceptance
 
-- [ ] Re-audit the exact regular Codex, Claude, Node, tmux, metadata-selected ACP
+- [x] Re-audit the exact regular Codex, Claude, Node, tmux, metadata-selected ACP
   entrypoint, and both closed npm `.bin` links without modifying them.
-- [ ] Run exactly one v5 designated read-only preflight on the new frozen SHA
+- [x] Run exactly one v5 designated read-only preflight on the new frozen SHA
   with Leader `gpt-5.5`.
-- [ ] Require `ready=true`, `blockers=[]`, `failures=[]`, authority v3, and a
+- [x] Require `ready=true`, `blockers=[]`, `failures=[]`, authority v3, and a
   fresh digest; otherwise record evidence and do not run live.
 - [ ] On PASS only, run exactly one real four-stage Mission on the same
   SHA/model/digest.
