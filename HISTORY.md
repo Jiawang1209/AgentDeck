@@ -4,6 +4,20 @@
 
 ## 2026-07-17
 
+### Validate complete M2c Claude Agent ACP package authority
+
+- Added non-following package traversal for the fixed
+  `dist/claude-agent-acp` entrypoint, deterministic sorted manifest hashing,
+  and rejection of symlinks, special files, missing/non-executable entrypoints,
+  group/world-writable entries, unreadable files, and unstable reads.
+- Added a separate runtime package seal retaining device/inode/owner/mode/size
+  and mtime so same-content replacement is detected inside one process while
+  the cross-process tree hash remains path/metadata independent.
+- Added an explicit authority loader that accepts only declared model/tool/
+  package inputs and never falls back to PATH. Focused Task 1-2 coverage passed
+  `23`; no installed tool, provider, ACP/tmux Worker, designated preflight, or
+  live Mission ran.
+
 ### Seal deterministic M2c tool authority content
 
 - Added harness-only immutable authority types and canonical

@@ -212,7 +212,7 @@ git commit -m "test: seal M2c tool authority content"
 - Test: `tests/test_m2c_live_acceptance.py`
 - Modify: `HISTORY.md`
 
-- [ ] **Step 1: Add RED package-tree tests**
+- [x] **Step 1: Add RED package-tree tests**
 
 Add parameterized tests covering: sorted manifest determinism, missing fixed entrypoint, root symlink, nested symlink, FIFO, group-writable directory, world-writable file, entrypoint without execute bit, and file mutation after sealing.
 
@@ -246,7 +246,7 @@ def test_m2c_package_tree_manifest_is_sorted_and_path_independent(tmp_path):
     assert left.tree_hash == right.tree_hash
 ```
 
-- [ ] **Step 2: Run package tests and verify RED**
+- [x] **Step 2: Run package tests and verify RED**
 
 Run:
 
@@ -256,7 +256,7 @@ conda run -n agentdeck pytest -q tests/test_m2c_live_acceptance.py -k 'package_t
 
 Expected: failures because `_seal_acp_package_tree` and `_verify_package_tree_seal` are absent.
 
-- [ ] **Step 3: Implement non-following traversal and manifest hashing**
+- [x] **Step 3: Implement non-following traversal and manifest hashing**
 
 Implement:
 
@@ -288,7 +288,7 @@ def _seal_acp_package_tree(value: str | None) -> tuple[_PackageTreeSeal | None, 
 
 `_read_safe_package_manifest()` must use `lstat()`, reject every non-directory/non-regular-file type, reject mode `& 0o022`, read files through `O_NOFOLLOW`, compare pre/read/post identity, normalize relative paths with `PurePosixPath`, and return directories and files in one sorted tuple. `_verify_package_tree_seal()` must reseal and require exact equality.
 
-- [ ] **Step 4: Add explicit authority loader**
+- [x] **Step 4: Add explicit authority loader**
 
 Implement a pure mapping-based loader so tests and live do not reread ambient environment after admission:
 
@@ -304,7 +304,7 @@ def _load_explicit_tool_authority(
 
 Use exact fields rather than `**dict` construction. `AGENTDECK_M2C_CLAUDE_ACP` remains accepted only by the legacy portability preflight; strict authority uses `ACP_PACKAGE_ENV`.
 
-- [ ] **Step 5: Run package and authority GREEN tests**
+- [x] **Step 5: Run package and authority GREEN tests**
 
 Run:
 
@@ -314,7 +314,7 @@ conda run -n agentdeck pytest -q tests/test_m2c_live_acceptance.py -k 'tool_auth
 
 Expected: all selected tests pass.
 
-- [ ] **Step 6: Commit Task 2**
+- [x] **Step 6: Commit Task 2**
 
 Update HISTORY with package safety rules and the fact that no external tool ran.
 

@@ -23,7 +23,7 @@ import subprocess
 import sys
 import tempfile
 import time
-from typing import Any
+from typing import Any, Mapping
 
 import pytest
 
@@ -225,11 +225,23 @@ class _PackageManifestEntry:
 
 
 @dataclass(frozen=True)
+class _PackageRuntimeEntry:
+    path: str
+    device: int
+    inode: int
+    owner: int
+    mode: int
+    size: int
+    mtime_ns: int
+
+
+@dataclass(frozen=True)
 class _PackageTreeSeal:
     root: Path
     entries: tuple[_PackageManifestEntry, ...]
     tree_hash: str
     entrypoint: _ExecutableSeal
+    runtime_entries: tuple[_PackageRuntimeEntry, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -446,6 +458,180 @@ def _seal_executable(value: str | None) -> _ExecutableSeal | None:
         mtime_ns=opened.st_mtime_ns,
         content_hash=digest.hexdigest(),
     )
+
+
+def _package_runtime_entry(
+    relative: str, metadata: os.stat_result
+) -> _PackageRuntimeEntry:
+    return _PackageRuntimeEntry(
+        path=relative,
+        device=metadata.st_dev,
+        inode=metadata.st_ino,
+        owner=metadata.st_uid,
+        mode=stat.S_IMODE(metadata.st_mode),
+        size=metadata.st_size,
+        mtime_ns=metadata.st_mtime_ns,
+    )
+
+
+def _same_file_identity(
+    left: os.stat_result, right: os.stat_result
+) -> bool:
+    return _package_runtime_entry(".", left) == _package_runtime_entry(
+        ".", right
+    )
+
+
+def _read_safe_package_manifest(
+    root: Path,
+) -> tuple[
+    tuple[_PackageManifestEntry, ...],
+    tuple[_PackageRuntimeEntry, ...],
+]:
+    manifest: list[_PackageManifestEntry] = []
+    runtime: list[_PackageRuntimeEntry] = []
+
+    def visit(directory: Path, parts: tuple[str, ...]) -> None:
+        with os.scandir(directory) as iterator:
+            children = sorted(iterator, key=lambda item: item.name)
+        for child in children:
+            metadata = child.stat(follow_symlinks=False)
+            relative_parts = (*parts, child.name)
+            relative = PurePosixPath(*relative_parts).as_posix()
+            path = directory / child.name
+            mode = stat.S_IMODE(metadata.st_mode)
+            if stat.S_ISLNK(metadata.st_mode) or mode & 0o022:
+                raise ValueError("unsafe package entry")
+            if stat.S_ISDIR(metadata.st_mode):
+                manifest.append(
+                    _PackageManifestEntry(
+                        relative,
+                        "directory",
+                        None,
+                        None,
+                        bool(mode & 0o111),
+                    )
+                )
+                runtime.append(_package_runtime_entry(relative, metadata))
+                visit(path, relative_parts)
+                final = path.lstat()
+                if not _same_file_identity(metadata, final):
+                    raise ValueError("unstable package directory")
+                continue
+            if not stat.S_ISREG(metadata.st_mode):
+                raise ValueError("unsupported package entry")
+            descriptor = os.open(
+                path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+            )
+            try:
+                opened = os.fstat(descriptor)
+                digest = hashlib.sha256()
+                while True:
+                    chunk = os.read(descriptor, 1024 * 1024)
+                    if not chunk:
+                        break
+                    digest.update(chunk)
+                closed = os.fstat(descriptor)
+                final = path.lstat()
+            finally:
+                os.close(descriptor)
+            if (
+                not stat.S_ISREG(opened.st_mode)
+                or not _same_file_identity(metadata, opened)
+                or not _same_file_identity(opened, closed)
+                or not _same_file_identity(closed, final)
+            ):
+                raise ValueError("unstable package file")
+            manifest.append(
+                _PackageManifestEntry(
+                    relative,
+                    "file",
+                    opened.st_size,
+                    digest.hexdigest(),
+                    bool(stat.S_IMODE(opened.st_mode) & 0o111),
+                )
+            )
+            runtime.append(_package_runtime_entry(relative, opened))
+
+    visit(root, ())
+    return (
+        tuple(sorted(manifest, key=lambda item: item.path)),
+        tuple(sorted(runtime, key=lambda item: item.path)),
+    )
+
+
+def _package_tree_hash(entries: tuple[_PackageManifestEntry, ...]) -> str:
+    encoded = (
+        json.dumps(
+            [asdict(item) for item in entries],
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        + "\n"
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _seal_acp_package_tree(
+    value: str | None,
+) -> tuple[_PackageTreeSeal | None, str | None]:
+    blocker = "claude_agent_acp_package_invalid"
+    if not value:
+        return None, blocker
+    root = Path(value)
+    if not root.is_absolute():
+        return None, blocker
+    try:
+        initial_root = root.lstat()
+        if (
+            not stat.S_ISDIR(initial_root.st_mode)
+            or stat.S_ISLNK(initial_root.st_mode)
+            or stat.S_IMODE(initial_root.st_mode) & 0o022
+        ):
+            return None, blocker
+        entries, runtime = _read_safe_package_manifest(root)
+        final_root = root.lstat()
+        if not _same_file_identity(initial_root, final_root):
+            return None, blocker
+        entry_path = root.joinpath(*ACP_ENTRYPOINT.parts)
+        entrypoint = _seal_executable(str(entry_path))
+        entry_item = next(
+            (item for item in entries if item.path == str(ACP_ENTRYPOINT)),
+            None,
+        )
+        entry_runtime = next(
+            (item for item in runtime if item.path == str(ACP_ENTRYPOINT)),
+            None,
+        )
+        if (
+            entrypoint is None
+            or entry_item is None
+            or entry_item.kind != "file"
+            or not entry_item.executable
+            or entry_runtime is None
+            or entry_runtime.inode != entrypoint.inode
+            or entry_runtime.device != entrypoint.device
+        ):
+            return None, blocker
+        root_runtime = _package_runtime_entry(".", initial_root)
+        return (
+            _PackageTreeSeal(
+                root=root,
+                entries=entries,
+                tree_hash=_package_tree_hash(entries),
+                entrypoint=entrypoint,
+                runtime_entries=(root_runtime, *runtime),
+            ),
+            None,
+        )
+    except (OSError, RuntimeError, ValueError):
+        return None, blocker
+
+
+def _verify_package_tree_seal(seal: _PackageTreeSeal) -> None:
+    current, blocker = _seal_acp_package_tree(str(seal.root))
+    if blocker is not None or current != seal:
+        raise _live_failure("claude_agent_acp_package_invalid")
 
 
 def _seal_preflight_candidate(
@@ -727,6 +913,55 @@ def _seal_leader_model_input(
 def _leader_model_from_environment(
 ) -> tuple[_LeaderModelSeal | None, str | None]:
     return _seal_leader_model_input(os.environ.get(LEADER_MODEL_ENV))
+
+
+def _load_explicit_tool_authority(
+    environ: Mapping[str, str],
+) -> tuple[_ToolAuthority | None, tuple[_PreflightFailure, ...]]:
+    failures: list[_PreflightFailure] = []
+    leader_model, model_blocker = _seal_leader_model_input(
+        environ.get(LEADER_MODEL_ENV)
+    )
+    if model_blocker is not None:
+        failures.append(
+            _PreflightFailure("leader-model", "identity", model_blocker)
+        )
+    executable_specs = (
+        ("codex", "AGENTDECK_M2C_CODEX", "codex_unavailable"),
+        ("claude", "AGENTDECK_M2C_CLAUDE", "claude_unavailable"),
+        ("node", NODE_ENV, "node_unavailable"),
+        ("tmux", "AGENTDECK_M2C_TMUX", "tmux_unavailable"),
+    )
+    seals: dict[str, _ExecutableSeal] = {}
+    for role, environment_name, blocker in executable_specs:
+        seal = _seal_executable(environ.get(environment_name))
+        if seal is None:
+            failures.append(_PreflightFailure(role, "identity", blocker))
+        else:
+            seals[role] = seal
+    package, package_blocker = _seal_acp_package_tree(
+        environ.get(ACP_PACKAGE_ENV)
+    )
+    if package_blocker is not None:
+        failures.append(
+            _PreflightFailure(
+                "claude-agent-acp",
+                "package-tree",
+                package_blocker,
+            )
+        )
+    if failures or leader_model is None or package is None:
+        return None, tuple(failures)
+    authority = _ToolAuthority(
+        leader_model=leader_model,
+        codex=seals["codex"],
+        claude=seals["claude"],
+        node=seals["node"],
+        tmux=seals["tmux"],
+        acp_package=package,
+        digest="",
+    )
+    return _finalize_authority(authority), ()
 
 
 def _resolved_probe_seal(name: str, env_name: str) -> _ExecutableSeal | None:
@@ -4265,6 +4500,159 @@ def test_m2c_tool_authority_digest_binds_every_input(
     )
 
     assert changed.digest != baseline.digest
+
+
+def _fake_acp_package(root: Path) -> Path:
+    entrypoint = root / "dist" / "claude-agent-acp"
+    support = root / "lib" / "support.js"
+    entrypoint.parent.mkdir(parents=True)
+    support.parent.mkdir(parents=True)
+    entrypoint.write_text("#!/bin/sh\necho 0.58.1\n", encoding="utf-8")
+    entrypoint.chmod(0o700)
+    support.write_text("export const ready = true;\n", encoding="utf-8")
+    support.chmod(0o600)
+    root.chmod(0o700)
+    entrypoint.parent.chmod(0o700)
+    support.parent.chmod(0o700)
+    return root
+
+
+def test_m2c_package_tree_manifest_is_sorted_and_path_independent(
+    tmp_path,
+) -> None:
+    left, left_blocker = _seal_acp_package_tree(
+        str(_fake_acp_package(tmp_path / "left"))
+    )
+    right, right_blocker = _seal_acp_package_tree(
+        str(_fake_acp_package(tmp_path / "right"))
+    )
+
+    assert left_blocker is None and right_blocker is None
+    assert left is not None and right is not None
+    assert tuple(item.path for item in left.entries) == tuple(
+        sorted(item.path for item in left.entries)
+    )
+    assert left.tree_hash == right.tree_hash
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    (
+        "missing-entrypoint",
+        "root-symlink",
+        "nested-symlink",
+        "fifo",
+        "writable-directory",
+        "writable-file",
+        "non-executable-entrypoint",
+    ),
+)
+def test_m2c_package_tree_rejects_unsafe_entries(
+    tmp_path, mutation
+) -> None:
+    root = _fake_acp_package(tmp_path / "package")
+    candidate = root
+    if mutation == "missing-entrypoint":
+        (root / "dist" / "claude-agent-acp").unlink()
+    elif mutation == "root-symlink":
+        candidate = tmp_path / "package-link"
+        candidate.symlink_to(root, target_is_directory=True)
+    elif mutation == "nested-symlink":
+        (root / "lib" / "unsafe").symlink_to(root / "lib" / "support.js")
+    elif mutation == "fifo":
+        os.mkfifo(root / "lib" / "pipe", 0o600)
+    elif mutation == "writable-directory":
+        (root / "lib").chmod(0o720)
+    elif mutation == "writable-file":
+        (root / "lib" / "support.js").chmod(0o620)
+    else:
+        (root / "dist" / "claude-agent-acp").chmod(0o600)
+
+    seal, blocker = _seal_acp_package_tree(str(candidate))
+
+    assert seal is None
+    assert blocker == "claude_agent_acp_package_invalid"
+
+
+def test_m2c_package_tree_runtime_seal_rejects_same_content_replacement(
+    tmp_path,
+) -> None:
+    root = _fake_acp_package(tmp_path / "package")
+    seal, blocker = _seal_acp_package_tree(str(root))
+    assert blocker is None and seal is not None
+    target = root / "lib" / "support.js"
+    replacement = root / "lib" / "replacement.js"
+    replacement.write_bytes(target.read_bytes())
+    replacement.chmod(0o600)
+    replacement.replace(target)
+
+    with pytest.raises(
+        _LiveHarnessFailure, match="claude_agent_acp_package_invalid"
+    ):
+        _verify_package_tree_seal(seal)
+
+
+def _fake_explicit_authority_environment(root: Path) -> dict[str, str]:
+    binary = root / "bin"
+    binary.mkdir(parents=True)
+    values = {
+        LEADER_MODEL_ENV: "gpt-5.5",
+        ACP_PACKAGE_ENV: str(_fake_acp_package(root / "acp-package")),
+    }
+    for name, environment_name in (
+        ("codex", "AGENTDECK_M2C_CODEX"),
+        ("claude", "AGENTDECK_M2C_CLAUDE"),
+        ("node", NODE_ENV),
+        ("tmux", "AGENTDECK_M2C_TMUX"),
+    ):
+        executable = binary / name
+        executable.write_text(
+            f"#!/bin/sh\necho {name} test\n", encoding="utf-8"
+        )
+        executable.chmod(0o700)
+        values[environment_name] = str(executable)
+    return values
+
+
+def test_m2c_explicit_authority_loader_uses_only_declared_inputs(
+    tmp_path,
+) -> None:
+    environment = _fake_explicit_authority_environment(tmp_path)
+    environment["PATH"] = "/forbidden/ambient/path"
+
+    authority, failures = _load_explicit_tool_authority(environment)
+
+    assert failures == ()
+    assert authority is not None
+    assert authority.leader_model == _LeaderModelSeal("gpt-5.5")
+    assert authority.digest == _content_address(
+        _authority_digest_payload(authority)
+    )
+
+
+@pytest.mark.parametrize(
+    ("missing", "expected"),
+    (
+        (LEADER_MODEL_ENV, _PreflightFailure("leader-model", "identity", "leader_model_missing")),
+        ("AGENTDECK_M2C_CODEX", _PreflightFailure("codex", "identity", "codex_unavailable")),
+        ("AGENTDECK_M2C_CLAUDE", _PreflightFailure("claude", "identity", "claude_unavailable")),
+        (NODE_ENV, _PreflightFailure("node", "identity", "node_unavailable")),
+        ("AGENTDECK_M2C_TMUX", _PreflightFailure("tmux", "identity", "tmux_unavailable")),
+        (ACP_PACKAGE_ENV, _PreflightFailure("claude-agent-acp", "package-tree", "claude_agent_acp_package_invalid")),
+    ),
+)
+def test_m2c_explicit_authority_loader_fails_closed_without_fallback(
+    tmp_path, missing, expected
+) -> None:
+    environment = _fake_explicit_authority_environment(tmp_path)
+    environment.pop(missing)
+    environment["PATH"] = str(tmp_path / "bin")
+
+    authority, failures = _load_explicit_tool_authority(environment)
+
+    assert authority is None
+    assert expected in failures
+    assert str(tmp_path) not in repr(failures)
 
 
 @pytest.mark.parametrize(
