@@ -490,7 +490,7 @@ git commit -m "test: expose closed M2c preflight v3 diagnostics"
 - Test: `tests/test_m2c_live_acceptance.py`
 - Modify: `HISTORY.md`
 
-- [ ] **Step 1: Add RED admission-order and reuse tests**
+- [x] **Step 1: Add RED admission-order and reuse tests**
 
 ```python
 @pytest.mark.parametrize("value", [None, "", "sha256:nope", "sha256:" + "A" * 64])
@@ -524,7 +524,7 @@ def test_m2c_internal_preflight_reuses_admitted_authority_without_environment_re
     assert payload["tool_authority"]["digest"] == authority.digest
 ```
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
 Run:
 
@@ -534,7 +534,7 @@ conda run -n agentdeck pytest -q tests/test_m2c_live_acceptance.py -k 'expected_
 
 Expected: failures because live still accepts a paths dict and creates the root before digest binding.
 
-- [ ] **Step 3: Replace `_explicit_live_paths()` with one admission function**
+- [x] **Step 3: Replace `_explicit_live_paths()` with one admission function**
 
 Implement:
 
@@ -557,32 +557,29 @@ def _admit_live_tool_authority(environ: Mapping[str, str]) -> _ToolAuthority:
 
 Call it at the top of `_run_live_acceptance()` before `tempfile.mkdtemp()`. Change guarded runner signatures from `(paths, parent, leader_model)` to `(authority, parent)`. Do not re-read Leader model or tool environment inside the guarded runner.
 
-- [ ] **Step 4: Make internal preflight consume the same object**
+- [x] **Step 4: Make internal preflight consume the same object**
 
-Inside `_run_live_acceptance_in_project_guarded()` call:
+Inside `_run_live_acceptance_in_project_guarded()` call the strict preflight
+with the same object and keep the current compact blocker until Task 5 installs
+the closed projection:
 
 ```python
 preflight = _strict_live_preflight(root, authority)
-errors = _validate_strict_preflight_payload(preflight)
-if errors:
-    raise _live_failure(
-        "preflight_blocked",
-        preflight_blockers=("preflight_contract_invalid",),
-        preflight_failures=(
-            _PreflightFailure("authority", "binding", "preflight_contract_invalid"),
-        ),
-    )
+if _validate_strict_preflight_payload(preflight):
+    raise _live_failure("preflight_contract_invalid")
+if preflight["blockers"] == ["preflight_contract_invalid"]:
+    raise _live_failure("preflight_contract_invalid")
 if not preflight["ready"]:
-    raise _live_failure(
-        "preflight_blocked",
-        preflight_blockers=tuple(preflight["blockers"]),
-        preflight_failures=tuple(_failure_from_card(item) for item in preflight["failures"]),
-    )
+    raise _live_failure("preflight_blocked")
 ```
+
+Task 5 replaces the final compact blocked branch with validated
+`preflight_blockers` / `preflight_failures`; keeping serialization in one task
+prevents an intermediate open diagnostic shape.
 
 Project initialization, checkout copy, config creation, daemon admission, and Mission work must remain after this gate.
 
-- [ ] **Step 5: Run GREEN admission tests and setup cleanup regressions**
+- [x] **Step 5: Run GREEN admission tests and setup cleanup regressions**
 
 Run:
 
@@ -593,7 +590,7 @@ conda run -n agentdeck pytest -q tests/test_m2c_live_acceptance.py \
 
 Expected: selected tests pass; no `/tmp/agentdeck-m2c-live-*` test residue.
 
-- [ ] **Step 6: Commit Task 4**
+- [x] **Step 6: Commit Task 4**
 
 Update HISTORY with exact admission order and same-object reuse.
 

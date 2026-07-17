@@ -13,6 +13,7 @@ from pathlib import Path, PurePosixPath
 import pty
 import re
 import resource
+import secrets
 import select
 import shutil
 import shlex
@@ -4036,6 +4037,23 @@ def _explicit_live_paths() -> dict[str, _ExecutableSeal]:
     return paths
 
 
+def _admit_live_tool_authority(
+    environ: Mapping[str, str],
+) -> _ToolAuthority:
+    expected = environ.get(AUTHORITY_DIGEST_ENV)
+    if (
+        expected is None
+        or AUTHORITY_DIGEST_PATTERN.fullmatch(expected) is None
+    ):
+        raise _live_failure("preflight_authority_drift")
+    authority, failures = _load_explicit_tool_authority(environ)
+    if authority is None or failures:
+        raise _live_failure("preflight_blocked")
+    if not secrets.compare_digest(authority.digest, expected):
+        raise _live_failure("preflight_authority_drift")
+    return authority
+
+
 def _create_and_confirm_live_mission(
     root: Path,
     store: StateStore,
@@ -4389,16 +4407,13 @@ def _live_resource_guard(
 
 
 def _run_live_acceptance() -> dict[str, object]:
-    leader_model, model_blocker = _leader_model_from_environment()
-    if model_blocker is not None or leader_model is None:
-        raise _live_failure(model_blocker or "leader_model_invalid")
     parent: Path | None = None
     try:
-        paths = _explicit_live_paths()
+        authority = _admit_live_tool_authority(os.environ)
         parent = Path(
             tempfile.mkdtemp(prefix="agentdeck-m2c-live-", dir="/tmp")
         ).resolve()
-        return _run_live_acceptance_in_project(paths, parent, leader_model)
+        return _run_live_acceptance_in_project(authority, parent)
     except _LiveHarnessFailure:
         raise
     except Exception:
@@ -4423,14 +4438,11 @@ def _remove_live_setup_parent(parent: Path) -> bool:
 
 
 def _run_live_acceptance_in_project(
-    paths: dict[str, _ExecutableSeal],
+    authority: _ToolAuthority,
     parent: Path,
-    leader_model: _LeaderModelSeal,
 ) -> dict[str, object]:
     try:
-        return _run_live_acceptance_in_project_guarded(
-            paths, parent, leader_model
-        )
+        return _run_live_acceptance_in_project_guarded(authority, parent)
     except BaseException as exc:
         cleanup_failed = _remove_live_setup_parent(parent)
         if isinstance(exc, _LiveHarnessFailure) or not isinstance(exc, Exception):
@@ -4451,11 +4463,11 @@ def _run_live_acceptance_in_project(
 
 
 def _run_live_acceptance_in_project_guarded(
-    paths: dict[str, _ExecutableSeal],
+    authority: _ToolAuthority,
     parent: Path,
-    leader_model: _LeaderModelSeal,
 ) -> dict[str, object]:
-    source_paths = paths
+    leader_model = authority.leader_model
+    source_paths = authority.executable_seals()
     root = parent / "repo"
     root.mkdir(mode=0o700)
     session_name = "agentdeck-m2c-" + parent.name[-8:]
@@ -4496,12 +4508,12 @@ def _run_live_acceptance_in_project_guarded(
     ) as cleanup_audit:
         _verify_all_executable_seals(all_seals)
         preflight_before = _tree_snapshot(root)
-        preflight = _live_preflight(
-            root,
-            require_explicit_paths=True,
-            leader_model_seal=leader_model,
-        )
+        preflight = _strict_live_preflight(root, authority)
         _require_live(_tree_snapshot(root) == preflight_before, "preflight_wrote_project")
+        if _validate_strict_preflight_payload(preflight):
+            raise _live_failure("preflight_contract_invalid")
+        if preflight["blockers"] == ["preflight_contract_invalid"]:
+            raise _live_failure("preflight_contract_invalid")
         _require_live(preflight["ready"] is True, "preflight_blocked")
         checkout = Path(__file__).resolve().parents[1]
         _require_live(
@@ -5842,15 +5854,11 @@ def test_live_model_drift_is_compact_and_pre_provider(tmp_path) -> None:
     assert str(root) not in str(raised.value)
 
 
-def test_live_entry_requires_model_before_paths_or_project(
+def test_live_entry_rejects_missing_model_before_project(
     monkeypatch,
 ) -> None:
     monkeypatch.delenv(LEADER_MODEL_ENV, raising=False)
-    monkeypatch.setattr(
-        sys.modules[__name__],
-        "_explicit_live_paths",
-        lambda: (_ for _ in ()).throw(AssertionError("path discovery called")),
-    )
+    monkeypatch.setenv(AUTHORITY_DIGEST_ENV, "sha256:" + "0" * 64)
     monkeypatch.setattr(
         tempfile,
         "mkdtemp",
@@ -5862,10 +5870,121 @@ def test_live_entry_requires_model_before_paths_or_project(
     with pytest.raises(_LiveHarnessFailure) as raised:
         _run_live_acceptance()
 
+    diagnostic = json.loads(str(raised.value))
+    assert diagnostic["stage"] == "live_acceptance"
+    assert diagnostic["code"] == "preflight_blocked"
+
+
+@pytest.mark.parametrize(
+    "expected_digest",
+    (None, "", "sha256:nope", "sha256:" + "A" * 64),
+)
+def test_live_authority_digest_is_validated_before_loader_and_root(
+    monkeypatch, expected_digest
+) -> None:
+    monkeypatch.setenv(LEADER_MODEL_ENV, "gpt-5.5")
+    if expected_digest is None:
+        monkeypatch.delenv(AUTHORITY_DIGEST_ENV, raising=False)
+    else:
+        monkeypatch.setenv(AUTHORITY_DIGEST_ENV, expected_digest)
+    monkeypatch.setattr(
+        sys.modules[__name__],
+        "_load_explicit_tool_authority",
+        lambda _environment: pytest.fail("authority loader called"),
+    )
+    monkeypatch.setattr(
+        tempfile,
+        "mkdtemp",
+        lambda *args, **kwargs: pytest.fail("live root created"),
+    )
+
+    with pytest.raises(_LiveHarnessFailure) as raised:
+        _run_live_acceptance()
+
     assert json.loads(str(raised.value)) == {
         "stage": "live_acceptance",
-        "code": "leader_model_missing",
+        "code": "preflight_authority_drift",
     }
+
+
+def test_live_authority_digest_mismatch_blocks_root_creation(
+    tmp_path, monkeypatch
+) -> None:
+    environment = _fake_explicit_authority_environment(tmp_path / "authority")
+    for name, value in environment.items():
+        monkeypatch.setenv(name, value)
+    monkeypatch.setenv(AUTHORITY_DIGEST_ENV, "sha256:" + "0" * 64)
+    monkeypatch.setattr(
+        tempfile,
+        "mkdtemp",
+        lambda *args, **kwargs: pytest.fail("live root created"),
+    )
+
+    with pytest.raises(_LiveHarnessFailure) as raised:
+        _run_live_acceptance()
+
+    assert json.loads(str(raised.value)) == {
+        "stage": "live_acceptance",
+        "code": "preflight_authority_drift",
+    }
+
+
+def test_live_entry_passes_same_admitted_authority_object(
+    tmp_path, monkeypatch
+) -> None:
+    environment = _fake_explicit_authority_environment(tmp_path / "authority")
+    authority, failures = _load_explicit_tool_authority(environment)
+    assert failures == () and authority is not None
+    parent = tmp_path / "agentdeck-m2c-live-test"
+    parent.mkdir()
+    monkeypatch.setattr(
+        sys.modules[__name__],
+        "_admit_live_tool_authority",
+        lambda _environment: authority,
+        raising=False,
+    )
+    monkeypatch.setattr(tempfile, "mkdtemp", lambda *args, **kwargs: str(parent))
+
+    def capture(supplied, supplied_parent):
+        assert supplied is authority
+        assert supplied_parent == parent.resolve()
+        return {"result": "admitted"}
+
+    monkeypatch.setattr(
+        sys.modules[__name__], "_run_live_acceptance_in_project", capture
+    )
+
+    assert _run_live_acceptance() == {"result": "admitted"}
+
+
+def test_live_internal_preflight_invalid_contract_fails_closed(
+    tmp_path, monkeypatch
+) -> None:
+    authority, failures = _load_explicit_tool_authority(
+        _fake_explicit_authority_environment(tmp_path / "authority")
+    )
+    assert failures == () and authority is not None
+    parent = tmp_path / "agentdeck-m2c-live-invalid-contract"
+    parent.mkdir()
+    monkeypatch.setattr(
+        sys.modules[__name__],
+        "_strict_live_preflight",
+        lambda _project, supplied: {
+            "authority": supplied,
+            "stderr": "SECRET /private/path",
+        },
+    )
+
+    with pytest.raises(_LiveHarnessFailure) as raised:
+        _run_live_acceptance_in_project(authority, parent)
+
+    assert json.loads(str(raised.value)) == {
+        "stage": "live_acceptance",
+        "code": "preflight_contract_invalid",
+    }
+    assert "SECRET" not in str(raised.value)
+    assert "/private/path" not in str(raised.value)
+    assert not parent.exists()
 
 
 def test_live_task_authority_accepts_only_exact_fixed_scenario() -> None:
@@ -8631,16 +8750,12 @@ def test_live_setup_launcher_failure_removes_entire_parent(
 ) -> None:
     parent = tmp_path / f"agentdeck-m2c-live-{failure_index}"
     parent.mkdir(mode=0o700)
-    source_bin = tmp_path / f"source-bin-{failure_index}"
-    source_bin.mkdir(mode=0o700)
-    paths: dict[str, _ExecutableSeal] = {}
-    for name, _env_name, _help, _version in TOOL_SPECS:
-        executable = source_bin / name
-        executable.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
-        executable.chmod(0o700)
-        seal = _seal_executable(str(executable))
-        assert seal is not None
-        paths[name] = seal
+    authority, failures = _load_explicit_tool_authority(
+        _fake_explicit_authority_environment(
+            tmp_path / f"authority-{failure_index}"
+        )
+    )
+    assert failures == () and authority is not None
     real_writer = _write_controlled_launcher
     calls = 0
 
@@ -8659,9 +8774,7 @@ def test_live_setup_launcher_failure_removes_entire_parent(
     )
 
     with pytest.raises(_LiveHarnessFailure) as error:
-        _run_live_acceptance_in_project(
-            paths, parent, _LeaderModelSeal("gpt-5.5")
-        )
+        _run_live_acceptance_in_project(authority, parent)
 
     assert "launcher_setup_blocked" in str(error.value)
     assert not parent.exists()
@@ -8672,11 +8785,10 @@ def test_live_setup_cleanup_failure_keeps_original_blocker_compact(
 ) -> None:
     parent = tmp_path / "agentdeck-m2c-live-cleanup-failure"
     parent.mkdir(mode=0o700)
-    executable = tmp_path / "codex"
-    executable.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
-    executable.chmod(0o700)
-    seal = _seal_executable(str(executable))
-    assert seal is not None
+    authority, failures = _load_explicit_tool_authority(
+        _fake_explicit_authority_environment(tmp_path / "authority-cleanup")
+    )
+    assert failures == () and authority is not None
     monkeypatch.setattr(
         sys.modules[__name__],
         "_write_controlled_launcher",
@@ -8691,11 +8803,7 @@ def test_live_setup_cleanup_failure_keeps_original_blocker_compact(
     )
 
     with pytest.raises(_LiveHarnessFailure) as error:
-        _run_live_acceptance_in_project(
-            {name: seal for name, _env, _help, _version in TOOL_SPECS},
-            parent,
-            _LeaderModelSeal("gpt-5.5"),
-        )
+        _run_live_acceptance_in_project(authority, parent)
 
     assert "launcher_setup_blocked" in str(error.value)
     assert "live_setup_cleanup_failed" in repr(error.value.__notes__)
@@ -8722,18 +8830,12 @@ def test_live_setup_interrupt_removes_parent_and_reraises_same_object(
         f"agentdeck-m2c-live-{interrupt_type.__name__}-{failure_index}"
     )
     parent.mkdir(mode=0o700)
-    source_bin = tmp_path / (
-        f"source-{interrupt_type.__name__}-{failure_index}"
+    authority, failures = _load_explicit_tool_authority(
+        _fake_explicit_authority_environment(
+            tmp_path / f"authority-{interrupt_type.__name__}-{failure_index}"
+        )
     )
-    source_bin.mkdir(mode=0o700)
-    paths: dict[str, _ExecutableSeal] = {}
-    for name, _env_name, _help, _version in TOOL_SPECS:
-        executable = source_bin / name
-        executable.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
-        executable.chmod(0o700)
-        seal = _seal_executable(str(executable))
-        assert seal is not None
-        paths[name] = seal
+    assert failures == () and authority is not None
     real_writer = _write_controlled_launcher
     interruption = interrupt_type("stop setup")
     calls = 0
@@ -8753,9 +8855,7 @@ def test_live_setup_interrupt_removes_parent_and_reraises_same_object(
     )
 
     with pytest.raises(interrupt_type) as raised:
-        _run_live_acceptance_in_project(
-            paths, parent, _LeaderModelSeal("gpt-5.5")
-        )
+        _run_live_acceptance_in_project(authority, parent)
 
     assert raised.value is interruption
     assert not parent.exists()
@@ -8775,11 +8875,12 @@ def test_live_setup_interrupt_cleanup_failure_adds_only_compact_note(
 ) -> None:
     parent = tmp_path / f"agentdeck-m2c-live-{interrupt_type.__name__}-cleanup"
     parent.mkdir(mode=0o700)
-    executable = tmp_path / f"tool-{interrupt_type.__name__}"
-    executable.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
-    executable.chmod(0o700)
-    seal = _seal_executable(str(executable))
-    assert seal is not None
+    authority, failures = _load_explicit_tool_authority(
+        _fake_explicit_authority_environment(
+            tmp_path / f"authority-{interrupt_type.__name__}-cleanup"
+        )
+    )
+    assert failures == () and authority is not None
     interruption = interrupt_type("stop setup")
     monkeypatch.setattr(
         sys.modules[__name__],
@@ -8795,11 +8896,7 @@ def test_live_setup_interrupt_cleanup_failure_adds_only_compact_note(
     )
 
     with pytest.raises(interrupt_type) as raised:
-        _run_live_acceptance_in_project(
-            {name: seal for name, _env, _help, _version in TOOL_SPECS},
-            parent,
-            _LeaderModelSeal("gpt-5.5"),
-        )
+        _run_live_acceptance_in_project(authority, parent)
 
     assert raised.value is interruption
     assert "live_setup_cleanup_failed" in repr(interruption.__notes__)

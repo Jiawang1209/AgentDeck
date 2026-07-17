@@ -4,6 +4,19 @@
 
 ## 2026-07-17
 
+### Bind M2c live admission to the preflight authority digest
+
+- Live now validates the exact lowercase authority-digest grammar, loads only
+  the strict explicit model/tool/package inputs, computes current content
+  identity, and compares it with constant-time equality before creating any
+  disposable live root.
+- Replaced the live `(paths, model)` handoff with one already admitted
+  `_ToolAuthority`; the guarded setup and its strict internal preflight consume
+  that same object and do not rediscover PATH, Node, model, or package inputs.
+- Six new admission-order/object-identity cases and fourteen live entry/setup/
+  cleanup regressions passed. Closed blocker/failure projection is the next
+  TDD task; no real preflight/live path or installed tool ran.
+
 ### Add strict M2c preflight v3 closed diagnostics
 
 - Added harness-only `m2c-live-preflight/v3` generation and exact validation
