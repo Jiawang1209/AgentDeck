@@ -10,12 +10,14 @@
   project conversation, explicitly select Codex or Claude as Leader, preview
   and edit one frozen Mission, confirm its exact version and digest once,
   continue in the background, reconnect, inspect or take over Workers, and
-  receive graded, evidence-backed acceptance or a precise actionable pause.
+  receive graded evidence-backed acceptance, a precise actionable pause, or a
+  precise terminal failure.
 - Fixed V1 to governed Codex/Claude software-development collaboration with
   permission, Handoff, Evidence, and peer-review lineage, plus recovery and a
   shared ProjectView. One-confirmation autonomy applies only inside the
   confirmed scope; new authority, drift, ambiguous effects, and exhausted
-  bounds must pause.
+  bounds stop autonomous progress and become `paused` or `failed` according to
+  the approved transition matrix.
 - Required safe evidence-derived memory, skill, and Improvement Mission
   suggestions with preview, provenance, and explicit confirmation, and made
   clear that this documentation slice does not implement them or any other
@@ -35,6 +37,12 @@
   `paused` / `failed` transition matrix. Learning Review eligibility now
   consistently includes completed, meaningfully paused, and terminally failed
   Missions. This is a requirements clarification, not implementation.
+- Defined transition precedence over all simultaneous durable facts: absorbing
+  terminal states first, then Mission-wide and Task-local blockers before
+  session-only takeover, with automatic recovery allowed only when no higher
+  blocker is active. Same-level reasons remain complete, and deterministic
+  overlap plus hard-exhaustion acceptance cases prove the safest outcome. This
+  is a requirements clarification, not implementation.
 
 ### Start the AgentDeck V1 architecture-reset program
 

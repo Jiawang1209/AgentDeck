@@ -205,28 +205,56 @@ for.
 
 ### Exclusive transition matrix
 
-The following matrix is the sole recovery and interruption classifier. Its
-conditions are evaluated top to bottom; one observation enters exactly one
-row, and every transition is recorded in activity and ProjectView. A model's
-status word never chooses the row.
+The following matrix is the sole recovery and interruption classifier. It is
+exclusive through all-facts safety precedence, not by row order. AgentDeck
+must evaluate all simultaneously active durable facts in one coherent snapshot
+before choosing a transition. Every selected state, scope, and reason is
+recorded in activity and ProjectView; a model's status word never chooses them.
 
-| Exclusive condition | Required state and scope | Required behavior |
+Safety precedence is explicit:
+
+1. Terminal `completed`, `failed`, or `cancelled` states are absorbing. Later
+   session or Task observations cannot downgrade them to `paused` or
+   `recovering`, restart dispatch, or reopen their work.
+2. For a nonterminal state, facts that satisfy the terminal-failure condition
+   cannot be masked by a lower-scope actionable pause.
+3. Mission-wide authority and project-truth blockers outrank Task-local and
+   session-local facts. These blockers are authorization revocation, Mission
+   version or digest drift, an ambiguous external effect or project truth, and
+   an amendable global policy or limit decision. They suspend all new
+   dispatch.
+4. Task-local actionable blockers outrank a session-only continuation when a
+   dependency or shared scope is affected. Their downstream dependents pause;
+   unrelated Tasks continue only when no dependency, shared-scope, or authority
+   conflict exists.
+5. Session-local takeover is selected only when no higher-scope blocker is
+   active. It pauses automated input to that session and its dependent Tasks;
+   unrelated safe Tasks may continue.
+6. `running` or `recovering` automatic recovery is allowed only when no
+   blocking fact at any higher precedence is active and the retry,
+   reassignment, split, or fallback is proven safe inside the frozen envelope.
+7. If multiple blockers exist at the same precedence and scope, the selected
+   pause or failure record must preserve all reasons, not only one matched
+   reason.
+
+For example, takeover plus authorization revocation remains Mission-wide
+`paused` and suspends all new dispatch. Terminal `failed` plus a later takeover
+remains `failed` and dispatches nothing.
+
+| Durable fact set after precedence evaluation | Required state and scope | Required behavior |
 | --- | --- | --- |
-| A prior operation effect is ambiguous, including a timeout, lost route, or unknown outcome without sufficient durable proof. | `paused`, Mission-wide reconciliation pause. | Stop all new dispatch and create zero fallback Attempt or effect. Inspect durable facts and require the concrete user decision needed to restore trustworthy project truth. If reconciliation later proves safe, re-evaluate from the new facts; if no valid continuation remains, enter the terminal row. |
-| Human takeover is active for a Worker session. | `paused`, session-local. | Pause automated input to that session and Tasks that depend on its next result. Unrelated safe Tasks may continue. Return-control requires reconciliation and valid continuation or Handoff facts. |
-| New authority or Mission version drift, authorization revocation, or an amendable global limit or policy decision has a valid user decision path, and project truth is not ambiguous. | `paused`, Mission-wide. | Stop all new dispatch. Present the exact decision or lineage-preserving Mission Amendment; confirm, deny, or cancel it explicitly. |
-| A Worker, Attempt, protocol, lineage, or route failure has a bounded automatic recovery that is proven safe and fully inside the frozen envelope. | Stay `running` or enter `recovering`; no pause scope. | Retry, reassign, split, or activate a proven-safe pre-approved fallback within the frozen bounds. This requires no human decision and no pause. Return to `running` after recovery succeeds. A Worker or Attempt failure does not automatically pause. |
-| The same Task-level failure has no safe automatic recovery, but a concrete user decision or remediation can create a valid continuation. | `paused`, Task-local. | Pause that Task and its downstream dependents. Unrelated Tasks may continue only with no dependency, shared-scope, or authority conflict. Present the exact remediation; do not exceed frozen bounds before it is resolved. |
-| A Task-scoped budget or retry limit is exhausted, and an allowed amendment can raise or change that limit. | `paused`, Task-local. | Present the limit change as a Mission Amendment. A corresponding amendable global budget or policy limit uses the Mission-wide row above. |
+| A terminal `completed`, `failed`, or `cancelled` state already exists. | Remain in the same absorbing terminal state. | Produce zero further dispatch or effect for that work. Preserve later observations as audit facts only. |
 | Bounded recovery is exhausted and no valid user action can resume safely; a hard or non-amendable policy is violated; or an allowed amendment is declined and no route remains. | Terminal `failed` at the affected Task or Mission scope. | Report the failed stage, authoritative facts, completed or possibly completed effects, retry safety, exhausted limits, and next available product action. The failed work is never silently resumed; a later version or Mission is distinct. |
+| A prior operation effect or project truth is ambiguous, including a timeout, lost route, or unknown outcome without sufficient durable proof. | `paused`, Mission-wide reconciliation pause. | Stop all new dispatch and create zero fallback Attempt or effect. Inspect durable facts and require the concrete user decision needed to restore trustworthy project truth. If reconciliation proves safe, classify again from the complete new snapshot; if no valid continuation remains, transition to `failed`. |
+| New authority, Mission version or digest drift, authorization revocation, or an amendable global limit or policy decision has a valid user decision path, and project truth is not ambiguous. | `paused`, Mission-wide. | Stop all new dispatch. Present the exact decision or lineage-preserving Mission Amendment; confirm, deny, or cancel it explicitly. |
+| A Task-level Worker, Attempt, protocol, lineage, or route failure has no safe automatic recovery, but a concrete user decision or remediation can create a valid continuation, and no Mission-wide blocker is active. | `paused`, Task-local. | Pause that Task and its downstream dependents. Unrelated Tasks may continue only with no dependency, shared-scope, or authority conflict. Present the exact remediation; do not exceed frozen bounds before it is resolved. |
+| A Task-scoped budget or retry limit is exhausted, an allowed amendment can raise or change it, and no higher-precedence blocker is active. | `paused`, Task-local. | Present the limit change as a Mission Amendment. A corresponding amendable global budget or policy limit is Mission-wide. |
+| Human takeover is active for a Worker session and no terminal, Mission-wide, or Task-local blocker is active. | `paused`, session-local. | Pause automated input to that session and Tasks that depend on its next result. Unrelated safe Tasks may continue. Return-control requires reconciliation and valid continuation or Handoff facts. |
+| A Worker, Attempt, protocol, lineage, or route failure has a bounded automatic recovery that is proven safe and fully inside the frozen envelope, with no blocking fact active at any higher precedence. | Stay `running` or enter `recovering`; no pause scope. | Retry, reassign, split, or activate a proven-safe pre-approved fallback within the frozen bounds. This requires no human decision and no pause. Return to `running` after recovery succeeds. A Worker or Attempt failure does not automatically pause. |
 
-Thus safe bounded automatic recovery remains `running` or `recovering` and
-never asks for a human decision. `paused` is reserved for a concrete decision,
-remediation, or amendment that can create a valid continuation at the narrowest
-safe scope. `failed` is terminal for the classified Task or Mission. Budget or
-retry exhaustion is `paused` only when an allowed amendment can change the
-limit; it becomes `failed` when the limit is hard or non-amendable, or when the
-amendment is declined and no route remains.
+Budget or retry exhaustion is `paused` only when an allowed amendment can
+change the limit. It becomes `failed` when the limit is hard or non-amendable,
+or when the amendment is declined and no route remains.
 
 A generic `BLOCKED` result is insufficient. An actionable pause must identify
 the exact decision or remediation and deterministic continuation action. A
@@ -328,6 +356,16 @@ both setup and the documented Mission flow. Transport acceptance must include:
 - an ambiguous-effect scenario that produces zero fallback dispatch or effect,
   stops new Mission dispatch, and enters a Mission-wide reconciliation pause
   for fact inspection and user decision.
+
+Transition acceptance must additionally include:
+
+- a deterministic overlapping-facts case proving the safest scope wins:
+  takeover plus authorization revocation must produce one Mission-wide
+  `paused` classification, suspend all new dispatch, and retain the takeover
+  fact without selecting the session-local scope; and
+- a hard non-amendable exhaustion case proving terminal `failed`, zero further
+  dispatch, and absorption of a later takeover observation without restarting
+  or downgrading the failed work.
 
 Failure in any of these journeys is a release failure until corrected and
 reverified; legacy harness status or a model-authored explanation cannot waive
