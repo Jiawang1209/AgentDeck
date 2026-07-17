@@ -4,6 +4,25 @@ Updated: 2026-07-17
 
 ## Active goal — close the live internal-preflight authority mismatch
 
+Before consuming the authorized designated preflight for frozen implementation
+`fda1a69194e67b50afe0c2b9f4e7f29c195af400`, a read-only command audit found a
+specification defect: installed
+`@agentclientprotocol/claude-agent-acp@0.58.1` declares its official executable
+as `bin["claude-agent-acp"] = "dist/index.js"`, while the frozen M2c authority
+hard-codes nonexistent `dist/claude-agent-acp`. Synthetic packages had copied
+the same incorrect assumption, so deterministic and full-suite verification
+could not reveal the real-package mismatch.
+
+No designated pytest node, provider, ACP/tmux session, daemon, install, login,
+or global change ran; the authorization was not consumed. The human approved a
+metadata-bound correction at
+`docs/superpowers/specs/2026-07-17-m2c-acp-package-entrypoint-authority-design.md`.
+It derives and seals the official npm bin entrypoint, binds its canonical
+relative path into `m2c-tool-authority/v2`, and advances the strict designated
+response to `m2c-live-preflight/v4`. M2c remains **BLOCKED** and M3 remains
+locked until a new RED/GREEN, frozen SHA, double full suite, real preflight,
+and real four-stage Mission all pass.
+
 The native-schema provenance persistence correction is implemented and frozen
 at `7a76ada81938be3ba0720a7c2f5a540b4beebb3e`. Semantic Mission previews now
 preserve the exact validated eleven-field generation envelope. StateStore

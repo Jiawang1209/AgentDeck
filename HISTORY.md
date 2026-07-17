@@ -4,6 +4,22 @@
 
 ## 2026-07-17
 
+### Design metadata-bound M2c ACP package entrypoint authority
+
+- Confirmed before consuming the authorized real preflight that installed
+  `@agentclientprotocol/claude-agent-acp@0.58.1` declares
+  `bin["claude-agent-acp"] = "dist/index.js"`, while frozen implementation
+  `fda1a691...` incorrectly requires nonexistent `dist/claude-agent-acp`.
+- Approved a harness-only correction that strictly parses sealed npm package
+  metadata, binds the canonical official entrypoint into
+  `m2c-tool-authority/v2`, and reports it through
+  `m2c-live-preflight/v4`. It rejects metadata/path/binding drift without
+  weakening package-tree, Node, diagnostic, or live admission controls.
+- The `fda1a691...` preflight authorization was not consumed: no designated
+  pytest node, provider, ACP/tmux session, daemon, install, or global change
+  ran. A new RED/GREEN, freeze, double-suite, preflight, and live cycle is
+  required before M2c can close.
+
 ### Verify the frozen M2c tool-authority binding implementation
 
 - Froze implementation authority at
