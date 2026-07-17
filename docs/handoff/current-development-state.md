@@ -62,8 +62,20 @@ with no loader failures; closed Claude auth readiness remains exit-zero and
 logged-in. A conda-PATH tmux candidate produced a different digest and was
 rejected rather than silently substituted. The next gate is one newly
 authorized strict v6 preflight naming frozen SHA `e83dcc48...`, Leader
-`gpt-5.5`, and the exact `b194c3...` digest. No designated preflight has run for
-this candidate.
+`gpt-5.5`, and the exact `b194c3...` digest. At that checkpoint, no designated
+preflight had run for this candidate.
+
+The separately authorized designated strict v6 preflight then ran exactly once
+on frozen `e83dcc482d2403f613485d06eff75ff99ffe733f`, Leader `gpt-5.5`, and
+authority digest
+`sha256:b194c3b4ccbfa3ba2b534bf9cb51e59ecbc077e2576c6eea8ba343f26cc83ffa`.
+It passed `1 passed in 16.57s` with `ready=true`, `blockers=[]`, `failures=[]`,
+`m2c-live-preflight/v6`, and `m2c-tool-authority/v3`. The detached checkout was
+removed; process, daemon, ACP, worktree, and temporary-root audits were empty.
+This preflight authority is consumed and must not be rerun. One new, separate
+human authorization naming this same frozen SHA, Leader model, and exact digest
+is now required for the sole real four-stage Mission. M2c is not yet PASS and
+M3 remains locked.
 
 The exhausted authority at frozen `284d8f62...` reached Mission Preview and
 daemon admission, then the live harness read the consume ledger before the

@@ -294,9 +294,39 @@ previous ready v6 authority and produced authority v3 digest
 with no loader failures. Claude closed auth readiness remains exit-zero and
 logged-in. A different tmux selected only by conda PATH produced a different
 digest and was rejected; no fallback or silent substitution occurred. This
-audit is not the designated preflight. The next operation requires explicit
-human authorization for exactly one strict v6 preflight on frozen
-`e83dcc48...`, Leader `gpt-5.5`, and digest `b194c3...`.
+That audit was not the designated preflight. At that checkpoint, the next
+operation required explicit human authorization for exactly one strict v6
+preflight on frozen `e83dcc48...`, Leader `gpt-5.5`, and digest `b194c3...`.
+
+That authorization was granted and the designated strict v6 preflight ran
+exactly once. It passed `1 passed in 16.57s` and returned:
+
+```json
+{
+  "schema_version": "m2c-live-preflight/v6",
+  "ready": true,
+  "blockers": [],
+  "failures": [],
+  "leader_model": {
+    "provider": "codex-cli",
+    "model": "gpt-5.5",
+    "source": "explicit",
+    "ready": true
+  },
+  "tool_authority": {
+    "schema_version": "m2c-tool-authority/v3",
+    "digest": "sha256:b194c3b4ccbfa3ba2b534bf9cb51e59ecbc077e2576c6eea8ba343f26cc83ffa",
+    "source": "explicit",
+    "ready": true
+  }
+}
+```
+
+No path, environment value, raw output, prompt, terminal transcript, or auth
+material was retained. The checkout and all audited runtime/temporary residues
+were removed. This preflight authority is consumed and cannot be rerun. The
+only next M2c operation is one separately authorized real Mission naming the
+same frozen SHA, Leader model, and digest.
 
 ## Frozen authority
 

@@ -40,6 +40,13 @@
   selected only by conda PATH was rejected rather than substituted. One newly
   authorized strict v6 preflight is now the next gate; none has run for this
   candidate.
+- Ran the separately authorized designated strict v6 preflight exactly once on
+  frozen `e83dcc482d2403f613485d06eff75ff99ffe733f` with Leader `gpt-5.5`. It
+  passed `1 passed in 16.57s` with `ready=true`, empty blockers/failures, and
+  exact authority v3 digest
+  `sha256:b194c3b4ccbfa3ba2b534bf9cb51e59ecbc077e2576c6eea8ba343f26cc83ffa`.
+  Cleanup and residue audits were empty. The preflight is consumed; a separate
+  human authorization is required before the one real four-stage Mission.
 
 ### Design M2c first-attempt terminal observability
 

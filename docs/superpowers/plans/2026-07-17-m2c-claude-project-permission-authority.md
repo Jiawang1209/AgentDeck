@@ -89,7 +89,7 @@ unchanged.
 - [x] Run complete suite B in a second fresh detached worktree at the same SHA.
 - [x] Remove both worktrees and prove zero residue.
 - [x] Re-audit exact installed inputs and closed Claude login readiness.
-- [ ] Run exactly one designated strict v6 preflight.
+- [x] Run exactly one designated strict v6 preflight.
 - [ ] If and only if ready, obtain a separate SHA/model/digest live authority.
 - [ ] Execute one real four-stage Mission; never retry that authority.
 - [ ] On PASS, close M2c in roadmap/validation/HISTORY/handoff and begin M3
