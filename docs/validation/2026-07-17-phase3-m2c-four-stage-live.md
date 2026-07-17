@@ -501,9 +501,24 @@ Deterministic TDD evidence through implementation Task 8 is:
 - conda Python compile, `git diff --check`, and `src/agentdeck/**` zero-change
   scope audit: PASS.
 
-No real provider, ACP/tmux Worker, daemon, designated preflight, live Mission,
-install, login, timeout change, retry, global setting change, merge, or push ran
-for this candidate. Complete non-live M2c, product regressions, residue audits,
-review, and freeze are still pending Task 10. The candidate is **unfrozen**;
-the current implementation commit is evidence only and does not authorize a
-preflight or live run. M2c remains **BLOCKED** and M3 remains locked.
+Task 10 deterministic freeze evidence is now complete:
+
+- focused sequential-permission verification: `50 passed, 322 deselected in
+  0.46s`;
+- complete non-live M2c: `370 passed, 2 skipped in 102.28s`, with only the
+  designated preflight and live nodes skipped;
+- product/Conversation/contract/provider regressions: `851 passed in 4.51s`;
+- conda compile, `git diff --check`, `src/agentdeck/**` zero-change,
+  tracked-runtime-state, process, tmux, worktree, leakage, and residue audits:
+  PASS;
+- requirement review: no findings. Exact preview/confirm/effect authority,
+  same-attempt sequential permission progression, reply-plus-handoff gates,
+  takeover/return-control exclusion, transition-derived state, and closed
+  path-free diagnostics agree with the approved spec. No timeout, retry,
+  fallback, global setting, or product source changed.
+
+The documentation commit containing this evidence is the frozen Task 10
+candidate; Task 11 records its exact full SHA before creating detached
+worktrees. No real provider, ACP/tmux Worker, daemon, designated preflight,
+live Mission, install, login, merge, or push ran. This freeze does not authorize
+preflight or live execution. M2c remains **BLOCKED** and M3 remains locked.

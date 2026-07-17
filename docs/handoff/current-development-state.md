@@ -25,12 +25,22 @@ focused integration passes `27 passed, 345 deselected in 2.22s`; confirmation,
 diagnostic, lineage, driver, and four-stage tests are independently GREEN.
 Compile, diff, and `src/agentdeck/**` zero-change scope audits pass.
 
-The implementation is not frozen yet. Complete non-live M2c, product
-regressions, leakage/residue audits, spec review, and exact-SHA freeze remain
-Task 10. No designated preflight or live Mission has run for this candidate;
-no prior authority carries forward. M2c remains **BLOCKED** and M3 remains
-locked. Do not retry `e83dcc48...`, increase timeouts, auto-approve, merge,
-push, install, change authentication/global settings, or begin M3.
+Task 10 deterministic verification is complete. Focused sequential-permission
+coverage passes `50 passed, 322 deselected in 0.46s`; complete non-live M2c
+passes `370 passed, 2 skipped in 102.28s`; product/Conversation/contract/
+provider regressions preserve `851 passed in 4.51s`. Conda compile, diff,
+`src/agentdeck/**` zero-change, tracked-runtime-state, process, tmux, worktree,
+and leakage/residue audits pass. A requirement-by-requirement local review
+found no issues and confirmed exact preview/confirm/effect authority,
+attempt-local sequential progression, reply-plus-handoff stage gates,
+takeover/return-control exclusion, transition-derived effective state, closed
+diagnostics, and no timeout/retry/fallback/global-setting/product-source
+change. The documentation commit containing this block is the Task 10 frozen
+candidate; Task 11 records its exact full SHA before creating two detached
+verification worktrees. No designated preflight or live Mission has run for
+this candidate; no prior authority carries forward. M2c remains **BLOCKED**
+and M3 remains locked. Do not retry `e83dcc48...`, auto-approve, merge, push,
+install, change authentication/global settings, or begin M3.
 
 The separately authorized live Mission on frozen
 `79d8160eb60ad4e8bfb37ff43615f099afd9edc5`, Leader `gpt-5.5`, and authority

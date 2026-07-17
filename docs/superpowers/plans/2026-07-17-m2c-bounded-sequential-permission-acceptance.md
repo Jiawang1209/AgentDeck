@@ -2035,7 +2035,7 @@ git commit -m "docs: record bounded M2c permission progression"
 - Modify after commands: `HISTORY.md`, `docs/handoff/current-development-state.md`,
   `docs/validation/2026-07-17-phase3-m2c-four-stage-live.md`, and this plan
 
-- [ ] **Step 1: Run focused sequential-permission verification**
+- [x] **Step 1: Run focused sequential-permission verification**
 
 ```bash
 PYTHONPATH="$PWD/src" conda run --no-capture-output -n agentdeck \
@@ -2045,7 +2045,9 @@ PYTHONPATH="$PWD/src" conda run --no-capture-output -n agentdeck \
 
 Expected: PASS with zero failures and no real node execution.
 
-- [ ] **Step 2: Run complete non-live M2c**
+Observed: `50 passed, 322 deselected in 0.46s`; no real node executed.
+
+- [x] **Step 2: Run complete non-live M2c**
 
 ```bash
 PYTHONPATH="$PWD/src" conda run --no-capture-output -n agentdeck \
@@ -2054,7 +2056,10 @@ PYTHONPATH="$PWD/src" conda run --no-capture-output -n agentdeck \
 
 Expected: zero failures; designated preflight and real live tests are skipped.
 
-- [ ] **Step 3: Run product/Conversation/contract/provider regressions**
+Observed: `370 passed, 2 skipped in 102.28s`; the two skips were the designated
+preflight and real live nodes.
+
+- [x] **Step 3: Run product/Conversation/contract/provider regressions**
 
 ```bash
 PYTHONPATH="$PWD/src" conda run --no-capture-output -n agentdeck \
@@ -2067,7 +2072,9 @@ PYTHONPATH="$PWD/src" conda run --no-capture-output -n agentdeck \
 Expected baseline: `851 passed`; any count change must be explained by current
 branch collection rather than ignored.
 
-- [ ] **Step 4: Run syntax, diff, scope, leakage, and residue audits**
+Observed: `851 passed in 4.51s`; the baseline is unchanged.
+
+- [x] **Step 4: Run syntax, diff, scope, leakage, and residue audits**
 
 ```bash
 PYTHONPATH="$PWD/src" conda run --no-capture-output -n agentdeck \
@@ -2084,7 +2091,12 @@ Expected: compile and diff pass; no product source change; no tracked runtime
 state or M2c process/session residue; only the main checkout and intended
 development worktree remain.
 
-- [ ] **Step 5: Review against every spec requirement**
+Observed: all gates passed. No `src/agentdeck/**` or tracked runtime-state
+change exists; no M2c tmux session or durable process remains; the transient
+`pgrep` self-match disappeared on exact process inspection; only the main
+checkout and intended development worktree exist.
+
+- [x] **Step 5: Review against every spec requirement**
 
 Use `superpowers:requesting-code-review` if execution mode permits it. Review
 must explicitly verify:
@@ -2101,7 +2113,12 @@ must explicitly verify:
 Resolve every finding before freezing. Any implementation edit after the two
 full suites begins invalidates those suites and restarts this task.
 
-- [ ] **Step 6: Record results, commit, and freeze**
+Observed: local requirement review found no issues. The review skill's
+subagent path was unavailable under the current no-unsolicited-delegation
+execution rule, so the same checklist was inspected directly against the
+diff, implementation, and focused tests. Every listed property is satisfied.
+
+- [x] **Step 6: Record results, commit, and freeze**
 
 Write exact counts/timings and audit results to the four evidence files, then:
 

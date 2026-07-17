@@ -143,6 +143,26 @@
   a harness cardinality assumption, not a proven product ACP defect; M2c
   remains BLOCKED, M3 remains locked, and no preflight/live authority exists.
 
+### Freeze bounded M2c permission acceptance candidate
+
+- Passed focused sequential-permission verification with `50 passed, 322
+  deselected in 0.46s`, complete non-live M2c with `370 passed, 2 skipped in
+  102.28s`, and the unchanged product/Conversation/contract/provider baseline
+  with `851 passed in 4.51s`.
+- Passed conda compile, diff, `src/agentdeck/**` zero-change,
+  tracked-runtime-state, leakage, process, tmux, worktree, and residue audits.
+  The transient `pgrep` self-match disappeared on exact process inspection.
+- Completed a requirement-by-requirement local review with no findings. The
+  approved exact permission authority, same-attempt bounded progression,
+  reply-plus-handoff gating, takeover exclusion, transition-derived state, and
+  closed diagnostics are present; no timeout, retry, fallback, global setting,
+  or product-source behavior changed.
+- Froze the documentation commit carrying this evidence as the Task 10
+  candidate. No provider, ACP/tmux Worker, daemon, designated preflight, live
+  Mission, install, login, merge, or push ran. M2c remains **BLOCKED**, M3
+  remains locked, and Task 11 must verify two detached worktrees at the exact
+  unchanged SHA before any separately authorized preflight can be considered.
+
 ### Design bounded sequential ACP permission acceptance for M2c
 
 - Replaced the live harness assumption of exactly two Mission permissions with
