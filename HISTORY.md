@@ -23,6 +23,12 @@
 - Explicitly excluded a GUI, terminal emulator, A2A, third official Agent,
   provider matrix, parallel mutating Missions, marketplace, remote execution,
   and silent self-modification from V1.
+- Clarified session-, Task-, and Mission-level pauses versus terminal failure;
+  fixed exactly one confirmation and zero extra in-scope decisions per frozen
+  version; required ordered, disclosed fallback and zero-effect route refusal;
+  defined deterministic AgentDeck-owned Verification; and made one seeded
+  Golden review rejection and revision path mandatory. These are requirement
+  clarifications only, not implementation claims.
 
 ### Start the AgentDeck V1 architecture-reset program
 
