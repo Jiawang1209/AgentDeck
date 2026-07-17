@@ -1,6 +1,6 @@
 # AgentDeck Current Development State
 
-Updated: 2026-07-16
+Updated: 2026-07-17
 
 ## Active goal — close the live internal-preflight authority mismatch
 
@@ -68,10 +68,14 @@ No inference is made about which tool or probe failed.
 For frozen SHA `7a76ada...`, preflight/live counts are now exactly `1/1`; both
 authorizations are exhausted and neither may be rerun. Historical SHA
 `75f0366d...` also remains exhausted at `1/1`. M2c remains **BLOCKED** and M3
-remains locked. The next gate is a new brainstorming -> spec -> plan cycle that
-binds designated preflight and live to the same executable authority and
-projects only the closed allowlisted internal blocker set before any new
-frozen-SHA authorization cycle.
+remains locked. The human-approved design is now written at
+`docs/superpowers/specs/2026-07-17-m2c-tool-authority-binding-design.md`. It
+binds designated preflight and live through one content-addressed authority
+covering model, Codex, Claude, tmux, Node, and the complete Claude Agent ACP
+package tree; it also projects only closed `tool + probe + code` diagnostics.
+The written spec awaits human review. After approval, the next gate is a
+detailed writing-plans TDD plan; no implementation, preflight, or live run is
+authorized yet.
 
 ## Historical 75f provenance blocker evidence
 

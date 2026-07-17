@@ -2,6 +2,29 @@
 
 本文件记录 AgentDeck 每一次开发内容。约束：每次新增功能、文档规则、项目骨架、运行环境或用户可见行为变化，都必须同步更新本文件，并在同一次 commit 中提交。
 
+## 2026-07-17
+
+### Approve M2c content-addressed tool authority design
+
+- Approved the harness-only solution for the exhausted `7a76ada...`
+  `preflight_blocked` result: designated preflight and live will share a
+  content-addressed `m2c-tool-authority/v1` digest rather than independent PATH
+  and strict-basename executable sets.
+- The authority covers exact Leader model, Codex, Claude, tmux, sealed Node,
+  and the complete Claude Agent ACP package tree. Preflight remains read-only;
+  live must receive the separately human-approved digest and fail before root
+  creation on drift.
+- Approved `m2c-live-preflight/v3` with closed per-tool/per-probe diagnostics.
+  Live may expose only validated allowlisted blocker codes and
+  `tool + probe + code` items; paths, output, prompts, stderr, environment, and
+  auth material remain forbidden.
+- Kept the change inside the M2c harness/SOP. Production Provider,
+  ConversationSession, Mission, ACP/tmux, daemon, permission, and ProjectView
+  behavior remain out of scope. Historical `7a76ada...` stays exhausted at
+  `1/1`; no preflight/live rerun is authorized by this design.
+- Formal design:
+  `docs/superpowers/specs/2026-07-17-m2c-tool-authority-binding-design.md`.
+
 ## 2026-07-16
 
 ### Record the exhausted provenance-candidate single-live blocker
