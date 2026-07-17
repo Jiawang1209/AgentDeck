@@ -4,6 +4,29 @@
 
 ## 2026-07-17
 
+### Pin disposable Claude permission authority for M2c
+
+- Added an exact project-local Claude permission setting to the M2c live
+  harness: `.claude` is exclusively created at mode `0700`, and regular
+  `settings.local.json` is exclusively written at mode `0600` with exact
+  `permissions.defaultMode=default` bytes. User/global settings are neither
+  read nor changed.
+- Added a path-free directory/file identity and content seal, revalidated
+  before Mission creation, around both permission confirmations, around
+  takeover/return-control, and after completion. Pre-existing paths and
+  content/mode/inode/kind/symlink/directory/extra-entry drift fail closed as
+  `claude_permission_settings_invalid`.
+- Deterministic attack coverage exposed a FIFO blocking edge; non-regular
+  settings are now rejected before descriptor open. Focused permission/setup
+  coverage passes `28`; complete non-live M2c passes `337 passed, 2 skipped in
+  95.98s`; product/Conversation/contract/provider regressions pass `851 passed
+  in 4.28s`. Compile, diff, current-slice product-source zero-change, process,
+  worktree, temporary-root, and tracked-runtime-state audits pass.
+- The exhausted `79d8160e...`/`gpt-5.5`/authority-v3 live input remains failed
+  and non-retryable. This candidate requires a new frozen SHA, two fresh full
+  suites, installed-input audit, and separately authorized strict v6 preflight;
+  no new real authority has been consumed.
+
 ### Design M2c first-attempt terminal observability
 
 - Approved a harness-only repair for the new one-shot blocker: the first

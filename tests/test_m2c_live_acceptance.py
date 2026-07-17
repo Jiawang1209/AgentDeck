@@ -81,6 +81,9 @@ ACP_COMMAND_NAME = "claude-agent-acp"
 ACP_PACKAGE_JSON = PurePosixPath("package.json")
 MAX_ACP_PACKAGE_JSON_BYTES = 1024 * 1024
 MAX_PACKAGE_SYMLINK_BYTES = 4096
+CLAUDE_PERMISSION_SETTINGS_BYTES = (
+    b'{"permissions":{"defaultMode":"default"}}\n'
+)
 TOOL_SPECS = (
     ("codex", "AGENTDECK_M2C_CODEX", ("exec", "--help"), ("--version",)),
     ("claude", "AGENTDECK_M2C_CLAUDE", ("--help",), ("--version",)),
@@ -2467,6 +2470,12 @@ class _FileIdentity:
 
 
 @dataclass(frozen=True)
+class _ClaudePermissionSettingsSeal:
+    directory: _FileIdentity
+    settings: _FileIdentity
+
+
+@dataclass(frozen=True)
 class _DaemonCleanupIdentity:
     metadata: tuple[tuple[str, object], ...]
     metadata_file: _FileIdentity
@@ -4600,18 +4609,182 @@ def _toml_string(value: str) -> str:
     return json.dumps(value, ensure_ascii=False)
 
 
+def _claude_permission_settings_failure() -> _LiveHarnessFailure:
+    return _live_failure("claude_permission_settings_invalid")
+
+
+def _live_claude_permission_directory_identity(
+    path: Path,
+) -> _FileIdentity:
+    try:
+        metadata = path.lstat()
+    except OSError:
+        raise _claude_permission_settings_failure() from None
+    if (
+        not stat.S_ISDIR(metadata.st_mode)
+        or path.is_symlink()
+        or metadata.st_uid != os.getuid()
+        or stat.S_IMODE(metadata.st_mode) != 0o700
+    ):
+        raise _claude_permission_settings_failure()
+    return _FileIdentity(
+        device=metadata.st_dev,
+        inode=metadata.st_ino,
+        owner=metadata.st_uid,
+        mode=stat.S_IMODE(metadata.st_mode),
+        size=metadata.st_size,
+    )
+
+
+def _live_claude_permission_file_identity(path: Path) -> _FileIdentity:
+    descriptor: int | None = None
+    try:
+        metadata = path.lstat()
+        if path.is_symlink() or not stat.S_ISREG(metadata.st_mode):
+            raise OSError("settings path is not a regular file")
+        descriptor = os.open(
+            path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+        )
+        opened = os.fstat(descriptor)
+        payload = bytearray()
+        while len(payload) <= len(CLAUDE_PERMISSION_SETTINGS_BYTES):
+            chunk = os.read(
+                descriptor,
+                len(CLAUDE_PERMISSION_SETTINGS_BYTES) + 1 - len(payload),
+            )
+            if not chunk:
+                break
+            payload.extend(chunk)
+        closed = os.fstat(descriptor)
+        final_path = path.lstat()
+    except OSError:
+        raise _claude_permission_settings_failure() from None
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+    mode = stat.S_IMODE(opened.st_mode)
+    runtime_facts = (
+        opened.st_dev,
+        opened.st_ino,
+        opened.st_uid,
+        mode,
+        opened.st_size,
+    )
+    if (
+        not stat.S_ISREG(metadata.st_mode)
+        or not stat.S_ISREG(opened.st_mode)
+        or metadata.st_uid != os.getuid()
+        or mode != 0o600
+        or bytes(payload) != CLAUDE_PERMISSION_SETTINGS_BYTES
+        or runtime_facts
+        != (
+            metadata.st_dev,
+            metadata.st_ino,
+            metadata.st_uid,
+            stat.S_IMODE(metadata.st_mode),
+            metadata.st_size,
+        )
+        or runtime_facts
+        != (
+            closed.st_dev,
+            closed.st_ino,
+            closed.st_uid,
+            stat.S_IMODE(closed.st_mode),
+            closed.st_size,
+        )
+        or runtime_facts
+        != (
+            final_path.st_dev,
+            final_path.st_ino,
+            final_path.st_uid,
+            stat.S_IMODE(final_path.st_mode),
+            final_path.st_size,
+        )
+    ):
+        raise _claude_permission_settings_failure()
+    return _FileIdentity(
+        device=opened.st_dev,
+        inode=opened.st_ino,
+        owner=opened.st_uid,
+        mode=mode,
+        size=opened.st_size,
+        content_hash=hashlib.sha256(bytes(payload)).hexdigest(),
+    )
+
+
+def _seal_live_claude_permission_settings(
+    root: Path,
+) -> _ClaudePermissionSettingsSeal:
+    directory = root / ".claude"
+    settings = directory / "settings.local.json"
+    directory_identity = _live_claude_permission_directory_identity(directory)
+    try:
+        entries = sorted(item.name for item in directory.iterdir())
+    except OSError:
+        raise _claude_permission_settings_failure() from None
+    if entries != ["settings.local.json"]:
+        raise _claude_permission_settings_failure()
+    return _ClaudePermissionSettingsSeal(
+        directory=directory_identity,
+        settings=_live_claude_permission_file_identity(settings),
+    )
+
+
+def _write_live_claude_permission_settings(
+    root: Path,
+) -> _ClaudePermissionSettingsSeal:
+    directory = root / ".claude"
+    descriptor: int | None = None
+    try:
+        os.mkdir(directory, mode=0o700)
+        descriptor = os.open(
+            directory / "settings.local.json",
+            os.O_WRONLY
+            | os.O_CREAT
+            | os.O_EXCL
+            | getattr(os, "O_NOFOLLOW", 0),
+            0o600,
+        )
+        offset = 0
+        while offset < len(CLAUDE_PERMISSION_SETTINGS_BYTES):
+            written = os.write(
+                descriptor, CLAUDE_PERMISSION_SETTINGS_BYTES[offset:]
+            )
+            if written <= 0:
+                raise OSError("settings write did not progress")
+            offset += written
+        os.fsync(descriptor)
+    except OSError:
+        raise _claude_permission_settings_failure() from None
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+    return _seal_live_claude_permission_settings(root)
+
+
+def _verify_live_claude_permission_settings(
+    root: Path, seal: object
+) -> None:
+    if (
+        type(seal) is not _ClaudePermissionSettingsSeal
+        or _seal_live_claude_permission_settings(root) != seal
+    ):
+        raise _claude_permission_settings_failure()
+
+
 def _write_live_config(
     root: Path,
     paths: dict[str, _ExecutableSeal],
     *,
     session_name: str,
     leader_model: _LeaderModelSeal,
-) -> None:
+) -> _ClaudePermissionSettingsSeal:
     if (
         type(leader_model) is not _LeaderModelSeal
         or _seal_leader_model_input(leader_model.model)[0] != leader_model
     ):
         raise _live_failure("leader_model_invalid")
+    permission_settings = _write_live_claude_permission_settings(root)
     config = f'''[project]
 name = "m2c-live"
 
@@ -4652,6 +4825,8 @@ controller_ttl_seconds = 3600
 max_frame_bytes = 1048576
 '''
     (root / ".agentdeck" / "config.toml").write_text(config, encoding="utf-8")
+    _verify_live_claude_permission_settings(root, permission_settings)
+    return permission_settings
 
 
 def _verify_live_leader_model(root: Path, seal: _LeaderModelSeal) -> None:
@@ -5195,16 +5370,18 @@ def _run_live_acceptance_in_project_guarded(
         )
         _require_live(code == 0, "project_init_failed")
         _verify_all_executable_seals(all_seals)
-        _write_live_config(
+        permission_settings = _write_live_config(
             root,
             paths,
             session_name=session_name,
             leader_model=leader_model,
         )
+        _verify_live_claude_permission_settings(root, permission_settings)
         _verify_live_leader_model(root, leader_model)
         _verify_all_executable_seals(all_seals)
         store = StateStore(root)
         _verify_live_leader_model(root, leader_model)
+        _verify_live_claude_permission_settings(root, permission_settings)
         mission_id, capture, admitted = _create_and_confirm_live_mission(
             root,
             store,
@@ -5220,13 +5397,16 @@ def _run_live_acceptance_in_project_guarded(
             capture=capture,
         )
         first_pending = _wait_for_first_permission_or_terminal_attempt(store)
+        _verify_live_claude_permission_settings(root, permission_settings)
         _require_live(
             len(first_pending.get("mission_attempts", [])) == 1,
             "first_attempt_cardinality_invalid",
             store=store,
         )
         _verify_all_executable_seals(all_seals)
+        _verify_live_claude_permission_settings(root, permission_settings)
         _confirm_pending_permission(root, store)
+        _verify_live_claude_permission_settings(root, permission_settings)
         _verify_all_executable_seals(all_seals)
         _wait_for_state(
             store,
@@ -5236,6 +5416,7 @@ def _run_live_acceptance_in_project_guarded(
             and state["mission_attempts"][1].get("state") == "succeeded",
             code="third_stage_safe_window_timeout",
         )
+        _verify_live_claude_permission_settings(root, permission_settings)
         config = load_config(root)
         view = asdict(store.project_view(config))
         workbench = cli_module._workbench_snapshot_payload(view, store)
@@ -5273,6 +5454,7 @@ def _run_live_acceptance_in_project_guarded(
             env=env,
         )
         _verify_all_executable_seals(all_seals)
+        _verify_live_claude_permission_settings(root, permission_settings)
         taken = asyncio.run(
             _govern_live_worker(root, method="worker.takeover")
         )
@@ -5281,6 +5463,7 @@ def _run_live_acceptance_in_project_guarded(
             "takeover_failed",
             store=store,
         )
+        _verify_live_claude_permission_settings(root, permission_settings)
         _verify_all_executable_seals(all_seals)
         returned = asyncio.run(
             _govern_live_worker(
@@ -5294,7 +5477,9 @@ def _run_live_acceptance_in_project_guarded(
             "return_control_failed",
             store=store,
         )
+        _verify_live_claude_permission_settings(root, permission_settings)
         _confirm_pending_permission(root, store)
+        _verify_live_claude_permission_settings(root, permission_settings)
         _verify_all_executable_seals(all_seals)
         completed = _wait_for_state(
             store,
@@ -5303,6 +5488,7 @@ def _run_live_acceptance_in_project_guarded(
             code="mission_completion_timeout",
             timeout=300,
         )
+        _verify_live_claude_permission_settings(root, permission_settings)
         attempts = completed.get("mission_attempts", [])
         handoffs = completed.get("mission_handoffs", [])
         replies = completed.get("mission_worker_replies", [])
@@ -7056,6 +7242,199 @@ def test_live_config_pins_exact_project_local_claude_permission_mode(
     assert stat.S_IMODE(settings_dir.lstat().st_mode) == 0o700
     assert stat.S_IMODE(settings.lstat().st_mode) == 0o600
     _verify_live_claude_permission_settings(root, seal)
+
+
+def _permission_settings_fixture(tmp_path: Path) -> tuple[Path, object]:
+    root = tmp_path / "project"
+    root.mkdir()
+    return root, _write_live_claude_permission_settings(root)
+
+
+def _assert_permission_settings_failure(
+    root: Path, seal: object
+) -> None:
+    with pytest.raises(_LiveHarnessFailure) as raised:
+        _verify_live_claude_permission_settings(root, seal)
+    assert json.loads(str(raised.value)) == {
+        "stage": "live_acceptance",
+        "code": "claude_permission_settings_invalid",
+    }
+    assert str(root) not in str(raised.value)
+    assert "defaultMode" not in str(raised.value)
+
+
+@pytest.mark.parametrize(
+    "preexisting_kind", ("directory", "file", "symlink", "fifo")
+)
+def test_live_permission_settings_reject_preexisting_path_without_overwrite(
+    tmp_path, preexisting_kind
+) -> None:
+    root = tmp_path / f"project-{preexisting_kind}"
+    root.mkdir()
+    candidate = root / ".claude"
+    sentinel = tmp_path / f"sentinel-{preexisting_kind}"
+    sentinel.write_bytes(b"SECRET sentinel")
+    if preexisting_kind == "directory":
+        candidate.mkdir()
+        (candidate / "keep").write_bytes(b"SECRET sentinel")
+    elif preexisting_kind == "file":
+        candidate.write_bytes(b"SECRET sentinel")
+    elif preexisting_kind == "symlink":
+        candidate.symlink_to(sentinel)
+    else:
+        os.mkfifo(candidate, 0o600)
+
+    with pytest.raises(_LiveHarnessFailure) as raised:
+        _write_live_claude_permission_settings(root)
+
+    assert json.loads(str(raised.value)) == {
+        "stage": "live_acceptance",
+        "code": "claude_permission_settings_invalid",
+    }
+    assert sentinel.read_bytes() == b"SECRET sentinel"
+    if preexisting_kind == "directory":
+        assert (candidate / "keep").read_bytes() == b"SECRET sentinel"
+    elif preexisting_kind == "file":
+        assert candidate.read_bytes() == b"SECRET sentinel"
+    assert "SECRET" not in str(raised.value)
+    assert str(root) not in str(raised.value)
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    (
+        "content",
+        "file-mode",
+        "file-inode",
+        "file-symlink",
+        "file-fifo",
+        "extra-entry",
+        "directory-mode",
+        "directory-inode",
+    ),
+)
+def test_live_permission_settings_seal_rejects_all_filesystem_drift(
+    tmp_path, mutation
+) -> None:
+    root, seal = _permission_settings_fixture(tmp_path)
+    directory = root / ".claude"
+    settings = directory / "settings.local.json"
+    external = tmp_path / "external-secret"
+    external.write_bytes(CLAUDE_PERMISSION_SETTINGS_BYTES)
+
+    if mutation == "content":
+        settings.write_bytes(b'{"permissions":{"defaultMode":"auto"}}\n')
+        settings.chmod(0o600)
+    elif mutation == "file-mode":
+        settings.chmod(0o644)
+    elif mutation == "file-inode":
+        replacement = directory / "replacement"
+        replacement.write_bytes(CLAUDE_PERMISSION_SETTINGS_BYTES)
+        replacement.chmod(0o600)
+        replacement.replace(settings)
+    elif mutation == "file-symlink":
+        settings.unlink()
+        settings.symlink_to(external)
+    elif mutation == "file-fifo":
+        settings.unlink()
+        os.mkfifo(settings, 0o600)
+    elif mutation == "extra-entry":
+        (directory / "unexpected").write_bytes(b"SECRET")
+    elif mutation == "directory-mode":
+        directory.chmod(0o755)
+    else:
+        replacement = root / "replacement-claude"
+        replacement.mkdir(mode=0o700)
+        replacement_settings = replacement / "settings.local.json"
+        replacement_settings.write_bytes(CLAUDE_PERMISSION_SETTINGS_BYTES)
+        replacement_settings.chmod(0o600)
+        directory.rename(root / "old-claude")
+        replacement.rename(directory)
+
+    _assert_permission_settings_failure(root, seal)
+    assert external.read_bytes() == CLAUDE_PERMISSION_SETTINGS_BYTES
+
+
+def test_live_permission_settings_owner_drift_fails_closed(
+    tmp_path, monkeypatch
+) -> None:
+    root, seal = _permission_settings_fixture(tmp_path)
+    real_uid = os.getuid()
+    monkeypatch.setattr(os, "getuid", lambda: real_uid + 1)
+
+    _assert_permission_settings_failure(root, seal)
+
+
+def test_live_permission_settings_seal_and_diagnostic_are_path_free(
+    tmp_path
+) -> None:
+    root, seal = _permission_settings_fixture(tmp_path)
+
+    rendered = repr(seal)
+    assert str(root) not in rendered
+    assert ".claude" not in rendered
+    assert "settings.local.json" not in rendered
+    assert "defaultMode" not in rendered
+    assert CLAUDE_PERMISSION_SETTINGS_BYTES.decode().strip() not in rendered
+
+    (root / ".claude" / "settings.local.json").write_bytes(b"SECRET")
+    _assert_permission_settings_failure(root, seal)
+
+
+def test_live_permission_settings_never_access_user_or_global_config(
+    tmp_path, monkeypatch
+) -> None:
+    root = tmp_path / "project"
+    root.mkdir()
+    user_config = tmp_path / "user-config"
+    user_config.mkdir()
+    sentinel = user_config / "settings.json"
+    sentinel.write_bytes(b"SECRET user configuration")
+    before = _tree_snapshot(user_config)
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(user_config))
+    monkeypatch.setattr(
+        Path,
+        "home",
+        classmethod(
+            lambda _cls: (_ for _ in ()).throw(
+                AssertionError("user home accessed")
+            )
+        ),
+    )
+
+    seal = _write_live_claude_permission_settings(root)
+    _verify_live_claude_permission_settings(root, seal)
+
+    assert _tree_snapshot(user_config) == before
+    assert sentinel.read_bytes() == b"SECRET user configuration"
+
+
+def test_live_permission_settings_partial_write_fails_closed(
+    tmp_path, monkeypatch
+) -> None:
+    root = tmp_path / "project"
+    root.mkdir()
+    real_write = os.write
+    calls = 0
+
+    def interrupted_write(descriptor, payload):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return real_write(descriptor, payload[:4])
+        return 0
+
+    monkeypatch.setattr(os, "write", interrupted_write)
+
+    with pytest.raises(_LiveHarnessFailure) as raised:
+        _write_live_claude_permission_settings(root)
+
+    assert json.loads(str(raised.value)) == {
+        "stage": "live_acceptance",
+        "code": "claude_permission_settings_invalid",
+    }
+    assert "settings write" not in str(raised.value)
+    assert str(root) not in str(raised.value)
 
 
 def test_live_config_rejects_unvalidated_model_seal_before_write(

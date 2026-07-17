@@ -2,7 +2,45 @@
 
 Updated: 2026-07-17
 
-## Active goal — close M2c through preview-consumption convergence
+## Active goal — close M2c through project-local Claude permission authority
+
+The separately authorized live Mission on frozen
+`79d8160eb60ad4e8bfb37ff43615f099afd9edc5`, Leader `gpt-5.5`, and authority
+digest `sha256:b194c3b4ccbfa3ba2b534bf9cb51e59ecbc077e2576c6eea8ba343f26cc83ffa`
+ran exactly once and failed `1 failed in 110.98s` as
+`first_attempt_terminal_contract_invalid`. Step 1 reached a succeeded Claude
+ACP attempt and one validated Worker reply, but zero permission requests and
+zero handoffs; no later stage was admitted. The disposable checkout/project
+and all process, daemon, ACP, tmux, worktree, and temporary-root residues were
+removed. This SHA/model/digest authority is exhausted and must never be
+retried.
+
+Root-cause evidence shows that the installed Claude ACP adapter derives session
+permission mode from merged Claude settings. The existing Phase 2 real ACP
+fixture pins disposable project-local `permissions.defaultMode=default`, while
+the M2c harness did not, allowing an unrelated user-level permissive mode to
+bypass the permission bridge. No user settings content was read or changed.
+The approved harness-only correction now creates exact bytes
+`{"permissions":{"defaultMode":"default"}}\n` at
+`.claude/settings.local.json`, with `.claude` mode `0700` and the regular file
+mode `0600`. Exclusive/no-follow creation returns a path-free identity/content
+seal. The harness revalidates it before Mission creation, around both human
+permission confirmations, around takeover/return-control, and after Mission
+completion. Pre-existing paths and content/mode/inode/kind/symlink/directory/
+extra-entry drift fail closed as `claude_permission_settings_invalid`; the
+helper never reads `Path.home()` or `CLAUDE_CONFIG_DIR`.
+
+The independent RED commit reproduced the missing file. GREEN then exposed
+and fixed one FIFO edge where file kind had to be rejected before `open()`.
+Focused permission/setup coverage passes `28 passed`; complete non-live M2c
+passes `337 passed, 2 skipped in 95.98s`; product/Conversation/contract/provider
+regressions pass `851 passed in 4.28s`. Compile, diff, `src/agentdeck/**`
+zero-change, process, worktree, temporary-root, and tracked-runtime-state audits
+pass. Documentation and the final frozen implementation commit are the current
+gate. After freeze, two fresh complete suites and a new installed-input audit
+are required before one newly authorized strict v6 preflight. No new
+preflight/live authority exists yet. M2c remains **BLOCKED** and M3 remains
+locked.
 
 The exhausted authority at frozen `284d8f62...` reached Mission Preview and
 daemon admission, then the live harness read the consume ledger before the

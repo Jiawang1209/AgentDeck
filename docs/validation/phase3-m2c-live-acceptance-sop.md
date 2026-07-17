@@ -26,6 +26,25 @@ their validated executables. Claude Agent ACP uses a specialized launcher that
 revalidates its complete package and executes its fixed entrypoint through the
 explicit sealed Node executable; it never resolves Node through ambient PATH.
 
+Before any Leader or ACP process starts, the harness exclusively creates the
+disposable-project authority `.claude/settings.local.json` with exact bytes
+`{"permissions":{"defaultMode":"default"}}\n`. `.claude` must be a newly
+created non-symlink directory owned by the current user with mode `0700`; the
+settings path must be a newly created regular non-symlink file owned by the
+current user with mode `0600`. Any pre-existing path, unexpected entry, short
+write, wrong kind/owner/mode, content change, inode replacement (even with
+identical bytes), symlink substitution, or directory replacement fails closed
+as `claude_permission_settings_invalid`.
+
+Successful creation returns only an in-memory path-free identity/content seal.
+The harness revalidates the seal before Mission creation, after the first
+permission becomes durable, before and after both explicit confirmations,
+around takeover/return-control, and after Mission completion. It does not
+repair or recreate drift. This project-local authority is removed with the
+whole disposable project and is never copied into evidence. The helper must
+not read, report, or change the user's Claude settings, home directory, or
+`CLAUDE_CONFIG_DIR`; those remain outside this acceptance authority.
+
 ## 1. Freeze and inspect the checkout
 
 Run from the AgentDeck implementation checkout:

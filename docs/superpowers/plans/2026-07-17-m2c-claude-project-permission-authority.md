@@ -18,10 +18,10 @@ unchanged.
 
 - Modify: `tests/test_m2c_live_acceptance.py`
 
-- [ ] Add a test proving live configuration must create exact project-local
+- [x] Add a test proving live configuration must create exact project-local
   `permissions.defaultMode=default` bytes and return a verifiable seal.
-- [ ] Run only that test; record the current missing-file/return failure.
-- [ ] Commit the RED test without implementation.
+- [x] Run only that test; record the current missing-file/return failure.
+- [x] Commit the RED test without implementation.
 
 ## Task 2: Implement exact creation and sealing
 
@@ -29,15 +29,15 @@ unchanged.
 
 - Modify: `tests/test_m2c_live_acceptance.py`
 
-- [ ] Add a fixed byte constant and a path-free
+- [x] Add a fixed byte constant and a path-free
   `_ClaudePermissionSettingsSeal`.
-- [ ] Create `.claude` mode 0700 and `settings.local.json` mode 0600 with
+- [x] Create `.claude` mode 0700 and `settings.local.json` mode 0600 with
   exclusive no-follow writes.
-- [ ] Read/seal through a bounded no-follow descriptor and verify path/descriptor
+- [x] Read/seal through a bounded no-follow descriptor and verify path/descriptor
   identity before and after hashing.
-- [ ] Reject pre-existing paths, wrong owner/mode/kind, extra entries, partial
+- [x] Reject pre-existing paths, wrong owner/mode/kind, extra entries, partial
   writes, and all drift as `claude_permission_settings_invalid`.
-- [ ] Make `_write_live_config()` return the seal after exact creation.
+- [x] Make `_write_live_config()` return the seal after exact creation.
 
 ## Task 3: Bind live boundaries and close tests
 
@@ -45,18 +45,18 @@ unchanged.
 
 - Modify: `tests/test_m2c_live_acceptance.py`
 
-- [ ] Revalidate the seal before Mission creation, after first permission,
+- [x] Revalidate the seal before Mission creation, after first permission,
   around both confirmations, around takeover/return-control, and after Mission
   completion.
-- [ ] Cover content/mode/inode/kind/symlink/directory/extra-entry drift and
+- [x] Cover content/mode/inode/kind/symlink/directory/extra-entry drift and
   identical-byte replacement.
-- [ ] Prove pre-existing inputs are not overwritten and user/global settings
+- [x] Prove pre-existing inputs are not overwritten and user/global settings
   paths are never accessed.
-- [ ] Prove the seal and diagnostics contain no absolute path, settings content,
+- [x] Prove the seal and diagnostics contain no absolute path, settings content,
   prompt, auth value, or raw adapter output.
-- [ ] Preserve existing whole-parent cleanup tests for setup failure and
+- [x] Preserve existing whole-parent cleanup tests for setup failure and
   interruption.
-- [ ] Run focused settings/live-setup tests until GREEN and commit.
+- [x] Run focused settings/live-setup tests until GREEN and commit.
 
 ## Task 4: Synchronize durable documentation
 
@@ -68,18 +68,18 @@ unchanged.
 - Modify: `HISTORY.md`
 - Modify: this plan
 
-- [ ] Document exact project-local bytes/modes/seal and the prohibition on
+- [x] Document exact project-local bytes/modes/seal and the prohibition on
   reading or changing user settings.
-- [ ] Record the exhausted old live authority and new frozen-SHA requirement.
-- [ ] Keep authority v3/preflight v6 semantics explicit.
+- [x] Record the exhausted old live authority and new frozen-SHA requirement.
+- [x] Keep authority v3/preflight v6 semantics explicit.
 - [ ] Commit user-visible acceptance behavior with HISTORY.
 
 ## Task 5: Verify and freeze
 
-- [ ] Run focused permission-settings and strict/live-harness coverage.
-- [ ] Run the complete M2c file.
-- [ ] Run product/Conversation/contract/provider regressions.
-- [ ] Run compile, diff, `src/agentdeck/**` zero-change, leakage, process,
+- [x] Run focused permission-settings and strict/live-harness coverage.
+- [x] Run the complete M2c file.
+- [x] Run product/Conversation/contract/provider regressions.
+- [x] Run compile, diff, `src/agentdeck/**` zero-change, leakage, process,
   daemon, tmux, worktree, and temporary-root audits.
 - [ ] Commit the frozen implementation and record its full SHA.
 

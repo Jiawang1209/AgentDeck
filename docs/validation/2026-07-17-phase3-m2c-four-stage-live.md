@@ -239,6 +239,46 @@ settings content was read or changed. A new minimal design/TDD/freeze cycle must
 pin and verify the disposable project's permission mode before any new real
 authority is established.
 
+## Project-local Claude permission authority candidate
+
+The approved correction is harness-only. Before any Leader or ACP process is
+started inside the disposable live project, it exclusively creates exactly:
+
+```text
+.claude/                         directory mode 0700
+.claude/settings.local.json     regular non-symlink file mode 0600
+```
+
+The file bytes are exactly
+`{"permissions":{"defaultMode":"default"}}\n`. Creation and verification
+never read or modify user/global Claude settings, never consult `Path.home()`
+or `CLAUDE_CONFIG_DIR`, and never persist a path or settings content. The
+in-memory seal contains only directory/file identity, mode, size, owner, and
+file SHA-256 facts. It is revalidated before Mission creation, around both
+permission confirmations, around takeover/return-control, and after Mission
+completion. Pre-existing paths and every tested content, mode, inode, kind,
+symlink, directory, or extra-entry drift stop with the single compact code
+`claude_permission_settings_invalid`.
+
+The RED commit proved the setting was absent. GREEN also exposed a FIFO
+replacement that would block if opened before checking kind; the validator now
+rejects non-regular files before descriptor open. Current deterministic
+evidence is:
+
+- focused permission/setup coverage: `28 passed, 311 deselected in 0.68s`;
+- complete non-live M2c: `337 passed, 2 skipped in 95.98s`;
+- product/Conversation/contract/provider regressions: `851 passed in 4.28s`;
+- compile, diff, current-slice `src/agentdeck/**` zero-change, process,
+  worktree, temporary-root, and tracked runtime-state audits: PASS.
+
+Tool authority remains `m2c-tool-authority/v3`; designated preflight remains
+`m2c-live-preflight/v6`. The exhausted `79d8160e...` authority cannot be
+reused. The candidate must be committed and frozen, pass two complete suites
+in fresh detached worktrees, and undergo a fresh installed-input audit before
+a human may authorize one new strict v6 preflight. No preflight or live run has
+been executed for this candidate. M2c remains **BLOCKED** and M3 remains
+locked.
+
 ## Frozen authority
 
 - AgentDeck implementation:
