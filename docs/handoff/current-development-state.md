@@ -39,6 +39,16 @@ commit freezes the implementation; two fresh detached-worktree full suites on
 its unchanged SHA remain before the one real v4 preflight. No real preflight,
 live Mission, provider, installed ACP/tmux execution, or daemon has run.
 
+The new implementation authority is frozen at
+`582fc2c7f3b344b5310d254d017e461d68f806f6`. Two fresh detached worktrees on
+that unchanged SHA passed the complete suite: `4357 passed, 3 skipped in
+199.07s` and `4357 passed, 3 skipped in 200.45s`. The skips were exactly the
+opt-in real ACP, designated M2c preflight, and real four-stage Mission nodes.
+Both worktrees were removed; implementation/SOP remained byte-unchanged after
+freeze; process and temporary-root audits were empty. The next action is the
+one real v4 read-only preflight using Leader `gpt-5.5` and the installed
+metadata-selected package entrypoint.
+
 The native-schema provenance persistence correction is implemented and frozen
 at `7a76ada81938be3ba0720a7c2f5a540b4beebb3e`. Semantic Mission previews now
 preserve the exact validated eleven-field generation envelope. StateStore

@@ -356,7 +356,7 @@ Record focused results in HISTORY/handoff, commit documentation, and record the
 returned SHA as `FROZEN_SHA`. No implementation edit may follow without a new
 freeze and restarted suites.
 
-- [ ] **Step 3: Run full suite twice on the unchanged SHA**
+- [x] **Step 3: Run full suite twice on the unchanged SHA**
 
 Create two fresh detached worktrees and use their absolute source paths:
 
@@ -377,7 +377,7 @@ git worktree remove /tmp/agentdeck-m2c-entrypoint-suite-2
 Both suites must pass with only known opt-in skips. Remove each worktree and
 audit pytest/daemon processes and M2c temporary roots.
 
-- [ ] **Step 4: Commit verification evidence**
+- [x] **Step 4: Commit verification evidence**
 
 Update HISTORY/handoff/plan with exact SHA, counts, durations, skip identities,
 scope/leakage/cleanup results, and confirm that no real preflight/live ran.

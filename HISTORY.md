@@ -4,6 +4,19 @@
 
 ## 2026-07-17
 
+### Verify frozen M2c ACP entrypoint authority on two complete suites
+
+- Froze implementation authority at
+  `582fc2c7f3b344b5310d254d017e461d68f806f6`. Two fresh detached worktrees on
+  that unchanged SHA passed `4357 passed, 3 skipped in 199.07s` and `4357
+  passed, 3 skipped in 200.45s`.
+- The three skips were exactly the opt-in real ACP, designated M2c preflight,
+  and real four-stage Mission nodes. Both verification worktrees were removed;
+  implementation/SOP diff from the frozen SHA is empty, and process/resource
+  audits found no current pytest/AgentDeck daemon or M2c temporary root.
+- Deterministic implementation is verified. M2c remains **BLOCKED** only until
+  the one real v4 preflight and same-authority four-stage live Mission pass.
+
 ### Freeze the M2c metadata-selected ACP entrypoint implementation
 
 - Completed the harness-only npm metadata correction without changing
