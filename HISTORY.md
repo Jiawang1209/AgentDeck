@@ -4,6 +4,22 @@
 
 ## 2026-07-17
 
+### Clarify the Hive-informed product north star
+
+- Added Hive as a first-class experience and information-architecture
+  reference for a browser-native local workspace, visible Leader/Worker
+  terminals, team cards, task graphs, dispatch/report timelines, restart,
+  reconnect, notification, and human-intervention affordances.
+- Made AgentDeck's own communication ledger and orchestration kernel the sole
+  authority for Mission, task, attempt, permission, reply, handoff, and
+  acceptance facts. ACP is the preferred structured transport; CLI/PTY and
+  tmux remain governed fallbacks and observation/takeover surfaces.
+- Explicitly rejected adopting Hive's private `team` protocol, bypass-oriented
+  permission defaults, task Markdown as scheduler truth, PTY output as
+  completion proof, or any parallel communication authority. A future GUI must
+  render ProjectView, contracts, and ledger evidence rather than infer state
+  from terminal pixels.
+
 ### Design bounded sequential ACP permission acceptance for M2c
 
 - Replaced the live harness assumption of exactly two Mission permissions with

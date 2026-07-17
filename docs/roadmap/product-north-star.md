@@ -1,6 +1,6 @@
 # AgentDeck Product North Star
 
-Updated: 2026-07-14
+Updated: 2026-07-17
 
 ## Phase 3 M2 delivery status
 
@@ -19,7 +19,11 @@ AgentDeck is a local-first multi-agent workbench. A user should be able to enter
 
 The product north star is:
 
-> AgentDeck combines Hermes-like natural interaction, ACP-native agent communication, CCB-like visible and controllable multi-agent collaboration, and a future WispTerm-class workspace experience with AgentDeck's stronger Mission orchestration, governance, audit, and recovery core.
+> AgentDeck combines Hermes-like natural interaction, an AgentDeck-owned
+> communication and orchestration kernel, ACP-native structured transport,
+> CCB-like visible and controllable multi-agent collaboration, Hive-like
+> browser-workbench clarity, and a future WispTerm-class workspace experience
+> with stronger Mission governance, audit, and recovery.
 
 AgentDeck is not a terminal multiplexer, a thin multi-provider chat UI, or a wrapper around one model. Its durable value is the control plane that coordinates several real agents as a recoverable team.
 
@@ -59,11 +63,14 @@ AgentDeck keeps a stricter boundary: learning may automatically propose, preview
 ### From ACP
 
 - Standard session lifecycle, prompts, streamed updates, tool calls, and permission requests.
-- Structured communication instead of terminal-screen inference.
+- Structured transport instead of terminal-screen inference.
 - Portable agent integrations across clients and providers.
 - A path for AgentDeck to act both as an ACP client and, later, as an ACP agent that exposes an entire governed Mission team.
 
-ACP replaces fragile Worker communication mechanisms. It does not replace Mission planning, scheduling, governance, or audit.
+ACP is the preferred standard transport for compatible agents. It does not
+own Mission identity, task state, permission authority, handoff validity,
+scheduling, governance, or audit. Those facts remain authoritative in
+AgentDeck's own communication ledger and orchestration kernel.
 
 ### From CCB
 
@@ -75,6 +82,24 @@ ACP replaces fragile Worker communication mechanisms. It does not replace Missio
 
 AgentDeck keeps stronger frozen-Mission, approval, lineage, and recovery semantics. Terminal state is an observation surface, not the protocol authority.
 
+### From Hive
+
+- A browser-native local workspace that makes one Orchestrator and many real
+  CLI Workers immediately understandable.
+- Visible Leader and Worker terminals, team cards, role presets, task graphs,
+  dispatch/report timelines, notifications, restart, and reconnect affordances.
+- A product experience in which users can watch work, inspect a Worker, and
+  intervene without reducing the system to a terminal multiplexer.
+- A durable local runtime that keeps PTY-backed work available when the browser
+  view disconnects.
+
+Hive is an experience and information-architecture reference, not AgentDeck's
+communication authority. AgentDeck does not adopt Hive's private `team`
+protocol, bypass-oriented permission defaults, task Markdown as scheduler
+truth, or PTY output as completion proof. Any similar surface is independently
+implemented over AgentDeck contracts, ProjectView, event ledger, permission
+lineage, and recovery state.
+
 ### From WispTerm
 
 - A future cross-platform workspace with terminals, tabs, splits, files, diffs, artifacts, Markdown, images, PDFs, browser panels, remote projects, and history recovery.
@@ -85,31 +110,38 @@ This is a future client experience, not the current core implementation. AgentDe
 ## Architecture principles
 
 ```text
-Human / CLI / TUI / Desktop / future ACP client
-                       |
-              AgentDeck Frontdesk
-                       |
-        Mission / Planner / Orchestrator
-                       |
- Approval / Policy / Skill / Memory / Ledger / Recovery
-                       |
-          Protocol-Native Runtime Kernel
-        /              |              \
-   ACP native      ACP adapter      tmux fallback
-        \              |              /
-       Codex / Claude / Gemini / OpenCode / future agents
+Human / CLI / TUI / Browser Workspace / Desktop / future ACP client
+                              |
+                     AgentDeck Frontdesk
+                              |
+               Mission / Planner / Orchestrator
+                              |
+       AgentDeck Communication Ledger / Governance / Recovery
+                              |
+                  Protocol-Native Runtime Kernel
+                              |
+                     Transport Router
+          /                   |                    \
+      ACP native       CLI / PTY adapter       tmux fallback
+          \                   |                    /
+          Codex / Claude / Gemini / OpenCode / future agents
 ```
 
 1. **Project first, globally navigable.** Project state is isolated; the global Frontdesk stores only user-level preferences and a project index.
 2. **One project daemon is authoritative.** Interactive clients may disconnect. Confirmed Missions continue in the background.
 3. **One confirmation covers one frozen scope.** Ordinary steps do not repeatedly interrupt the user. New permission, plan drift, risk escalation, or runtime failure pauses the Mission.
 4. **Sessions, not panes, identify Workers.** A stable `session_id` survives transport and UI changes. A `pane_id` is an optional observation binding.
-5. **ACP is the preferred transport.** ACP adapters bridge compatible CLIs during migration. tmux remains a visible fallback and takeover surface.
-6. **All facts enter one ledger.** Prompts, updates, tools, permissions, replies, artifacts, and failures are append-only evidence projected through ProjectView.
-7. **Context is not authority.** Prompts, skills, memory, role packs, and ACP metadata cannot expand permissions.
-8. **Headless core, replaceable clients.** CLI, TUI, desktop, remote, and IDE clients consume the same contracts and event stream.
-9. **No big-bang rewrite.** Internal V2 refactoring is allowed; user projects, history, and commands receive previewed, backed-up, reversible migration.
-10. **Evidence before product claims.** Every phase ends with contracts, failure tests, crash recovery, and a real multi-agent Golden Demo.
+5. **AgentDeck owns communication truth.** Mission, task, attempt, permission,
+   reply, handoff, and acceptance facts belong to one AgentDeck ledger. No
+   transport adapter may create a parallel authority system.
+6. **ACP is the preferred transport.** ACP adapters bridge compatible CLIs
+   during migration. CLI/PTY and tmux remain governed fallbacks, observation
+   surfaces, and takeover paths for agents without ACP support.
+7. **All facts enter one ledger.** Prompts, updates, tools, permissions, replies, artifacts, and failures are append-only evidence projected through ProjectView.
+8. **Context is not authority.** Prompts, skills, memory, role packs, and ACP metadata cannot expand permissions.
+9. **Headless core, replaceable clients.** CLI, TUI, browser, desktop, remote, and IDE clients consume the same contracts and event stream. The GUI renders authority; it does not infer it from terminal pixels.
+10. **No big-bang rewrite.** Internal V2 refactoring is allowed; user projects, history, and commands receive previewed, backed-up, reversible migration.
+11. **Evidence before product claims.** Every phase ends with contracts, failure tests, crash recovery, and a real multi-agent Golden Demo.
 
 ## LLM setup
 
@@ -139,12 +171,17 @@ When the user returns, AgentDeck summarizes completed turns, current work, failu
 4. Add the project daemon and default `agentdeck` conversation.
 5. Run a confirmed Codex-and-Claude Mission over ACP with permission bridging and recovery.
 6. Add global project roaming and opt-in notifications.
-7. Build a CCB/WispTerm-class observable workspace client after the headless core is stable.
+7. Build a Hive-clear, CCB-visible, WispTerm-class observable workspace client
+   after the headless core is stable, backed exclusively by AgentDeck contracts
+   and ledger facts.
 
 ## Non-goals for the current product line
 
 - Building a terminal emulator or forking WispTerm.
 - Replacing AgentDeck with a thin ACP chat client.
+- Copying CCB or Hive communication protocols into a second execution system.
+- Treating a private `team` command, task Markdown, or PTY text as Mission
+  authority.
 - Removing deterministic CLI primitives.
 - Silent login, trust, permission escalation, skill installation, or memory writes.
 - Depending on one model provider.
@@ -153,4 +190,11 @@ When the user returns, AgentDeck summarizes completed turns, current work, failu
 
 ## Product success test
 
-From a fresh project, a user can run `agentdeck`, select or skip a detected model, describe a multi-agent objective, review one Mission, confirm once, close the terminal, and later return to a complete or safely paused result. Codex and Claude communicate through structured sessions, every step is auditable, no new authority is inferred, and the same state is visible through natural language, CLI contracts, and the optional live workspace.
+From a fresh project, a user can run `agentdeck`, select or skip a detected
+model, describe a multi-agent objective, review one Mission, confirm once,
+close the terminal, and later return to a complete or safely paused result.
+Codex and Claude communicate through AgentDeck-governed structured sessions;
+ACP is preferred and CLI/PTY or tmux remains an explicit fallback. Every step
+is auditable, no new authority is inferred, and the same state is visible
+through natural language, CLI contracts, and an optional live browser
+workspace where the user can watch, inspect, take over, and return control.
