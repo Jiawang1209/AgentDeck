@@ -69,6 +69,15 @@
   next cycle will classify only the safe underlying `AcpTransport.prompt()`
   failure category; raw adapter/provider output remains prohibited.
 
+### Identify missing Claude authentication behind ACP prompt ambiguity
+
+- A read-only, redacted CLI audit found `loggedIn=false`, `authMethod=none`, and
+  no supported Anthropic API/auth/OAuth environment credential. No identity,
+  token, config content, or path was retained.
+- This explains ACP session admission followed by prompt-stage ambiguity before
+  permission. No login or global mutation was attempted. Human authentication
+  is required before a new auth-aware preflight/live cycle.
+
 ### Design the M2c preview-consumption convergence repair
 
 - Approved a harness-only correction for the observed admission/consumption

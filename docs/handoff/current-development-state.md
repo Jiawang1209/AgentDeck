@@ -88,6 +88,16 @@ cycle must classify the safe underlying ACP prompt failure (for example closed
 timeout/EOF/protocol/process/auth categories) without retaining stderr, Prompt,
 paths, or provider output. M2c remains **BLOCKED** and M3 remains locked.
 
+The follow-up read-only auth audit found the concrete external blocker: the
+exact configured Claude CLI currently reports `loggedIn=false`,
+`authMethod=none`, and no supported Anthropic API/auth/OAuth environment
+credential is present. ACP session admission therefore succeeds locally, but
+the first provider prompt has no usable authentication and terminalizes before
+permission. No account identity, token, config content, login, or global change
+was performed. Human Claude login is now required. After login, continue with
+an auth-readiness preflight design/TDD cycle so logged-out state becomes a
+preflight blocker instead of consuming live authority.
+
 ### Historical M2c authority cycles
 
 Before consuming the authorized designated preflight for frozen implementation

@@ -153,6 +153,18 @@ audits were empty. This authority is exhausted. M2c remains **BLOCKED** and M3
 remains locked pending a new minimal cycle that classifies the safe underlying
 `AcpTransport.prompt()` failure without retaining raw adapter output.
 
+A follow-up read-only authentication audit then identified the external cause:
+the exact configured Claude CLI reported `loggedIn=false` and
+`authMethod=none`; no supported Anthropic API/auth/OAuth environment credential
+was present. No account identity, token, configuration content, or path was
+retained. This explains why ACP session admission could succeed while the first
+provider prompt terminalized before any permission request.
+
+No login or global authentication mutation was attempted. A human must restore
+Claude authentication first. After that, the next repair cycle must add a
+read-only, closed auth-readiness gate so version/help probes can never again
+claim a logged-out Claude Worker is ready.
+
 ## Frozen authority
 
 - AgentDeck implementation:
