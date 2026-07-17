@@ -26,6 +26,12 @@
   migration design. This is a documentation-only architecture decision and
   does not implement the daemon, kernel, adapters, transports, migration, or
   learning behavior.
+- Closed the authority boundaries so pure Mission/Governance/Verification
+  services only return typed decisions to the sole-writer daemon, asynchronous
+  adapter events join its serialized mutation loop, the local control endpoint
+  is owner-only/authenticated with actor provenance, and each legacy command
+  cuts over with no local-write or direct-execution fallback. This is a
+  documentation clarification, not an implementation claim.
 
 ### Freeze the AgentDeck V1 product requirements
 

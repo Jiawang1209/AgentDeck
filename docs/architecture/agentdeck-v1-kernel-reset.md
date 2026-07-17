@@ -40,19 +40,24 @@ flowchart LR
     K["Mission Engine"]
     G["Governance"]
     V["Verification"]
+    P["State persistence port"]
     S["Event Ledger + durable State"]
     X["Agent adapters + transports"]
+    E["Inbound adapter-event port"]
 
     C -->|commands with id and expected revision| A
     A -->|validated command| D
-    D --> K
-    D --> G
-    D --> V
-    K -->|intents and facts| S
-    G -->|decisions and lineage| S
-    V -->|graded results| S
+    D -->|query or proposed transition| K
+    D -->|query or proposed transition| G
+    D -->|query or proposed transition| V
+    K -->|typed decision, fact, or proposed event| D
+    G -->|typed decision, fact, or proposed event| D
+    V -->|typed decision, fact, or proposed event| D
+    D -->|atomic append, apply, publish revision| P
+    P --> S
     D -->|effect intent| X
-    X -->|ordered outcome and evidence| D
+    X -->|asynchronous event| E
+    E -->|serialized validated input| D
     S -->|one coherent snapshot| A
     A -->|read-only ProjectView and event cursor| C
 ```
@@ -61,18 +66,21 @@ flowchart LR
 | --- | --- | --- |
 | Clients | Human interaction, rendering, command submission, reconnect cursor, and explicit confirm/deny/cancel/takeover actions | Product state writes, scheduling, completion, transport inference, or terminal-pixel truth |
 | ProjectView and application API | Stable command DTOs, validation, command identity/revision checks, read-only ProjectView projection, and compatibility facades | Independent state, execution, policy decisions, or direct adapter access |
-| ProjectDaemon | The serialized product command loop, sole write authority, Task scheduling, recovery orchestration, leases, and event publication | Model-authored policy, client rendering, transport-specific semantics, or arbitrary acceptance overrides |
-| Mission Engine | Frozen MissionVersion interpretation, dependency-aware Task DAG progression, Attempt creation, Handoffs, and bounded recovery proposals | Permission expansion, confirmation, direct effects, or Verification grades |
-| Governance | AuthorizationEnvelope evaluation, permission lineage, scope and budget gates, ordered-route eligibility, and pause/failure classification | Task implementation, model selection by guess, or completion |
-| Verification | Deterministic evaluation of durable Evidence against frozen acceptance criteria and `pass`/`fail`/`unavailable` grades | Worker self-attestation, reviewer authority, transport status, or amendment approval |
-| Event Ledger and durable State | Append-only intent/outcome facts, current materialized state, revisions, idempotency records, cursors, provenance, and recovery evidence | Policy invention, scheduling, transport calls, or client-specific projections |
-| Agent adapters and transports | Protocol translation, session/effect execution, ordered progress/result events, and transport evidence | Mission semantics, authorization, fallback choice, Task completion, or state transitions |
+| ProjectDaemon | The serialized command and inbound-event mutation loop, sole write authority, Task scheduling, recovery orchestration, leases, adapter-event validation, persistence calls, and event publication | Model-authored policy, client rendering, transport-specific semantics, or arbitrary acceptance overrides |
+| Mission Engine | Pure interpretation of frozen MissionVersions, dependency-aware Task DAG progression, Attempt/Handoff decisions, and bounded recovery proposals returned to the daemon | Append/apply/repository access, permission expansion, confirmation, direct effects, or Verification grades |
+| Governance | Pure evaluation of AuthorizationEnvelopes, permission lineage, scope/budget gates, ordered-route eligibility, and pause/failure classification returned to the daemon | Append/apply/repository access, Task implementation, model selection by guess, or completion |
+| Verification | Pure deterministic evaluation of durable Evidence against frozen acceptance criteria, returning `pass`/`fail`/`unavailable` grades to the daemon | Append/apply/repository access, Worker self-attestation, reviewer authority, transport status, or amendment approval |
+| State persistence port, Event Ledger, and durable State | Atomic append/apply/revision publication requested only by the daemon; append-only intent/outcome facts, current materialized state, revisions, idempotency records, cursors, provenance, and recovery evidence | Direct calls from kernel decision services or adapters, policy invention, scheduling, transport calls, or client-specific projections |
+| Agent adapters and transports | Protocol translation, session/effect execution, asynchronous ordered progress/result events, and transport evidence submitted through the inbound adapter-event port | State/repository writes, Mission semantics, authorization, fallback choice, Task completion, or state transitions |
 
-The daemon invokes the Mission Engine, Governance, and Verification as kernel
-services. Those services return deterministic decisions or proposed effects;
-the daemon alone records the resulting transition. Adapters report facts. They
-never turn a provider response, process exit, or terminal marker into product
-truth.
+The daemon invokes the Mission Engine, Governance, and Verification as pure
+domain/application decision services. They return typed decisions, facts, or
+proposed events and have no append, apply, repository, or publication
+capability. Only the ProjectDaemon calls the state persistence port to
+atomically append accepted events, apply current state, and publish the new
+revision. The daemon alone records the resulting transition. Adapters report
+facts through a port and cannot write state. They never turn a provider
+response, process exit, or terminal marker into product truth.
 
 ## Domain model and invariants
 
@@ -129,6 +137,31 @@ resulting events. Replaying a completed `command_id` returns its recorded
 outcome; reusing it with different input fails closed; a stale expected
 revision returns a conflict and the current revision. This makes reconnect and
 client retry idempotent without making effects implicitly safe to repeat.
+
+The project daemon control endpoint is local owner-only and authenticated. The
+exact Unix socket permissions, credential exchange, and peer-identity mechanics
+are deferred to P1, but filesystem locality alone is not authentication.
+Confirmation, Mission Amendment, cancel, takeover, return-control, shutdown,
+permission, and every other explicit-human mutation command retain actor
+provenance and pass command authorization before entering the mutation loop.
+Read-only observation is distinct from mutation authority.
+
+The ProjectDaemon also owns one inbound adapter-event port. Every asynchronous
+Worker or transport event carries a stable `adapter_event_id`; exact Mission,
+MissionVersion, Task, Attempt, and AgentSession lineage; per-session and
+per-Attempt ordering information; event kind; and a payload integrity identity.
+The wire schema is deferred, but these facts are mandatory at the boundary.
+Adapters and transports cannot write state or apply a transition themselves.
+
+Inbound adapter events enter the same serialized daemon mutation loop as
+client commands. The daemon validates event identity, lineage, ordering, kind,
+and integrity; deduplicates replays; and rejects or safely holds gaps,
+out-of-order events, and conflicting identities for reconciliation. It then
+persists the accepted event and resulting state transition atomically through
+the state persistence port. Duplicate valid events are idempotent. Stale
+terminal, permission, or Evidence events remain audit observations and cannot
+reactivate terminal work, repeat a permission transition, double-apply an
+effect, or duplicate Evidence credit.
 
 The daemon enforces one running Mission per project. It may schedule multiple
 ready Tasks from that Mission when the DAG, file/semantic scope, permissions,
@@ -269,7 +302,8 @@ State classification carries the PRD semantics unchanged:
 
 1. terminal `completed`, `failed`, and `cancelled` states are absorbing;
 2. all simultaneously active durable facts are evaluated in one coherent
-   snapshot, and same-scope reasons are all retained;
+   snapshot, and every fact/reason is retained even when a higher-precedence
+   fact determines the effective state and scope;
 3. terminal-failure facts cannot be masked by actionable pauses, and
    Mission-wide authority/project-truth blockers outrank Task-local blockers,
    which outrank session-local takeover: **Mission > Task > Session**;
@@ -278,6 +312,13 @@ State classification carries the PRD semantics unchanged:
    or authority conflict;
 5. `running` or `recovering` is selected only for bounded recovery proven safe
    inside the envelope with no blocking fact at any higher precedence.
+
+Effective state and scope use precedence; they do not erase observations.
+The audit record and ProjectView retain every simultaneous durable fact and
+reason, including Task-local failures and session takeover facts masked by a
+selected Mission-wide pause or terminal state. Those lower-scope facts remain
+non-authoritative for the selected transition but available for explanation,
+reconciliation, and later classification from a new coherent snapshot.
 
 Thus takeover plus authorization revocation is one Mission-wide `paused`
 classification with zero new dispatch, while terminal `failed` plus a later
@@ -335,26 +376,35 @@ The target package responsibilities and allowed dependency direction are:
 clients (bare CLI, deterministic CLI, future UI)
     -> application (commands, queries, ProjectView projections)
         -> daemon (single command loop, scheduling, recovery coordination)
-            -> kernel
-                -> mission (MissionVersion, DAG, Attempt, Handoff)
+            -> pure decision services
+                -> mission (MissionVersion, DAG, Attempt, Handoff decisions)
                 -> governance (AuthorizationEnvelope, Permission, precedence)
-                -> verification (Evidence grading and completion)
+                -> verification (Evidence grading and completion decisions)
                 -> learning (review and suggestion proposals)
-            -> ports (ledger/state, Agent adapter, transport, clock/identity)
-                <- infrastructure (SQLite, ACP, CLI/PTY, tmux observation)
+            -> state persistence port (the only append/apply call path)
+            -> outbound effect and inbound adapter-event ports
+            -> clock/identity ports
+infrastructure (SQLite, ACP, CLI/PTY, tmux observation)
+    -> implements daemon-owned ports
 ```
 
-Domain and kernel modules depend only on domain types and ports. Infrastructure
-implements ports and depends inward; adapters never become imports inside the
-Mission Engine, Governance, or Verification. Application projections may read
-kernel state but cannot mutate it except by sending daemon commands.
+Domain models and pure decision services depend only on domain types. They do
+not receive a persistence port or repository and cannot append or apply state.
+The daemon depends on those services and on ports; infrastructure implements
+the ports and depends inward. Adapters never become imports inside the Mission
+Engine, Governance, or Verification. Application projections may read an
+authoritative snapshot but cannot mutate it except by sending daemon commands.
+Only the daemon may call the state persistence port, including when an accepted
+adapter event rather than a client command caused the proposed transition.
 
 Current code converges as follows:
 
 | Current surface | Target responsibility |
 | --- | --- |
-| `src/agentdeck/conversation/` | Preserve the sustained conversation and terminal UX, then route all commands/queries through the application service; remove any direct state or execution authority |
+| `src/agentdeck/cli.py` | Current legacy handlers directly call many `StateStore.record_*`/`append_event` methods, schedule work, approve, and send tmux input. Characterize and cut over each mutating command to the daemon; retain the CLI only as an application delegate and projection renderer |
+| `src/agentdeck/conversation/` | Preserve the sustained conversation and terminal UX, but remove current `conversation/session.py` direct `StateStore` creation/event writes and ensure Leader/runtime paths submit commands or adapter events through daemon-owned ports |
 | `src/agentdeck/daemon/` | Converge lifecycle, protocol, service, scheduler, governance, lease, recovery, and transports on the single `ProjectDaemon` command loop and explicit ports |
+| `src/agentdeck/daemon/client.py` | Remove unavailable-daemon local persistence such as `admit_confirmed_mission()` calling `record_mission_not_admitted()`; a daemon client reports deterministic unavailability and never becomes a fallback writer |
 | `src/agentdeck/state.py` | Place behind the ledger/state port as a migration source and compatibility implementation; it must not remain a parallel writer once the new authority is active |
 | `src/agentdeck/mission*.py`, `semantic_*.py`, `autonomy.py`, and `workflow.py` | Extract and converge MissionVersion, envelope, DAG, recovery, and application policies into deterministic kernel services rather than overlapping lifecycles |
 | `src/agentdeck/providers/` and `src/agentdeck/orchestration/` | Implement Leader proposal and Worker adapter ports with explicit Agent/model provenance; provider-specific planning cannot mutate state |
@@ -362,11 +412,32 @@ Current code converges as follows:
 | `src/agentdeck/runtime/tmux.py` and current daemon/conversation transport helpers | Separate governed CLI/PTY execution from tmux observation/takeover; neither may own Mission truth |
 | `src/agentdeck/contracts.py`, `models.py`, and CLI projection code | Continue ProjectView/contract compatibility while moving projection input to the one authoritative snapshot |
 
-Migration proceeds only by tested vertical slice: one public command or user
-journey enters the shared application service, mutates through the daemon,
-records facts through the state port, and projects through ProjectView before
-the next slice moves. Do not create empty package scaffolding, perform a
-big-bang module move, or keep old and new writers alive for convenience.
+Migration proceeds only by tested vertical slice and per-command cutover:
+
+1. characterize the legacy command's mutation, execution, failure, and
+   projection behavior with deterministic evidence;
+2. move its authoritative mutation behind a daemon command or inbound-event
+   boundary and the daemon-only state persistence call;
+3. rewire the legacy CLI or Conversation handler as a delegate to the shared
+   application service;
+4. verify the public command-to-daemon-to-ledger-to-ProjectView behavior,
+   including unavailable-daemon and replay cases;
+5. only then remove the direct state, scheduler, approval, or transport-input
+   path.
+
+Once a product fact is cut over, legacy code may not directly write that fact,
+send its transport input, schedule it, or approve it. If the daemon is
+unavailable, mutating commands refuse with a deterministic diagnostic; they
+never fall back to local state mutation or direct execution. Read-only status
+may use an explicitly designed safe projection when the daemon is unavailable,
+but that projection cannot mutate, reconcile, infer new truth, or become a
+second authority.
+
+Each slice therefore enters the shared application service, mutates through
+the daemon, records facts through the daemon-owned state port, and projects
+through ProjectView before the next slice moves. Do not create empty package
+scaffolding, perform a big-bang module move, or keep old and new writers alive
+for convenience.
 SQLite format and migration mechanics are specified in Task 4; this document
 fixes only the dependency and authority boundary they must satisfy.
 
