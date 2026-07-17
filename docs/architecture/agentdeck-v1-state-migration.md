@@ -67,13 +67,16 @@ No adapter event or internal trigger fabricates client command fields. All
 three trigger kinds enter the same serialized daemon mutation loop and use the
 same atomic append/apply/revision persistence operation.
 
-SQLite runs in WAL mode to support the controlled daemon writer and bounded,
-coherent read views without turning readers into writers. WAL does not relax
-the single-writer rule, daemon ownership, revision checks, or migration
-exclusion. Exact durability and pragma choices, including synchronous level,
-checkpoint policy, busy handling, page size, and foreign-key enforcement
-startup checks, are deferred to P1 failure-injection and filesystem tests. P1
-must choose them from measured crash-safety evidence, not convenience.
+SQLite runs in WAL mode to support controlled concurrent read views while only
+the daemon may commit a product-state mutation. That is a product-state
+semantic boundary, not a claim that an operating-system reader can never
+coordinate through a SQLite sidecar. WAL does not relax the single-writer
+rule, daemon ownership, revision checks, or migration exclusion. Exact
+durability and pragma choices, including synchronous level, checkpoint policy,
+busy handling, page size, and foreign-key enforcement startup checks, are
+deferred to P1 failure-injection and filesystem tests. P1 must prove read-only
+connection mode plus owner-only sidecar permissions and lifecycle, and choose
+the remaining settings from measured crash-safety evidence, not convenience.
 
 ## Conceptual schema responsibilities
 
@@ -120,8 +123,18 @@ The `.agentdeck` directory, database, WAL sidecars, backup manifests, temporary
 files, and migration locks must be owner-only. Migration validates ownership,
 file type, containment, and path traversal before reading or writing. Stored
 paths and user-visible diagnostics are project-relative or redacted; canonical
-absolute source paths, home-directory details, and secrets must not leak into
-ProjectView, events, migration output, or portable backups.
+absolute source paths, home-directory details, and secrets must not be newly
+introduced into ProjectView, events, migration diagnostics, or generated
+manifest metadata.
+
+The migration restore backup is an owner-only, non-portable, byte-preserving
+recovery image. Its payload inherits the full sensitivity of the legacy source,
+including any secret, unredacted text, or absolute path already present; this
+design does not promise payload sanitization. The backup manifest and
+diagnostics identify those payloads by controlled project-relative identity,
+hash, length, and mode rather than copying sensitive content into new metadata.
+A future portable export must be separately designed and sanitized. Portable
+export is not a P0 command, a migration restore backup, or part of this Task.
 
 ## Legacy discovery and Migration Preview
 
@@ -154,10 +167,38 @@ Only an explicit confirmed migration may move authority. The P1 implementation
 must make the following phases observable to its own recovery logic while
 never exposing a partially imported database as product truth:
 
-1. **Exclude writers.** Acquire an exclusive project migration lock and prove
-   daemon exclusion. A running daemon must enter a migration-safe stopped state
-   or refuse the operation; a stale or ambiguous lease is a blocker, not
-   permission to compete. Legacy state remains authoritative.
+Migration commands are client commands: all `agentdeck migrate` invocations
+request application behavior. Read-only preview may run through a controlled
+application read service, but confirmed migration backup, build, cutover,
+activation, and finalization execute only inside the same `ProjectDaemon` in
+exclusive maintenance mode. Maintenance stops ordinary product mutations,
+adapter-event application, scheduler transitions, and ordinary read serving,
+but the daemon does not surrender sole-writer ownership. If no daemon is
+running, the CLI may start or connect to the same project-locked daemon
+maintenance executor; the CLI or a separate migration process never becomes a
+database or legacy-state writer.
+
+The durable authority lifecycle has exactly these serving states:
+
+- `legacy_active`: verified legacy state is the active fact source and may be
+  served or mutated only outside migration maintenance;
+- `sqlite_installed_quarantined`: a verified SQLite candidate has been durably
+  installed but is non-serving and unactivated. Legacy remains the last active
+  fact source, while migration exclusion disables all ordinary reads and every
+  mutation path; and
+- `sqlite_active`: the daemon has durably activated and reverified the exact
+  installed candidate, so SQLite is the sole serving and mutation authority.
+
+Only the daemon may transition these states. Filesystem presence, rename
+completion, a backup, or a client response cannot activate an authority.
+
+1. **Enter exclusive maintenance.** The sole-writer daemon acquires the
+   exclusive project migration lock, drains or durably defers accepted adapter
+   input, and disables ordinary mutation, scheduling, and read serving while
+   retaining its writer lease and identity. A competing, stale, or ambiguous
+   lease is a blocker, not permission for a client or helper to write. The
+   durable state remains `legacy_active`, but it is quarantined from ordinary
+   serving for the duration of maintenance.
 2. **Revalidate intent.** Require explicit confirmation bound to the supplied
    preview digest. Re-resolve the canonical project root, re-inventory every
    legacy identity, and compare versions, types, ownership, references, sizes,
@@ -198,18 +239,30 @@ never exposing a partially imported database as product truth:
    make the replacement directory entry durable. Rename alone is not durable
    success: migration remains under exclusive exclusion and cannot serve
    ordinary mutations until the directory fsync succeeds and the installed
-   database's authority/cutover identity and integrity are revalidated. Only
-   then is cutover treated as durable and SQLite as the sole product-state
-   authority. The original legacy files remain intact and are thereafter
-   opened only as a sealed read-only legacy archive, never as a write target or
-   fallback store.
+   database's authority/cutover identity and integrity are revalidated. After
+   that fsync and revalidation, the durable state is
+   `sqlite_installed_quarantined`, not `sqlite_active`: SQLite is installed but
+   non-serving, legacy remains the last active fact source, and maintenance
+   exclusion prevents either representation from serving ordinary reads or
+   accepting mutations. The original legacy files remain intact and are never
+   a concurrent write target or silent fallback store.
 7. **Finalize in the new authority.** Before accepting any ordinary mutation,
-   validate and activate the already sealed candidate identities, then record
-   the imported source identities, schema versions, verifier result, durable
-   cutover time, and actor provenance in the new SQLite authority. Migration
-   provenance is not written to the legacy ledger or status and becomes active
-   only in the new authority after durable switch. Release migration exclusion
-   only after this finalization and a fresh read verification.
+   the daemon validates the already sealed candidate identities, then executes
+   one migration-identity-bound, idempotent SQLite transaction that atomically
+   changes the activation state and records the preview, backup, authority,
+   imported-source and cutover identities, schema versions, verifier result,
+   durable cutover time, and actor provenance. It commits under the tested P1
+   durability policy, closes or checkpoints as that policy requires, reopens
+   through the controlled `StateStore`, and verifies the committed activation
+   identity and integrity. The committed activation record is not serving
+   authority until that reopen verification succeeds; until then the project
+   remains non-serving under `sqlite_installed_quarantined` recovery. Only after
+   verification does the state become `sqlite_active`; only then may the daemon
+   release migration exclusion and resume SQLite-backed read serving, adapters,
+   scheduling, and mutations. Migration provenance is never written to the
+   legacy ledger or used to broaden imported authorization. At that point the
+   untouched legacy files become a sealed read-only archive rather than an
+   authority or fallback.
 
 Failure before the atomic switch leaves every legacy source authoritative and
 untouched. The implementation removes an unexposed temporary database when it
@@ -236,19 +289,28 @@ Migration recovery is phase-aware and fail-closed:
 - A crash after atomic rename but before the containing-directory fsync has an
   uncertain directory-entry durability outcome; path existence alone cannot
   classify it as success. Startup keeps both legacy and SQLite mutation paths
-  disabled, reacquires migration exclusion, and evaluates the installed
+  and ordinary read serving disabled, reacquires daemon maintenance exclusion,
+  and evaluates the installed
   candidate's authority/cutover identity against the sealed backup, preview,
   and migration identities. If the candidate is present, self-contained, and
   passes complete integrity and identity revalidation, recovery may repeat the
-  directory fsync and finish the uniquely identified cutover. If the candidate
-  is absent, the verified legacy authority remains authoritative. A corrupt,
+  directory fsync and enter `sqlite_installed_quarantined`. If the candidate
+  is absent, the verified `legacy_active` authority remains the fact source but
+  is not served until maintenance recovery releases it. A corrupt,
   mismatched, or otherwise ambiguous candidate fails closed for explicit
   repair; recovery never guesses from a filename and never enables dual write.
-- A crash after the directory fsync means `.agentdeck/state.db` is the sole new
-  authority even if final migration provenance was not yet committed. Startup
-  still holds all ordinary mutations, validates the cutover candidate against
-  the sealed backup and preview identity, idempotently finalizes provenance,
-  and only then serves writes. It never restarts legacy writes automatically.
+- A crash after the directory fsync but before the activation transaction
+  leaves `sqlite_installed_quarantined`. Startup reads the candidate's internal
+  unactivated state and exact cutover identity, keeps all serving disabled,
+  revalidates it against the sealed backup and preview, and may retry only the
+  same idempotent activation transaction.
+- A crash during or after activation commit is resolved from the database's
+  internal activation state and cutover identity, never from path existence. A
+  committed matching activation is eligible to complete the transition, but
+  startup keeps `sqlite_installed_quarantined` non-serving until it reopens and
+  verifies; only that successful verification yields `sqlite_active`. An absent
+  commit remains installed and quarantined. A conflicting or unreadable result
+  fails closed; it never restarts legacy writes automatically.
 
 Every phase uses stable migration, preview, backup, and cutover identities.
 Retrying the same confirmed operation either returns the already verified
@@ -260,13 +322,82 @@ temporary filename, timestamp, process exit, or provider narrative.
 ## Guarded rollback
 
 Rollback is safe only while no post-cutover authoritative product mutation has
-occurred. Under exclusive project and daemon exclusion, `--rollback` must
-verify the sealed backup manifest, exact cutover identity, authority generation,
-and the new store's event/revision watermark. If only migration-finalization
-records exist after the cutover watermark, it may atomically retire the SQLite
-authority and restore the sealed backup and legacy authority pointer while all
-readers and writers remain excluded. The retired database is preserved
-owner-only for audit until the restored authority is verified.
+occurred. `agentdeck migrate --rollback` remains a client command to the same
+daemon. The daemon performs the following rollback state machine without
+delegating writes to the CLI or an independent restore process:
+
+1. **Quarantine and prove eligibility.** Enter exclusive maintenance mode from
+   `sqlite_active`; stop ordinary reads, mutations, adapters, and scheduling;
+   then verify the SQLite watermark, exact cutover and authority identities,
+   and sealed migration restore backup. Any post-cutover authoritative product
+   write refuses rollback before a restore image is installed.
+2. **Build a complete legacy restore image off-path.** Restore every raw source
+   byte-for-byte into a new owner-only same-filesystem image. Seal a rollback
+   manifest containing the source authority generation, a new legacy authority
+   generation, exact rollback identity, file identities, lengths, hashes, and
+   modes. It must preserve old permission and approval facts without widening,
+   synthesizing, or re-authorizing them.
+3. **Durably verify the restore image.** Verify all restored bytes and
+   cross-file identities, fsync every restored file and the rollback manifest,
+   then fsync the restore-image directory. Failure leaves SQLite active in
+   precedence but non-serving under maintenance.
+4. **Install but quarantine legacy.** Install the complete restore image in its
+   final legacy location while the SQLite authority still has precedence and
+   all mutations and ordinary reads remain disabled.
+   Fsync the containing legacy-install or selector directory and revalidate the
+   installed identity before retirement. The installed legacy image is
+   non-serving and cannot become active merely because files exist. P1 must
+   choose a physical layout with one testable, atomic selector or same-filesystem
+   installation boundary that exposes either the complete old layout or the
+   complete identity-bound restore image, never a path-by-path mixture; no vague
+   mutable pointer or multi-file partial install satisfies this observable
+   contract.
+5. **Durably retire SQLite.** Record the exact rollback-prepared identity in an
+   idempotent SQLite transaction, consolidate sidecars as required, close and
+   verify the self-contained database, and fsync it. Atomically rename it to a
+   unique owner-only audit location, then fsync the containing `.agentdeck`
+   directory. That durable retirement is the authority switch: before it,
+   SQLite retains precedence; after it, SQLite is retired and may never resume
+   mutations for that authority generation. This administrative
+   rollback-prepared record does not represent an ordinary product mutation and
+   does not widen the zero-post-cutover-write eligibility window.
+6. **Activate and release legacy.** Revalidate the installed restore image,
+   new authority generation, and exact rollback identity against the retired
+   SQLite audit record and sealed raw backup. Only that exact matching image may
+   transition to `legacy_active`. Reopen it through the controlled `StateStore`,
+   verify ProjectView and lineage, and only then release maintenance and allow
+   legacy reads or mutations. Before full verification and release, restored
+   legacy remains read-disabled and mutation-disabled quarantine.
+
+If the physical layout requires a selector to make the installation boundary
+atomic, P1 may choose its representation only if failure injection proves the
+observable precedence and all-or-nothing rules above. The selector is an
+authority-generation and rollback-identity record, not a convenience pointer,
+and cannot authorize writes by itself.
+
+Rollback recovery is phase-aware:
+
+- A crash during restore-image write, fsync, verification, or installation but
+  before SQLite retirement keeps SQLite as the recoverable authority. Startup
+  verifies it, quarantines any incomplete restore image, and either resumes the
+  exact rollback identity or safely releases `sqlite_active`; legacy never
+  accepts writes.
+- A crash after the SQLite-retire rename but before containing-directory fsync
+  is ambiguous. Startup disables every read and mutation path, checks both the
+  authority and audit locations plus their internal rollback/cutover identities,
+  and may finish or reverse the rename only when the exact identity and one
+  complete self-contained database are provable. Otherwise it fails closed.
+- A crash after durable SQLite retirement never reactivates that SQLite
+  generation. Startup may activate legacy only after the complete installed
+  image matches the exact rollback identity, new authority generation, retired
+  audit record, and sealed backup; mismatch stays blocked for repair.
+- A crash during legacy activation or release repeats identity and integrity
+  verification idempotently. Until release completes, no ordinary read or
+  mutation is served.
+
+Every rollback interruption therefore exposes at most one mutation authority;
+neither an installed restore image nor a retired database filename proves
+activation, and no recovery path enables dual write.
 
 After any new command, adapter event, internal trigger, Mission change,
 permission decision, Evidence record, learning application, or other
@@ -276,18 +407,25 @@ export/forward repair into the current SQLite authority, or a separately
 reviewed and approved destructive-discard procedure that names the data and
 effects being abandoned. Basic `--rollback` has no force bypass for this guard.
 
-A rollback failure preserves the current verified authority and remains under
-exclusive lock until its status is known. It cannot reactivate legacy writes
-merely because restoration began or a backup directory exists.
+A rollback failure before durable SQLite retirement preserves SQLite as the
+recoverable precedence authority and remains under exclusive maintenance until
+its status is verified. A failure after durable retirement preserves the
+retired database only as immutable audit/recovery evidence and never reactivates
+it; the project remains non-serving until the exact legacy rollback identity is
+verified or a separately reviewed repair is performed. Restoration beginning,
+a backup directory, or an installed legacy path can never reactivate writes.
 
 ## Compatibility and projection versions
 
 `project-view/v1` and `project-view/v2` are two read-only projections from the
-same `StateStore` and `.agentdeck/state.db` authority. The v1 projection is a
-compatibility shape, not a query against legacy JSON/JSONL and not a second
-cache authority. The v2 projection may expose the new Mission model while both
-views share one project revision, event lineage, and source facts. Differences
-must be intentional field/version mapping, never divergent state.
+same currently active `StateStore` authority. In `sqlite_active`, both project
+from `.agentdeck/state.db`; in `legacy_active`, including after verified
+rollback, both use the controlled compatibility adapter. Neither projection
+may read an installed/quarantined candidate, retired database, raw backup, or
+legacy archive directly. The v1 projection is a compatibility shape, not a
+second cache authority. The v2 projection may expose the new Mission model
+while both views share one project revision, event lineage, and source facts.
+Differences must be intentional field/version mapping, never divergent state.
 
 Legacy deterministic CLI commands become application/daemon compatibility
 facades one vertical slice at a time. Once a command is cut over, it delegates
@@ -366,15 +504,22 @@ failure-injection coverage. Acceptance includes:
   a database whose committed truth still depends on an uninstalled sidecar;
 - backup restore reproduces the sealed identities byte-for-byte where required
   and no incomplete backup is accepted;
-- readers observe either the complete legacy authority before cutover or the
-  complete SQLite authority after cutover, never a partially imported view;
+- when ordinary read serving is enabled, readers observe either complete
+  `legacy_active` state or complete `sqlite_active` state; installed,
+  quarantined, activating, retiring, and partially restored states serve no
+  ordinary ProjectView;
 - `project-view/v1` and `project-view/v2` derive from the same revision and
   authority, including after restart;
 - rollback before a new authoritative write restores the verified legacy
   authority, while rollback after any such write refuses without changing
   either authority;
-- preview, verification, errors, events, ProjectView, and portable backup
-  metadata contain no canonical source-path or secret leaks; and
+- restore-image write/fsync failure, restore-image install failure,
+  SQLite-retire rename failure, rollback directory-fsync failure, and rollback
+  activation/release crash each prove that at most one mutation authority can
+  exist and that quarantined state serves no ordinary reads;
+- the raw migration restore backup remains owner-only and byte-preserving, while
+  preview, verification, errors, events, ProjectView, and newly generated
+  manifest metadata introduce no canonical source-path or secret leaks; and
 - all migration tests run with fake/local state only and make no provider,
   Agent, ACP, CLI/PTY Worker, tmux, network, skill-load, memory-apply, or Mission
   execution call.

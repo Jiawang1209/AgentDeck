@@ -23,9 +23,23 @@
   verified temporary database; atomically replace the target; fsync the
   containing `.agentdeck` directory; and fail closed across rename/fsync crash
   windows while proving that at most one authority can accept mutations.
+- Kept every migration command as a client request to the same ProjectDaemon:
+  confirmed migration runs only in daemon-owned exclusive maintenance mode,
+  with ordinary reads, mutations, adapters, and scheduling suspended and no
+  independent CLI or migration writer.
+- Split authority activation into `legacy_active`, a durably installed but
+  non-serving `sqlite_installed_quarantined`, and transactionally activated and
+  reverified `sqlite_active`, so rename or path existence cannot imply success.
+- Distinguished the owner-only, non-portable, byte-preserving migration restore
+  backup from a future sanitized portable export, which remains outside P0 and
+  this migration command surface.
+- Defined identity-bound rollback through an off-path verified legacy image,
+  durable SQLite retirement, exact-generation legacy activation, and explicit
+  restore/install/rename/fsync/activation crash recovery with no dual writes.
 - Required `project-view/v1` and `project-view/v2` to project from the same
-  StateStore/SQLite authority, legacy commands to delegate to the daemon with
-  no local-write fallback, and rollback to refuse after any post-cutover
+  currently active StateStore authority, including the sole SQLite authority
+  while `sqlite_active`; legacy commands delegate to the daemon with no
+  local-write fallback, and rollback refuses after any post-cutover
   authoritative write rather than discard events.
 - This is a docs-only P0 architecture decision. It does not implement SQLite,
   migration commands, backup/rollback behavior, ProjectView v2, or make a live
