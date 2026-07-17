@@ -108,6 +108,16 @@
   Python dictionary `repr`. Removed only that impossible single-character
   assertion; the dedicated account/secret/path leakage test remains intact.
 
+### Freeze the M2c Claude authentication readiness candidate
+
+- Froze the harness-only implementation at
+  `79d8160eb60ad4e8bfb37ff43615f099afd9edc5`. A fresh complete M2c run passed
+  `320 passed, 2 skipped in 119.98s`; product/Conversation/contract/provider
+  regressions passed `851 passed in 4.36s`.
+- Compile, diff, current-slice product-source zero-change, durable leakage,
+  process, worktree, and temporary-root audits passed. Two fresh complete suites
+  remain before human login and one newly authorized v6 preflight.
+
 ### Design the M2c preview-consumption convergence repair
 
 - Approved a harness-only correction for the observed admission/consumption

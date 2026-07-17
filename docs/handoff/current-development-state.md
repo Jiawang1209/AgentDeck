@@ -110,6 +110,16 @@ complete deterministic/full verification and frozen SHA remain next. Human
 login is still required before a single new real v6 preflight; old v5 evidence
 cannot authorize it. M2c remains **BLOCKED** and M3 remains locked.
 
+The auth-readiness implementation is frozen at
+`79d8160eb60ad4e8bfb37ff43615f099afd9edc5`. After correcting one test-only
+single-character `repr` assertion collision, a fresh complete M2c run passed
+`320 passed, 2 skipped in 119.98s`; product/Conversation/contract/provider
+regressions passed `851 passed in 4.36s`. Compile, diff, current-slice
+`src/agentdeck/**` zero-change, durable leakage, process, worktree, and
+temporary-root audits passed. The next deterministic gate is two complete
+suites in fresh detached worktrees at that exact SHA. No real v6 preflight or
+live Mission has run for this candidate.
+
 ### Historical M2c authority cycles
 
 Before consuming the authorized designated preflight for frozen implementation

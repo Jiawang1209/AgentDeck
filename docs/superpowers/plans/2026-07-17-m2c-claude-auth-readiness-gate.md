@@ -58,7 +58,7 @@ strict preflight contract to v6 while retaining authority v3.
   execution effects.
 - [x] Prove changing auth state cannot change the authority digest.
 - [x] Run focused and aggregate tests until GREEN.
-- [ ] Commit the minimal harness implementation and tests.
+- [x] Commit the minimal harness implementation and tests.
 
 ## Task 4: Synchronize durable contracts and history
 
@@ -75,19 +75,19 @@ strict preflight contract to v6 while retaining authority v3.
   harness.
 - [x] Record only schema, model, SHA, readiness, blockers/failures, and digest;
   never auth output/material.
-- [ ] Commit documentation in the same GREEN slice if user-visible semantics
+- [x] Commit documentation in the same GREEN slice if user-visible semantics
   changed, or as an immediately following evidence commit.
 
 ## Task 5: Verify and freeze
 
-- [ ] Run focused auth/preflight/live-guard tests.
-- [ ] Run the aggregate M2c deterministic selection.
-- [ ] Run the entire M2c file.
-- [ ] Run relevant product/Conversation/provider/contract regressions.
-- [ ] Run `python -m compileall src`.
-- [ ] Assert `git diff <pre-slice-sha> -- src/agentdeck` is empty.
-- [ ] Run leakage, process, tmux, temporary-root, and repository-residue audits.
-- [ ] Commit the frozen implementation and record its full SHA.
+- [x] Run focused auth/preflight/live-guard tests.
+- [x] Run the aggregate M2c deterministic selection.
+- [x] Run the entire M2c file.
+- [x] Run relevant product/Conversation/provider/contract regressions.
+- [x] Run `python -m compileall src`.
+- [x] Assert `git diff <pre-slice-sha> -- src/agentdeck` is empty.
+- [x] Run leakage, process, tmux, temporary-root, and repository-residue audits.
+- [x] Commit the frozen implementation and record its full SHA.
 
 ## Task 6: Double full suite and real gates
 

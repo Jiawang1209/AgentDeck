@@ -179,10 +179,20 @@ RED proved v5 incorrectly returned `ready=true` for a fake logged-out Claude:
 `1 failed` at the readiness assertion. Focused GREEN covers 11 selected auth
 and v6 cases, including login-state independence from the authority digest and
 guarded live projection. No `src/agentdeck/**`, provider, ACP transport, retry,
-timeout, or global authentication behavior changed. Complete deterministic and
-double-full-suite verification remain before freezing this candidate. Human
-Claude login remains required before the one new real v6 preflight. Every v5
-preflight above is exhausted historical evidence and cannot authorize v6 live.
+timeout, or global authentication behavior changed.
+
+The implementation is frozen at
+`79d8160eb60ad4e8bfb37ff43615f099afd9edc5`. The first complete M2c run exposed
+one impossible test-only assertion requiring the one-character malformed input
+`{` not to occur in any Python dictionary `repr`; the dedicated sentinel
+leakage test was already separate. Removing only that assertion was followed by
+a fresh complete result of `320 passed, 2 skipped in 119.98s`. Product,
+Conversation, contract, and provider regressions passed `851 passed in 4.36s`.
+Compile, diff, product-source zero-change, durable leakage, process, worktree,
+and temporary-root audits passed. Two complete suites in fresh detached
+worktrees remain. Human Claude login is required before the one new real v6
+preflight. Every v5 preflight above is exhausted historical evidence and cannot
+authorize v6 live.
 
 ## Frozen authority
 
