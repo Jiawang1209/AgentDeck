@@ -4,6 +4,28 @@
 
 ## 2026-07-17
 
+### Classify the AgentDeck implementation for V1 migration
+
+- Classified current capabilities by retained behavior, target ownership,
+  migration phase, concrete characterization evidence, and an explicit removal
+  gate; retained behavior no longer implies retaining legacy authority or file
+  placement.
+- Preserved the natural-language Conversation foundations, ProjectDaemon
+  lifecycle/recovery, approval/permission/Handoff lineage, ACP mapping, tmux
+  visibility, ProjectView compatibility, and governed Skill/Memory/Learning
+  Review behavior while identifying focused extraction boundaries.
+- Recorded the main refactor pressure in `cli.py`, `contracts.py`, `state.py`,
+  daemon service, Conversation session, and the M2c mega-harness without treating
+  line count as a rewrite mandate.
+- Classified the M2c mega-harness for archive only after replacement coverage
+  exists and fixed phase/count/one-shot authority assertions for removal after
+  general Mission invariants are proven; M2c remains evidence, not a V1 release
+  veto or live-run authorization.
+- Marked the SQLite Mission store, V2 domain/ProjectView, shared Codex/Claude
+  adapter conformance suite, and Golden A/B product acceptance as missing P1-P4
+  capabilities. Comprehensive SQLite means structured-state authority migration,
+  not deletion of filesystem content, ACP, tmux, or user-facing contracts.
+
 ### Choose SQLite for the new Mission authority
 
 - Chose standard-library SQLite at `.agentdeck/state.db` as the local-first
