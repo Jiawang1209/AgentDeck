@@ -5909,7 +5909,10 @@ def test_m2c_package_tree_runtime_seal_rejects_same_content_replacement(
 
 
 def _fake_explicit_authority_environment(
-    root: Path, *, internal_bin_links: bool = False
+    root: Path,
+    *,
+    internal_bin_links: bool = False,
+    claude_logged_in: bool = True,
 ) -> dict[str, str]:
     binary = root / "bin"
     binary.mkdir(parents=True)
@@ -5938,7 +5941,10 @@ def _fake_explicit_authority_environment(
             ),
             "claude": (
                 "#!/bin/sh\n"
-                "if [ \"$1\" = --help ]; then echo --json-schema --output-format; "
+                "if [ \"$1\" = auth ] && [ \"$2\" = status ] && [ \"$3\" = --json ]; then "
+                f"echo '{{\"loggedIn\":{str(claude_logged_in).lower()}}}'; "
+                f"exit {0 if claude_logged_in else 1}; "
+                "elif [ \"$1\" = --help ]; then echo --json-schema --output-format; "
                 "else echo claude 2.1.211; fi\n"
             ),
             "node": (
@@ -6129,6 +6135,29 @@ def test_m2c_strict_preflight_v5_ready_uses_explicit_authority(
         "source": "explicit",
         "ready": True,
     }
+
+
+def test_m2c_strict_preflight_rejects_logged_out_claude(tmp_path) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    authority, failures = _load_explicit_tool_authority(
+        _fake_explicit_authority_environment(
+            tmp_path / "authority", claude_logged_in=False
+        )
+    )
+    assert failures == () and authority is not None
+
+    payload = _strict_live_preflight(project, authority)
+
+    assert payload["ready"] is False
+    assert payload["blockers"] == ["claude_auth_unavailable"]
+    assert payload["failures"] == [
+        {
+            "tool": "claude",
+            "probe": "auth-status",
+            "code": "claude_auth_unavailable",
+        }
+    ]
 
 
 def test_m2c_strict_preflight_attributes_probe_write_without_leakage(
