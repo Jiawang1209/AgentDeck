@@ -42,7 +42,7 @@ defect and a new approved spec/plan explicitly scopes it.
 - Modify: `tests/test_m2c_live_acceptance.py`
 - Modify: `HISTORY.md`
 
-- [ ] **Step 1: Add a realistic package fixture without changing the sealer**
+- [x] **Step 1: Add a realistic package fixture without changing the sealer**
 
 Replace `_fake_acp_package` with a parameterized fixture that writes
 `package.json`, `dist/index.js`, and `lib/support.js`. Its default metadata is:
@@ -57,7 +57,7 @@ Replace `_fake_acp_package` with a parameterized fixture that writes
 The helper accepts `bin_value`, `entrypoint`, and `package_name` solely to build
 negative cases. Every ordinary fake package uses executable `dist/index.js`.
 
-- [ ] **Step 2: Add focused RED cases**
+- [x] **Step 2: Add focused RED cases**
 
 Add tests whose public assertions are:
 
@@ -79,7 +79,7 @@ ACP item is exactly:
 }
 ```
 
-- [ ] **Step 3: Run RED and verify the expected cause**
+- [x] **Step 3: Run RED and verify the expected cause**
 
 ```bash
 PYTHONPATH="$WORKTREE/src" conda run --no-capture-output -n agentdeck \
@@ -91,7 +91,7 @@ Expected: failures because the current sealer still requires
 `dist/claude-agent-acp` and `_PackageTreeSeal` has no
 `entrypoint_relative` field. No real preflight/live marker is set.
 
-- [ ] **Step 4: Record and commit the RED boundary**
+- [x] **Step 4: Record and commit the RED boundary**
 
 Update HISTORY with the observed RED count and root cause, then:
 

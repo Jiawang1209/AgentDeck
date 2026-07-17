@@ -4,6 +4,16 @@
 
 ## 2026-07-17
 
+### Expose the real M2c ACP package entrypoint mismatch
+
+- Replaced the synthetic ACP fixture's invented `dist/claude-agent-acp` with
+  realistic npm metadata and executable `dist/index.js`, covering both object
+  and string `bin` forms plus the authority digest projection.
+- The focused RED run produced exactly `3 failed, 240 deselected in 2.15s`:
+  the current fixed-entrypoint sealer rejected both official metadata shapes,
+  and no authority could be built for the digest assertion. No implementation,
+  real preflight/live, provider, ACP/tmux session, or daemon ran.
+
 ### Plan M2c ACP package entrypoint authority implementation
 
 - Added a self-reviewed, task-by-task TDD plan for metadata-selected npm bin

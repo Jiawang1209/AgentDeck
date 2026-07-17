@@ -5136,19 +5136,85 @@ def test_m2c_tool_authority_digest_binds_every_input(
     assert changed.digest != baseline.digest
 
 
-def _fake_acp_package(root: Path) -> Path:
-    entrypoint = root / "dist" / "claude-agent-acp"
+_DEFAULT_ACP_BIN = object()
+
+
+def _fake_acp_package(
+    root: Path,
+    *,
+    bin_value: object = _DEFAULT_ACP_BIN,
+    entrypoint: str = "dist/index.js",
+    package_name: str = "@agentclientprotocol/claude-agent-acp",
+) -> Path:
+    entrypoint_path = root.joinpath(*PurePosixPath(entrypoint).parts)
     support = root / "lib" / "support.js"
-    entrypoint.parent.mkdir(parents=True)
+    entrypoint_path.parent.mkdir(parents=True)
     support.parent.mkdir(parents=True)
-    entrypoint.write_text("#!/bin/sh\necho 0.58.1\n", encoding="utf-8")
-    entrypoint.chmod(0o700)
+    entrypoint_path.write_text("#!/bin/sh\necho 0.58.1\n", encoding="utf-8")
+    entrypoint_path.chmod(0o700)
     support.write_text("export const ready = true;\n", encoding="utf-8")
     support.chmod(0o600)
+    metadata = {
+        "name": package_name,
+        "bin": (
+            {"claude-agent-acp": entrypoint}
+            if bin_value is _DEFAULT_ACP_BIN
+            else bin_value
+        ),
+    }
+    (root / "package.json").write_text(
+        json.dumps(metadata, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    (root / "package.json").chmod(0o600)
     root.chmod(0o700)
-    entrypoint.parent.chmod(0o700)
+    entrypoint_path.parent.chmod(0o700)
     support.parent.chmod(0o700)
     return root
+
+
+@pytest.mark.parametrize(
+    "bin_value",
+    (
+        {"claude-agent-acp": "dist/index.js"},
+        "dist/index.js",
+    ),
+    ids=("object-bin", "string-bin"),
+)
+def test_m2c_package_metadata_selects_official_entrypoint(
+    tmp_path, bin_value
+) -> None:
+    root = _fake_acp_package(tmp_path / "package", bin_value=bin_value)
+
+    seal, blocker = _seal_acp_package_tree(str(root))
+
+    assert blocker is None
+    assert seal is not None
+    assert seal.entrypoint_relative == "dist/index.js"
+    assert seal.entrypoint.path == root / "dist" / "index.js"
+
+
+def test_m2c_authority_digest_binds_entrypoint(tmp_path) -> None:
+    root = _fake_acp_package(tmp_path / "package")
+    package, blocker = _seal_acp_package_tree(str(root))
+    assert blocker is None and package is not None
+    baseline = _fake_authority_for_digest(tmp_path / "authority")
+    authority = _finalize_authority(
+        replace(baseline, acp_package=package, digest="")
+    )
+
+    acp_item = next(
+        item
+        for item in _authority_digest_payload(authority)["tools"]
+        if item["name"] == "claude-agent-acp"
+    )
+
+    assert acp_item == {
+        "name": "claude-agent-acp",
+        "kind": "package-tree",
+        "tree_hash": package.tree_hash,
+        "entrypoint": "dist/index.js",
+    }
 
 
 def test_m2c_package_tree_manifest_is_sorted_and_path_independent(
@@ -5187,7 +5253,7 @@ def test_m2c_package_tree_rejects_unsafe_entries(
     root = _fake_acp_package(tmp_path / "package")
     candidate = root
     if mutation == "missing-entrypoint":
-        (root / "dist" / "claude-agent-acp").unlink()
+        (root / "dist" / "index.js").unlink()
     elif mutation == "root-symlink":
         candidate = tmp_path / "package-link"
         candidate.symlink_to(root, target_is_directory=True)
@@ -5200,7 +5266,7 @@ def test_m2c_package_tree_rejects_unsafe_entries(
     elif mutation == "writable-file":
         (root / "lib" / "support.js").chmod(0o620)
     else:
-        (root / "dist" / "claude-agent-acp").chmod(0o600)
+        (root / "dist" / "index.js").chmod(0o600)
 
     seal, blocker = _seal_acp_package_tree(str(candidate))
 
