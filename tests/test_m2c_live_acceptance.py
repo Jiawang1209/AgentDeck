@@ -101,6 +101,32 @@ BLOCKER_CODES = frozenset(
         "leader_model_missing",
         "leader_model_invalid",
         "leader_model_drift",
+        "node_unavailable",
+        "claude_agent_acp_package_invalid",
+        "preflight_authority_drift",
+        "preflight_contract_invalid",
+    }
+)
+PREFLIGHT_FAILURE_TOOLS = frozenset(
+    {
+        "authority",
+        "leader-model",
+        "codex",
+        "claude",
+        "claude-agent-acp",
+        "node",
+        "tmux",
+    }
+)
+PREFLIGHT_FAILURE_PROBES = frozenset(
+    {
+        "identity",
+        "package-tree",
+        "version",
+        "help",
+        "process-scope",
+        "filesystem-snapshot",
+        "binding",
     }
 )
 _LIVE_TASK_AUTHORITY_FIELDS = (
@@ -985,6 +1011,351 @@ def _load_explicit_tool_authority(
         digest="",
     )
     return _finalize_authority(authority), ()
+
+
+def _preflight_failure_card(value: _PreflightFailure) -> dict[str, str]:
+    return {"tool": value.tool, "probe": value.probe, "code": value.code}
+
+
+def _authority_card(
+    authority: _ToolAuthority, *, ready: bool
+) -> dict[str, object]:
+    return {
+        "schema_version": AUTHORITY_SCHEMA_VERSION,
+        "digest": authority.digest,
+        "source": "explicit",
+        "ready": ready,
+    }
+
+
+def _strict_authority_snapshot(
+    project: Path,
+    isolation: _ProbeIsolation,
+    authority: _ToolAuthority,
+) -> tuple[object, ...]:
+    package, package_blocker = _seal_acp_package_tree(
+        str(authority.acp_package.root)
+    )
+    return (
+        _roots_snapshot((project, *isolation.roots)),
+        tuple(
+            (name, _seal_executable(str(seal.path)))
+            for name, seal in sorted(authority.executable_seals().items())
+        ),
+        package if package_blocker is None else None,
+    )
+
+
+def _probe_failure_probe(requested: str, blocker: str) -> str:
+    if blocker in {"probe_scope_unverified", "probe_residual_process"}:
+        return "process-scope"
+    if blocker == "executable_identity_drift":
+        return "identity"
+    return requested
+
+
+def _run_attributed_probe(
+    *,
+    tool: str,
+    probe: str,
+    seal: _ExecutableSeal,
+    args: tuple[str, ...],
+    cwd: Path,
+    env: dict[str, str],
+    isolation: _ProbeIsolation,
+    authority: _ToolAuthority,
+) -> tuple[_ProbeOutcome, tuple[_PreflightFailure, ...]]:
+    before = _strict_authority_snapshot(cwd, isolation, authority)
+    outcome = _bounded_probe(seal, args, cwd=cwd, env=env)
+    failures: list[_PreflightFailure] = []
+    if outcome.blocker is not None:
+        failures.append(
+            _PreflightFailure(
+                tool,
+                _probe_failure_probe(probe, outcome.blocker),
+                outcome.blocker,
+            )
+        )
+    if _strict_authority_snapshot(cwd, isolation, authority) != before:
+        failures.append(
+            _PreflightFailure(
+                tool, "filesystem-snapshot", "probe_wrote_files"
+            )
+        )
+    return outcome, tuple(failures)
+
+
+def _strict_tool_card(
+    name: str, version: str | None, ready: bool
+) -> dict[str, object]:
+    return {
+        "name": name,
+        "executable_basename": name,
+        "version": version,
+        "ready": ready,
+    }
+
+
+def _validate_strict_preflight_payload(payload: object) -> list[str]:
+    errors: list[str] = []
+    expected_fields = {
+        "schema_version",
+        "mode",
+        "ready",
+        "probe_timeout_seconds",
+        "leader_model",
+        "tool_authority",
+        "tools",
+        "blockers",
+        "failures",
+    }
+    if type(payload) is not dict or set(payload) != expected_fields:
+        return ["strict preflight shape invalid"]
+    if payload["schema_version"] != STRICT_PREFLIGHT_SCHEMA_VERSION:
+        errors.append("schema version invalid")
+    if payload["mode"] != "m2c_live_preflight":
+        errors.append("mode invalid")
+    if payload["probe_timeout_seconds"] != PROBE_TIMEOUT_SECONDS:
+        errors.append("timeout invalid")
+    blockers = payload["blockers"]
+    if (
+        type(blockers) is not list
+        or any(type(item) is not str or item not in BLOCKER_CODES for item in blockers)
+        or len(blockers) != len(set(blockers))
+    ):
+        errors.append("blockers invalid")
+        blockers = []
+    failures = payload["failures"]
+    failure_codes: list[str] = []
+    seen_failures: set[tuple[str, str, str]] = set()
+    if type(failures) is not list:
+        errors.append("failures invalid")
+    else:
+        for item in failures:
+            if type(item) is not dict or set(item) != {"tool", "probe", "code"}:
+                errors.append("failure item invalid")
+                continue
+            tool, probe, code = item["tool"], item["probe"], item["code"]
+            if (
+                type(tool) is not str
+                or tool not in PREFLIGHT_FAILURE_TOOLS
+                or type(probe) is not str
+                or probe not in PREFLIGHT_FAILURE_PROBES
+                or type(code) is not str
+                or code not in BLOCKER_CODES
+            ):
+                errors.append("failure enum invalid")
+                continue
+            key = (tool, probe, code)
+            if key in seen_failures:
+                errors.append("failure duplicate")
+                continue
+            seen_failures.add(key)
+            if code not in failure_codes:
+                failure_codes.append(code)
+    if failure_codes != blockers:
+        errors.append("failure blocker consistency invalid")
+    ready = payload["ready"]
+    if type(ready) is not bool or ready != (not blockers):
+        errors.append("readiness invalid")
+    leader = payload["leader_model"]
+    if type(leader) is not dict or set(leader) != {
+        "provider", "model", "source", "ready"
+    }:
+        errors.append("leader model shape invalid")
+    elif (
+        leader["provider"] != "codex-cli"
+        or type(leader["model"]) is not str
+        or LEADER_MODEL_PATTERN.fullmatch(leader["model"]) is None
+        or leader["source"] != "explicit"
+        or type(leader["ready"]) is not bool
+    ):
+        errors.append("leader model invalid")
+    authority_card = payload["tool_authority"]
+    if type(authority_card) is not dict or set(authority_card) != {
+        "schema_version", "digest", "source", "ready"
+    }:
+        errors.append("authority card shape invalid")
+    elif (
+        authority_card["schema_version"] != AUTHORITY_SCHEMA_VERSION
+        or type(authority_card["digest"]) is not str
+        or AUTHORITY_DIGEST_PATTERN.fullmatch(authority_card["digest"]) is None
+        or authority_card["source"] != "explicit"
+        or type(authority_card["ready"]) is not bool
+    ):
+        errors.append("authority card invalid")
+    tools = payload["tools"]
+    expected_names = (
+        "codex", "claude", "claude-agent-acp", "node", "tmux"
+    )
+    if type(tools) is not list or len(tools) != len(expected_names):
+        errors.append("tools invalid")
+    else:
+        for expected_name, item in zip(expected_names, tools, strict=True):
+            if type(item) is not dict or set(item) != {
+                "name", "executable_basename", "version", "ready"
+            }:
+                errors.append("tool item shape invalid")
+                continue
+            version = item["version"]
+            if (
+                item["name"] != expected_name
+                or item["executable_basename"] != expected_name
+                or (version is not None and (type(version) is not str or len(version) > 120))
+                or type(item["ready"]) is not bool
+            ):
+                errors.append("tool item invalid")
+    if ready is True and type(tools) is list and any(
+        type(item) is not dict or item.get("ready") is not True for item in tools
+    ):
+        errors.append("tool readiness invalid")
+    return list(dict.fromkeys(errors))
+
+
+def _strict_contract_invalid_payload(
+    authority: _ToolAuthority,
+) -> dict[str, object]:
+    failure = _PreflightFailure(
+        "authority", "binding", "preflight_contract_invalid"
+    )
+    return {
+        "schema_version": STRICT_PREFLIGHT_SCHEMA_VERSION,
+        "mode": "m2c_live_preflight",
+        "ready": False,
+        "probe_timeout_seconds": PROBE_TIMEOUT_SECONDS,
+        "leader_model": {
+            "provider": "codex-cli",
+            "model": authority.leader_model.model,
+            "source": "explicit",
+            "ready": True,
+        },
+        "tool_authority": _authority_card(authority, ready=False),
+        "tools": [
+            _strict_tool_card(name, None, False)
+            for name in (
+                "codex", "claude", "claude-agent-acp", "node", "tmux"
+            )
+        ],
+        "blockers": [failure.code],
+        "failures": [_preflight_failure_card(failure)],
+    }
+
+
+def _strict_live_preflight(
+    project: Path,
+    authority: _ToolAuthority,
+    *,
+    isolation: _ProbeIsolation | None = None,
+) -> dict[str, object]:
+    isolation = isolation or _prepare_probe_isolation(project)
+    failures: list[_PreflightFailure] = []
+
+    def add(items: tuple[_PreflightFailure, ...]) -> None:
+        for item in items:
+            if item not in failures:
+                failures.append(item)
+
+    for name, seal in authority.executable_seals().items():
+        try:
+            _verify_executable_seal(seal)
+        except _LiveHarnessFailure:
+            add((_PreflightFailure(name, "identity", "executable_identity_drift"),))
+    try:
+        _verify_package_tree_seal(authority.acp_package)
+    except _LiveHarnessFailure:
+        add(
+            (
+                _PreflightFailure(
+                    "claude-agent-acp",
+                    "package-tree",
+                    "claude_agent_acp_package_invalid",
+                ),
+            )
+        )
+    probe_env = _probe_environment(
+        isolation,
+        tuple(seal.path for seal in authority.executable_seals().values()),
+    )
+    probe_specs = (
+        ("codex", authority.codex, ("--version",), ("exec", "--help"), "codex_unavailable", "codex_native_schema_unavailable"),
+        ("claude", authority.claude, ("--version",), ("--help",), "claude_unavailable", "claude_native_schema_unavailable"),
+        ("claude-agent-acp", authority.node, (str(authority.acp_package.entrypoint.path), "--version"), None, "claude_agent_acp_unavailable", None),
+        ("node", authority.node, ("--version",), None, "node_unavailable", None),
+        ("tmux", authority.tmux, ("-V",), None, "tmux_unavailable", None),
+    )
+    tool_cards: list[dict[str, object]] = []
+    for name, seal, version_args, help_args, unavailable, capability in probe_specs:
+        version: str | None = None
+        if not any(item.tool == name and item.probe in {"identity", "package-tree"} for item in failures):
+            environment = dict(probe_env)
+            if name == "codex":
+                environment["CODEX_HOME"] = str(isolation.temporary / "codex-home")
+            outcome, attributed = _run_attributed_probe(
+                tool=name,
+                probe="version",
+                seal=seal,
+                args=version_args,
+                cwd=project,
+                env=environment,
+                isolation=isolation,
+                authority=authority,
+            )
+            add(attributed)
+            version = _sanitized_version(outcome.output) if outcome.ok else None
+            if version is None:
+                add((_PreflightFailure(name, "version", unavailable),))
+            if help_args is not None:
+                help_outcome, help_failures = _run_attributed_probe(
+                    tool=name,
+                    probe="help",
+                    seal=seal,
+                    args=help_args,
+                    cwd=project,
+                    env=environment,
+                    isolation=isolation,
+                    authority=authority,
+                )
+                add(help_failures)
+                required = (
+                    {"--output-schema", "--output-last-message"}
+                    if name == "codex"
+                    else {"--json-schema", "--output-format"}
+                )
+                if not help_outcome.ok or not required.issubset(
+                    _option_names(help_outcome.output)
+                ):
+                    add((_PreflightFailure(name, "help", capability),))
+        tool_cards.append(
+            _strict_tool_card(
+                name,
+                version,
+                not any(item.tool == name for item in failures),
+            )
+        )
+    blockers = list(dict.fromkeys(item.code for item in failures))
+    authority_ready = not any(
+        item.probe in {"identity", "package-tree", "binding"}
+        for item in failures
+    )
+    payload: dict[str, object] = {
+        "schema_version": STRICT_PREFLIGHT_SCHEMA_VERSION,
+        "mode": "m2c_live_preflight",
+        "ready": not blockers,
+        "probe_timeout_seconds": PROBE_TIMEOUT_SECONDS,
+        "leader_model": {
+            "provider": "codex-cli",
+            "model": authority.leader_model.model,
+            "source": "explicit",
+            "ready": True,
+        },
+        "tool_authority": _authority_card(authority, ready=authority_ready),
+        "tools": tool_cards,
+        "blockers": blockers,
+        "failures": [_preflight_failure_card(item) for item in failures],
+    }
+    if _validate_strict_preflight_payload(payload):
+        return _strict_contract_invalid_payload(authority)
+    return payload
 
 
 def _resolved_probe_seal(name: str, env_name: str) -> _ExecutableSeal | None:
@@ -4633,9 +5004,25 @@ def _fake_explicit_authority_environment(root: Path) -> dict[str, str]:
         ("tmux", "AGENTDECK_M2C_TMUX"),
     ):
         executable = binary / name
-        executable.write_text(
-            f"#!/bin/sh\necho {name} test\n", encoding="utf-8"
-        )
+        scripts = {
+            "codex": (
+                "#!/bin/sh\n"
+                "if [ \"$1\" = exec ]; then echo --output-schema --output-last-message; "
+                "else echo codex-cli 0.131.0; fi\n"
+            ),
+            "claude": (
+                "#!/bin/sh\n"
+                "if [ \"$1\" = --help ]; then echo --json-schema --output-format; "
+                "else echo claude 2.1.211; fi\n"
+            ),
+            "node": (
+                "#!/bin/sh\n"
+                "if [ \"$1\" = --version ]; then echo node 22.0.0; "
+                "else exec \"$@\"; fi\n"
+            ),
+            "tmux": "#!/bin/sh\necho tmux 3.7\n",
+        }
+        executable.write_text(scripts[name], encoding="utf-8")
         executable.chmod(0o700)
         values[environment_name] = str(executable)
     return values
@@ -4704,6 +5091,127 @@ def test_m2c_explicit_authority_loader_binds_acp_entrypoint_to_package(
             "claude_agent_acp_package_invalid",
         ),
     )
+
+
+def _valid_strict_preflight_payload(authority: _ToolAuthority) -> dict[str, object]:
+    return {
+        "schema_version": STRICT_PREFLIGHT_SCHEMA_VERSION,
+        "mode": "m2c_live_preflight",
+        "ready": True,
+        "probe_timeout_seconds": PROBE_TIMEOUT_SECONDS,
+        "leader_model": {
+            "provider": "codex-cli",
+            "model": authority.leader_model.model,
+            "source": "explicit",
+            "ready": True,
+        },
+        "tool_authority": {
+            "schema_version": AUTHORITY_SCHEMA_VERSION,
+            "digest": authority.digest,
+            "source": "explicit",
+            "ready": True,
+        },
+        "tools": [
+            {
+                "name": name,
+                "executable_basename": name,
+                "version": "test 1.0",
+                "ready": True,
+            }
+            for name in (
+                "codex",
+                "claude",
+                "claude-agent-acp",
+                "node",
+                "tmux",
+            )
+        ],
+        "blockers": [],
+        "failures": [],
+    }
+
+
+def test_m2c_strict_preflight_validator_rejects_open_failure_fields(
+    tmp_path,
+) -> None:
+    authority, failures = _load_explicit_tool_authority(
+        _fake_explicit_authority_environment(tmp_path)
+    )
+    assert failures == () and authority is not None
+    payload = _valid_strict_preflight_payload(authority)
+    payload["ready"] = False
+    payload["blockers"] = ["codex_unavailable"]
+    payload["failures"] = [
+        {
+            "tool": "codex",
+            "probe": "version",
+            "code": "codex_unavailable",
+            "stderr": "SECRET /private/path",
+        }
+    ]
+
+    errors = _validate_strict_preflight_payload(payload)
+
+    assert errors
+    assert "SECRET" not in repr(errors)
+    assert "/private/path" not in repr(errors)
+
+
+def test_m2c_strict_preflight_v3_ready_uses_explicit_authority(
+    tmp_path,
+) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    authority, failures = _load_explicit_tool_authority(
+        _fake_explicit_authority_environment(tmp_path / "authority")
+    )
+    assert failures == () and authority is not None
+
+    payload = _strict_live_preflight(project, authority)
+
+    assert _validate_strict_preflight_payload(payload) == []
+    assert payload["ready"] is True
+    assert payload["blockers"] == []
+    assert payload["failures"] == []
+    assert payload["tool_authority"] == {
+        "schema_version": AUTHORITY_SCHEMA_VERSION,
+        "digest": authority.digest,
+        "source": "explicit",
+        "ready": True,
+    }
+
+
+def test_m2c_strict_preflight_attributes_probe_write_without_leakage(
+    tmp_path,
+) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    environment = _fake_explicit_authority_environment(tmp_path / "authority")
+    codex = Path(environment["AGENTDECK_M2C_CODEX"])
+    codex.write_text(
+        "#!/bin/sh\n"
+        "if [ \"$1\" = exec ]; then touch \"$HOME/SECRET-write\"; "
+        "echo --output-schema --output-last-message; "
+        "else echo codex-cli 0.131.0; fi\n",
+        encoding="utf-8",
+    )
+    codex.chmod(0o700)
+    authority, failures = _load_explicit_tool_authority(environment)
+    assert failures == () and authority is not None
+
+    payload = _strict_live_preflight(project, authority)
+
+    assert payload["ready"] is False
+    assert payload["blockers"] == ["probe_wrote_files"]
+    assert payload["failures"] == [
+        {
+            "tool": "codex",
+            "probe": "filesystem-snapshot",
+            "code": "probe_wrote_files",
+        }
+    ]
+    assert "SECRET-write" not in repr(payload)
+    assert str(tmp_path) not in repr(payload)
 
 
 @pytest.mark.parametrize(

@@ -330,7 +330,7 @@ git commit -m "test: validate M2c ACP package authority"
 - Test: `tests/test_m2c_live_acceptance.py`
 - Modify: `HISTORY.md`
 
-- [ ] **Step 1: Add RED validator and attribution tests**
+- [x] **Step 1: Add RED validator and attribution tests**
 
 Define the exact closed types in tests:
 
@@ -367,7 +367,7 @@ def test_m2c_strict_preflight_attributes_failures(tool, probe, blocker):
     assert payload["ready"] is False
 ```
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
 Run:
 
@@ -377,7 +377,7 @@ conda run -n agentdeck pytest -q tests/test_m2c_live_acceptance.py -k 'strict_pr
 
 Expected: failures because v3 structures and validator do not exist.
 
-- [ ] **Step 3: Add the v3 authority card and closed enums**
+- [x] **Step 3: Add the v3 authority card and closed enums**
 
 Reuse the `_PreflightFailure` type established in Task 1 and add:
 
@@ -404,7 +404,7 @@ Extend `BLOCKER_CODES` only with:
 "preflight_contract_invalid"
 ```
 
-- [ ] **Step 4: Implement attributed probes without transcript persistence**
+- [x] **Step 4: Implement attributed probes without transcript persistence**
 
 Add one wrapper whose result contains no bytes:
 
@@ -431,7 +431,7 @@ def _run_attributed_probe(
 
 The strict payload may consume `outcome.output` transiently to derive option names and a sanitized version, but it must never put output, stderr, argv, path, prompt, environment, exception text, or bytes into `failures`, `_LiveHarnessFailure`, docs evidence, or pytest parameter IDs.
 
-- [ ] **Step 5: Implement the strict v3 preflight and validator**
+- [x] **Step 5: Implement the strict v3 preflight and validator**
 
 Create `_strict_live_preflight(project, authority, isolation=None)` that:
 
@@ -463,7 +463,7 @@ Create `_strict_live_preflight(project, authority, isolation=None)` that:
 
 Keep the old PATH-discovered `_live_preflight()` and v2 validator only for existing portability tests. Rename it to `_portable_live_preflight_v2()` if needed so it cannot be called by live admission.
 
-- [ ] **Step 6: Run focused GREEN and legacy compatibility**
+- [x] **Step 6: Run focused GREEN and legacy compatibility**
 
 Run:
 
@@ -474,7 +474,7 @@ conda run -n agentdeck pytest -q tests/test_m2c_live_acceptance.py \
 
 Expected: selected tests pass; the opt-in live node remains skipped.
 
-- [ ] **Step 7: Commit Task 3**
+- [x] **Step 7: Commit Task 3**
 
 Update HISTORY with strict v3 fields and closed allowlists.
 

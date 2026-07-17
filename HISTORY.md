@@ -4,6 +4,20 @@
 
 ## 2026-07-17
 
+### Add strict M2c preflight v3 closed diagnostics
+
+- Added harness-only `m2c-live-preflight/v3` generation and exact validation
+  with a compact authority card, five logical tool readiness cards, unique
+  ordered blockers, and closed `tool + probe + code` failures.
+- Each strict version/help probe now compares project, isolated HOME/XDG/tmp,
+  executable seals, and the complete ACP package seal before/after execution;
+  writes are attributed to the exact tool through
+  `probe=filesystem-snapshot` without retaining paths or process output.
+- Invalid internal v3 shapes fail closed as `preflight_contract_invalid`.
+  Three new strict RED/GREEN cases and the existing non-live preflight
+  selection passed. The PATH-based v2 helper remains portability-only; live
+  admission has not yet switched and no real preflight/live execution ran.
+
 ### Bind declared M2c ACP entrypoint to the sealed package
 
 - Closed a plan-review gap by requiring the explicit
