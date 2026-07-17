@@ -130,13 +130,13 @@ git commit -m "test: await M2c confirmation turn convergence"
   with Leader `gpt-5.5`.
 - [x] Require `ready=true`, `blockers=[]`, `failures=[]`, authority v3, and a
   fresh digest; otherwise record evidence and do not run live.
-- [ ] On PASS only, run exactly one real four-stage Mission on the same
+- [x] On PASS only, run exactly one real four-stage Mission on the same
   SHA/model/digest.
 - [ ] Require exact implementation -> review -> revision -> acceptance order,
   ACP/tmux transport evidence, disconnect/reconnect, permission confirmation,
   takeover/return-control, exact artifact bytes, compact handoffs, complete
   cleanup, and no diagnostic leakage.
-- [ ] Never retry either one-shot node under the same authority.
+- [x] Never retry either one-shot node under the same authority.
 
 ## Task 7: Close M2c and transition to M3
 

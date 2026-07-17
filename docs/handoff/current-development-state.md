@@ -45,6 +45,17 @@ Its detached worktree was removed and residue audits were empty. The one
 same-SHA/model/digest real four-stage Mission is now the only remaining M2c
 gate for this candidate.
 
+That live node ran exactly once and failed `1 failed in 224.33s` with
+`code=first_permission_timeout`. Preview consumption and prompt-3 convergence
+passed; one step-1 `claude-worker` ACP attempt existed, but it reached durable
+`attempt_state=ambiguous` with zero permission requests, replies, or handoffs.
+The harness waited the full first-permission bound instead of terminalizing on
+that durable attempt state. The checkout and disposable project were removed;
+process, daemon, ACP, tmux, worktree, and temporary-root audits were empty.
+This authority is exhausted and will not be retried. The next action is a new
+minimal root-cause/spec/plan/TDD/freeze cycle around first-attempt ambiguous
+terminal observability; M2c remains **BLOCKED** and M3 remains locked.
+
 ### Historical M2c authority cycles
 
 Before consuming the authorized designated preflight for frozen implementation

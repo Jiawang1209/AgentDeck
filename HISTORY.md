@@ -64,6 +64,16 @@
   `sha256:b194c3b4ccbfa3ba2b534bf9cb51e59ecbc077e2576c6eea8ba343f26cc83ffa`.
   The detached worktree was removed and residue audits were empty.
 
+### Record the one-shot M2c first-permission blocker
+
+- Ran the same-SHA/model/digest real four-stage node exactly once. It crossed
+  Preview consumption and daemon admission, then failed `1 failed in 224.33s`
+  as `first_permission_timeout` with one step-1 Claude ACP attempt in durable
+  `ambiguous` state and zero permissions, replies, or handoffs.
+- The authority was not retried. The detached checkout and disposable project
+  were removed; process, daemon, ACP, tmux, worktree, and temporary-root audits
+  were empty. M2c remains blocked and M3 remains locked.
+
 ### Record the one-shot M2c preview-consumption live blocker
 
 - Ran the one same-SHA/model/digest four-stage node exactly once. It failed `1

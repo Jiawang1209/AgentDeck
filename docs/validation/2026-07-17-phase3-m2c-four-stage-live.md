@@ -49,6 +49,41 @@ SHA. The detached preflight worktree was removed and residue audits were empty.
 Exactly one same-SHA/model/digest real four-stage Mission is now the remaining
 M2c gate for this candidate.
 
+That live node then ran exactly once and was not retried. It crossed Mission
+Preview, exact-once consumption, prompt-3 convergence, and daemon admission,
+then reported `1 failed in 224.33s` with:
+
+```json
+{
+  "stage": "live_acceptance",
+  "code": "first_permission_timeout",
+  "cardinalities": {
+    "plans": 1,
+    "missions": 1,
+    "mission_attempts": 1,
+    "permission_requests": 0,
+    "mission_worker_replies": 0,
+    "mission_handoffs": 0
+  },
+  "ledger": {
+    "agent_id": "claude-worker",
+    "configured_transport": "acp",
+    "step_position": 1,
+    "attempt_state": "ambiguous",
+    "permission_count": 0,
+    "permission_states": [],
+    "classification": "permission_state_inconsistent"
+  }
+}
+```
+
+The run proved the preview-convergence correction but did not reach the first
+permission confirmation or any Worker reply/handoff. Cleanup removed the
+detached checkout and disposable project; process, daemon, ACP, tmux, worktree,
+and temporary-root audits were empty. This SHA/model/digest live authority is
+exhausted. M2c remains **BLOCKED** and M3 remains locked pending a new
+evidence-driven cycle for the first ACP attempt's ambiguous terminal state.
+
 ## Frozen authority
 
 - AgentDeck implementation:
