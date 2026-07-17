@@ -27,7 +27,7 @@
 - Test: `tests/test_m2c_live_acceptance.py` (new authority unit tests beside existing executable-seal tests)
 - Modify: `HISTORY.md`
 
-- [ ] **Step 1: Add RED tests for canonical content identity**
+- [x] **Step 1: Add RED tests for canonical content identity**
 
 Add tests with these exact behavioral assertions:
 
@@ -64,7 +64,7 @@ def test_m2c_tool_authority_digest_changes_for_every_bound_input(tmp_path):
 
 The helper `_fake_explicit_authority()` must create real regular fake files and return the production `_ToolAuthority`; it must not mock the digest function.
 
-- [ ] **Step 2: Run the authority tests and verify RED**
+- [x] **Step 2: Run the authority tests and verify RED**
 
 Run:
 
@@ -76,7 +76,7 @@ conda run -n agentdeck pytest -q \
 
 Expected: collection or runtime failure because `_ToolAuthority`, `_load_explicit_tool_authority`, and the new environment constants do not exist.
 
-- [ ] **Step 3: Add the closed constants and dataclasses**
+- [x] **Step 3: Add the closed constants and dataclasses**
 
 Add the following contract names and immutable values near the existing harness constants:
 
@@ -126,11 +126,18 @@ class _ToolAuthority:
             "tmux": self.tmux,
             "claude-agent-acp": self.acp_package.entrypoint,
         }
+
+
+@dataclass(frozen=True)
+class _PreflightFailure:
+    tool: str
+    probe: str
+    code: str
 ```
 
 Use `PurePosixPath` from `pathlib`. Do not put any absolute path, inode, owner, mode, mtime, or xattr into the stable authority payload.
 
-- [ ] **Step 4: Implement the canonical authority digest**
+- [x] **Step 4: Implement the canonical authority digest**
 
 Add these helpers with sorted tool roles and compact JSON:
 
@@ -183,13 +190,13 @@ def _finalize_authority(authority: _ToolAuthority) -> _ToolAuthority:
 
 Never serialize `authority.__dict__`.
 
-- [ ] **Step 5: Run focused GREEN tests**
+- [x] **Step 5: Run focused GREEN tests**
 
 Run the same two-node command from Step 2.
 
 Expected: `2 passed` and no provider, tmux session, ACP process, preflight, or live execution.
 
-- [ ] **Step 6: Record and commit Task 1**
+- [x] **Step 6: Record and commit Task 1**
 
 Prepend a `2026-07-17` HISTORY item stating that the harness gained deterministic content identity only and no external execution ran.
 
@@ -370,19 +377,13 @@ conda run -n agentdeck pytest -q tests/test_m2c_live_acceptance.py -k 'strict_pr
 
 Expected: failures because v3 structures and validator do not exist.
 
-- [ ] **Step 3: Add failure model and v3 card**
+- [ ] **Step 3: Add the v3 authority card and closed enums**
 
-Add:
+Reuse the `_PreflightFailure` type established in Task 1 and add:
 
 ```python
-@dataclass(frozen=True)
-class _PreflightFailure:
-    tool: str
-    probe: str
-    code: str
-
-    def card(self) -> dict[str, str]:
-        return {"tool": self.tool, "probe": self.probe, "code": self.code}
+def _preflight_failure_card(value: _PreflightFailure) -> dict[str, str]:
+    return {"tool": value.tool, "probe": value.probe, "code": value.code}
 
 
 def _authority_card(authority: _ToolAuthority) -> dict[str, object]:

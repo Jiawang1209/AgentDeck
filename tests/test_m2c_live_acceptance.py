@@ -6,10 +6,10 @@ import copy
 import ctypes
 import ctypes.util
 from contextlib import contextmanager
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 import hashlib
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import pty
 import re
 import resource
@@ -67,6 +67,14 @@ PROBE_TIMEOUT_SECONDS = 5
 PROBE_OUTPUT_LIMIT = 256 * 1024
 LEADER_MODEL_ENV = "AGENTDECK_M2C_LEADER_MODEL"
 LEADER_MODEL_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,95}\Z")
+AUTHORITY_SCHEMA_VERSION = "m2c-tool-authority/v1"
+STRICT_PREFLIGHT_SCHEMA_VERSION = "m2c-live-preflight/v3"
+STRICT_PREFLIGHT_ENV = "AGENTDECK_M2C_STRICT_PREFLIGHT"
+NODE_ENV = "AGENTDECK_M2C_NODE"
+ACP_PACKAGE_ENV = "AGENTDECK_M2C_CLAUDE_ACP_PACKAGE"
+AUTHORITY_DIGEST_ENV = "AGENTDECK_M2C_AUTHORITY_DIGEST"
+AUTHORITY_DIGEST_PATTERN = re.compile(r"sha256:[0-9a-f]{64}\Z")
+ACP_ENTRYPOINT = PurePosixPath("dist/claude-agent-acp")
 TOOL_SPECS = (
     ("codex", "AGENTDECK_M2C_CODEX", ("exec", "--help"), ("--version",)),
     ("claude", "AGENTDECK_M2C_CLAUDE", ("--help",), ("--version",)),
@@ -208,10 +216,106 @@ class _ExecutableSeal:
 
 
 @dataclass(frozen=True)
+class _PackageManifestEntry:
+    path: str
+    kind: str
+    size: int | None
+    content_hash: str | None
+    executable: bool
+
+
+@dataclass(frozen=True)
+class _PackageTreeSeal:
+    root: Path
+    entries: tuple[_PackageManifestEntry, ...]
+    tree_hash: str
+    entrypoint: _ExecutableSeal
+
+
+@dataclass(frozen=True)
+class _ToolAuthority:
+    leader_model: _LeaderModelSeal
+    codex: _ExecutableSeal
+    claude: _ExecutableSeal
+    node: _ExecutableSeal
+    tmux: _ExecutableSeal
+    acp_package: _PackageTreeSeal
+    digest: str
+
+    def executable_seals(self) -> dict[str, _ExecutableSeal]:
+        return {
+            "codex": self.codex,
+            "claude": self.claude,
+            "node": self.node,
+            "tmux": self.tmux,
+            "claude-agent-acp": self.acp_package.entrypoint,
+        }
+
+
+@dataclass(frozen=True)
+class _PreflightFailure:
+    tool: str
+    probe: str
+    code: str
+
+
+@dataclass(frozen=True)
 class _ProbeOutcome:
     ok: bool
     output: bytes
     blocker: str | None = None
+
+
+def _content_identity(seal: _ExecutableSeal) -> dict[str, object]:
+    return {
+        "kind": "executable",
+        "size": seal.size,
+        "content_hash": seal.content_hash,
+    }
+
+
+def _authority_digest_payload(authority: _ToolAuthority) -> dict[str, object]:
+    seals = authority.executable_seals()
+    return {
+        "schema_version": AUTHORITY_SCHEMA_VERSION,
+        "leader": {
+            "provider": "codex-cli",
+            "model": authority.leader_model.model,
+        },
+        "tools": [
+            {"name": name, **_content_identity(seals[name])}
+            for name in ("codex", "claude", "node", "tmux")
+        ]
+        + [
+            {
+                "name": "claude-agent-acp",
+                "kind": "package-tree",
+                "tree_hash": authority.acp_package.tree_hash,
+            }
+        ],
+    }
+
+
+def _content_address(payload: dict[str, object]) -> str:
+    encoded = (
+        json.dumps(
+            payload,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=True,
+        )
+        + "\n"
+    ).encode("utf-8")
+    return "sha256:" + hashlib.sha256(encoded).hexdigest()
+
+
+def _finalize_authority(authority: _ToolAuthority) -> _ToolAuthority:
+    if authority.digest != "":
+        raise ValueError("authority already finalized")
+    return replace(
+        authority,
+        digest=_content_address(_authority_digest_payload(authority)),
+    )
 
 
 def _tree_snapshot(root: Path) -> dict[str, tuple[str, int, str]]:
@@ -4074,6 +4178,93 @@ def _write_fake_capability_tool(path: Path, name: str) -> None:
     }
     path.write_text("#!/bin/sh\n" + responses[name], encoding="utf-8")
     path.chmod(0o700)
+
+
+def _fake_authority_for_digest(
+    root: Path,
+    *,
+    model: str = "gpt-5.5",
+    changed_role: str | None = None,
+    mtime_ns: int | None = None,
+) -> _ToolAuthority:
+    root.mkdir(parents=True)
+    seals: dict[str, _ExecutableSeal] = {}
+    for name in ("codex", "claude", "node", "tmux"):
+        path = root / name
+        suffix = "-changed" if changed_role == name else ""
+        path.write_bytes(f"#!/bin/sh\necho {name}{suffix}\n".encode("ascii"))
+        path.chmod(0o700)
+        if mtime_ns is not None:
+            os.utime(path, ns=(mtime_ns, mtime_ns))
+        seal = _seal_executable(str(path))
+        assert seal is not None
+        seals[name] = seal
+    package_root = root / "package"
+    entrypoint_path = package_root / "dist" / "claude-agent-acp"
+    entrypoint_path.parent.mkdir(parents=True)
+    acp_suffix = "-changed" if changed_role == "claude-agent-acp" else ""
+    entrypoint_path.write_bytes(
+        f"#!/bin/sh\necho acp{acp_suffix}\n".encode("ascii")
+    )
+    entrypoint_path.chmod(0o700)
+    if mtime_ns is not None:
+        os.utime(entrypoint_path, ns=(mtime_ns, mtime_ns))
+    entrypoint = _seal_executable(str(entrypoint_path))
+    assert entrypoint is not None
+    entries = (
+        _PackageManifestEntry("dist", "directory", None, None, True),
+        _PackageManifestEntry(
+            "dist/claude-agent-acp",
+            "file",
+            entrypoint.size,
+            entrypoint.content_hash,
+            True,
+        ),
+    )
+    tree_hash = hashlib.sha256(
+        (json.dumps([asdict(item) for item in entries], sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8")
+    ).hexdigest()
+    package = _PackageTreeSeal(package_root, entries, tree_hash, entrypoint)
+    return _finalize_authority(
+        _ToolAuthority(
+            leader_model=_LeaderModelSeal(model),
+            codex=seals["codex"],
+            claude=seals["claude"],
+            node=seals["node"],
+            tmux=seals["tmux"],
+            acp_package=package,
+            digest="",
+        )
+    )
+
+
+def test_m2c_tool_authority_digest_ignores_path_and_mtime(tmp_path) -> None:
+    left = _fake_authority_for_digest(
+        tmp_path / "left", mtime_ns=1_700_000_000_000_000_000
+    )
+    right = _fake_authority_for_digest(
+        tmp_path / "right", mtime_ns=1_800_000_000_000_000_000
+    )
+
+    assert left.digest == right.digest
+    assert re.fullmatch(r"sha256:[0-9a-f]{64}", left.digest)
+
+
+@pytest.mark.parametrize(
+    "changed_role",
+    ("leader-model", "codex", "claude", "node", "tmux", "claude-agent-acp"),
+)
+def test_m2c_tool_authority_digest_binds_every_input(
+    tmp_path, changed_role
+) -> None:
+    baseline = _fake_authority_for_digest(tmp_path / "baseline")
+    changed = _fake_authority_for_digest(
+        tmp_path / "changed",
+        model="gpt-5.5-review" if changed_role == "leader-model" else "gpt-5.5",
+        changed_role=changed_role,
+    )
+
+    assert changed.digest != baseline.digest
 
 
 @pytest.mark.parametrize(

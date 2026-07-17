@@ -4,6 +4,18 @@
 
 ## 2026-07-17
 
+### Seal deterministic M2c tool authority content
+
+- Added harness-only immutable authority types and canonical
+  `m2c-tool-authority/v1` serialization for the exact Leader model, Codex,
+  Claude, Node, tmux, and complete Claude Agent ACP package-tree hash.
+- The cross-process digest is `sha256:<64-lowercase-hex>` and intentionally
+  excludes paths, inode/device, owner, mode, mtime, and xattrs; those facts
+  remain process-local executable seals.
+- TDD observed the expected missing-authority-type RED, then passed `7`
+  focused identity cases. No installed tool, provider, ACP/tmux Worker,
+  designated preflight, or live Mission ran.
+
 ### Plan M2c content-addressed authority RED/GREEN implementation
 
 - Converted the approved `m2c-tool-authority/v1` design into the task-by-task
