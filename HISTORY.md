@@ -4,6 +4,23 @@
 
 ## 2026-07-17
 
+### Design bounded sequential ACP permission acceptance for M2c
+
+- Replaced the live harness assumption of exactly two Mission permissions with
+  an approved attempt-scoped driver design: each Claude ACP attempt may produce
+  several transport-ordered permissions, and every permission retains its own
+  exact preview, explicit confirmation, append-only transition, effect
+  authority, and lineage.
+- Stage progression now requires attempt success plus a validated reply and
+  canonical handoff. Implementation and revision must each exercise at least
+  one real permission bridge; acceptance-only bounds are four permissions per
+  Claude attempt and eight across the Mission, without imposing a product
+  limit.
+- Kept the repair harness-only unless deterministic RED proves a product
+  defect. Timeout inflation, batch/automatic approval, prompt-constrained
+  permission counts, retry, raw diagnostics, reused authority, and M3 work are
+  excluded. The exhausted `e83dcc48...` live authority remains non-retryable.
+
 ### Pin disposable Claude permission authority for M2c
 
 - Added an exact project-local Claude permission setting to the M2c live
