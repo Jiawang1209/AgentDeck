@@ -2144,7 +2144,7 @@ preflight remains the exact frozen implementation SHA defined by the SOP.
 - Modify after commands: `HISTORY.md`, `docs/handoff/current-development-state.md`,
   `docs/validation/2026-07-17-phase3-m2c-four-stage-live.md`, and this plan
 
-- [ ] **Step 1: Create two detached worktrees at the exact frozen SHA**
+- [x] **Step 1: Create two detached worktrees at the exact frozen SHA**
 
 ```bash
 FROZEN_SHA="$(git rev-parse HEAD)"
@@ -2155,7 +2155,10 @@ git worktree add --detach "$SUITE_A" "$FROZEN_SHA"
 git worktree add --detach "$SUITE_B" "$FROZEN_SHA"
 ```
 
-- [ ] **Step 2: Run full suite A, then suite B serially**
+Observed: created two detached worktrees at exact frozen SHA
+`df25532d0bd4fb9c8dd57fd119607a05411d11db`.
+
+- [x] **Step 2: Run full suite A, then suite B serially**
 
 ```bash
 cd "$SUITE_A"
@@ -2168,7 +2171,11 @@ Expected: both complete suites PASS with the same collected/pass/skip counts.
 They must not run in parallel and must not use a direct interpreter whose child
 PATH omits the conda `agentdeck` command.
 
-- [ ] **Step 3: Remove both worktrees and prove zero residue**
+Observed: suite A passed `4461 passed, 3 skipped in 250.94s`; only after it
+completed, suite B passed `4461 passed, 3 skipped in 245.06s`. Both used the
+`agentdeck` conda environment and identical collection counts.
+
+- [x] **Step 3: Remove both worktrees and prove zero residue**
 
 ```bash
 cd /Users/liuyue/.config/superpowers/worktrees/multi-agent-explore/codex/m2c-leader-preview-observability
@@ -2183,7 +2190,10 @@ tmux list-sessions 2>/dev/null | rg 'agentdeck-m2c' || true
 
 Expected: no suite checkout, M2c process, daemon, ACP adapter, or tmux residue.
 
-- [ ] **Step 4: Reconstruct exact installed inputs read-only**
+Observed: both paths were removed and pruned; process, daemon, ACP, tmux,
+worktree, and repository-status audits were empty.
+
+- [x] **Step 4: Reconstruct exact installed inputs read-only**
 
 Use the existing explicit-authority loader without PATH search. The values below
 are the last accepted explicit identities and must be checked as-is; if one no
@@ -2252,7 +2262,12 @@ If the digest or any installed identity differs from the last accepted audit,
 stop and report the new exact closed blocker. Do not substitute another PATH
 candidate.
 
-- [ ] **Step 5: Commit verification evidence before requesting authority**
+Observed: exact identities were unchanged. The audit returned
+`m2c-tool-authority/v3`, `m2c-live-preflight/v6`, Leader `gpt-5.5`, digest
+`sha256:b194c3b4ccbfa3ba2b534bf9cb51e59ecbc077e2576c6eea8ba343f26cc83ffa`,
+`loader_failures=[]`, and `claude_auth_ready=true`.
+
+- [x] **Step 5: Commit verification evidence before requesting authority**
 
 Record both suite results, cleanup, input audit, exact frozen SHA, model, and
 digest. Then:

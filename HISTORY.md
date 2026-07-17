@@ -163,6 +163,25 @@
   remains locked, and Task 11 must verify two detached worktrees at the exact
   unchanged SHA before any separately authorized preflight can be considered.
 
+### Verify frozen bounded M2c permission acceptance candidate
+
+- Identified the exact frozen Task 10 candidate as
+  `df25532d0bd4fb9c8dd57fd119607a05411d11db`. Two fresh detached-worktree full
+  suites ran serially and passed with identical counts: `4461 passed, 3
+  skipped in 250.94s` and `4461 passed, 3 skipped in 245.06s`.
+- Removed both detached worktrees and confirmed empty process, daemon, ACP,
+  tmux, worktree, and repository residue. The frozen development worktree did
+  not change during either suite.
+- Reconstructed installed authority from explicit, previously accepted paths
+  without PATH search or substitution. The closed result remains
+  `m2c-tool-authority/v3`, strict preflight `m2c-live-preflight/v6`, Leader
+  `gpt-5.5`, digest
+  `sha256:b194c3b4ccbfa3ba2b534bf9cb51e59ecbc077e2576c6eea8ba343f26cc83ffa`,
+  empty loader failures, and ready Claude auth.
+- Ran no designated preflight or live Mission. M2c remains **BLOCKED** and M3
+  remains locked pending separate human authorization naming the exact frozen
+  SHA, model, and digest for one read-only strict v6 preflight.
+
 ### Design bounded sequential ACP permission acceptance for M2c
 
 - Replaced the live harness assumption of exactly two Mission permissions with

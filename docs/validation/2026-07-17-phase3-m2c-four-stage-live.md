@@ -522,3 +522,32 @@ candidate; Task 11 records its exact full SHA before creating detached
 worktrees. No real provider, ACP/tmux Worker, daemon, designated preflight,
 live Mission, install, login, merge, or push ran. This freeze does not authorize
 preflight or live execution. M2c remains **BLOCKED** and M3 remains locked.
+
+Task 11 identifies the frozen candidate as
+`df25532d0bd4fb9c8dd57fd119607a05411d11db`. Two fresh detached worktrees at
+that exact SHA passed serially with identical results:
+
+- suite A: `4461 passed, 3 skipped in 250.94s`;
+- suite B: `4461 passed, 3 skipped in 245.06s`.
+
+The three skips were exactly the opt-in real ACP, designated strict preflight,
+and real four-stage Mission nodes. Both detached worktrees were removed;
+process, daemon, ACP, tmux, temporary worktree, and repository status audits
+were empty. The development worktree stayed unchanged throughout both suites.
+
+The subsequent explicit, read-only installed-input reconstruction returned:
+
+```text
+authority_schema=m2c-tool-authority/v3
+strict_preflight_schema=m2c-live-preflight/v6
+leader_model=gpt-5.5
+authority_digest=sha256:b194c3b4ccbfa3ba2b534bf9cb51e59ecbc077e2576c6eea8ba343f26cc83ffa
+loader_failures=[]
+claude_auth_ready=true
+```
+
+No PATH candidate was substituted and no path, executable hash, auth payload,
+prompt, stderr, or credential is retained here. No designated preflight or
+live Mission ran. The next gate is separate human authorization naming this
+exact frozen SHA, Leader model, and digest for one read-only strict v6
+preflight. M2c remains **BLOCKED** and M3 remains locked.

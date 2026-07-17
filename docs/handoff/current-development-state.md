@@ -35,12 +35,22 @@ found no issues and confirmed exact preview/confirm/effect authority,
 attempt-local sequential progression, reply-plus-handoff stage gates,
 takeover/return-control exclusion, transition-derived effective state, closed
 diagnostics, and no timeout/retry/fallback/global-setting/product-source
-change. The documentation commit containing this block is the Task 10 frozen
-candidate; Task 11 records its exact full SHA before creating two detached
-verification worktrees. No designated preflight or live Mission has run for
-this candidate; no prior authority carries forward. M2c remains **BLOCKED**
-and M3 remains locked. Do not retry `e83dcc48...`, auto-approve, merge, push,
-install, change authentication/global settings, or begin M3.
+change. The Task 10 candidate is frozen at
+`df25532d0bd4fb9c8dd57fd119607a05411d11db`. Two fresh detached-worktree full
+suites at that exact SHA pass serially with identical counts: `4461 passed, 3
+skipped in 250.94s` and `4461 passed, 3 skipped in 245.06s`. The skips are the
+opt-in real ACP, designated preflight, and real four-stage nodes. Both
+worktrees were removed and process/daemon/ACP/tmux/worktree residue audits are
+empty. The explicit installed-input audit preserved Leader `gpt-5.5`,
+`m2c-tool-authority/v3`, `m2c-live-preflight/v6`, digest
+`sha256:b194c3b4ccbfa3ba2b534bf9cb51e59ecbc077e2576c6eea8ba343f26cc83ffa`,
+`loader_failures=[]`, and `claude_auth_ready=true` without PATH substitution.
+No designated preflight or live Mission has run for this candidate; no prior
+authority carries forward. The next gate is a separate human authorization
+naming this exact SHA, model, and digest for one read-only strict v6 preflight.
+M2c remains **BLOCKED** and M3 remains locked. Do not retry `e83dcc48...`,
+auto-approve, merge, push, install, change authentication/global settings, or
+begin M3.
 
 The separately authorized live Mission on frozen
 `79d8160eb60ad4e8bfb37ff43615f099afd9edc5`, Leader `gpt-5.5`, and authority
