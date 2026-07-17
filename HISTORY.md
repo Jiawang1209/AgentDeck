@@ -4,6 +4,26 @@
 
 ## 2026-07-17
 
+### Freeze the AgentDeck V1 product requirements
+
+- Defined the complete bare-`agentdeck` user journey: restore or initialize a
+  project conversation, explicitly select Codex or Claude as Leader, preview
+  and edit one frozen Mission, confirm its exact version and digest once,
+  continue in the background, reconnect, inspect or take over Workers, and
+  receive graded, evidence-backed acceptance or a precise actionable pause.
+- Fixed V1 to governed Codex/Claude software-development collaboration with
+  permission, Handoff, Evidence, and peer-review lineage, plus recovery and a
+  shared ProjectView. One-confirmation autonomy applies only inside the
+  confirmed scope; new authority, drift, ambiguous effects, and exhausted
+  bounds must pause.
+- Required safe evidence-derived memory, skill, and Improvement Mission
+  suggestions with preview, provenance, and explicit confirmation, and made
+  clear that this documentation slice does not implement them or any other
+  product behavior.
+- Explicitly excluded a GUI, terminal emulator, A2A, third official Agent,
+  provider matrix, parallel mutating Missions, marketplace, remote execution,
+  and silent self-modification from V1.
+
 ### Start the AgentDeck V1 architecture-reset program
 
 - Replaced the historical close-M2c-then-M3 active route with the approved
