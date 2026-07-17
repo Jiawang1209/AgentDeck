@@ -56,6 +56,16 @@ This authority is exhausted and will not be retried. The next action is a new
 minimal root-cause/spec/plan/TDD/freeze cycle around first-attempt ambiguous
 terminal observability; M2c remains **BLOCKED** and M3 remains locked.
 
+That terminal-observability candidate is now frozen at
+`3b2b3ae18dec745e56ff1920c3a401c9518515ec`. It changes only the live harness:
+pending permission returns normally, while exact terminal attempt state maps to
+a finite leak-free stage. RED failed because the observer was absent; focused
+GREEN passed `55`; strict/package/launcher/live aggregate passed `109`;
+complete non-live M2c passed `310 passed, 2 skipped in 80.97s`; product
+regressions passed `851 passed in 4.48s`. Compile, diff, current-slice source,
+leakage, process, daemon, ACP, worktree, and temporary-root audits passed. Two
+fresh complete suites remain before a new real preflight.
+
 ### Historical M2c authority cycles
 
 Before consuming the authorized designated preflight for frozen implementation

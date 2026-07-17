@@ -80,12 +80,12 @@ git worktrees, real installed inputs only after deterministic freeze.
 - Modify: `HISTORY.md`
 - Modify: this plan
 
-- [ ] Run focused strict/package/launcher/live-harness coverage.
-- [ ] Run complete non-live M2c coverage.
-- [ ] Run Conversation/product regressions.
-- [ ] Run compile, diff, current-slice product-source zero-change, leakage,
+- [x] Run focused strict/package/launcher/live-harness coverage.
+- [x] Run complete non-live M2c coverage.
+- [x] Run Conversation/product regressions.
+- [x] Run compile, diff, current-slice product-source zero-change, leakage,
   process, daemon, worktree, and temporary-root audits.
-- [ ] Freeze the new implementation SHA and record deterministic evidence.
+- [x] Freeze the new implementation SHA and record deterministic evidence.
 
 ## Task 5: Two complete suites
 

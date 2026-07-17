@@ -84,6 +84,29 @@ and temporary-root audits were empty. This SHA/model/digest live authority is
 exhausted. M2c remains **BLOCKED** and M3 remains locked pending a new
 evidence-driven cycle for the first ACP attempt's ambiguous terminal state.
 
+## First-attempt terminal-observability candidate
+
+The harness-only terminal observer is frozen at
+`3b2b3ae18dec745e56ff1920c3a401c9518515ec`. It stops the first-permission wait
+on one exact durable terminal attempt and maps only admission, receipt, ACP
+prompt/update/parse/finish/cleanup, failed, cancelled, or interrupted into
+closed evidence. It does not change AgentDeck product source, ACP behavior,
+timeouts, retries, provider selection, or authority schemas.
+
+Deterministic evidence:
+
+- RED: `1 failed, 295 deselected in 0.84s` because the terminal-aware wait was
+  absent;
+- focused terminal/diagnostic GREEN: `55 passed, 257 deselected in 0.72s`;
+- focused strict/package/launcher/live aggregate: `109 passed, 203 deselected
+  in 24.55s`;
+- complete non-live M2c: `310 passed, 2 skipped in 80.97s`;
+- product regressions: `851 passed in 4.48s`;
+- compile, diff, current-slice product-source zero-change, leakage, process,
+  daemon, ACP, worktree, and temporary-root audits: PASS.
+
+Two independent complete suites remain before any new real preflight.
+
 ## Frozen authority
 
 - AgentDeck implementation:

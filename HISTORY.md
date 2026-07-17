@@ -31,6 +31,16 @@
   0.72s`. No product source, timeout, retry, provider, or authority schema
   changed.
 
+### Freeze M2c first-attempt terminal observability
+
+- Froze the harness-only candidate at
+  `3b2b3ae18dec745e56ff1920c3a401c9518515ec`. Focused aggregate passed `109
+  passed, 203 deselected in 24.55s`; complete non-live M2c passed `310 passed,
+  2 skipped in 80.97s`; product regressions passed `851 passed in 4.48s`.
+- Compile, diff, current-slice product-source zero-change, leakage, process,
+  daemon, ACP, worktree, and temporary-root audits passed. Two fresh complete
+  suites remain before any real preflight.
+
 ### Design the M2c preview-consumption convergence repair
 
 - Approved a harness-only correction for the observed admission/consumption
