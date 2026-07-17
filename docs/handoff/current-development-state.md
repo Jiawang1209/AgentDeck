@@ -850,7 +850,7 @@ The Task 6 quality closure also makes the hidden daemon's idle loop reload the f
 
 The final Task 6 spec closure makes offline ProjectView use the same pure time-aware lease predicate as live status: only a strictly parsed active `lse_` lease whose aware expiry is later than current UTC reports `controller_present=true`; expired, terminal, naive, and malformed facts report false without repairing or writing state. DaemonServer also owns a monotonic process-local `activity_generation`: accept and each successfully decoded protocol-valid request increment once, while close never increments. The idle loop remembers the last generation and resets `idle_since` before evaluating keepalive, so a sub-100ms client that connects and closes entirely between polls still grants a new full idle window. This counter is runtime-only, is not added to ProjectView/contracts, and is not execution authority.
 
-Historical routing note: before the Codex probe was made zero-write, the active instruction was to investigate the Task 11 `probe_wrote_files` blocker and rerun preflight before any live attempt. That instruction was completed and is no longer the active route. Frozen historical live results remain evidence only. The approved semantic-authority and Leader Preview observability work at `9db5b476f885cfcf68a55cbf59673a2d908d3fce` used its one explicit-model preflight and one separately authorized live attempt, which stopped at `leader_schema_before_preview` / `semantic_effect_conflict`; neither may be rerun in place. The target-exclusivity and pytest-redaction slice frozen at `75f0366d4d5619b29c77f10949365f43d46185b1` also used exactly one preflight and one live attempt, which stopped at `native_schema_provenance_missing`; neither may be rerun. That blocker was corrected and verified at new frozen SHA `7a76ada81938be3ba0720a7c2f5a540b4beebb3e`, but its own exact `gpt-5.5` cycle is now exhausted at preflight/live `1/1`; live stopped at fixed `preflight_blocked`. The active route is a new design/TDD cycle that binds designated preflight and live to one executable authority and projects the closed internal blocker set; there is no automatic retry. M2c is **BLOCKED**, M3 remains locked, and A2A Client/Server, remote daemon, global roaming, Workspace Client, system notifications, complete transcript persistence, automatic install/auth, Windows IPC, and terminal-emulator work remain out of scope.
+Historical routing note: before the Codex probe was made zero-write, the active instruction was to investigate the Task 11 `probe_wrote_files` blocker and rerun preflight before any live attempt. That instruction was completed and is no longer the active route. Frozen historical live results remain evidence only. The approved semantic-authority and Leader Preview observability work at `9db5b476f885cfcf68a55cbf59673a2d908d3fce` used its one explicit-model preflight and one separately authorized live attempt, which stopped at `leader_schema_before_preview` / `semantic_effect_conflict`; neither may be rerun in place. The target-exclusivity and pytest-redaction slice frozen at `75f0366d4d5619b29c77f10949365f43d46185b1` also used exactly one preflight and one live attempt, which stopped at `native_schema_provenance_missing`; neither may be rerun. That blocker was corrected and verified at new frozen SHA `7a76ada81938be3ba0720a7c2f5a540b4beebb3e`, but its own exact `gpt-5.5` cycle was exhausted at preflight/live `1/1`; live stopped at fixed `preflight_blocked`. At that historical checkpoint, the prescribed follow-up was a design/TDD cycle for same-authority binding and closed internal diagnostics. That prescription has been superseded by the P0-P5 architecture-reset program and carries no current execution or retry authority. At the time, M2c was classified **BLOCKED**, M3 had not started, and A2A Client/Server, remote daemon, global roaming, Workspace Client, system notifications, complete transcript persistence, automatic install/auth, Windows IPC, and terminal-emulator work were out of scope.
 
 The completed natural-language Mission and G-series work below is historical context only. It must not be treated as an active continuation request or redone.
 
@@ -861,8 +861,11 @@ When switching from Codex to Claude Code CLI or another local agent, read these 
 1. `CLAUDE.md`
 2. `AGENT.md`
 3. Top of `HISTORY.md`
-4. `docs/roadmap/ultimate-goal-roadmap.md`
-5. This file
+4. `docs/roadmap/product-north-star.md`
+5. `docs/roadmap/ultimate-goal-roadmap.md`
+6. `docs/superpowers/plans/2026-07-17-agentdeck-v1-architecture-reset-program.md`
+7. `docs/superpowers/plans/2026-07-17-agentdeck-p0-product-reset.md`
+8. This file
 
 Then inspect current state with:
 
@@ -874,13 +877,26 @@ conda run -n agentdeck pytest -q
 
 ## Current Phase
 
-Phase 0, Phase 1, Phase 2, Phase 3 M1, and Phase 3 M2 implementation Tasks 1–14 are complete and integrated into `main`. M1's final full suite was 1855 passed and 1 skipped; its deterministic and live Claude ACP/PTY evidence is `docs/validation/2026-07-13-phase3-m1-foreground-conversation.md`. M2's earlier final full suite was `2928 passed, 1 skipped`; deterministic evidence and the two-step real transport PASS are recorded in `docs/validation/2026-07-13-phase3-m2-project-daemon.md`. M2c remains **BLOCKED**, not a partial PASS; M3 remains locked. Historical `9db5b476...` and `75f0366d...` preflight/live authorities are exhausted and must not be rerun. The provenance correction is frozen at `7a76ada81938be3ba0720a7c2f5a540b4beebb3e`; focused verification and two unchanged-SHA full suites pass, but its exact `gpt-5.5` preflight/live cycle is now exhausted at `1/1`. The single live stopped before project initialization at fixed `preflight_blocked`. The remaining gate is a new approved design/TDD cycle for same-authority binding and closed internal-preflight diagnostics. Earlier live and `probe_wrote_files` states are historical evidence only, not current routing.
+The approved [AgentDeck V1 architecture-reset program](../superpowers/plans/2026-07-17-agentdeck-v1-architecture-reset-program.md)
+is the current development route and must run in strict P0-P5 order. P0 Task 1
+authoritative routing is complete. P0 Task 2, the V1 product requirements
+document, is the next planned task and may begin only after the Task 1 review
+closes; its exact steps are in the
+[P0 Product Reset plan](../superpowers/plans/2026-07-17-agentdeck-p0-product-reset.md).
 
-The final M2 security closure anchors audit-journal reads to the verified project state directory and implements append as a bounded 64 MiB full-content temp/fsync/identity-check/atomic-replace transaction. Symlink, non-regular, and journal-inode replacement races cannot append to the detached journal; daemon/conversation/protocol outboxes stay pending on failure and retry without duplicate events. Current writers acquire the stable project-root directory flock before the legacy filename lock, then revalidate project-root/deck/state and lock-file identities around every atomic state or journal effect. Replacing `protocol-mutation.lock` or the whole state directory after proof therefore cannot split current writers, report a detached write as success, clear the canonical outbox, or cause a canonical lost update. The explicit threat boundary is cooperative AgentDeck writers under the opened project-root inode: a same-UID process that ignores advisory locks can move open directories and cause a rejected detached-descriptor effect, while project-root replacement itself is rejected rather than recovered.
+P0 remains limited to documentation, current-capability inventory, migration
+design, and deterministic baseline evidence. P1 product code, provider calls,
+ACP/tmux sessions, daemons, preflights, live Missions, merge, and push remain
+locked or out of scope. Old M2c evidence is historical only: it is not a
+release veto, a current scheduling gate, or authority to retry any preflight or
+live node.
 
-The completed Phase 2 diagnostic slice covers one real Agent's initialize, session create/load, prompt, streamed update, permission bridge, completion, disconnect, and resume behavior. M1 composes that ACP client with explicit Leader/Worker transport and foreground conversation contracts while preserving tmux compatibility. M2 moves confirmed Mission advancement into a recoverable project daemon while reusing those primitives rather than creating a parallel authority.
-
-Historical note: G1–G5 frontdesk, coordination-role, loop, worker-lifecycle, review-gate, release-preview, and natural-language discovery slices were completed before the Phase 0/1 protocol-native work. Their detailed behavior remains in `HISTORY.md` and the contract documents; they are not the current phase or next slice.
+Earlier implementation and validation facts remain available in
+[`HISTORY.md`](../../HISTORY.md),
+[Phase 3 M1 validation](../validation/2026-07-13-phase3-m1-foreground-conversation.md),
+[Phase 3 M2 validation](../validation/2026-07-13-phase3-m2-project-daemon.md),
+and [historical M2c validation](../validation/2026-07-17-phase3-m2c-four-stage-live.md).
+They are evidence, not continuation instructions.
 
 ## Cross-Agent Goal Continuity
 
@@ -890,7 +906,9 @@ Claude can still continue the same work by treating this repository as the sourc
 
 - `HISTORY.md` is the development timeline.
 - `CLAUDE.md` and `AGENT.md` are the behavioral constraints.
-- `docs/roadmap/ultimate-goal-roadmap.md` is the north star.
+- `docs/roadmap/product-north-star.md` is the active product north star.
+- `docs/roadmap/ultimate-goal-roadmap.md` is the historical capability roadmap.
+- The architecture-reset program and P0 plan define the current task order.
 - This handoff file carries the current active goal and next slice.
 - Git commits are the durable recovery points.
 
@@ -898,10 +916,10 @@ Suggested prompt for Claude Code CLI:
 
 ```text
 Please continue AgentDeck development from this repository.
-Read CLAUDE.md, AGENT.md, the top of HISTORY.md, docs/roadmap/ultimate-goal-roadmap.md, and docs/handoff/current-development-state.md first.
+Read CLAUDE.md, AGENT.md, the top of HISTORY.md, docs/roadmap/product-north-star.md, docs/roadmap/ultimate-goal-roadmap.md, docs/handoff/current-development-state.md, docs/superpowers/plans/2026-07-17-agentdeck-v1-architecture-reset-program.md, and docs/superpowers/plans/2026-07-17-agentdeck-p0-product-reset.md first.
 Use conda activate agentdeck or conda run -n agentdeck for commands.
 Every development iteration must update HISTORY.md, run verification, and commit locally.
-Treat Phase 3 M2 Tasks 1–14 as complete. Historical live failures remain evidence only; M2c is BLOCKED and M3 remains locked. Do not rerun the historical `9db5b476`, `75f0366d`, or current `7a76ada` preflight/live cycles. The semantic provenance persistence and public contract correction is frozen at `7a76ada81938be3ba0720a7c2f5a540b4beebb3e`, has passed focused verification and two full suites, and has exhausted one ready `gpt-5.5` preflight plus one separately authorized live attempt. Its preflight/live counts are `1/1`; live stopped before project initialization at fixed `preflight_blocked`. The next gate is a new brainstorming/spec/plan and TDD cycle that binds designated preflight and live to one executable authority and exposes only the closed allowlisted internal blocker set. No prior preflight/live authorization carries forward. Do not redo M1 or earlier phases; do not merge/push, auto-install, change authentication, add A2A, remote execution, global roaming, Workspace Client, full transcript persistence, or terminal-emulator work.
+Follow the approved P0 Product Reset plan in order. P0 Task 1 authoritative routing is complete; begin P0 Task 2, the V1 PRD, only after the Task 1 review is closed, and do not skip ahead to later P0 tasks or P1. P0 is documentation, inventory, migration design, and deterministic baseline work only. Preserve historical M2c evidence, but do not treat it as a release veto, current gate, or retry authority. Do not modify product source or tests, call a provider, start ACP/tmux sessions or daemons, run preflight/live Missions, merge, or push. Do not auto-install or change authentication/global settings. Use the agentdeck conda environment, update HISTORY.md with each development iteration, run the plan's verification, and make the required local commit only.
 ```
 
 ## Historical development log — not active

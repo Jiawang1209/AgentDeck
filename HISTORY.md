@@ -12,6 +12,9 @@
 - Made P0 documentation, inventory, migration design, and baseline evidence the
   sole current scope; P1 product code, real providers, ACP/tmux sessions,
   preflight/live runs, merge, and push remain out of scope.
+- Routed the canonical handoff inputs, current-phase summary, and cross-Agent
+  continuation prompt exclusively through P0. Earlier M2c continuation prompts
+  remain historical evidence and no longer advertise a live gate or retry path.
 
 ### Plan the AgentDeck V1 architecture reset
 
