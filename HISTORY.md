@@ -34,6 +34,17 @@
   cardinalities retain `mission_preview_not_consumed_exactly_once` and expose no
   injected terminal or path sentinel.
 
+### Freeze the M2c preview-convergence candidate
+
+- Froze the harness-only implementation at
+  `690f0baf6efad6ad5608edaf10cf396da2729521`. Strict/package/launcher/preview
+  coverage passed `55 passed, 240 deselected in 8.48s`; complete non-live M2c
+  passed `293 passed, 2 skipped in 86.41s`; product regressions passed `851
+  passed in 4.23s`.
+- Compile, diff, current-slice `src/agentdeck/**` zero-change, leakage, process,
+  and temporary-root audits passed. Two fresh complete suites remain before any
+  new real preflight; the historical authority remains exhausted.
+
 ### Record the one-shot M2c preview-consumption live blocker
 
 - Ran the one same-SHA/model/digest four-stage node exactly once. It failed `1

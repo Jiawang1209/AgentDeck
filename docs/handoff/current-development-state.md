@@ -2,7 +2,33 @@
 
 Updated: 2026-07-17
 
-## Active goal — close the live internal-preflight authority mismatch
+## Active goal — close M2c through preview-consumption convergence
+
+The exhausted authority at frozen `284d8f62...` reached Mission Preview and
+daemon admission, then the live harness read the consume ledger before the
+synchronous confirmation turn had completed. Product tracing proved the event
+commit and prompt 3 are causally after `preview_executor` returns; no Worker
+attempt or effect occurred.
+
+The approved minimal repair changes only
+`tests/test_m2c_live_acceptance.py`: after daemon admission, the harness waits
+for the existing bounded third prompt and then still requires exactly one
+Mission-specific `conversation_preview_consumed` event. Sleep, timeout
+inflation, retry, fallback, event fabrication, and product-source changes were
+rejected.
+
+The new implementation is frozen at
+`690f0baf6efad6ad5608edaf10cf396da2729521`. RED reproduced the exact race (`1
+failed, 291 deselected in 3.92s`); confirmation/cardinality GREEN passed `9
+passed`; focused authority/preview coverage passed `55 passed`; complete
+non-live M2c passed `293 passed, 2 skipped in 86.41s`; product regressions
+passed `851 passed in 4.23s`. Compile, diff, current-slice
+`src/agentdeck/**` zero-change, leakage, process, and temporary-root audits
+passed. Two fresh detached-worktree full suites remain. No new real preflight,
+live Mission, provider, ACP/tmux session, daemon, install, login, merge, or push
+has run. M2c remains **BLOCKED** and M3 remains locked.
+
+### Historical M2c authority cycles
 
 Before consuming the authorized designated preflight for frozen implementation
 `fda1a69194e67b50afe0c2b9f4e7f29c195af400`, a read-only command audit found a

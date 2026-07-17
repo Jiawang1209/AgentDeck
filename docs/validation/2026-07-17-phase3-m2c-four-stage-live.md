@@ -2,6 +2,35 @@
 
 Date: 2026-07-17
 
+## Preview-convergence repair candidate
+
+The exhausted authority below exposed a harness observation race: daemon
+admission can become visible while the synchronous confirmation turn is still
+inside `preview_executor`, before `conversation_preview_consumed` is committed
+and prompt 3 is rendered.
+
+The harness-only repair is frozen at
+`690f0baf6efad6ad5608edaf10cf396da2729521`. It waits for prompt 3 after
+admission, then preserves the exact Mission-specific consume-event cardinality
+check. No production `src/agentdeck/**`, timeout, retry, provider, authority
+schema, or diagnostic surface changed.
+
+Deterministic evidence for the new candidate:
+
+- RED: `1 failed, 291 deselected in 3.92s`, exact code
+  `mission_preview_not_consumed_exactly_once`;
+- exact confirmation/PTY/cardinality GREEN: `9 passed, 286 deselected in
+  1.03s`;
+- strict/package/launcher/preview aggregate: `55 passed, 240 deselected in
+  8.48s`;
+- complete non-live M2c: `293 passed, 2 skipped in 86.41s`;
+- product regressions: `851 passed in 4.23s`;
+- compile, diff, current-slice product-source scope, leakage, process, and
+  temporary-root audits: PASS.
+
+Two independent complete suites remain before any new real preflight. The old
+preflight/live authority documented below is exhausted and will not be reused.
+
 ## Frozen authority
 
 - AgentDeck implementation:

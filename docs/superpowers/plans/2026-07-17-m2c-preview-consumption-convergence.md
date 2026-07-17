@@ -102,13 +102,13 @@ git commit -m "test: await M2c confirmation turn convergence"
 - Modify: `HISTORY.md`
 - Modify: this plan
 
-- [ ] Run focused strict/preflight/live-harness coverage with real nodes skipped.
-- [ ] Run complete non-live M2c coverage.
-- [ ] Run Conversation/product regression coverage.
-- [ ] Run `python -m compileall src`, `git diff --check`, production-source
+- [x] Run focused strict/preflight/live-harness coverage with real nodes skipped.
+- [x] Run complete non-live M2c coverage.
+- [x] Run Conversation/product regression coverage.
+- [x] Run `python -m compileall src`, `git diff --check`, production-source
   zero-change audit, durable-wording audit, process audit, and temporary-root
   audit.
-- [ ] Update durable evidence and freeze a new implementation commit.
+- [x] Update durable evidence and freeze a new implementation commit.
 
 ## Task 5: Two independent complete suites
 
