@@ -156,6 +156,18 @@
   No user settings were read or changed. A new minimal project-local
   permission-mode authority cycle is required.
 
+### Design M2c project-local Claude permission authority
+
+- Chose a harness-only correction matching the existing Phase 2 real ACP
+  practice: create exact disposable-project `.claude/settings.local.json` bytes
+  with `permissions.defaultMode=default`, never read or mutate user settings,
+  and seal/revalidate the file across every live effect boundary.
+- Rejected retry/prompt changes and rejected hard-coding Claude's `default` mode
+  into generic ACP transport. The latter is an independent product/configuration
+  design because ACP mode IDs are agent-defined.
+- Authority remains v3 and preflight remains v6; a new frozen SHA, double full
+  suite, new preflight, and separately authorized one-shot live are required.
+
 ### Design the M2c preview-consumption convergence repair
 
 - Approved a harness-only correction for the observed admission/consumption
