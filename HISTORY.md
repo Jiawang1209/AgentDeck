@@ -4,6 +4,18 @@
 
 ## 2026-07-17
 
+### Preserve closed M2c internal-preflight diagnostics
+
+- Extended `_live_failure()` with an exact, allowlisted preflight projection:
+  valid blocked results retain only ordered unique blocker codes and closed
+  `tool + probe + code` items.
+- Open mappings, unknown enums, duplicates, inconsistent blocker/failure order,
+  or partial arguments are never stringified; the entire diagnostic is
+  replaced by `{stage=live_acceptance, code=preflight_contract_invalid}`.
+- Strict guarded preflight and pre-root authority loading now use the same
+  projection. Five new RED/GREEN cases and seven default-pytest leakage
+  regressions passed; no real preflight/live or installed tool ran.
+
 ### Bind M2c live admission to the preflight authority digest
 
 - Live now validates the exact lowercase authority-digest grammar, loads only

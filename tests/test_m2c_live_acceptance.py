@@ -2476,6 +2476,52 @@ def _closed_leader_terminal(value: object) -> dict[str, object] | None:
     return leader_gateway_diagnostics(error)
 
 
+def _closed_preflight_projection(
+    blockers: object,
+    failures: object,
+) -> tuple[list[str], list[dict[str, str]]] | None:
+    if type(blockers) not in {list, tuple} or type(failures) not in {
+        list,
+        tuple,
+    }:
+        return None
+    if (
+        any(type(item) is not str or item not in BLOCKER_CODES for item in blockers)
+        or len(blockers) != len(set(blockers))
+    ):
+        return None
+    closed_failures: list[_PreflightFailure] = []
+    for item in failures:
+        if (
+            type(item) is not _PreflightFailure
+            or item.tool not in PREFLIGHT_FAILURE_TOOLS
+            or item.probe not in PREFLIGHT_FAILURE_PROBES
+            or item.code not in BLOCKER_CODES
+            or item in closed_failures
+        ):
+            return None
+        closed_failures.append(item)
+    derived_blockers = list(
+        dict.fromkeys(item.code for item in closed_failures)
+    )
+    if list(blockers) != derived_blockers:
+        return None
+    return (
+        list(blockers),
+        [_preflight_failure_card(item) for item in closed_failures],
+    )
+
+
+def _preflight_failure_from_card(
+    value: object,
+) -> _PreflightFailure | None:
+    if type(value) is not dict or set(value) != {"tool", "probe", "code"}:
+        return None
+    item = _PreflightFailure(value["tool"], value["probe"], value["code"])
+    projection = _closed_preflight_projection((item.code,), (item,))
+    return item if projection is not None else None
+
+
 def _live_failure(
     code: str,
     *,
@@ -2486,9 +2532,29 @@ def _live_failure(
     task_authority: object = None,
     frozen_authority: object = None,
     leader_terminal: object = None,
+    preflight_blockers: object = None,
+    preflight_failures: object = None,
 ) -> _LiveHarnessFailure:
     if store is not None and state_snapshot is not None:
         raise ValueError("live failure state source is ambiguous")
+    preflight_projection_supplied = (
+        preflight_blockers is not None or preflight_failures is not None
+    )
+    closed_preflight = None
+    if preflight_projection_supplied:
+        closed_preflight = _closed_preflight_projection(
+            preflight_blockers, preflight_failures
+        )
+        if code != "preflight_blocked" or closed_preflight is None:
+            return _LiveHarnessFailure(
+                json.dumps(
+                    {
+                        "stage": "live_acceptance",
+                        "code": "preflight_contract_invalid",
+                    },
+                    sort_keys=True,
+                )
+            )
     diagnostic: dict[str, object] = {"stage": "live_acceptance", "code": code}
     closed_task_authority = _closed_task_authority(task_authority)
     closed_frozen_authority = _closed_frozen_authority(frozen_authority)
@@ -2518,6 +2584,9 @@ def _live_failure(
         diagnostic["frozen_authority"] = closed_frozen_authority
     if closed_terminal is not None:
         diagnostic["leader_terminal"] = closed_terminal
+    if closed_preflight is not None:
+        diagnostic["preflight_blockers"] = closed_preflight[0]
+        diagnostic["preflight_failures"] = closed_preflight[1]
     return _LiveHarnessFailure(json.dumps(diagnostic, sort_keys=True))
 
 
@@ -4048,7 +4117,13 @@ def _admit_live_tool_authority(
         raise _live_failure("preflight_authority_drift")
     authority, failures = _load_explicit_tool_authority(environ)
     if authority is None or failures:
-        raise _live_failure("preflight_blocked")
+        raise _live_failure(
+            "preflight_blocked",
+            preflight_blockers=tuple(
+                dict.fromkeys(item.code for item in failures)
+            ),
+            preflight_failures=failures,
+        )
     if not secrets.compare_digest(authority.digest, expected):
         raise _live_failure("preflight_authority_drift")
     return authority
@@ -4514,7 +4589,18 @@ def _run_live_acceptance_in_project_guarded(
             raise _live_failure("preflight_contract_invalid")
         if preflight["blockers"] == ["preflight_contract_invalid"]:
             raise _live_failure("preflight_contract_invalid")
-        _require_live(preflight["ready"] is True, "preflight_blocked")
+        if preflight["ready"] is not True:
+            closed_failures = tuple(
+                _preflight_failure_from_card(item)
+                for item in preflight["failures"]
+            )
+            if any(item is None for item in closed_failures):
+                raise _live_failure("preflight_contract_invalid")
+            raise _live_failure(
+                "preflight_blocked",
+                preflight_blockers=tuple(preflight["blockers"]),
+                preflight_failures=closed_failures,
+            )
         checkout = Path(__file__).resolve().parents[1]
         _require_live(
             checkout not in root.parents and root not in checkout.parents,
@@ -5984,6 +6070,120 @@ def test_live_internal_preflight_invalid_contract_fails_closed(
     }
     assert "SECRET" not in str(raised.value)
     assert "/private/path" not in str(raised.value)
+    assert not parent.exists()
+
+
+def test_live_failure_projects_closed_preflight_diagnostics() -> None:
+    failure = _live_failure(
+        "preflight_blocked",
+        preflight_blockers=("codex_unavailable", "probe_wrote_files"),
+        preflight_failures=(
+            _PreflightFailure("codex", "version", "codex_unavailable"),
+            _PreflightFailure(
+                "codex", "filesystem-snapshot", "probe_wrote_files"
+            ),
+        ),
+    )
+
+    assert json.loads(str(failure)) == {
+        "stage": "live_acceptance",
+        "code": "preflight_blocked",
+        "preflight_blockers": ["codex_unavailable", "probe_wrote_files"],
+        "preflight_failures": [
+            {
+                "tool": "codex",
+                "probe": "version",
+                "code": "codex_unavailable",
+            },
+            {
+                "tool": "codex",
+                "probe": "filesystem-snapshot",
+                "code": "probe_wrote_files",
+            },
+        ],
+    }
+
+
+@pytest.mark.parametrize(
+    ("blockers", "failures"),
+    (
+        (
+            ("codex_unavailable",),
+            ({"tool": "codex", "probe": "version", "code": "SECRET /private/path"},),
+        ),
+        (
+            ("codex_unavailable",),
+            (
+                _PreflightFailure("codex", "version", "codex_unavailable"),
+                _PreflightFailure("codex", "version", "codex_unavailable"),
+            ),
+        ),
+        (
+            ("probe_wrote_files",),
+            (_PreflightFailure("codex", "version", "codex_unavailable"),),
+        ),
+    ),
+)
+def test_live_failure_replaces_invalid_preflight_projection(
+    blockers, failures
+) -> None:
+    failure = _live_failure(
+        "preflight_blocked",
+        preflight_blockers=blockers,
+        preflight_failures=failures,
+    )
+
+    assert json.loads(str(failure)) == {
+        "stage": "live_acceptance",
+        "code": "preflight_contract_invalid",
+    }
+    assert "SECRET" not in str(failure)
+    assert "/private/path" not in str(failure)
+
+
+def test_live_guarded_projects_valid_strict_preflight_blocker(
+    tmp_path, monkeypatch
+) -> None:
+    authority, failures = _load_explicit_tool_authority(
+        _fake_explicit_authority_environment(tmp_path / "authority")
+    )
+    assert failures == () and authority is not None
+    parent = tmp_path / "agentdeck-m2c-live-blocked"
+    parent.mkdir()
+    payload = _valid_strict_preflight_payload(authority)
+    payload["ready"] = False
+    payload["tools"][0]["ready"] = False
+    payload["tools"][0]["version"] = None
+    payload["blockers"] = ["codex_unavailable"]
+    payload["failures"] = [
+        {
+            "tool": "codex",
+            "probe": "version",
+            "code": "codex_unavailable",
+        }
+    ]
+    assert _validate_strict_preflight_payload(payload) == []
+    monkeypatch.setattr(
+        sys.modules[__name__],
+        "_strict_live_preflight",
+        lambda _project, supplied: payload if supplied is authority else {},
+    )
+
+    with pytest.raises(_LiveHarnessFailure) as raised:
+        _run_live_acceptance_in_project(authority, parent)
+
+    assert json.loads(str(raised.value)) == {
+        "stage": "live_acceptance",
+        "code": "preflight_blocked",
+        "preflight_blockers": ["codex_unavailable"],
+        "preflight_failures": [
+            {
+                "tool": "codex",
+                "probe": "version",
+                "code": "codex_unavailable",
+            }
+        ],
+    }
     assert not parent.exists()
 
 

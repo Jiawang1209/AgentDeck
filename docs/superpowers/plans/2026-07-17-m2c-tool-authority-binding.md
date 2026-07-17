@@ -606,7 +606,7 @@ git commit -m "test: bind M2c live admission to preflight authority"
 - Test: `tests/test_m2c_live_acceptance.py`
 - Modify: `HISTORY.md`
 
-- [ ] **Step 1: Add RED diagnostic closure tests**
+- [x] **Step 1: Add RED diagnostic closure tests**
 
 ```python
 def test_m2c_live_failure_projects_closed_preflight_diagnostics():
@@ -641,7 +641,7 @@ def test_m2c_live_failure_rejects_preflight_transcript_and_path_data():
     assert secret not in repr(_PreflightFailure("codex", "version", "codex_unavailable"))
 ```
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
 Run:
 
@@ -651,7 +651,7 @@ conda run -n agentdeck pytest -q tests/test_m2c_live_acceptance.py -k 'projects_
 
 Expected: `_live_failure()` rejects the new keyword arguments.
 
-- [ ] **Step 3: Add closed validation and serialization**
+- [x] **Step 3: Add closed validation and serialization**
 
 Add `preflight_blockers` and `preflight_failures` keyword-only parameters. Validate exact types, enum membership, uniqueness, and consistency before adding them to `diagnostic`. For any invalid internal payload, replace both collections with:
 
@@ -664,7 +664,7 @@ preflight_failures = (
 
 Do not call `str(exc)`, serialize arbitrary mappings, or preserve unknown values.
 
-- [ ] **Step 4: Run GREEN plus default pytest leakage checks**
+- [x] **Step 4: Run GREEN plus default pytest leakage checks**
 
 Run:
 
@@ -675,7 +675,7 @@ conda run -n agentdeck pytest -q tests/test_m2c_live_acceptance.py \
 
 Expected: selected tests pass and sentinel prompt/path/output bytes are absent from captured pytest reports.
 
-- [ ] **Step 5: Commit Task 5**
+- [x] **Step 5: Commit Task 5**
 
 Update HISTORY with the exact diagnostic fields and fail-closed replacement.
 
