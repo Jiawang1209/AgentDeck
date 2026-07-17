@@ -4,6 +4,14 @@
 
 ## 2026-07-17
 
+### Design M2c first-attempt terminal observability
+
+- Approved a harness-only repair for the new one-shot blocker: the first
+  permission wait will also observe durable terminal attempt state and map only
+  product-defined admission/receipt/ACP completion stages into closed evidence.
+- Rejected timeout inflation, retry, and raw adapter diagnostics. M2c remains
+  blocked and M3 locked pending RED/GREEN, a new freeze, and real acceptance.
+
 ### Design the M2c preview-consumption convergence repair
 
 - Approved a harness-only correction for the observed admission/consumption
