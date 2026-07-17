@@ -140,6 +140,22 @@
   worktree, and temporary-root audits. A separately authorized one-shot live
   Mission is now the only M2c gate for this candidate.
 
+### Identify unpinned Claude permission mode in real M2c
+
+- Ran the separately authorized live Mission exactly once on frozen
+  `79d8160e...`, Leader `gpt-5.5`, and the ready v6 digest. It failed `1 failed
+  in 110.98s` as `first_attempt_terminal_contract_invalid` after the first
+  Claude ACP attempt succeeded with one Worker reply but zero permission
+  requests and zero handoffs.
+- Cleanup and process/daemon/ACP/tmux/worktree/temporary-root audits were empty;
+  the authority was not retried and is exhausted.
+- Read-only inspection showed the adapter derives permission mode from merged
+  Claude settings. Existing Phase 2 live setup already pins the disposable
+  project's `permissions.defaultMode=default`; M2c omitted that pin, allowing
+  an inherited permissive/auto mode to bypass the intended permission bridge.
+  No user settings were read or changed. A new minimal project-local
+  permission-mode authority cycle is required.
+
 ### Design the M2c preview-consumption convergence repair
 
 - Approved a harness-only correction for the observed admission/consumption

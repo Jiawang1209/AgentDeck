@@ -98,7 +98,7 @@ strict preflight contract to v6 while retaining authority v3.
 - [x] Re-audit exact Codex/Claude/Node/tmux/ACP package inputs without mutation.
 - [x] Run exactly one strict v6 designated preflight on the frozen SHA with
   Leader `gpt-5.5`.
-- [ ] If and only if ready, request/consume one separate exact live authority.
+- [x] If and only if ready, request/consume one separate exact live authority.
 - [ ] On real four-stage PASS, close M2c in validation/HISTORY/handoff/roadmap,
   then begin M3 brainstorming → spec → plan. Otherwise record the one-shot
   blocker and start only the smallest evidence-led repair cycle.

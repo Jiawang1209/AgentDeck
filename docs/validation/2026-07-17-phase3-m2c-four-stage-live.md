@@ -214,6 +214,31 @@ temporary-root audits were empty. This preflight authority is now consumed and
 must not be rerun. The remaining gate is one separately authorized real
 four-stage Mission naming this exact frozen SHA, Leader model, and digest.
 
+That separately authorized live node ran exactly once and failed `1 failed in
+110.98s`. It crossed Leader Preview, confirmation, daemon admission, Claude ACP
+session/prompt, and completed the first implementation attempt. Durable closed
+evidence contained one `claude-worker` ACP attempt with `state=succeeded`, one
+validated Worker reply, zero permission requests, and zero handoffs. The
+first-permission gate therefore stopped as
+`first_attempt_terminal_contract_invalid`; no second stage was admitted.
+
+Cleanup removed the detached checkout and disposable live project. Process,
+daemon, ACP, tmux, worktree, and temporary-root audits were empty. This
+SHA/model/digest live authority is exhausted and must not be retried.
+
+Read-only root-cause inspection found that the installed adapter resolves
+Claude user/project/local settings through the SDK and derives its session
+permission mode from `permissions.defaultMode`. The repository's existing real
+ACP vertical-slice setup explicitly writes disposable project-local
+`.claude/settings.local.json` with `defaultMode=default` so a user-level
+permissive/auto mode cannot bypass the ACP permission bridge. The M2c harness
+does not create or seal that project-local setting. The observed successful
+reply without a permission request is therefore consistent with an inherited
+non-default permission mode, not an ACP/authentication failure. No user-level
+settings content was read or changed. A new minimal design/TDD/freeze cycle must
+pin and verify the disposable project's permission mode before any new real
+authority is established.
+
 ## Frozen authority
 
 - AgentDeck implementation:

@@ -141,6 +141,22 @@ human authorization naming the frozen SHA, Leader `gpt-5.5`, and exact digest
 is required for the sole real four-stage Mission. M2c is not yet PASS and M3
 remains locked.
 
+That live Mission ran exactly once and failed `1 failed in 110.98s` as
+`first_attempt_terminal_contract_invalid`. It reached a succeeded first
+`claude-worker` ACP attempt and one Worker reply, but produced zero permission
+requests and zero handoffs; later stages were not admitted. Cleanup and all
+residue audits were empty. This SHA/model/digest authority is exhausted.
+
+The installed adapter and existing Phase 2 real ACP test identify the missing
+deterministic input: adapter permission mode is resolved from merged Claude
+settings, while the Phase 2 disposable project explicitly pins
+`.claude/settings.local.json` to `permissions.defaultMode=default` to prevent a
+user-level permissive/auto mode from bypassing permission bridging. M2c never
+writes or seals that project-local setting. No user configuration content was
+read or changed. The next action is a minimal brainstorming/spec/plan/TDD cycle
+for project-local Claude permission-mode authority. M2c is not PASS and M3
+remains locked.
+
 ### Historical M2c authority cycles
 
 Before consuming the authorized designated preflight for frozen implementation
