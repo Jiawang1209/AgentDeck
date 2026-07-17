@@ -68,8 +68,8 @@ PROBE_TIMEOUT_SECONDS = 5
 PROBE_OUTPUT_LIMIT = 256 * 1024
 LEADER_MODEL_ENV = "AGENTDECK_M2C_LEADER_MODEL"
 LEADER_MODEL_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,95}\Z")
-AUTHORITY_SCHEMA_VERSION = "m2c-tool-authority/v2"
-STRICT_PREFLIGHT_SCHEMA_VERSION = "m2c-live-preflight/v4"
+AUTHORITY_SCHEMA_VERSION = "m2c-tool-authority/v3"
+STRICT_PREFLIGHT_SCHEMA_VERSION = "m2c-live-preflight/v5"
 STRICT_PREFLIGHT_ENV = "AGENTDECK_M2C_STRICT_PREFLIGHT"
 NODE_ENV = "AGENTDECK_M2C_NODE"
 ACP_PACKAGE_ENV = "AGENTDECK_M2C_CLAUDE_ACP_PACKAGE"
@@ -79,6 +79,7 @@ ACP_PACKAGE_NAME = "@agentclientprotocol/claude-agent-acp"
 ACP_COMMAND_NAME = "claude-agent-acp"
 ACP_PACKAGE_JSON = PurePosixPath("package.json")
 MAX_ACP_PACKAGE_JSON_BYTES = 1024 * 1024
+MAX_PACKAGE_SYMLINK_BYTES = 4096
 TOOL_SPECS = (
     ("codex", "AGENTDECK_M2C_CODEX", ("exec", "--help"), ("--version",)),
     ("claude", "AGENTDECK_M2C_CLAUDE", ("--help",), ("--version",)),
@@ -514,6 +515,42 @@ def _same_file_identity(
     )
 
 
+def _canonical_internal_bin_symlink_target(
+    link_path: str,
+    raw_target: object,
+    manifest_by_path: Mapping[str, _PackageManifestEntry],
+) -> str:
+    link_parts = PurePosixPath(link_path).parts
+    if (
+        len(link_parts) != 3
+        or link_parts[:2] != ("node_modules", ".bin")
+        or link_parts[2] in {"", ".", ".."}
+        or type(raw_target) is not str
+        or not raw_target
+        or "\x00" in raw_target
+        or "\\" in raw_target
+        or PurePosixPath(raw_target).is_absolute()
+    ):
+        raise ValueError("invalid package symlink")
+    stack = list(link_parts[:-1])
+    for component in raw_target.split("/"):
+        if component == ".":
+            continue
+        if component == "" or component == ".." and not stack:
+            raise ValueError("invalid package symlink")
+        if component == "..":
+            stack.pop()
+        else:
+            stack.append(component)
+    if not stack:
+        raise ValueError("invalid package symlink")
+    normalized = PurePosixPath(*stack).as_posix()
+    target = manifest_by_path.get(normalized)
+    if normalized == link_path or target is None or target.kind != "file":
+        raise ValueError("invalid package symlink")
+    return normalized
+
+
 def _read_safe_package_manifest(
     root: Path,
 ) -> tuple[
@@ -522,6 +559,7 @@ def _read_safe_package_manifest(
 ]:
     manifest: list[_PackageManifestEntry] = []
     runtime: list[_PackageRuntimeEntry] = []
+    symlink_targets: dict[str, str] = {}
 
     def visit(directory: Path, parts: tuple[str, ...]) -> None:
         with os.scandir(directory) as iterator:
@@ -532,7 +570,31 @@ def _read_safe_package_manifest(
             relative = PurePosixPath(*relative_parts).as_posix()
             path = directory / child.name
             mode = stat.S_IMODE(metadata.st_mode)
-            if stat.S_ISLNK(metadata.st_mode) or mode & 0o022:
+            if stat.S_ISLNK(metadata.st_mode):
+                first_target = os.readlink(path)
+                final = path.lstat()
+                second_target = os.readlink(path)
+                if (
+                    not _same_file_identity(metadata, final)
+                    or first_target != second_target
+                ):
+                    raise ValueError("unstable package symlink")
+                encoded = first_target.encode("utf-8")
+                if not encoded or len(encoded) > MAX_PACKAGE_SYMLINK_BYTES:
+                    raise ValueError("invalid package symlink")
+                manifest.append(
+                    _PackageManifestEntry(
+                        relative,
+                        "symlink",
+                        len(encoded),
+                        hashlib.sha256(encoded).hexdigest(),
+                        False,
+                    )
+                )
+                runtime.append(_package_runtime_entry(relative, metadata))
+                symlink_targets[relative] = first_target
+                continue
+            if mode & 0o022:
                 raise ValueError("unsafe package entry")
             if stat.S_ISDIR(metadata.st_mode):
                 manifest.append(
@@ -586,6 +648,11 @@ def _read_safe_package_manifest(
             runtime.append(_package_runtime_entry(relative, opened))
 
     visit(root, ())
+    manifest_by_path = {item.path: item for item in manifest}
+    for link_path, raw_target in symlink_targets.items():
+        _canonical_internal_bin_symlink_target(
+            link_path, raw_target, manifest_by_path
+        )
     return (
         tuple(sorted(manifest, key=lambda item: item.path)),
         tuple(sorted(runtime, key=lambda item: item.path)),

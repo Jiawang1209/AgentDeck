@@ -56,7 +56,7 @@ git commit -m "test: expose official npm bin symlink authority gap"
 - Modify: `tests/test_m2c_live_acceptance.py`
 - Modify: `HISTORY.md`
 
-- [ ] Advance schemas:
+- [x] Advance schemas:
 
 ```python
 AUTHORITY_SCHEMA_VERSION = "m2c-tool-authority/v3"
@@ -64,13 +64,13 @@ STRICT_PREFLIGHT_SCHEMA_VERSION = "m2c-live-preflight/v5"
 MAX_PACKAGE_SYMLINK_BYTES = 4096
 ```
 
-- [ ] Add pure `_canonical_internal_bin_symlink_target(link_path, raw_target,
+- [x] Add pure `_canonical_internal_bin_symlink_target(link_path, raw_target,
   manifest_by_path)` validation. It must require exactly three link path parts
   (`node_modules`, `.bin`, command), relative bounded UTF-8 text, no NUL or
   backslash, lexical component processing without root underflow, and a
   distinct final manifest row of kind `file`.
 
-- [ ] Extend `_read_safe_package_manifest` without following links. For a
+- [x] Extend `_read_safe_package_manifest` without following links. For a
   symlink:
 
 ```python
@@ -86,12 +86,12 @@ SHA-256 link-text hash, and `executable=False`. Never recurse, `open`, `stat`,
 or read file bytes through it. After the full scan, validate every retained raw
 target against the complete manifest.
 
-- [ ] Preserve ordinary safety: symlinks outside `.bin`, absolute/escaping
+- [x] Preserve ordinary safety: symlinks outside `.bin`, absolute/escaping
   targets, missing targets, directory targets, and link chains raise only
   `ValueError` inside the sealer and project to
   `claude_agent_acp_package_invalid`.
 
-- [ ] Run GREEN plus existing package tests:
+- [x] Run GREEN plus existing package tests:
 
 ```bash
 PYTHONPATH="$PWD/src" conda run --no-capture-output -n agentdeck \
@@ -99,7 +99,7 @@ PYTHONPATH="$PWD/src" conda run --no-capture-output -n agentdeck \
   -k 'closed_npm_bin_symlinks or package_metadata or package_tree' -q
 ```
 
-- [ ] Update HISTORY and commit:
+- [x] Update HISTORY and commit:
 
 ```bash
 git add tests/test_m2c_live_acceptance.py HISTORY.md

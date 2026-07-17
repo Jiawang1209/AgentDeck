@@ -4,6 +4,17 @@
 
 ## 2026-07-17
 
+### Seal closed npm `.bin` links without following them
+
+- Added a narrow package `symlink` manifest member using stable `lstat`, two
+  matching `readlink` observations, bounded UTF-8 link-text hash, and runtime
+  identity. Traversal never opens, stats through, or recurses into a link.
+- A pure lexical closure gate accepts only `node_modules/.bin/{command}` links
+  whose normalized relative target is an existing regular file in the same
+  manifest. Authority advanced to v3 and strict preflight to v5.
+- Closed-link plus existing package metadata/tree GREEN passed `33 passed, 236
+  deselected in 3.26s`. No real external tool or preflight/live ran.
+
 ### Expose the official npm `.bin` symlink authority gap
 
 - Extended the fake ACP package with the exact two relative internal link
