@@ -1,8 +1,8 @@
 # M2c Tool Authority Binding and Closed Preflight Diagnostics Design
 
-**Date:** 2026-07-17  
-**Status:** Human-approved design; implementation not started  
-**Milestone:** Phase 3 M2c live acceptance closure  
+**Date:** 2026-07-17
+**Status:** Human-approved design; implementation not started
+**Milestone:** Phase 3 M2c live acceptance closure
 **Scope:** M2c acceptance harness and SOP only
 
 ## 1. Purpose
