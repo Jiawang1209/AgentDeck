@@ -1964,7 +1964,7 @@ Python compiled `tests/test_m2c_live_acceptance.py` successfully.
 - Modify: `HISTORY.md`
 - Modify: `docs/superpowers/plans/2026-07-17-m2c-bounded-sequential-permission-acceptance.md`
 
-- [ ] **Step 1: Update the SOP with operationally exact semantics**
+- [x] **Step 1: Update the SOP with operationally exact semantics**
 
 Document:
 
@@ -1979,19 +1979,19 @@ Document:
 - no timeout change, retry, auto-approval, global settings change, merge, or
   push is permitted.
 
-- [ ] **Step 2: Preserve old failure evidence and add the new candidate section**
+- [x] **Step 2: Preserve old failure evidence and add the new candidate section**
 
 Do not edit the facts of the exhausted `e83dcc48...` live node. Append the RED,
 GREEN, focused, non-live, product, scope, and cleanup results from Tasks 1-8.
 Mark the new implementation unfrozen until Task 10 records its exact SHA.
 
-- [ ] **Step 3: Update handoff and design status**
+- [x] **Step 3: Update handoff and design status**
 
 The handoff must say that the previous blocker is explained by a harness
 cardinality assumption, not a product ACP defect. The design status becomes
 `Implemented; deterministic verification pending` only after Task 8 passes.
 
-- [ ] **Step 4: Run documentation consistency checks**
+- [x] **Step 4: Run documentation consistency checks**
 
 ```bash
 rg -n 'third_stage_safe_window_timeout|len\(permissions\) == 2|exactly two|permission_limit_exceeded|permission_progress|M3' \
@@ -2008,7 +2008,14 @@ Expected: exact-two language appears only as historical rejected behavior;
 `third_stage_safe_window_timeout` remains only in immutable historical
 evidence; M3 remains locked.
 
-- [ ] **Step 5: Commit documentation**
+Observed: `len(permissions) == 2` is absent from the live harness; the only
+in-scope `exactly two` wording rejects the historical assumption;
+`third_stage_safe_window_timeout` appears only in preserved historical
+evidence; current implementation and documentation expose
+`permission_limit_exceeded` / `permission_progress`; M3 remains locked; and
+`git diff --check` passed.
+
+- [x] **Step 5: Commit documentation**
 
 ```bash
 git add HISTORY.md \

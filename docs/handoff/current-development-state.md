@@ -2,7 +2,35 @@
 
 Updated: 2026-07-17
 
-## Active goal — close M2c through project-local Claude permission authority
+## Active goal — close M2c through bounded sequential permission acceptance
+
+The currently authoritative route is the approved bounded sequential
+permission design and plan dated 2026-07-17. It supersedes the historical next
+actions below without rewriting their evidence. The exhausted `e83dcc48...`
+live run showed two permission base records in one step-1 Claude ACP attempt;
+the harness incorrectly assumed the first confirmation completed
+implementation and the second permission belonged to revision. AgentDeck's
+product communication layer already supports multiple sequential permissions
+per attempt, so this blocker is a harness cardinality defect, not a newly
+proven ACP product defect.
+
+Tasks 1–8 of the approved plan are implemented on the isolated feature branch.
+The harness now derives effective state from append-only transitions, validates
+exact Mission/attempt/session/turn/transport lineage, drives one to four
+permissions per Claude attempt through separate public preview/confirm
+transactions, requires reply plus canonical handoff before stage progression,
+holds the first revision permission unchanged through takeover/return-control,
+and validates four-stage completion with two to eight total permissions. The
+focused integration passes `27 passed, 345 deselected in 2.22s`; confirmation,
+diagnostic, lineage, driver, and four-stage tests are independently GREEN.
+Compile, diff, and `src/agentdeck/**` zero-change scope audits pass.
+
+The implementation is not frozen yet. Complete non-live M2c, product
+regressions, leakage/residue audits, spec review, and exact-SHA freeze remain
+Task 10. No designated preflight or live Mission has run for this candidate;
+no prior authority carries forward. M2c remains **BLOCKED** and M3 remains
+locked. Do not retry `e83dcc48...`, increase timeouts, auto-approve, merge,
+push, install, change authentication/global settings, or begin M3.
 
 The separately authorized live Mission on frozen
 `79d8160eb60ad4e8bfb37ff43615f099afd9edc5`, Leader `gpt-5.5`, and authority

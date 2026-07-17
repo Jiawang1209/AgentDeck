@@ -130,6 +130,19 @@
   provider, preflight, live Mission, timeout increase, retry, or product-source
   edit occurred.
 
+### Synchronize bounded sequential permission acceptance documentation
+
+- Updated the live SOP from exactly two confirmations to one-to-four
+  sequential permissions per Claude attempt and two-to-eight across the
+  Mission, each with an independent public preview/confirm and
+  transition-derived effective state.
+- Preserved the exhausted `e83dcc48...` failure facts and added a separate
+  unfrozen candidate section with all Task 1–8 RED/GREEN commits, focused
+  results, harness-only scope, and still-pending Task 10 verification.
+- Updated the active handoff and approved design status: the current blocker is
+  a harness cardinality assumption, not a proven product ACP defect; M2c
+  remains BLOCKED, M3 remains locked, and no preflight/live authority exists.
+
 ### Design bounded sequential ACP permission acceptance for M2c
 
 - Replaced the live harness assumption of exactly two Mission permissions with

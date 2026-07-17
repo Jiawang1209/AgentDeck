@@ -454,3 +454,56 @@ value, or absolute path was persisted.
 
 M2c remains **BLOCKED** and M3 remains locked. This SHA/model/digest authority
 is exhausted at preflight/live count `1/1` and must not be retried.
+
+## Bounded sequential permission acceptance candidate
+
+The exhausted `e83dcc48...` live facts above are immutable. Their two pending
+permission records belonged to the same step-1 Claude ACP attempt; the harness
+incorrectly assumed that its first confirmation completed implementation and
+that the next permission would belong to revision. The observed blocker is
+therefore explained by an acceptance-harness cardinality assumption, not by a
+new AgentDeck ACP product defect.
+
+The approved harness-only correction now:
+
+- derives effective permission state from immutable `pending` bases plus exact
+  append-only transitions;
+- binds each permission through Mission, attempt, AgentSession, ProtocolTurn,
+  transport sequence, public preview, exact confirmation, and approved effect;
+- handles one to four sequential permissions in each Claude attempt and two to
+  eight across the Mission;
+- requires a validated reply and canonical completed handoff before every
+  successor stage;
+- pauses the revision driver before its first confirmation during takeover and
+  revalidates exact authority after return-control;
+- validates the final four attempts, four replies, four handoffs, three ordered
+  inter-stage links, and bounded effective permissions through one shared
+  completion validator;
+- adds only the closed eight-field `permission_progress` projection to driver
+  failures.
+
+Deterministic TDD evidence through implementation Task 8 is:
+
+- lineage RED `a815fcde`: `6 failed, 339 deselected in 1.49s` at the missing
+  permission-fact unit;
+- lineage GREEN `d2ccc36b`: `6 passed, 339 deselected in 0.75s`; existing
+  daemon permission ordering `1 passed, 39 deselected in 0.31s`;
+- driver RED `1b8f1691`: `6 failed, 345 deselected in 1.40s` at the missing
+  bounded driver;
+- driver GREEN `14f46aa5`: `23 passed, 328 deselected in 0.74s`;
+- exact confirmation/diagnostic RED `448d458f`: `9 failed, 351 deselected in
+  4.14s` at the old helper signatures;
+- exact confirmation/diagnostic GREEN `7da90508`: `46 passed, 314 deselected
+  in 0.78s`;
+- completion RED `6f8134cb`: `12 failed, 360 deselected in 2.10s` at the
+  missing shared validator;
+- integrated GREEN `b3c393a3`: `27 passed, 345 deselected in 2.22s`;
+- conda Python compile, `git diff --check`, and `src/agentdeck/**` zero-change
+  scope audit: PASS.
+
+No real provider, ACP/tmux Worker, daemon, designated preflight, live Mission,
+install, login, timeout change, retry, global setting change, merge, or push ran
+for this candidate. Complete non-live M2c, product regressions, residue audits,
+review, and freeze are still pending Task 10. The candidate is **unfrozen**;
+the current implementation commit is evidence only and does not authorize a
+preflight or live run. M2c remains **BLOCKED** and M3 remains locked.

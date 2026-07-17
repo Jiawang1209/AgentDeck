@@ -38,12 +38,13 @@ as `claude_permission_settings_invalid`.
 
 Successful creation returns only an in-memory path-free identity/content seal.
 The harness revalidates the seal before Mission creation, after the first
-permission becomes durable, before and after both explicit confirmations,
-around takeover/return-control, and after Mission completion. It does not
-repair or recreate drift. This project-local authority is removed with the
-whole disposable project and is never copied into evidence. The helper must
-not read, report, or change the user's Claude settings, home directory, or
-`CLAUDE_CONFIG_DIR`; those remain outside this acceptance authority.
+permission becomes durable, before and after every explicit permission
+confirmation, around takeover/return-control, and after Mission completion. It
+does not repair or recreate drift. This project-local authority is removed
+with the whole disposable project and is never copied into evidence. The
+helper must not read, report, or change the user's Claude settings, home
+directory, or `CLAUDE_CONFIG_DIR`; those remain outside this acceptance
+authority.
 
 ## 1. Freeze and inspect the checkout
 
@@ -246,9 +247,11 @@ Worker effect. It requires:
    `revision`, and `acceptance` phases;
 2. exactly one natural-language preview confirmation and durable daemon
    admission before the first PTY closes;
-3. both real Claude ACP edit permissions confirmed through the Task 9 public
-   scoped-handle preview/confirm commands with no controller credential in
-   public JSON or argv;
+3. each Claude ACP phase produces between one and four transport-ordered
+   permissions; every permission receives its own exact public scoped-handle
+   preview and explicit confirmation, and the whole Mission contains between
+   two and eight permissions with no controller credential in public JSON or
+   argv;
 4. execution of the exact enabled ProjectView/workbench `codex-worker`
    `select_pane` control as argv without a shell, followed by an exact
    project-socket `display-message` identity check (never pane capture text);
@@ -269,6 +272,33 @@ metadata through a successful daemon handshake, seals no-follow metadata
    Cleanup also kills only the exact disposable tmux socket's session/server,
    removes the project, and derives zero residual process/resource counts from
    post-cleanup probes.
+
+Permission base records remain immutable `pending`. Acceptance derives
+`approved`, `denied`, or `expired` only from one legal append-only transition
+bound to the exact Mission, attempt, ACP session, protocol turn, and transport
+sequence. Confirming one permission never implies attempt completion; the
+driver continues the same Claude attempt until another permission, a terminal
+condition, or a validated reply plus canonical completed handoff becomes
+durable. The next stage may start only after that handoff.
+
+The revision driver stops at its first pending permission before takeover. It
+must not confirm while human ownership is active. After explicit
+return-control it revalidates the exact attempt/session/turn/permission fact;
+drift fails closed before confirmation.
+
+The fixed permission-driver failure vocabulary is
+`permission_lineage_invalid`, `permission_order_ambiguous`,
+`permission_transition_invalid`, `permission_preview_invalid`,
+`permission_confirmation_invalid`, `permission_limit_exceeded`,
+`permission_bridge_missing`, `attempt_terminal_before_handoff`,
+`handoff_missing_after_attempt_success`, `next_stage_started_before_handoff`,
+`takeover_authority_drift`, and `permission_wait_timeout`. Driver failures may
+add only the eight-field `permission_progress` projection defined by the
+approved spec. They never retain raw permission payloads, prompts, tool names,
+targets, terminal text, paths, provider output, or exception messages.
+
+No timeout increase, retry, batch/automatic approval, global settings change,
+fallback substitution, merge, or push is permitted by this SOP.
 
 PTY output is retained only as a 64 KiB process-local tail for in-process
 parsing. That tail is excluded from `_PtyTail`'s default representation. The

@@ -1,7 +1,7 @@
 # M2c Bounded Sequential Permission Acceptance Design
 
 **Date:** 2026-07-17
-**Status:** Written spec approved; implementation planned
+**Status:** Implemented; deterministic verification pending
 **Milestone:** Phase 3 M2c real four-stage acceptance closure
 **Scope:** M2c live-acceptance harness, closed diagnostics, and deterministic fixtures
 
@@ -403,3 +403,19 @@ other, and neither may be automatically retried.
   scope approval.
 - No placeholder, retry path, silent fallback, merge, push, preflight, live
   execution, or M3 work is authorized by this spec.
+
+## 15. Implementation status
+
+Implementation Tasks 1–8 are complete on the isolated feature branch. The
+result remains harness-only: `tests/test_m2c_live_acceptance.py` contains the
+effective-state projection, exact permission lineage, bounded same-attempt
+driver, public preview/confirm binding, closed `permission_progress`, takeover
+authority check, and shared four-stage completion validator. No
+`src/agentdeck/**` file changed.
+
+Focused lineage, driver, confirmation/diagnostic, and four-stage integration
+tests are GREEN; the latest integrated selection is `27 passed, 345 deselected
+in 2.22s`. This is not freeze evidence. Complete non-live M2c, product
+regressions, compile/diff/leakage/residue audits, requirement review, and an
+exact implementation freeze remain Task 10. M2c is still **BLOCKED**, M3 is
+still locked, and no preflight/live authority exists for this candidate.
