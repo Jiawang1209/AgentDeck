@@ -221,10 +221,10 @@ PYTHONPATH="$PWD/src" conda run --no-capture-output -n agentdeck \
   their closed targets, modes, and ownership. Run exactly one real v5
   designated preflight using Leader `gpt-5.5`.
 
-- [ ] Only on `ready=true`, empty blockers/failures, and authority v3, run
+- [x] Only on `ready=true`, empty blockers/failures, and authority v3, run
   exactly one same-SHA/model/digest four-stage live Mission.
 
-- [ ] On PASS, close M2c and unlock M3. On any one-shot failure, record closed
+- [x] On PASS, close M2c and unlock M3. On any one-shot failure, record closed
   evidence and return to a new minimal root-cause/spec/plan/freeze cycle without
   retrying the same authority.
 

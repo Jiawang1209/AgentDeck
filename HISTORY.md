@@ -4,6 +4,20 @@
 
 ## 2026-07-17
 
+### Record the one-shot M2c preview-consumption live blocker
+
+- Ran the one same-SHA/model/digest four-stage node exactly once. It failed `1
+  failed in 47.71s` at `stage=live_acceptance`,
+  `code=mission_preview_not_consumed_exactly_once` after one plan/Mission and
+  daemon admission, with zero attempts, permissions, replies, or handoffs.
+- Retained only bounded PTY facts: `byte_count=5893`, `truncated=false`, and
+  SHA-256 `6e28bb2b249ca7b1ac863ec7ba1ae174cd1061eb11770574b306595ab58b7c61`.
+  The detached checkout was removed and residue audits were empty.
+- Static tracing shows an ordering race in the harness: daemon admission can be
+  observed while `preview_executor` is still returning, before the conversation
+  process commits `conversation_preview_consumed` and renders its third prompt.
+  The authority is exhausted at `1/1` and was not retried.
+
 ### Pass the real M2c authority-v3 designated preflight
 
 - Ran the designated v5 read-only preflight exactly once on frozen

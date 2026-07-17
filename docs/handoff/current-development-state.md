@@ -91,6 +91,22 @@ and all five tools ready. Its detached worktree was removed and residue audits
 were empty. The one same-SHA/model/digest real four-stage Mission is now the
 only remaining M2c gate.
 
+That same-SHA/model/digest live node ran exactly once and failed `1 failed in
+47.71s` with `stage=live_acceptance`,
+`code=mission_preview_not_consumed_exactly_once`. One plan and Mission plus
+daemon admission existed; attempts, permissions, Worker replies, and handoffs
+were all zero. Only bounded PTY byte-count/truncation/hash evidence was retained.
+The checkout was removed and residue audits were empty.
+
+Static data-flow tracing identified a harness ordering race: confirmation calls
+the daemon admission executor before committing the conversation's
+`conversation_preview_consumed` event and rendering prompt 3. The live harness
+waited only for admission, then immediately counted events, so it could stop the
+PTY during that valid commit window. Frozen authority `284d8f62...` is exhausted
+at preflight/live `1/1` and cannot be retried. A new minimal preview-consumption
+convergence spec/TDD/freeze cycle is required; M2c remains **BLOCKED** and M3
+remains locked.
+
 The native-schema provenance persistence correction is implemented and frozen
 at `7a76ada81938be3ba0720a7c2f5a540b4beebb3e`. Semantic Mission previews now
 preserve the exact validated eleven-field generation envelope. StateStore

@@ -58,8 +58,38 @@ daemon, install, authenticate, or change global state.
 
 ## Real four-stage Mission
 
-Status: pending the one same-SHA/model/digest live execution.
+The same-SHA/model/digest live node ran exactly once and was not retried. It
+reported `1 failed in 47.71s` with:
 
-M2c remains **BLOCKED** and M3 remains locked until that live execution proves
-the complete implementation, review, revision, acceptance, handoff, permission,
-takeover/recovery, artifact, ledger, and cleanup matrix.
+```json
+{
+  "stage": "live_acceptance",
+  "code": "mission_preview_not_consumed_exactly_once",
+  "cardinalities": {
+    "plans": 1,
+    "missions": 1,
+    "mission_attempts": 0,
+    "permission_requests": 0,
+    "mission_worker_replies": 0,
+    "mission_handoffs": 0
+  },
+  "pty": {
+    "byte_count": 5893,
+    "truncated": false,
+    "sha256": "6e28bb2b249ca7b1ac863ec7ba1ae174cd1061eb11770574b306595ab58b7c61"
+  }
+}
+```
+
+The Mission Preview and Mission record existed and daemon admission was
+observed. The harness then checked the consume-once event before the bare
+conversation had durably completed its confirmation response. It stopped and
+cleaned up before every Worker attempt, permission, reply, handoff, or artifact
+effect.
+
+The detached live checkout was removed. Follow-up process, temporary-root, and
+worktree audits were empty. No transcript, prompt, raw model output, environment
+value, or absolute path was persisted.
+
+M2c remains **BLOCKED** and M3 remains locked. This SHA/model/digest authority
+is exhausted at preflight/live count `1/1` and must not be retried.
