@@ -691,7 +691,7 @@ git commit -m "test: close M2c internal preflight diagnostics"
 - Test: `tests/test_m2c_live_acceptance.py`
 - Modify: `HISTORY.md`
 
-- [ ] **Step 1: Add RED controlled-launcher tests**
+- [x] **Step 1: Add RED controlled-launcher tests**
 
 ```python
 def test_m2c_controlled_acp_launcher_executes_sealed_node_with_fixed_entrypoint(tmp_path):
@@ -715,7 +715,7 @@ def test_m2c_controlled_acp_launcher_rejects_post_seal_drift(tmp_path, target):
     assert completed.stderr == b""
 ```
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
 Run:
 
@@ -725,7 +725,7 @@ conda run -n agentdeck pytest -q tests/test_m2c_live_acceptance.py -k 'controlle
 
 Expected: failures because the specialized launcher does not exist.
 
-- [ ] **Step 3: Implement the specialized launcher**
+- [x] **Step 3: Implement the specialized launcher**
 
 `_write_controlled_acp_launcher(authority, destination)` must create `claude-agent-acp` with mode `0500`. Its generated Python program must:
 
@@ -739,11 +739,11 @@ Expected: failures because the specialized launcher does not exist.
 
 Reuse small source strings for the facts/hash algorithm, but do not import the repository test module from the generated launcher and do not use ambient PATH.
 
-- [ ] **Step 4: Wire runtime launchers**
+- [x] **Step 4: Wire runtime launchers**
 
 Create ordinary controlled launchers for Codex, Claude, and tmux; create the specialized ACP launcher; do not create or expose an ambient `node` launcher in PATH. Include source Node, ACP entrypoint, package tree, and all generated launchers in the process-local verification set.
 
-- [ ] **Step 5: Run GREEN and cleanup regressions**
+- [x] **Step 5: Run GREEN and cleanup regressions**
 
 Run:
 
@@ -754,7 +754,7 @@ conda run -n agentdeck pytest -q tests/test_m2c_live_acceptance.py \
 
 Expected: selected tests pass with no residual process or test root.
 
-- [ ] **Step 6: Commit Task 6**
+- [x] **Step 6: Commit Task 6**
 
 Update HISTORY with sealed Node/package runtime behavior.
 

@@ -4,6 +4,20 @@
 
 ## 2026-07-17
 
+### Execute M2c Claude Agent ACP through sealed Node and package
+
+- Added a dedicated mode-`0500` ACP launcher that revalidates the full package
+  runtime manifest, fixed `dist/claude-agent-acp` entrypoint, and exact Node
+  executable immediately before direct `os.execve`.
+- Removed ambient Node from the live runtime PATH surface. Codex, Claude, and
+  tmux keep their ordinary controlled launchers; ACP now receives the sealed
+  Node and fixed entrypoint explicitly and exits `126` without output on any
+  drift.
+- Normal execution plus Node/entrypoint/package-file drift RED/GREEN coverage
+  passed `4`; combined launcher/setup/process-cleanup coverage passed `16`.
+  No installed tool, real ACP session, designated preflight, or live Mission
+  ran.
+
 ### Preserve closed M2c internal-preflight diagnostics
 
 - Extended `_live_failure()` with an exact, allowlisted preflight projection:

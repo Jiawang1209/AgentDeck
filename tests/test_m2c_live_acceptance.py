@@ -769,6 +769,129 @@ def _write_controlled_launcher(
     return sealed
 
 
+def _write_controlled_acp_launcher(
+    authority: _ToolAuthority,
+    destination: Path,
+) -> _ExecutableSeal:
+    _verify_executable_seal(authority.node)
+    _verify_package_tree_seal(authority.acp_package)
+    destination.mkdir(mode=0o700, parents=True, exist_ok=True)
+    if stat.S_IMODE(destination.stat().st_mode) != 0o700:
+        raise _live_failure("executable_identity_drift")
+    launcher = destination / "claude-agent-acp"
+    expected_node = {
+        "device": authority.node.device,
+        "inode": authority.node.inode,
+        "owner": authority.node.owner,
+        "mode": authority.node.mode,
+        "size": authority.node.size,
+        "mtime_ns": authority.node.mtime_ns,
+        "content_hash": authority.node.content_hash,
+    }
+    expected_runtime = [
+        asdict(item) for item in authority.acp_package.runtime_entries
+    ]
+    expected_manifest = [
+        asdict(item) for item in authority.acp_package.entries
+    ]
+    entrypoint = authority.acp_package.root.joinpath(*ACP_ENTRYPOINT.parts)
+    payload = (
+        f"#!{sys.executable}\n"
+        "import hashlib, os, stat, sys\n"
+        f"NODE = {str(authority.node.path)!r}\n"
+        f"ROOT = {str(authority.acp_package.root)!r}\n"
+        f"ENTRYPOINT = {str(entrypoint)!r}\n"
+        f"EXPECTED_NODE = {expected_node!r}\n"
+        f"EXPECTED_RUNTIME = {expected_runtime!r}\n"
+        f"EXPECTED_MANIFEST = {expected_manifest!r}\n"
+        "def facts(path, value):\n"
+        "    return {'path': path, 'device': value.st_dev, 'inode': value.st_ino,\n"
+        "            'owner': value.st_uid, 'mode': stat.S_IMODE(value.st_mode),\n"
+        "            'size': value.st_size, 'mtime_ns': value.st_mtime_ns}\n"
+        "def read_file(path, relative):\n"
+        "    initial = os.lstat(path)\n"
+        "    mode = stat.S_IMODE(initial.st_mode)\n"
+        "    if not stat.S_ISREG(initial.st_mode) or stat.S_ISLNK(initial.st_mode) or mode & 0o022:\n"
+        "        raise ValueError()\n"
+        "    fd = os.open(path, os.O_RDONLY | getattr(os, 'O_NOFOLLOW', 0))\n"
+        "    try:\n"
+        "        opened = os.fstat(fd); digest = hashlib.sha256()\n"
+        "        while True:\n"
+        "            chunk = os.read(fd, 1024 * 1024)\n"
+        "            if not chunk: break\n"
+        "            digest.update(chunk)\n"
+        "        closed = os.fstat(fd); final = os.lstat(path)\n"
+        "    finally:\n"
+        "        os.close(fd)\n"
+        "    values = [facts(relative, item) for item in (initial, opened, closed, final)]\n"
+        "    if any(item != values[0] for item in values[1:]): raise ValueError()\n"
+        "    return values[0], digest.hexdigest(), bool(mode & 0o111)\n"
+        "def scan(directory, parts, runtime, manifest):\n"
+        "    with os.scandir(directory) as stream: children = sorted(stream, key=lambda item: item.name)\n"
+        "    for child in children:\n"
+        "        relative_parts = (*parts, child.name); relative = '/'.join(relative_parts)\n"
+        "        path = os.path.join(directory, child.name); meta = child.stat(follow_symlinks=False)\n"
+        "        mode = stat.S_IMODE(meta.st_mode)\n"
+        "        if stat.S_ISLNK(meta.st_mode) or mode & 0o022: raise ValueError()\n"
+        "        if stat.S_ISDIR(meta.st_mode):\n"
+        "            runtime.append(facts(relative, meta))\n"
+        "            manifest.append({'path': relative, 'kind': 'directory', 'size': None,\n"
+        "                             'content_hash': None, 'executable': bool(mode & 0o111)})\n"
+        "            scan(path, relative_parts, runtime, manifest)\n"
+        "            if facts(relative, os.lstat(path)) != facts(relative, meta): raise ValueError()\n"
+        "        elif stat.S_ISREG(meta.st_mode):\n"
+        "            current, digest, executable = read_file(path, relative)\n"
+        "            runtime.append(current)\n"
+        "            manifest.append({'path': relative, 'kind': 'file', 'size': meta.st_size,\n"
+        "                             'content_hash': digest, 'executable': executable})\n"
+        "        else: raise ValueError()\n"
+        "try:\n"
+        "    root = os.lstat(ROOT); root_mode = stat.S_IMODE(root.st_mode)\n"
+        "    if not stat.S_ISDIR(root.st_mode) or stat.S_ISLNK(root.st_mode) or root_mode & 0o022:\n"
+        "        raise ValueError()\n"
+        "    runtime = [facts('.', root)]; manifest = []\n"
+        "    scan(ROOT, (), runtime, manifest)\n"
+        "    if facts('.', os.lstat(ROOT)) != runtime[0]: raise ValueError()\n"
+        "    runtime = [runtime[0], *sorted(runtime[1:], key=lambda item: item['path'])]\n"
+        "    manifest = sorted(manifest, key=lambda item: item['path'])\n"
+        "    if runtime != EXPECTED_RUNTIME or manifest != EXPECTED_MANIFEST: raise ValueError()\n"
+        "    node_facts, node_hash, _ = read_file(NODE, '.')\n"
+        "    node_facts.pop('path')\n"
+        "    node_facts['content_hash'] = node_hash\n"
+        "    if node_facts != EXPECTED_NODE: raise ValueError()\n"
+        "    if ENTRYPOINT != os.path.join(ROOT, 'dist', 'claude-agent-acp'): raise ValueError()\n"
+        "    os.execve(NODE, [NODE, ENTRYPOINT, *sys.argv[1:]], dict(os.environ))\n"
+        "except BaseException:\n"
+        "    os._exit(126)\n"
+    )
+    try:
+        descriptor = os.open(
+            launcher,
+            os.O_WRONLY
+            | os.O_CREAT
+            | os.O_EXCL
+            | getattr(os, "O_NOFOLLOW", 0),
+            0o500,
+        )
+        try:
+            encoded = payload.encode("utf-8")
+            offset = 0
+            while offset < len(encoded):
+                offset += os.write(descriptor, encoded[offset:])
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+        launcher.chmod(0o500)
+    except OSError:
+        raise _live_failure("executable_identity_drift") from None
+    _verify_executable_seal(authority.node)
+    _verify_package_tree_seal(authority.acp_package)
+    sealed = _seal_executable(str(launcher))
+    if sealed is None or sealed.mode != 0o500:
+        raise _live_failure("executable_identity_drift")
+    return sealed
+
+
 def _limit_probe_output() -> None:
     resource.setrlimit(resource.RLIMIT_FSIZE, (PROBE_OUTPUT_LIMIT, PROBE_OUTPUT_LIMIT))
 
@@ -4552,9 +4675,12 @@ def _run_live_acceptance_in_project_guarded(
     runtime_bin = parent / "runtime-bin"
     runtime_bin.mkdir(mode=0o700)
     launch_paths = {
-        name: _write_controlled_launcher(name, source, runtime_bin)
-        for name, source in source_paths.items()
+        name: _write_controlled_launcher(name, source_paths[name], runtime_bin)
+        for name in ("codex", "claude", "tmux")
     }
+    launch_paths["claude-agent-acp"] = _write_controlled_acp_launcher(
+        authority, runtime_bin
+    )
     all_seals = {
         **{f"source:{name}": seal for name, seal in source_paths.items()},
         **{f"launcher:{name}": seal for name, seal in launch_paths.items()},
@@ -8942,6 +9068,64 @@ def test_controlled_launcher_rejects_source_replacement_before_invocation(
     assert completed.stdout == b""
     assert not replacement_marker.exists()
     assert wrapper.mode == 0o500
+
+
+def test_m2c_controlled_acp_launcher_uses_sealed_node_and_entrypoint(
+    tmp_path,
+) -> None:
+    authority, failures = _load_explicit_tool_authority(
+        _fake_explicit_authority_environment(tmp_path / "authority")
+    )
+    assert failures == () and authority is not None
+
+    launcher = _write_controlled_acp_launcher(authority, tmp_path / "runtime")
+    payload = launcher.path.read_text(encoding="utf-8")
+    completed = subprocess.run(
+        [str(launcher.path), "--version"],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+        timeout=5,
+    )
+
+    assert str(authority.node.path) in payload
+    assert str(authority.acp_package.entrypoint.path) in payload
+    assert "shutil.which" not in payload
+    assert "#!/usr/bin/env" not in payload
+    assert completed.returncode == 0
+    assert completed.stdout == b"0.58.1\n"
+    assert completed.stderr == b""
+
+
+@pytest.mark.parametrize("target", ("node", "entrypoint", "package-file"))
+def test_m2c_controlled_acp_launcher_rejects_authority_drift(
+    tmp_path, target
+) -> None:
+    authority, failures = _load_explicit_tool_authority(
+        _fake_explicit_authority_environment(tmp_path / "authority")
+    )
+    assert failures == () and authority is not None
+    launcher = _write_controlled_acp_launcher(authority, tmp_path / "runtime")
+    targets = {
+        "node": authority.node.path,
+        "entrypoint": authority.acp_package.entrypoint.path,
+        "package-file": authority.acp_package.root / "lib" / "support.js",
+    }
+    targets[target].write_bytes(b"changed after seal\n")
+
+    completed = subprocess.run(
+        [str(launcher.path), "--version"],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+        timeout=5,
+    )
+
+    assert completed.returncode == 126
+    assert completed.stdout == b""
+    assert completed.stderr == b""
 
 
 @pytest.mark.parametrize("failure_index", [0, 2])
