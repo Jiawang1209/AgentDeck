@@ -78,6 +78,17 @@
   permission. No login or global mutation was attempted. Human authentication
   is required before a new auth-aware preflight/live cycle.
 
+### Design the M2c Claude authentication readiness gate
+
+- Approved a harness-only strict preflight correction that queries the exact
+  sealed Claude CLI with bounded `auth status --json`, projects only the closed
+  `loggedIn` readiness fact, and never retains authentication output/material.
+- Strict preflight advances to v6 because readiness semantics change; tool
+  authority remains v3 because mutable login state is not executable identity.
+- The implementation plan requires separate RED/GREEN commits, double full
+  suites, human-controlled login, one new v6 preflight, and only then a newly
+  authorized real Mission.
+
 ### Design the M2c preview-consumption convergence repair
 
 - Approved a harness-only correction for the observed admission/consumption
