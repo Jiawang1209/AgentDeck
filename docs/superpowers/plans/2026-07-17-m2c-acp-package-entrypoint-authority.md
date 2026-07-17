@@ -238,7 +238,7 @@ git commit -m "test: close M2c ACP metadata safety boundary"
 - Modify: `tests/test_m2c_live_acceptance.py`
 - Modify: `HISTORY.md`
 
-- [ ] **Step 1: Update explicit-authority RED cases**
+- [x] **Step 1: Update explicit-authority RED cases**
 
 Make `_fake_explicit_authority_environment` set
 `AGENTDECK_M2C_CLAUDE_ACP` to the fixture's metadata-selected entrypoint. Add
@@ -246,7 +246,7 @@ tests proving an alternate package member, external same-content file, symlink,
 and stale previously selected path all produce the existing closed binding
 failure.
 
-- [ ] **Step 2: Remove every fixed-entrypoint consumer**
+- [x] **Step 2: Remove every fixed-entrypoint consumer**
 
 Replace all remaining `ACP_ENTRYPOINT` use with
 `authority.acp_package.entrypoint_relative` or
@@ -254,13 +254,13 @@ Replace all remaining `ACP_ENTRYPOINT` use with
 embed and execute the already sealed absolute entrypoint path, while its tree
 walk revalidates the complete v2 manifest and exact Node seal.
 
-- [ ] **Step 3: Verify normal execution and drift**
+- [x] **Step 3: Verify normal execution and drift**
 
 The controlled launcher must execute fake Node plus `dist/index.js`, return
 `0.58.1`, contain no `shutil.which`/`/usr/bin/env`, and exit `126` with empty
 stdout/stderr after Node, package-json, entrypoint, or support-file drift.
 
-- [ ] **Step 4: Run GREEN and commit**
+- [x] **Step 4: Run GREEN and commit**
 
 ```bash
 PYTHONPATH="$WORKTREE/src" conda run --no-capture-output -n agentdeck \

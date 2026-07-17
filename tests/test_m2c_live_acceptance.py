@@ -915,6 +915,7 @@ def _write_controlled_acp_launcher(
         "import hashlib, os, stat, sys\n"
         f"NODE = {str(authority.node.path)!r}\n"
         f"ROOT = {str(authority.acp_package.root)!r}\n"
+        f"ENTRYPOINT_RELATIVE = {authority.acp_package.entrypoint_relative!r}\n"
         f"ENTRYPOINT = {str(entrypoint)!r}\n"
         f"EXPECTED_NODE = {expected_node!r}\n"
         f"EXPECTED_RUNTIME = {expected_runtime!r}\n"
@@ -974,7 +975,7 @@ def _write_controlled_acp_launcher(
         "    node_facts.pop('path')\n"
         "    node_facts['content_hash'] = node_hash\n"
         "    if node_facts != EXPECTED_NODE: raise ValueError()\n"
-        "    if ENTRYPOINT != os.path.join(ROOT, 'dist', 'claude-agent-acp'): raise ValueError()\n"
+        "    if ENTRYPOINT != os.path.join(ROOT, *ENTRYPOINT_RELATIVE.split('/')): raise ValueError()\n"
         "    os.execve(NODE, [NODE, ENTRYPOINT, *sys.argv[1:]], dict(os.environ))\n"
         "except BaseException:\n"
         "    os._exit(126)\n"
@@ -1207,17 +1208,25 @@ def _load_explicit_tool_authority(
     package, package_blocker = _seal_acp_package_tree(
         environ.get(ACP_PACKAGE_ENV)
     )
-    declared_acp_entrypoint = _seal_executable(
-        environ.get("AGENTDECK_M2C_CLAUDE_ACP")
-    )
+    declared_acp_value = environ.get("AGENTDECK_M2C_CLAUDE_ACP")
+    declared_acp_entrypoint = _seal_executable(declared_acp_value)
     if declared_acp_entrypoint is None:
-        failures.append(
-            _PreflightFailure(
-                "claude-agent-acp",
-                "identity",
-                "claude_agent_acp_unavailable",
+        if declared_acp_value:
+            failures.append(
+                _PreflightFailure(
+                    "claude-agent-acp",
+                    "binding",
+                    "claude_agent_acp_package_invalid",
+                )
             )
-        )
+        else:
+            failures.append(
+                _PreflightFailure(
+                    "claude-agent-acp",
+                    "identity",
+                    "claude_agent_acp_unavailable",
+                )
+            )
     if package_blocker is not None:
         failures.append(
             _PreflightFailure(
@@ -5591,16 +5600,40 @@ def test_m2c_explicit_authority_loader_fails_closed_without_fallback(
     assert str(tmp_path) not in repr(failures)
 
 
+@pytest.mark.parametrize(
+    "variant",
+    ("external", "package-member", "symlink", "stale-selection"),
+)
 def test_m2c_explicit_authority_loader_binds_acp_entrypoint_to_package(
-    tmp_path,
+    tmp_path, variant
 ) -> None:
     environment = _fake_explicit_authority_environment(tmp_path)
-    alternate = tmp_path / "bin" / "alternate-acp"
-    alternate.write_bytes(
-        Path(environment["AGENTDECK_M2C_CLAUDE_ACP"]).read_bytes()
-    )
-    alternate.chmod(0o700)
-    environment["AGENTDECK_M2C_CLAUDE_ACP"] = str(alternate)
+    selected = Path(environment["AGENTDECK_M2C_CLAUDE_ACP"])
+    package = Path(environment[ACP_PACKAGE_ENV])
+    if variant == "external":
+        alternate = tmp_path / "bin" / "alternate-acp"
+        alternate.write_bytes(selected.read_bytes())
+        alternate.chmod(0o700)
+        environment["AGENTDECK_M2C_CLAUDE_ACP"] = str(alternate)
+    elif variant == "package-member":
+        member = package / "lib" / "support.js"
+        member.chmod(0o700)
+        environment["AGENTDECK_M2C_CLAUDE_ACP"] = str(member)
+    elif variant == "symlink":
+        link = tmp_path / "bin" / "linked-acp"
+        link.symlink_to(selected)
+        environment["AGENTDECK_M2C_CLAUDE_ACP"] = str(link)
+    else:
+        alternate = package / "dist" / "alternate.js"
+        alternate.write_bytes(selected.read_bytes())
+        alternate.chmod(0o700)
+        metadata = {
+            "name": ACP_PACKAGE_NAME,
+            "bin": {ACP_COMMAND_NAME: "dist/alternate.js"},
+        }
+        (package / "package.json").write_text(
+            json.dumps(metadata, sort_keys=True) + "\n", encoding="utf-8"
+        )
 
     authority, failures = _load_explicit_tool_authority(environment)
 
@@ -9483,7 +9516,9 @@ def test_m2c_controlled_acp_launcher_uses_sealed_node_and_entrypoint(
     assert completed.stderr == b""
 
 
-@pytest.mark.parametrize("target", ("node", "entrypoint", "package-file"))
+@pytest.mark.parametrize(
+    "target", ("node", "package-json", "entrypoint", "package-file")
+)
 def test_m2c_controlled_acp_launcher_rejects_authority_drift(
     tmp_path, target
 ) -> None:
@@ -9494,6 +9529,7 @@ def test_m2c_controlled_acp_launcher_rejects_authority_drift(
     launcher = _write_controlled_acp_launcher(authority, tmp_path / "runtime")
     targets = {
         "node": authority.node.path,
+        "package-json": authority.acp_package.root / "package.json",
         "entrypoint": authority.acp_package.entrypoint.path,
         "package-file": authority.acp_package.root / "lib" / "support.js",
     }

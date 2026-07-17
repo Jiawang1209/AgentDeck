@@ -4,6 +4,19 @@
 
 ## 2026-07-17
 
+### Execute M2c ACP through the metadata-selected authority
+
+- Extended explicit binding coverage across an external same-content file, an
+  alternate package member, a symlink, and a stale selection after metadata
+  change. A supplied invalid/symlink path now reports the closed package
+  binding failure, while a genuinely missing input retains `unavailable`.
+- Removed the final fixed `dist/claude-agent-acp` comparison from the generated
+  mode-0500 launcher. It now embeds the sealed canonical relative entrypoint,
+  revalidates the complete package and Node, and executes exactly that path.
+- Loader/launcher/setup GREEN passed `21 passed, 1 skipped, 246 deselected in
+  12.78s`; the skip remained the opt-in real designated node. No real external
+  tool or live Mission ran.
+
 ### Close the M2c ACP package metadata safety matrix
 
 - Added table-driven rejection coverage for missing, oversized, non-UTF-8,
