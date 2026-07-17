@@ -53,7 +53,7 @@ or begin M3 before real M2c PASS.
 - Modify: `tests/test_m2c_live_acceptance.py:9186-9415`
 - Modify: `HISTORY.md:6-30`
 
-- [ ] **Step 1: Add a complete sequential-permission state fixture**
+- [x] **Step 1: Add a complete sequential-permission state fixture**
 
 Place this fixture immediately after `_StaticLiveStore`. It must produce real
 Mission/attempt/session/turn/binding/update/transition shapes and must retain
@@ -181,7 +181,7 @@ def _sequential_permission_state(
     return state
 ```
 
-- [ ] **Step 2: Add RED tests for transition-derived state and exact lineage**
+- [x] **Step 2: Add RED tests for transition-derived state and exact lineage**
 
 ```python
 def test_attempt_permission_facts_derive_approved_then_pending() -> None:
@@ -241,7 +241,7 @@ def test_attempt_permission_facts_fail_closed(
     assert "/private" not in str(error.value)
 ```
 
-- [ ] **Step 3: Run RED and verify the exact missing unit**
+- [x] **Step 3: Run RED and verify the exact missing unit**
 
 Run:
 
@@ -255,7 +255,10 @@ Expected: FAIL because `_attempt_permission_facts` and
 `_PermissionContractError` do not exist. No existing product or harness test
 may fail first.
 
-- [ ] **Step 4: Record and commit RED**
+Observed: `6 failed, 339 deselected in 1.49s`; every failure was the expected
+missing `_attempt_permission_facts` or `_PermissionContractError` symbol.
+
+- [x] **Step 4: Record and commit RED**
 
 Add the failing command and causal failure to `HISTORY.md`, then run:
 

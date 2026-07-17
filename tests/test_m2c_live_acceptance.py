@@ -9196,6 +9196,127 @@ class _StaticLiveStore:
         return self.state
 
 
+def _sequential_permission_state(
+    *,
+    step_position: int = 1,
+    effective_states: tuple[str, ...] = ("pending",),
+    attempt_state: str = "running",
+    include_completion: bool = False,
+) -> dict[str, object]:
+    mission_id = "mis_0123456789ab"
+    attempt_id = f"mat_00000000000{step_position}"
+    session_id = f"ags_session{step_position}"
+    turn_id = f"trn_turn{step_position}"
+    state = _live_diagnostic_state(
+        mission_status="running",
+        attempt_state=attempt_state,
+        reply_state="received",
+        handoff_state="pending",
+        handoff_status="blocked",
+        permissions=[],
+    )
+    state["missions"][0]["mission_id"] = mission_id
+    attempt = state["mission_attempts"][0]
+    attempt.update(
+        {
+            "mission_id": mission_id,
+            "attempt_id": attempt_id,
+            "step_id": f"step_{step_position}",
+            "step_position": step_position,
+            "agent_id": "claude-worker",
+            "configured_transport": "acp",
+            "dispatch_key": f"dsp_step_{step_position}",
+            "state": attempt_state,
+        }
+    )
+    state["agent_sessions"] = [
+        {"session_id": session_id, "agent_id": "claude-worker"}
+    ]
+    state["protocol_turns"] = [
+        {
+            "turn_id": turn_id,
+            "session_id": session_id,
+            "message_id": attempt["dispatch_key"],
+        }
+    ]
+    state["transport_updates"] = []
+    state["permission_requests"] = []
+    state["mission_permission_bindings"] = []
+    state["protocol_state_transitions"] = []
+    for sequence, effective_state in enumerate(effective_states):
+        permission_id = f"prm_step{step_position}_{sequence}"
+        state["permission_requests"].append(
+            {
+                "permission_id": permission_id,
+                "session_id": session_id,
+                "turn_id": turn_id,
+                "tool_name": "edit",
+                "target": "SECRET /private/project/artifact.txt",
+                "risk": "write",
+                "status": "pending",
+            }
+        )
+        state["mission_permission_bindings"].append(
+            {
+                "mission_id": mission_id,
+                "attempt_id": attempt_id,
+                "permission_id": permission_id,
+            }
+        )
+        state["transport_updates"].append(
+            {
+                "session_id": session_id,
+                "turn_id": turn_id,
+                "sequence": sequence,
+                "kind": "permission_request",
+                "payload": {
+                    "permission_id": permission_id,
+                    "tool_call_id": f"tool_{sequence}",
+                    "prompt": "SECRET prompt",
+                },
+            }
+        )
+        if effective_state != "pending":
+            state["protocol_state_transitions"].append(
+                {
+                    "entity_type": "permission",
+                    "entity_id": permission_id,
+                    "from_state": "pending",
+                    "to_state": effective_state,
+                }
+            )
+    if include_completion:
+        reply = state["mission_worker_replies"][0]
+        handoff = state["mission_handoffs"][0]
+        reply.update(
+            {
+                "mission_id": mission_id,
+                "attempt_id": attempt_id,
+                "dispatch_key": attempt["dispatch_key"],
+                "state": "validated",
+            }
+        )
+        handoff.update(
+            {
+                "mission_id": mission_id,
+                "attempt_id": attempt_id,
+                "reply_id": reply["reply_id"],
+                "state": "recorded",
+                "canonical_handoff": {
+                    "status": "completed",
+                    "summary": "closed",
+                    "verification": "closed",
+                    "risks": "none",
+                    "next_steps": "continue",
+                },
+            }
+        )
+    else:
+        state["mission_worker_replies"] = []
+        state["mission_handoffs"] = []
+    return state
+
+
 def _live_diagnostic_state(
     *,
     mission_status: object = "running",
@@ -9266,6 +9387,63 @@ def _live_diagnostic_state(
             [] if permissions is None else permissions
         ),
     }
+
+
+def test_attempt_permission_facts_derive_approved_then_pending() -> None:
+    state = _sequential_permission_state(
+        effective_states=("approved", "pending")
+    )
+    attempt = state["mission_attempts"][0]
+
+    facts = _attempt_permission_facts(state, attempt)
+
+    assert [(item.sequence, item.effective_state) for item in facts] == [
+        (0, "approved"),
+        (1, "pending"),
+    ]
+    assert all(item.permission_id.startswith("prm_") for item in facts)
+
+
+@pytest.mark.parametrize(
+    ("mutation", "expected_code"),
+    (
+        ("two_pending", "permission_order_ambiguous"),
+        ("cross_attempt", "permission_lineage_invalid"),
+        ("cross_session", "permission_lineage_invalid"),
+        ("duplicate_sequence", "permission_order_ambiguous"),
+        ("conflicting_transition", "permission_transition_invalid"),
+    ),
+)
+def test_attempt_permission_facts_fail_closed(
+    mutation: str, expected_code: str,
+) -> None:
+    state = _sequential_permission_state(
+        effective_states=("approved", "pending")
+    )
+    if mutation == "two_pending":
+        state["protocol_state_transitions"].clear()
+    elif mutation == "cross_attempt":
+        state["mission_permission_bindings"][1]["attempt_id"] = "mat_crossed"
+    elif mutation == "cross_session":
+        state["permission_requests"][1]["session_id"] = "ags_crossed"
+    elif mutation == "duplicate_sequence":
+        state["transport_updates"][1]["sequence"] = 0
+    else:
+        state["protocol_state_transitions"].append(
+            {
+                "entity_type": "permission",
+                "entity_id": "prm_step1_0",
+                "from_state": "pending",
+                "to_state": "denied",
+            }
+        )
+
+    with pytest.raises(_PermissionContractError) as error:
+        _attempt_permission_facts(state, state["mission_attempts"][0])
+
+    assert error.value.code == expected_code
+    assert "SECRET" not in str(error.value)
+    assert "/private" not in str(error.value)
 
 
 @pytest.mark.parametrize(

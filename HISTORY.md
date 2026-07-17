@@ -20,6 +20,19 @@
   render ProjectView, contracts, and ledger evidence rather than infer state
   from terminal pixels.
 
+### Require transition-derived M2c permission lineage
+
+- Added deterministic sequential-permission fixtures covering one exact
+  Mission attempt, ACP session, protocol turn, transport ordering, immutable
+  pending permission bases, and append-only permission transitions.
+- Added fail-closed RED coverage for approved-then-pending projection, multiple
+  simultaneous pending requests, crossed attempt/session lineage, duplicate
+  transport sequence, conflicting transitions, and diagnostic leakage.
+- The focused RED failed exactly as intended: `6 failed, 339 deselected in
+  1.49s` because `_attempt_permission_facts` and
+  `_PermissionContractError` do not exist. No product or existing harness
+  failure preceded the missing unit.
+
 ### Design bounded sequential ACP permission acceptance for M2c
 
 - Replaced the live harness assumption of exactly two Mission permissions with
