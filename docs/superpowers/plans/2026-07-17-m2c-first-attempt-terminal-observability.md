@@ -24,16 +24,16 @@ git worktrees, real installed inputs only after deterministic freeze.
 - Modify: `tests/test_m2c_live_acceptance.py`
 - Modify: `HISTORY.md`
 
-- [ ] Add a deterministic store whose first snapshot already contains one
+- [x] Add a deterministic store whose first snapshot already contains one
   step-1 `claude-worker` ACP attempt in `ambiguous` state with
   `acp_completion_prompt_outcome_unknown` and zero permissions.
-- [ ] Exercise the current first-permission path and prove it does not stop on
+- [x] Exercise the current first-permission path and prove it does not stop on
   the snapshot. Use a fake clock/bounded wait so RED is immediate.
-- [ ] Require the future result to be
+- [x] Require the future result to be
   `first_attempt_acp_prompt_ambiguous`, not `first_permission_timeout`.
-- [ ] Assert no raw reason, blocker, receipt, ID, path, or prompt sentinel is
+- [x] Assert no raw reason, blocker, receipt, ID, path, or prompt sentinel is
   rendered.
-- [ ] Record the exact RED result and commit.
+- [x] Record the exact RED result and commit.
 
 ## Task 2: GREEN — add closed terminal projection
 

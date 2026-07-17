@@ -12,6 +12,14 @@
 - Rejected timeout inflation, retry, and raw adapter diagnostics. M2c remains
   blocked and M3 locked pending RED/GREEN, a new freeze, and real acceptance.
 
+### Expose the missing first-attempt terminal wait
+
+- Added a deterministic step-1 Claude ACP fixture with durable prompt-stage
+  ambiguity, zero permissions, and secret receipt/path sentinels.
+- RED failed exactly because the terminal-aware wait does not exist: `1 failed,
+  295 deselected in 0.84s`. The future contract requires immediate closed
+  `first_attempt_acp_prompt_ambiguous` evidence without raw reason or sentinels.
+
 ### Design the M2c preview-consumption convergence repair
 
 - Approved a harness-only correction for the observed admission/consumption

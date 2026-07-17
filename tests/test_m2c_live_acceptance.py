@@ -8471,6 +8471,39 @@ def _live_diagnostic_state(
     }
 
 
+def test_first_permission_wait_stops_on_durable_acp_prompt_ambiguity() -> None:
+    state = _live_diagnostic_state(
+        attempt_state="ambiguous",
+        reply_state="invalid",
+        handoff_state="pending",
+        handoff_status="failed",
+    )
+    attempt = state["mission_attempts"][0]
+    assert type(attempt) is dict
+    attempt["receipt_summary"] = "SECRET receipt /private/project"
+    attempt["blocker"] = "acp_completion_prompt_outcome_unknown"
+    attempt["terminal_reason"] = "acp_completion_prompt_outcome_unknown"
+
+    with pytest.raises(_LiveHarnessFailure) as error:
+        _wait_for_first_permission_or_terminal_attempt(
+            _StaticLiveStore(state),
+            capture=_PtyTail(),
+        )
+
+    rendered = str(error.value)
+    diagnostic = json.loads(rendered)
+    assert diagnostic["code"] == "first_attempt_acp_prompt_ambiguous"
+    assert diagnostic["ledger"]["attempt_terminal_stage"] == "acp_prompt"
+    for forbidden in (
+        "SECRET",
+        "/private/project",
+        "receipt",
+        "terminal_reason",
+        "acp_completion_prompt_outcome_unknown",
+    ):
+        assert forbidden not in rendered
+
+
 _LIVE_LEDGER_KEYS = {
     "classification",
     "mission_status",
