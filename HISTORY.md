@@ -4,6 +4,18 @@
 
 ## 2026-07-17
 
+### Bind M2c ACP authority to sealed npm bin metadata
+
+- Replaced the fixed ACP entrypoint with bounded, duplicate-safe package JSON
+  parsing and canonical package-relative npm bin selection. The selected file
+  must be an executable member of the already sealed complete package tree.
+- Advanced cross-process identity to `m2c-tool-authority/v2` and strict
+  designated output to `m2c-live-preflight/v4`; the v2 digest explicitly binds
+  the selected relative entrypoint in addition to the package tree hash.
+- Focused GREEN passed `16 passed, 227 deselected in 0.87s`, including both npm
+  bin shapes, path/mtime independence, every authority input, and live digest
+  mismatch admission. No real preflight/live or external tool ran.
+
 ### Expose the real M2c ACP package entrypoint mismatch
 
 - Replaced the synthetic ACP fixture's invented `dist/claude-agent-acp` with

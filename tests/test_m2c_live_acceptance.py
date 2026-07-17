@@ -68,14 +68,17 @@ PROBE_TIMEOUT_SECONDS = 5
 PROBE_OUTPUT_LIMIT = 256 * 1024
 LEADER_MODEL_ENV = "AGENTDECK_M2C_LEADER_MODEL"
 LEADER_MODEL_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,95}\Z")
-AUTHORITY_SCHEMA_VERSION = "m2c-tool-authority/v1"
-STRICT_PREFLIGHT_SCHEMA_VERSION = "m2c-live-preflight/v3"
+AUTHORITY_SCHEMA_VERSION = "m2c-tool-authority/v2"
+STRICT_PREFLIGHT_SCHEMA_VERSION = "m2c-live-preflight/v4"
 STRICT_PREFLIGHT_ENV = "AGENTDECK_M2C_STRICT_PREFLIGHT"
 NODE_ENV = "AGENTDECK_M2C_NODE"
 ACP_PACKAGE_ENV = "AGENTDECK_M2C_CLAUDE_ACP_PACKAGE"
 AUTHORITY_DIGEST_ENV = "AGENTDECK_M2C_AUTHORITY_DIGEST"
 AUTHORITY_DIGEST_PATTERN = re.compile(r"sha256:[0-9a-f]{64}\Z")
-ACP_ENTRYPOINT = PurePosixPath("dist/claude-agent-acp")
+ACP_PACKAGE_NAME = "@agentclientprotocol/claude-agent-acp"
+ACP_COMMAND_NAME = "claude-agent-acp"
+ACP_PACKAGE_JSON = PurePosixPath("package.json")
+MAX_ACP_PACKAGE_JSON_BYTES = 1024 * 1024
 TOOL_SPECS = (
     ("codex", "AGENTDECK_M2C_CODEX", ("exec", "--help"), ("--version",)),
     ("claude", "AGENTDECK_M2C_CLAUDE", ("--help",), ("--version",)),
@@ -267,6 +270,7 @@ class _PackageTreeSeal:
     root: Path
     entries: tuple[_PackageManifestEntry, ...]
     tree_hash: str
+    entrypoint_relative: str
     entrypoint: _ExecutableSeal
     runtime_entries: tuple[_PackageRuntimeEntry, ...] = ()
 
@@ -330,6 +334,7 @@ def _authority_digest_payload(authority: _ToolAuthority) -> dict[str, object]:
                 "name": "claude-agent-acp",
                 "kind": "package-tree",
                 "tree_hash": authority.acp_package.tree_hash,
+                "entrypoint": authority.acp_package.entrypoint_relative,
             }
         ],
     }
@@ -599,6 +604,92 @@ def _package_tree_hash(entries: tuple[_PackageManifestEntry, ...]) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
+def _unique_json_object(
+    pairs: list[tuple[str, object]],
+) -> dict[str, object]:
+    result: dict[str, object] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("duplicate JSON key")
+        result[key] = value
+    return result
+
+
+def _canonical_package_relative_path(raw: object) -> str:
+    if type(raw) is not str or not raw or "\x00" in raw or "\\" in raw:
+        raise ValueError("invalid package path")
+    candidate = raw[2:] if raw.startswith("./") else raw
+    if not candidate or candidate.startswith("/"):
+        raise ValueError("invalid package path")
+    components = candidate.split("/")
+    if any(part in {"", ".", ".."} for part in components):
+        raise ValueError("invalid package path")
+    path = PurePosixPath(*components)
+    if path.is_absolute() or path.as_posix() in {"", "."}:
+        raise ValueError("invalid package path")
+    return path.as_posix()
+
+
+def _acp_bin_entrypoint(metadata: object) -> str:
+    if type(metadata) is not dict or metadata.get("name") != ACP_PACKAGE_NAME:
+        raise ValueError("invalid package metadata")
+    declared = metadata.get("bin")
+    if type(declared) is dict:
+        declared = declared.get(ACP_COMMAND_NAME)
+    return _canonical_package_relative_path(declared)
+
+
+def _read_sealed_package_member(
+    root: Path,
+    item: _PackageManifestEntry,
+    runtime: _PackageRuntimeEntry,
+    *,
+    byte_limit: int,
+) -> bytes:
+    if item.kind != "file" or item.size is None or item.content_hash is None:
+        raise ValueError("invalid package member")
+    if item.size > byte_limit:
+        raise ValueError("package member too large")
+    path = root.joinpath(*PurePosixPath(item.path).parts)
+    initial = path.lstat()
+    mode = stat.S_IMODE(initial.st_mode)
+    if (
+        not stat.S_ISREG(initial.st_mode)
+        or stat.S_ISLNK(initial.st_mode)
+        or mode & 0o022
+        or _package_runtime_entry(item.path, initial) != runtime
+    ):
+        raise ValueError("unsafe package member")
+    descriptor = os.open(
+        path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    )
+    try:
+        opened = os.fstat(descriptor)
+        payload = bytearray()
+        digest = hashlib.sha256()
+        while True:
+            chunk = os.read(descriptor, min(1024 * 1024, byte_limit + 1))
+            if not chunk:
+                break
+            payload.extend(chunk)
+            digest.update(chunk)
+            if len(payload) > byte_limit:
+                raise ValueError("package member too large")
+        closed = os.fstat(descriptor)
+        final = path.lstat()
+    finally:
+        os.close(descriptor)
+    if (
+        not _same_file_identity(initial, opened)
+        or not _same_file_identity(opened, closed)
+        or not _same_file_identity(closed, final)
+        or len(payload) != item.size
+        or digest.hexdigest() != item.content_hash
+    ):
+        raise ValueError("unstable package member")
+    return bytes(payload)
+
+
 def _seal_acp_package_tree(
     value: str | None,
 ) -> tuple[_PackageTreeSeal | None, str | None]:
@@ -620,14 +711,37 @@ def _seal_acp_package_tree(
         final_root = root.lstat()
         if not _same_file_identity(initial_root, final_root):
             return None, blocker
-        entry_path = root.joinpath(*ACP_ENTRYPOINT.parts)
+        metadata_item = next(
+            (item for item in entries if item.path == str(ACP_PACKAGE_JSON)),
+            None,
+        )
+        metadata_runtime = next(
+            (item for item in runtime if item.path == str(ACP_PACKAGE_JSON)),
+            None,
+        )
+        if metadata_item is None or metadata_runtime is None:
+            return None, blocker
+        metadata_bytes = _read_sealed_package_member(
+            root,
+            metadata_item,
+            metadata_runtime,
+            byte_limit=MAX_ACP_PACKAGE_JSON_BYTES,
+        )
+        metadata = json.loads(
+            metadata_bytes.decode("utf-8"),
+            object_pairs_hook=_unique_json_object,
+        )
+        entrypoint_relative = _acp_bin_entrypoint(metadata)
+        entry_path = root.joinpath(
+            *PurePosixPath(entrypoint_relative).parts
+        )
         entrypoint = _seal_executable(str(entry_path))
         entry_item = next(
-            (item for item in entries if item.path == str(ACP_ENTRYPOINT)),
+            (item for item in entries if item.path == entrypoint_relative),
             None,
         )
         entry_runtime = next(
-            (item for item in runtime if item.path == str(ACP_ENTRYPOINT)),
+            (item for item in runtime if item.path == entrypoint_relative),
             None,
         )
         if (
@@ -646,6 +760,7 @@ def _seal_acp_package_tree(
                 root=root,
                 entries=entries,
                 tree_hash=_package_tree_hash(entries),
+                entrypoint_relative=entrypoint_relative,
                 entrypoint=entrypoint,
                 runtime_entries=(root_runtime, *runtime),
             ),
@@ -794,7 +909,7 @@ def _write_controlled_acp_launcher(
     expected_manifest = [
         asdict(item) for item in authority.acp_package.entries
     ]
-    entrypoint = authority.acp_package.root.joinpath(*ACP_ENTRYPOINT.parts)
+    entrypoint = authority.acp_package.entrypoint.path
     payload = (
         f"#!{sys.executable}\n"
         "import hashlib, os, stat, sys\n"
@@ -5068,9 +5183,8 @@ def _fake_authority_for_digest(
         seal = _seal_executable(str(path))
         assert seal is not None
         seals[name] = seal
-    package_root = root / "package"
-    entrypoint_path = package_root / "dist" / "claude-agent-acp"
-    entrypoint_path.parent.mkdir(parents=True)
+    package_root = _fake_acp_package(root / "package")
+    entrypoint_path = package_root / "dist" / "index.js"
     acp_suffix = "-changed" if changed_role == "claude-agent-acp" else ""
     entrypoint_path.write_bytes(
         f"#!/bin/sh\necho acp{acp_suffix}\n".encode("ascii")
@@ -5078,22 +5192,8 @@ def _fake_authority_for_digest(
     entrypoint_path.chmod(0o700)
     if mtime_ns is not None:
         os.utime(entrypoint_path, ns=(mtime_ns, mtime_ns))
-    entrypoint = _seal_executable(str(entrypoint_path))
-    assert entrypoint is not None
-    entries = (
-        _PackageManifestEntry("dist", "directory", None, None, True),
-        _PackageManifestEntry(
-            "dist/claude-agent-acp",
-            "file",
-            entrypoint.size,
-            entrypoint.content_hash,
-            True,
-        ),
-    )
-    tree_hash = hashlib.sha256(
-        (json.dumps([asdict(item) for item in entries], sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8")
-    ).hexdigest()
-    package = _PackageTreeSeal(package_root, entries, tree_hash, entrypoint)
+    package, package_blocker = _seal_acp_package_tree(str(package_root))
+    assert package_blocker is None and package is not None
     return _finalize_authority(
         _ToolAuthority(
             leader_model=_LeaderModelSeal(model),
@@ -5299,7 +5399,7 @@ def _fake_explicit_authority_environment(root: Path) -> dict[str, str]:
     values = {
         LEADER_MODEL_ENV: "gpt-5.5",
         "AGENTDECK_M2C_CLAUDE_ACP": str(
-            package.joinpath(*ACP_ENTRYPOINT.parts)
+            package / "dist" / "index.js"
         ),
         ACP_PACKAGE_ENV: str(package),
     }

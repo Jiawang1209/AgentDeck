@@ -106,7 +106,7 @@ git commit -m "test: expose M2c ACP package entrypoint mismatch"
 - Modify: `tests/test_m2c_live_acceptance.py`
 - Modify: `HISTORY.md`
 
-- [ ] **Step 1: Add bounded metadata constants and seal shape**
+- [x] **Step 1: Add bounded metadata constants and seal shape**
 
 Replace the fixed `ACP_ENTRYPOINT` with:
 
@@ -121,7 +121,7 @@ Add `entrypoint_relative: str` to `_PackageTreeSeal` before `entrypoint`.
 Advance constants to `AUTHORITY_SCHEMA_VERSION = "m2c-tool-authority/v2"` and
 `STRICT_PREFLIGHT_SCHEMA_VERSION = "m2c-live-preflight/v4"`.
 
-- [ ] **Step 2: Implement duplicate-safe JSON and POSIX path selection**
+- [x] **Step 2: Implement duplicate-safe JSON and POSIX path selection**
 
 Add pure helpers with these contracts:
 
@@ -140,7 +140,7 @@ def _acp_bin_entrypoint(metadata: object) -> str:
 Parse with `json.loads(text, object_pairs_hook=_unique_json_object)`. Do not
 include parser exception text in any returned failure.
 
-- [ ] **Step 3: Read metadata as an already sealed package member**
+- [x] **Step 3: Read metadata as an already sealed package member**
 
 Add `_read_sealed_package_member(root, manifest_item, runtime_item)` that opens
 with `O_NOFOLLOW`, enforces the 1 MiB package-json limit, verifies initial/open/
@@ -158,13 +158,13 @@ In `_seal_acp_package_tree`:
 
 Any error returns only `claude_agent_acp_package_invalid`.
 
-- [ ] **Step 4: Bind entrypoint into authority v2**
+- [x] **Step 4: Bind entrypoint into authority v2**
 
 Add `"entrypoint": authority.acp_package.entrypoint_relative` to the ACP item
 in `_authority_digest_payload`. Update fake authority construction to call the
 real package sealer rather than manually constructing a partial package seal.
 
-- [ ] **Step 5: Run GREEN**
+- [x] **Step 5: Run GREEN**
 
 ```bash
 PYTHONPATH="$WORKTREE/src" conda run --no-capture-output -n agentdeck \
@@ -174,7 +174,7 @@ PYTHONPATH="$WORKTREE/src" conda run --no-capture-output -n agentdeck \
 
 Expected: all selected tests pass.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 Update HISTORY with authority v2/preflight v4 behavior, then:
 
