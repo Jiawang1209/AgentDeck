@@ -91,9 +91,9 @@ strict preflight contract to v6 while retaining authority v3.
 
 ## Task 6: Double full suite and real gates
 
-- [ ] Create fresh detached worktree A at the frozen SHA; run the complete suite
+- [x] Create fresh detached worktree A at the frozen SHA; run the complete suite
   with absolute `PYTHONPATH`; remove it.
-- [ ] Create fresh detached worktree B at the same SHA; repeat; remove it.
+- [x] Create fresh detached worktree B at the same SHA; repeat; remove it.
 - [ ] Human completes Claude login and verifies only the closed status fields.
 - [ ] Re-audit exact Codex/Claude/Node/tmux/ACP package inputs without mutation.
 - [ ] Run exactly one strict v6 designated preflight on the frozen SHA with

@@ -120,6 +120,15 @@ temporary-root audits passed. The next deterministic gate is two complete
 suites in fresh detached worktrees at that exact SHA. No real v6 preflight or
 live Mission has run for this candidate.
 
+Both fresh complete suites at frozen `79d8160e...` now pass: `4411 passed, 3
+skipped in 259.45s` and `4411 passed, 3 skipped in 256.80s`. The skips were
+exactly the three opt-in real nodes. Both detached worktrees were removed;
+process, daemon, ACP, worktree, and temporary-root audits were empty. Human
+Claude login is now the only prerequisite. After login, re-audit the exact
+installed inputs and run one newly authorized strict v6 preflight with Leader
+`gpt-5.5`; only a ready v6 result may support a separate one-shot live Mission.
+M2c remains **BLOCKED** and M3 remains locked.
+
 ### Historical M2c authority cycles
 
 Before consuming the authorized designated preflight for frozen implementation

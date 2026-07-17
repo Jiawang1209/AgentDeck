@@ -118,6 +118,15 @@
   process, worktree, and temporary-root audits passed. Two fresh complete suites
   remain before human login and one newly authorized v6 preflight.
 
+### Verify the M2c Claude authentication readiness candidate twice
+
+- Two fresh detached worktrees at frozen `79d8160e...` passed `4411 passed, 3
+  skipped in 259.45s` and `4411 passed, 3 skipped in 256.80s`.
+- Only the explicit real ACP, designated preflight, and live Mission nodes
+  skipped. Both worktrees were removed; process, daemon, ACP, worktree, and
+  temporary-root audits were empty. Human Claude login is the remaining
+  prerequisite before an installed-input audit and one v6 preflight.
+
 ### Design the M2c preview-consumption convergence repair
 
 - Approved a harness-only correction for the observed admission/consumption

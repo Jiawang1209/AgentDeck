@@ -190,9 +190,13 @@ a fresh complete result of `320 passed, 2 skipped in 119.98s`. Product,
 Conversation, contract, and provider regressions passed `851 passed in 4.36s`.
 Compile, diff, product-source zero-change, durable leakage, process, worktree,
 and temporary-root audits passed. Two complete suites in fresh detached
-worktrees remain. Human Claude login is required before the one new real v6
-preflight. Every v5 preflight above is exhausted historical evidence and cannot
-authorize v6 live.
+worktrees at the unchanged frozen SHA then passed `4411 passed, 3 skipped in
+259.45s` and `4411 passed, 3 skipped in 256.80s`. The skips were exactly the
+opt-in real ACP, designated strict preflight, and live four-stage Mission nodes.
+Both worktrees were removed; process, daemon, ACP, worktree, and temporary-root
+audits were empty. Human Claude login is now the sole prerequisite before a
+fresh installed-input audit and one new real v6 preflight. Every v5 preflight
+above is exhausted historical evidence and cannot authorize v6 live.
 
 ## Frozen authority
 
