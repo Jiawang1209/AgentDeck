@@ -29,6 +29,12 @@
   defined deterministic AgentDeck-owned Verification; and made one seeded
   Golden review rejection and revision path mandatory. These are requirement
   clarifications only, not implementation claims.
+- Closed the remaining recovery semantics by requiring durable zero-effect or
+  reconciled idempotent/consume-once proof before fallback, forbidding fallback
+  on ambiguous effects, and defining one exclusive `running` / `recovering` /
+  `paused` / `failed` transition matrix. Learning Review eligibility now
+  consistently includes completed, meaningfully paused, and terminally failed
+  Missions. This is a requirements clarification, not implementation.
 
 ### Start the AgentDeck V1 architecture-reset program
 

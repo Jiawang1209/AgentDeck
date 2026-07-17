@@ -108,12 +108,22 @@ under the user's control.
   observation or takeover view, not a transport or product authority.
 - The Mission envelope must record ordered permitted routes for each applicable
   Agent, such as ACP followed by CLI/PTY. If the active route fails, the daemon
-  may activate a pre-approved fallback automatically only in that frozen
-  order. Before or at activation it must emit an audit and activity event that
-  identifies the failed route, a stable reason code, and the selected route.
-  Automatic fallback is therefore allowed but never silent. When no approved
-  route remains, AgentDeck must create zero new Worker effect and enter an
-  actionable pause for the affected work.
+  may activate the next frozen, pre-approved route automatically only when
+  durable Evidence proves that the failed route produced no operation effect,
+  or when the exact operation is explicitly idempotent or consume-once and
+  reconciliation proves retry cannot duplicate or conflict with an existing
+  effect. A timeout, lost route, or unknown outcome is not enough to satisfy
+  either condition.
+- Before or at safe fallback activation, AgentDeck must emit an audit and
+  activity event that identifies the failed route, a stable reason code, and
+  the selected route. Automatic fallback is allowed but never silent. If any
+  prior effect is ambiguous, AgentDeck must dispatch zero fallback Attempt or
+  effect, enter a Mission-wide reconciliation pause, and require durable fact
+  inspection plus an explicit user decision. If the prior route is proven safe
+  but no approved route remains, it must create zero new Worker effect and
+  enter an actionable pause when a concrete route remediation or amendment is
+  available; otherwise the exclusive transition matrix determines terminal
+  failure.
 
 ### Frozen Mission and governed work
 
@@ -158,10 +168,11 @@ under the user's control.
   Mission Amendment, a new version and digest, explicit confirmation, and a
   recorded rationale. No user, Leader, reviewer, or adapter may directly
   override Verification on the already confirmed version.
-- Recovery must be bounded. AgentDeck may retry, split, reassign, or replan
-  only within the confirmed scope, budgets, retry limits, acceptance criteria,
-  and already approved transports. It must not widen scope, lower standards,
-  change models, or repeat an ambiguous external effect silently.
+- Recovery must satisfy the exclusive transition matrix below. Any retry,
+  split, reassignment, replan, or transport fallback must remain inside the
+  confirmed scope, budgets, retry limits, acceptance criteria, and approved
+  transport order. Recovery must never widen scope, lower standards, change
+  models, or retry while a prior effect remains ambiguous.
 - One authoritative project daemon must continue confirmed work after client
   disconnect and support deterministic reconnect and restart recovery. The
   restored view must distinguish known completed work, safe resumable work,
@@ -177,8 +188,8 @@ under the user's control.
   permissions, Handoffs, Evidence, acceptance, activity, pauses, and learning
   suggestions. ProjectView is read-only and must not infer authority or
   completion from terminal pixels.
-- A completed, precisely paused, or terminally failed Mission may produce
-  evidence-derived memory, skill, and Improvement Mission suggestions.
+- Completed, meaningfully paused, and terminally failed Missions are eligible
+  for evidence-derived memory, skill, and Improvement Mission suggestions.
   Suggestions remain separate from execution and durable application until the
   user explicitly confirms them.
 
@@ -192,56 +203,41 @@ complete only when all required Evidence is present, every mandatory grade
 passes, the frozen criteria are satisfied, and remaining effects are accounted
 for.
 
-`paused` means that an identified user decision or remediation can make the
-affected work resumable. Pause scope must be the narrowest safe scope and must
-be visible in activity and ProjectView.
+### Exclusive transition matrix
 
-### Session-local pause
+The following matrix is the sole recovery and interruption classifier. Its
+conditions are evaluated top to bottom; one observation enters exactly one
+row, and every transition is recorded in activity and ProjectView. A model's
+status word never chooses the row.
 
-Human takeover pauses automated input to that Worker session and pauses Tasks
-that depend on that session's next result. Unrelated safe Tasks may continue.
-Returning control does not erase the pause: AgentDeck must first reconcile the
-session and establish valid continuation or Handoff facts.
+| Exclusive condition | Required state and scope | Required behavior |
+| --- | --- | --- |
+| A prior operation effect is ambiguous, including a timeout, lost route, or unknown outcome without sufficient durable proof. | `paused`, Mission-wide reconciliation pause. | Stop all new dispatch and create zero fallback Attempt or effect. Inspect durable facts and require the concrete user decision needed to restore trustworthy project truth. If reconciliation later proves safe, re-evaluate from the new facts; if no valid continuation remains, enter the terminal row. |
+| Human takeover is active for a Worker session. | `paused`, session-local. | Pause automated input to that session and Tasks that depend on its next result. Unrelated safe Tasks may continue. Return-control requires reconciliation and valid continuation or Handoff facts. |
+| New authority or Mission version drift, authorization revocation, or an amendable global limit or policy decision has a valid user decision path, and project truth is not ambiguous. | `paused`, Mission-wide. | Stop all new dispatch. Present the exact decision or lineage-preserving Mission Amendment; confirm, deny, or cancel it explicitly. |
+| A Worker, Attempt, protocol, lineage, or route failure has a bounded automatic recovery that is proven safe and fully inside the frozen envelope. | Stay `running` or enter `recovering`; no pause scope. | Retry, reassign, split, or activate a proven-safe pre-approved fallback within the frozen bounds. This requires no human decision and no pause. Return to `running` after recovery succeeds. A Worker or Attempt failure does not automatically pause. |
+| The same Task-level failure has no safe automatic recovery, but a concrete user decision or remediation can create a valid continuation. | `paused`, Task-local. | Pause that Task and its downstream dependents. Unrelated Tasks may continue only with no dependency, shared-scope, or authority conflict. Present the exact remediation; do not exceed frozen bounds before it is resolved. |
+| A Task-scoped budget or retry limit is exhausted, and an allowed amendment can raise or change that limit. | `paused`, Task-local. | Present the limit change as a Mission Amendment. A corresponding amendable global budget or policy limit uses the Mission-wide row above. |
+| Bounded recovery is exhausted and no valid user action can resume safely; a hard or non-amendable policy is violated; or an allowed amendment is declined and no route remains. | Terminal `failed` at the affected Task or Mission scope. | Report the failed stage, authoritative facts, completed or possibly completed effects, retry safety, exhausted limits, and next available product action. The failed work is never silently resumed; a later version or Mission is distinct. |
 
-### Task-local pause
+Thus safe bounded automatic recovery remains `running` or `recovering` and
+never asks for a human decision. `paused` is reserved for a concrete decision,
+remediation, or amendment that can create a valid continuation at the narrowest
+safe scope. `failed` is terminal for the classified Task or Mission. Budget or
+retry exhaustion is `paused` only when an allowed amendment can change the
+limit; it becomes `failed` when the limit is hard or non-amendable, or when the
+amendment is declined and no route remains.
 
-A Worker or Attempt failure, protocol inconsistency, invalid permission or
-Handoff lineage, route exhaustion, or conflicting Task facts pauses that Task
-and its downstream dependents. Unrelated Tasks may continue only when they
-have no dependency, shared-scope, or authority conflict with the affected
-Task. The pause must not permit a retry beyond the frozen bounds.
-
-### Mission-wide pause
-
-A Mission-wide pause stops all new dispatch when AgentDeck detects new
-authority or Mission version drift, global budget or policy exhaustion,
-authorization revocation, or an ambiguous external effect that can affect
-project truth. This includes an unfrozen destructive action or external effect
-such as push, deploy, publish, or external send. Existing effects must be
-reconciled before dispatch can resume. New authority or changed criteria
-require a lineage-preserving Mission Amendment and confirmation of the new
-version; denial or cancellation leaves the prior version unchanged.
-
-### Terminal failure
-
-After allowed bounded recovery is exhausted and no user decision can resume
-within the same confirmed envelope, the affected Task or Mission enters
-terminal `failed`, not actionable `paused`. Its final result must still report
-the failed stage, authoritative facts, completed or possibly completed side
-effects, retry safety, exhausted limits, and next available product action. A
-user may create and confirm a new Mission version or a new Mission, but the
-failed Task or Mission is never silently resumed.
-
-A generic `BLOCKED` result is insufficient at every pause level and at terminal
-failure. An actionable pause must identify the exact user decision or
-remediation and the deterministic command or conversation action that resumes
-the affected scope. A terminal failure must say that the same confirmed
-version cannot resume rather than presenting a false action.
+A generic `BLOCKED` result is insufficient. An actionable pause must identify
+the exact decision or remediation and deterministic continuation action. A
+terminal failure must state that the failed Task or Mission cannot resume and
+must not present a false continuation action.
 
 ## Learning and self-improvement
 
-After completion or a meaningful pause, an evidence-derived Learning Review
-may suggest one of three durable improvements:
+Completed, meaningfully paused, and terminally failed Missions are eligible for
+an evidence-derived Learning Review that may suggest one of three durable
+improvements:
 
 - a Memory suggestion for reusable project or user context;
 - a Skill suggestion for a reviewable workflow capability; or
@@ -319,14 +315,23 @@ Each Golden Mission must prove all of the following:
 The V1 release gate also requires focused acceptance of daemon restart and
 recovery, explicit permission refusal with zero unauthorized effect,
 takeover/return-control reconciliation, and a fresh installation that reaches
-both setup and the documented Mission flow. It must also include an allowed
-fallback scenario in which a frozen ordered route fails, the failure and
-stable reason code, and selected pre-approved route are disclosed in
-audit/activity before or at activation, and provenance remains complete. A
-disallowed or exhausted-route scenario must prove zero new Worker effect and
-an actionable pause, with no unlisted route selected. Failure in any of these
-journeys is a release failure until corrected and reverified; legacy harness
-status or a model-authored explanation cannot waive it.
+both setup and the documented Mission flow. Transport acceptance must include:
+
+- an allowed fallback scenario in which durable Evidence proves the first
+  route produced no effect before fallback, or the exact operation is declared
+  idempotent or consume-once and reconciliation proves retry cannot duplicate
+  or conflict; the failed route, stable reason code, and selected pre-approved
+  route are disclosed in audit/activity before or at activation;
+- a proven-safe but disallowed or exhausted-route scenario with a concrete
+  remediation path that produces zero new Worker effect, selects no unlisted
+  route, and enters an actionable pause; and
+- an ambiguous-effect scenario that produces zero fallback dispatch or effect,
+  stops new Mission dispatch, and enters a Mission-wide reconciliation pause
+  for fact inspection and user decision.
+
+Failure in any of these journeys is a release failure until corrected and
+reverified; legacy harness status or a model-authored explanation cannot waive
+it.
 
 ## Release invariants
 
