@@ -50,6 +50,15 @@
   unchanged; process, daemon, ACP, worktree, and temporary-root audits were
   empty.
 
+### Pass the first-attempt terminal-observability preflight
+
+- Re-audited unchanged installed inputs and ran the designated v5 preflight
+  exactly once on frozen `3b2b3ae1...` with Leader `gpt-5.5`.
+- It passed `1 passed in 15.55s` with ready authority v3, empty
+  blockers/failures, and digest
+  `sha256:b194c3b4ccbfa3ba2b534bf9cb51e59ecbc077e2576c6eea8ba343f26cc83ffa`.
+  Cleanup and residue audits were empty.
+
 ### Design the M2c preview-consumption convergence repair
 
 - Approved a harness-only correction for the observed admission/consumption

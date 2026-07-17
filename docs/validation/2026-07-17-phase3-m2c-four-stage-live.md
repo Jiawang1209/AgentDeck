@@ -111,6 +111,13 @@ Both detached worktrees were removed; frozen implementation files remained
 unchanged; process, daemon, ACP, worktree, and temporary-root audits were empty.
 The next gate is a fresh installed-input audit and one new real v5 preflight.
 
+The audit found no drift. The new v5 preflight ran exactly once on frozen
+`3b2b3ae1...` with Leader `gpt-5.5` and passed `1 passed in 15.55s`:
+`ready=true`, `blockers=[]`, `failures=[]`, authority v3, digest
+`sha256:b194c3b4ccbfa3ba2b534bf9cb51e59ecbc077e2576c6eea8ba343f26cc83ffa`.
+Its detached worktree was removed and residue audits were empty. One
+same-SHA/model/digest live Mission is now authorized for this candidate.
+
 ## Frozen authority
 
 - AgentDeck implementation:

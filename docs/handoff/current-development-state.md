@@ -72,6 +72,13 @@ real nodes skipped. Both worktrees were removed; frozen implementation files
 were unchanged; process, daemon, ACP, worktree, and temporary-root audits were
 empty. A fresh installed-input audit and one new v5 preflight are next.
 
+The audit found no drift. The designated v5 preflight ran exactly once on
+frozen `3b2b3ae1...` with Leader `gpt-5.5` and passed `1 passed in 15.55s` with
+ready authority v3 and empty blockers/failures. The digest is
+`sha256:b194c3b4ccbfa3ba2b534bf9cb51e59ecbc077e2576c6eea8ba343f26cc83ffa`.
+The checkout was removed and residue audits were empty. One same-authority live
+Mission is the next gate.
+
 ### Historical M2c authority cycles
 
 Before consuming the authorized designated preflight for frozen implementation

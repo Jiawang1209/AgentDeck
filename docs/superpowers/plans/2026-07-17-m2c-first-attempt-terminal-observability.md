@@ -97,9 +97,9 @@ git worktrees, real installed inputs only after deterministic freeze.
 
 ## Task 6: One new preflight and one new live Mission
 
-- [ ] Re-audit exact installed Codex, Claude, Node, tmux, ACP package,
+- [x] Re-audit exact installed Codex, Claude, Node, tmux, ACP package,
   metadata-selected entrypoint, and both closed `.bin` links.
-- [ ] Run exactly one v5 read-only preflight on the frozen SHA with Leader
+- [x] Run exactly one v5 read-only preflight on the frozen SHA with Leader
   `gpt-5.5`.
 - [ ] On ready PASS only, run exactly one same-SHA/model/digest real four-stage
   Mission.
