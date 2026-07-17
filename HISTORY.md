@@ -4,6 +4,23 @@
 
 ## 2026-07-17
 
+### Choose SQLite for the new Mission authority
+
+- Chose standard-library SQLite at `.agentdeck/state.db` as the local-first
+  Mission authority behind one ProjectDaemon writer, with atomic event/current
+  state/revision transactions and trigger-specific mutation provenance.
+- Defined a no-silent-migration path: read-only Migration Preview, explicit
+  confirmation, complete verified backup, same-filesystem temporary database,
+  integrity and ProjectView verification, and atomic authority cutover that
+  leaves legacy files intact and read-only.
+- Required `project-view/v1` and `project-view/v2` to project from the same
+  StateStore/SQLite authority, legacy commands to delegate to the daemon with
+  no local-write fallback, and rollback to refuse after any post-cutover
+  authoritative write rather than discard events.
+- This is a docs-only P0 architecture decision. It does not implement SQLite,
+  migration commands, backup/rollback behavior, ProjectView v2, or make a live
+  migration or daemon-readiness claim.
+
 ### Define the evolutionary V1 kernel reset
 
 - Defined one ProjectDaemon as the only product-state writer and mapped the V1
