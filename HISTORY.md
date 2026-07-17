@@ -4,6 +4,16 @@
 
 ## 2026-07-17
 
+### Expose the official npm `.bin` symlink authority gap
+
+- Extended the fake ACP package with the exact two relative internal link
+  shapes observed in the installed package while retaining regular targets
+  inside the same tree.
+- Focused RED produced `1 failed, 268 deselected in 0.87s`: the current sealer
+  returned only `claude_agent_acp_package_invalid`, proving that all-symlink
+  rejection—not entrypoint metadata or environment—is the remaining boundary.
+  No implementation or real preflight/live ran.
+
 ### Plan closed npm `.bin` symlink authority implementation
 
 - Added a self-reviewed TDD plan for non-following symlink manifests, lexical

@@ -16,7 +16,7 @@
 - Modify: `tests/test_m2c_live_acceptance.py`
 - Modify: `HISTORY.md`
 
-- [ ] Add `internal_bin_links: bool = False` to `_fake_acp_package`. When true,
+- [x] Add `internal_bin_links: bool = False` to `_fake_acp_package`. When true,
   create executable regular targets at
   `node_modules/which/bin/node-which` and
   `node_modules/@anthropic-ai/sdk/bin/cli`, then create only these relative
@@ -27,11 +27,11 @@ node_modules/.bin/node-which -> ../which/bin/node-which
 node_modules/.bin/anthropic-ai-sdk -> ../@anthropic-ai/sdk/bin/cli
 ```
 
-- [ ] Add `test_m2c_package_tree_accepts_closed_npm_bin_symlinks`. Assert a
+- [x] Add `test_m2c_package_tree_accepts_closed_npm_bin_symlinks`. Assert a
   successful seal, two sorted `kind=symlink` rows, exact link-text hashes, and
   path-independent tree hashes across two roots.
 
-- [ ] Run the focused test before implementation:
+- [x] Run the focused test before implementation:
 
 ```bash
 PYTHONPATH="$PWD/src" conda run --no-capture-output -n agentdeck \
@@ -42,7 +42,7 @@ PYTHONPATH="$PWD/src" conda run --no-capture-output -n agentdeck \
 Expected: RED with `claude_agent_acp_package_invalid` because the current scan
 rejects all symlinks.
 
-- [ ] Record the RED count in HISTORY and commit:
+- [x] Record the RED count in HISTORY and commit:
 
 ```bash
 git add tests/test_m2c_live_acceptance.py HISTORY.md \

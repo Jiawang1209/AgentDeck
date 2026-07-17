@@ -5254,6 +5254,7 @@ def _fake_acp_package(
     bin_value: object = _DEFAULT_ACP_BIN,
     entrypoint: str = "dist/index.js",
     package_name: str = "@agentclientprotocol/claude-agent-acp",
+    internal_bin_links: bool = False,
 ) -> Path:
     entrypoint_path = root.joinpath(*PurePosixPath(entrypoint).parts)
     support = root / "lib" / "support.js"
@@ -5279,7 +5280,55 @@ def _fake_acp_package(
     root.chmod(0o700)
     entrypoint_path.parent.chmod(0o700)
     support.parent.chmod(0o700)
+    if internal_bin_links:
+        links = {
+            "node-which": (
+                "../which/bin/node-which",
+                root / "node_modules" / "which" / "bin" / "node-which",
+            ),
+            "anthropic-ai-sdk": (
+                "../@anthropic-ai/sdk/bin/cli",
+                root
+                / "node_modules"
+                / "@anthropic-ai"
+                / "sdk"
+                / "bin"
+                / "cli",
+            ),
+        }
+        bin_directory = root / "node_modules" / ".bin"
+        bin_directory.mkdir(parents=True, mode=0o700)
+        for name, (target_text, target) in links.items():
+            target.parent.mkdir(parents=True, mode=0o700)
+            target.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            target.chmod(0o700)
+            (bin_directory / name).symlink_to(target_text)
     return root
+
+
+def test_m2c_package_tree_accepts_closed_npm_bin_symlinks(tmp_path) -> None:
+    left_root = _fake_acp_package(
+        tmp_path / "left", internal_bin_links=True
+    )
+    right_root = _fake_acp_package(
+        tmp_path / "right", internal_bin_links=True
+    )
+
+    left, left_blocker = _seal_acp_package_tree(str(left_root))
+    right, right_blocker = _seal_acp_package_tree(str(right_root))
+
+    assert left_blocker is None and right_blocker is None
+    assert left is not None and right is not None
+    links = [item for item in left.entries if item.kind == "symlink"]
+    assert [(item.path, item.executable) for item in links] == [
+        ("node_modules/.bin/anthropic-ai-sdk", False),
+        ("node_modules/.bin/node-which", False),
+    ]
+    assert [item.content_hash for item in links] == [
+        hashlib.sha256(b"../@anthropic-ai/sdk/bin/cli").hexdigest(),
+        hashlib.sha256(b"../which/bin/node-which").hexdigest(),
+    ]
+    assert left.tree_hash == right.tree_hash
 
 
 @pytest.mark.parametrize(
