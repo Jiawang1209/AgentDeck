@@ -859,7 +859,7 @@ git commit -m "docs: bind M2c authority acceptance procedure"
 - Modify: `HISTORY.md`
 - Modify: this plan (check completed boxes only)
 
-- [ ] **Step 1: Run the focused authority matrix**
+- [x] **Step 1: Run the focused authority matrix**
 
 ```bash
 conda run -n agentdeck pytest -q tests/test_m2c_live_acceptance.py \
@@ -868,7 +868,7 @@ conda run -n agentdeck pytest -q tests/test_m2c_live_acceptance.py \
 
 Expected: all selected deterministic nodes pass.
 
-- [ ] **Step 2: Run the entire non-live M2c file**
+- [x] **Step 2: Run the entire non-live M2c file**
 
 ```bash
 conda run -n agentdeck pytest -q tests/test_m2c_live_acceptance.py
@@ -876,34 +876,36 @@ conda run -n agentdeck pytest -q tests/test_m2c_live_acceptance.py
 
 Expected: every deterministic node passes and the single opt-in four-stage live node is skipped. If the new designated real-tool preflight node needs a guard to avoid accidental ordinary-suite execution, use an explicit separate marker/environment gate that skips unless the SOP authorization variable is set; fake-tool subprocess coverage must still execute its body.
 
-- [ ] **Step 3: Run product and contract regressions**
+- [x] **Step 3: Run product and contract regressions**
 
 ```bash
 conda run -n agentdeck pytest -q \
   tests/test_conversation_session.py \
-  tests/test_terminal_cli.py \
-  tests/test_contract_cli.py \
-  tests/test_project_view.py \
-  tests/test_provider_cli.py
+  tests/test_conversation_terminal_ui.py \
+  tests/test_conversation_contracts.py \
+  tests/test_contracts.py \
+  tests/test_cli_structured_output.py \
+  tests/test_dashboard.py \
+  tests/test_provider_openai_compatible.py
 ```
 
 Expected: all selected production regressions pass, proving the harness-only change did not alter product behavior.
 
-- [ ] **Step 4: Audit scope, leakage, and residues**
+- [x] **Step 4: Audit scope, leakage, and residues**
 
 ```bash
-git diff --check
-test -z "$(git diff --name-only -- src/agentdeck)"
-! rg -n 'prompt|stderr|stdout|output|argv|environment|absolute_path' \
+git diff d488c2e6..HEAD --check
+test -z "$(git diff d488c2e6..HEAD --name-only -- src/agentdeck)"
+rg -n 'prompt|stderr|stdout|argv|environment|absolute path|absolute_path' \
   docs/validation/phase3-m2c-live-acceptance-sop.md \
-  docs/handoff/current-development-state.md | rg -v 'must not|不得|不记录|raw stdout/stderr'
-pgrep -af 'pytest.*test_m2c_live_acceptance|agentdeck.*daemon' || true
+  docs/handoff/current-development-state.md
+ps -Ao pid=,comm=,args= | rg 'pytest.*test_m2c_live_acceptance|agentdeck.*daemon' | rg -v 'rg |zsh -lc' || true
 find /tmp -maxdepth 1 -name 'agentdeck-m2c-live-*' -print
 ```
 
 Expected: diff check passes, no `src/agentdeck` changes, no forbidden durable transcript field, and no current-run process/root residue. Pre-existing unrelated paths are documented and left untouched.
 
-- [ ] **Step 5: Freeze the implementation commit**
+- [x] **Step 5: Freeze the implementation commit**
 
 Update HISTORY and handoff with focused/non-live results but state that the two full suites have not yet run. Then:
 

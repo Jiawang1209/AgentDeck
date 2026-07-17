@@ -4,6 +4,21 @@
 
 ## 2026-07-17
 
+### Freeze the M2c tool-authority binding implementation
+
+- Completed the harness-only authority slice without changing
+  `src/agentdeck/**`: content-addressed model/tool/package identity, strict
+  preflight v3, closed diagnostics, pre-root live admission, same-object
+  authority reuse, controlled Node/ACP execution, and the separately gated
+  designated preflight are implemented.
+- Fresh verification passed the authority matrix `44 passed, 196 deselected
+  in 11.02s`, complete non-live M2c `238 passed, 2 skipped in 67.79s`, and
+  product/conversation/contract/provider regression `851 passed in 4.53s`.
+- Compile, whole-slice diff check, `src/agentdeck/**` scope, durable-evidence
+  wording, current-run process, and `/tmp/agentdeck-m2c-live-*` residual audits
+  passed. The two unchanged-SHA full suites remain next. No real designated
+  preflight, live Mission, installed tool, merge, or push ran.
+
 ### Add the designated M2c explicit-authority preflight surface
 
 - Added the separately gated
