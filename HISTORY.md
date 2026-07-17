@@ -9,10 +9,20 @@
 - Chose standard-library SQLite at `.agentdeck/state.db` as the local-first
   Mission authority behind one ProjectDaemon writer, with atomic event/current
   state/revision transactions and trigger-specific mutation provenance.
+- Made the choice explicitly requirements-driven rather than inherited from
+  Hive or CCB: every structured control-plane fact moves to the sole SQLite
+  authority, while repository content, complete logs, Skill/Memory source text,
+  and large artifact bodies stay in owner-controlled files referenced only by
+  path or identity, hash, compact summary, and provenance.
 - Defined a no-silent-migration path: read-only Migration Preview, explicit
   confirmation, complete verified backup, same-filesystem temporary database,
   integrity and ProjectView verification, and atomic authority cutover that
   leaves legacy files intact and read-only.
+- Hardened cutover as an explicit fsync durability contract: seal backup files,
+  manifest, and directory; consolidate and close SQLite sidecars; fsync the
+  verified temporary database; atomically replace the target; fsync the
+  containing `.agentdeck` directory; and fail closed across rename/fsync crash
+  windows while proving that at most one authority can accept mutations.
 - Required `project-view/v1` and `project-view/v2` to project from the same
   StateStore/SQLite authority, legacy commands to delegate to the daemon with
   no local-write fallback, and rollback to refuse after any post-cutover

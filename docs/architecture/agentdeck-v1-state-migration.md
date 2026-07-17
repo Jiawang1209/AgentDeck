@@ -17,6 +17,19 @@ projection code never issue mutating SQL or open an independent write path.
 Application services and controlled read views use the `StateStore` boundary
 rather than coupling to table layout.
 
+This is a requirements-driven SQLite decision: AgentDeck needs local
+transactions, integrity constraints, schema evolution, idempotent recovery,
+and coherent queries across Mission, Task, Attempt, Permission, Handoff,
+Evidence, event, approval, and audit facts. The choice does not depend on Hive
+or CCB and is not an attempt to reproduce either reference architecture. All
+structured control-plane state moves to the SQLite authority. The filesystem
+remains the filesystem content authority for repository content, complete
+terminal logs, Skill and Memory source text, large artifact bodies, and other
+non-structured or bulk content; SQLite records only their controlled path or
+opaque identity, hash, compact summary, type, ownership, and provenance. A
+referenced file is not a second product-state authority and cannot override a
+SQLite lifecycle, authorization, lineage, or audit fact.
+
 This decision does not introduce a cloud database, synchronization service,
 remote authority, client-side SQL, direct adapter SQL, or a second writer. P0
 does not implement the database, migration commands, daemon integration, or
@@ -153,32 +166,50 @@ never exposing a partially imported database as product truth:
 3. **Seal a complete backup.** Copy every recognized authoritative legacy
    source and the authority metadata needed for restoration into an
    owner-only backup. Write and verify a manifest containing source identities,
-   lengths, hashes, modes/ownership facts, and preview digest. An incomplete or
-   unverifiable backup is never eligible for cutover or rollback.
+   lengths, hashes, modes/ownership facts, and preview digest. After verifying
+   the bytes, fsync every backup data file and the manifest, then fsync the
+   backup directory so its entries and manifest seal are durable. A backup is
+   not sealed until all of those durability operations succeed. An incomplete,
+   unverifiable, or not-durably-sealed backup is never eligible for cutover or
+   rollback.
 4. **Build off-path.** Create a uniquely named temporary database on the same
    filesystem as `.agentdeck/state.db`. Apply ordered schema migrations and
    legacy import steps through the intended `StateStore` mapping. The temporary
-   database is not an authority, is never opened by clients, and cannot emit
-   product events or advance legacy status.
+   database records the immutable migration, preview, backup, authority, and
+   cutover-candidate identities needed to recognize it during recovery, but
+   marks them as unactivated. It is not an authority, is never opened by
+   clients, and cannot emit product events or advance legacy status.
 5. **Verify before exposure.** Close write transactions and verify SQLite
    structural and referential integrity, applied schema versions, entity and
    event counts, source-to-row hashes, reference lineage, authorization and
    permission relationships, and deterministic ProjectView equivalence for
-   the facts representable by each compatibility projection. A mismatch is a
-   hard failure.
-6. **Durably cut over.** Flush the database and required filesystem metadata,
-   close all temporary handles, and use an atomic switch on the same filesystem
-   to place the verified database at `.agentdeck/state.db`. The switch, not
-   temporary-file existence or backup completion, changes authority. The
-   original legacy files remain intact and are thereafter opened only as a
-   sealed read-only legacy archive, never as a write target or fallback store.
+   the facts representable by each compatibility projection. Before exposure,
+   perform the checkpoint or equivalent consolidation selected and tested in
+   P1, close every database handle, and prove that the candidate is in a
+   self-contained switchable form: no WAL sidecar or other temporary sidecar
+   may contain committed state needed to interpret it. Reopen only as needed
+   for final read-only integrity and identity verification, close it again,
+   and fsync the verified temporary database file. A mismatch, close failure,
+   unintegrated sidecar, or fsync failure is a hard failure. This contract does
+   not freeze pragma values; P1 failure-injection evidence determines them.
+6. **Durably cut over.** With all temporary handles closed, use an atomic
+   same-filesystem replace to place the verified self-contained database at
+   `.agentdeck/state.db`, then fsync the containing `.agentdeck` directory to
+   make the replacement directory entry durable. Rename alone is not durable
+   success: migration remains under exclusive exclusion and cannot serve
+   ordinary mutations until the directory fsync succeeds and the installed
+   database's authority/cutover identity and integrity are revalidated. Only
+   then is cutover treated as durable and SQLite as the sole product-state
+   authority. The original legacy files remain intact and are thereafter
+   opened only as a sealed read-only legacy archive, never as a write target or
+   fallback store.
 7. **Finalize in the new authority.** Before accepting any ordinary mutation,
-   record the preview digest, backup identity, imported source identities,
-   schema versions, verifier result, cutover identity/time, and actor
-   provenance in the new SQLite authority. Migration provenance is not written
-   to the legacy ledger or status and is recorded only in the new authority
-   after switch. Release migration exclusion only after this finalization and
-   a fresh read verification.
+   validate and activate the already sealed candidate identities, then record
+   the imported source identities, schema versions, verifier result, durable
+   cutover time, and actor provenance in the new SQLite authority. Migration
+   provenance is not written to the legacy ledger or status and becomes active
+   only in the new authority after durable switch. Release migration exclusion
+   only after this finalization and a fresh read verification.
 
 Failure before the atomic switch leaves every legacy source authoritative and
 untouched. The implementation removes an unexposed temporary database when it
@@ -202,11 +233,22 @@ Migration recovery is phase-aware and fail-closed:
   authoritative. The temporary database may be reused only after complete
   revalidation under the exclusive lock; temp existence alone never implies
   success.
-- A crash after the atomic rename means `.agentdeck/state.db` is the sole new
+- A crash after atomic rename but before the containing-directory fsync has an
+  uncertain directory-entry durability outcome; path existence alone cannot
+  classify it as success. Startup keeps both legacy and SQLite mutation paths
+  disabled, reacquires migration exclusion, and evaluates the installed
+  candidate's authority/cutover identity against the sealed backup, preview,
+  and migration identities. If the candidate is present, self-contained, and
+  passes complete integrity and identity revalidation, recovery may repeat the
+  directory fsync and finish the uniquely identified cutover. If the candidate
+  is absent, the verified legacy authority remains authoritative. A corrupt,
+  mismatched, or otherwise ambiguous candidate fails closed for explicit
+  repair; recovery never guesses from a filename and never enables dual write.
+- A crash after the directory fsync means `.agentdeck/state.db` is the sole new
   authority even if final migration provenance was not yet committed. Startup
-  holds all ordinary mutations, validates the cutover candidate against the
-  sealed backup and preview identity, idempotently finalizes provenance, and
-  only then serves writes. It never restarts legacy writes automatically.
+  still holds all ordinary mutations, validates the cutover candidate against
+  the sealed backup and preview identity, idempotently finalizes provenance,
+  and only then serves writes. It never restarts legacy writes automatically.
 
 Every phase uses stable migration, preview, backup, and cutover identities.
 Retrying the same confirmed operation either returns the already verified
@@ -316,6 +358,12 @@ failure-injection coverage. Acceptance includes:
 - interruption before backup, during backup/temp write, before the atomic
   switch, immediately after switch, and during finalization recovers to exactly
   one known authority;
+- injected backup fsync failure, temporary database fsync failure, rename
+  failure, and directory fsync failure each leave mutation disabled until
+  recovery proves at most one authority; no path may infer success from rename
+  or file existence alone;
+- temporary WAL/sidecar interruption and checkpoint/close failure never expose
+  a database whose committed truth still depends on an uninstalled sidecar;
 - backup restore reproduces the sealed identities byte-for-byte where required
   and no incomplete backup is accepted;
 - readers observe either the complete legacy authority before cutover or the
