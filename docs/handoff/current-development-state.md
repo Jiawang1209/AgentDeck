@@ -66,6 +66,12 @@ regressions passed `851 passed in 4.48s`. Compile, diff, current-slice source,
 leakage, process, daemon, ACP, worktree, and temporary-root audits passed. Two
 fresh complete suites remain before a new real preflight.
 
+Both complete suites on frozen `3b2b3ae1...` now pass: `4401 passed, 3 skipped
+in 207.30s` and `4401 passed, 3 skipped in 210.93s`. Only the three explicit
+real nodes skipped. Both worktrees were removed; frozen implementation files
+were unchanged; process, daemon, ACP, worktree, and temporary-root audits were
+empty. A fresh installed-input audit and one new v5 preflight are next.
+
 ### Historical M2c authority cycles
 
 Before consuming the authorized designated preflight for frozen implementation

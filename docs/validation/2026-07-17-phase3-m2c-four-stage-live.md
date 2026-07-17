@@ -102,10 +102,14 @@ Deterministic evidence:
   in 24.55s`;
 - complete non-live M2c: `310 passed, 2 skipped in 80.97s`;
 - product regressions: `851 passed in 4.48s`;
+- full suite 1: `4401 passed, 3 skipped in 207.30s`;
+- full suite 2: `4401 passed, 3 skipped in 210.93s`;
 - compile, diff, current-slice product-source zero-change, leakage, process,
   daemon, ACP, worktree, and temporary-root audits: PASS.
 
-Two independent complete suites remain before any new real preflight.
+Both detached worktrees were removed; frozen implementation files remained
+unchanged; process, daemon, ACP, worktree, and temporary-root audits were empty.
+The next gate is a fresh installed-input audit and one new real v5 preflight.
 
 ## Frozen authority
 

@@ -89,11 +89,11 @@ git worktrees, real installed inputs only after deterministic freeze.
 
 ## Task 5: Two complete suites
 
-- [ ] Run the complete suite in two fresh detached worktrees at the unchanged
+- [x] Run the complete suite in two fresh detached worktrees at the unchanged
   frozen SHA with independent absolute `PYTHONPATH` values.
-- [ ] Require only the three explicit real nodes to skip.
-- [ ] Remove both worktrees and prove zero residue.
-- [ ] Commit evidence without changing frozen implementation files.
+- [x] Require only the three explicit real nodes to skip.
+- [x] Remove both worktrees and prove zero residue.
+- [x] Commit evidence without changing frozen implementation files.
 
 ## Task 6: One new preflight and one new live Mission
 

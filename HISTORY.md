@@ -41,6 +41,15 @@
   daemon, ACP, worktree, and temporary-root audits passed. Two fresh complete
   suites remain before any real preflight.
 
+### Verify first-attempt terminal observability twice
+
+- Two fresh detached worktrees at frozen `3b2b3ae1...` passed `4401 passed, 3
+  skipped in 207.30s` and `4401 passed, 3 skipped in 210.93s`.
+- Only the explicit real ACP, designated preflight, and live Mission nodes
+  skipped. Both worktrees were removed; frozen implementation files were
+  unchanged; process, daemon, ACP, worktree, and temporary-root audits were
+  empty.
+
 ### Design the M2c preview-consumption convergence repair
 
 - Approved a harness-only correction for the observed admission/consumption
