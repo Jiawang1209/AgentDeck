@@ -129,6 +129,18 @@ installed inputs and run one newly authorized strict v6 preflight with Leader
 `gpt-5.5`; only a ready v6 result may support a separate one-shot live Mission.
 M2c remains **BLOCKED** and M3 remains locked.
 
+Claude authentication has now been restored and verified only through closed
+status fields. The installed-input audit reconstructed unchanged authority v3,
+Leader `gpt-5.5`, preflight v6, all five logical inputs, metadata-selected
+`dist/index.js`, and digest
+`sha256:b194c3b4ccbfa3ba2b534bf9cb51e59ecbc077e2576c6eea8ba343f26cc83ffa`.
+The one designated v6 preflight on frozen `79d8160e...` then passed `1 passed in
+16.27s` with `ready=true` and empty blockers/failures. Its checkout and all
+audited residues were removed. That preflight may not be rerun. One separate
+human authorization naming the frozen SHA, Leader `gpt-5.5`, and exact digest
+is required for the sole real four-stage Mission. M2c is not yet PASS and M3
+remains locked.
+
 ### Historical M2c authority cycles
 
 Before consuming the authorized designated preflight for frozen implementation

@@ -198,6 +198,22 @@ audits were empty. Human Claude login is now the sole prerequisite before a
 fresh installed-input audit and one new real v6 preflight. Every v5 preflight
 above is exhausted historical evidence and cannot authorize v6 live.
 
+The human restored Claude authentication. A closed read-only check returned
+`loggedIn=true`; no account identity, token, environment value, configuration
+content, or path was retained. The installed-input audit then reconstructed
+the unchanged authority v3 digest and confirmed Leader `gpt-5.5`, strict
+preflight v6, the five exact logical tool inputs, and metadata-selected
+`dist/index.js` without fallback.
+
+The designated v6 preflight ran exactly once on frozen `79d8160e...` and passed
+`1 passed in 16.27s` with `ready=true`, `blockers=[]`, `failures=[]`, authority
+v3, and digest
+`sha256:b194c3b4ccbfa3ba2b534bf9cb51e59ecbc077e2576c6eea8ba343f26cc83ffa`.
+The detached checkout was removed and process, daemon, ACP, worktree, and
+temporary-root audits were empty. This preflight authority is now consumed and
+must not be rerun. The remaining gate is one separately authorized real
+four-stage Mission naming this exact frozen SHA, Leader model, and digest.
+
 ## Frozen authority
 
 - AgentDeck implementation:

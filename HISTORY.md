@@ -127,6 +127,19 @@
   temporary-root audits were empty. Human Claude login is the remaining
   prerequisite before an installed-input audit and one v6 preflight.
 
+### Pass the M2c Claude authentication readiness preflight
+
+- Verified restored Claude authentication through closed status fields only,
+  then re-audited unchanged authority v3 inputs and the metadata-selected ACP
+  entrypoint without PATH/npm fallback.
+- Ran the designated v6 preflight exactly once on frozen `79d8160e...` with
+  Leader `gpt-5.5`. It passed `1 passed in 16.27s` with `ready=true`, empty
+  blockers/failures, and digest
+  `sha256:b194c3b4ccbfa3ba2b534bf9cb51e59ecbc077e2576c6eea8ba343f26cc83ffa`.
+- Removed the detached checkout and confirmed empty process, daemon, ACP,
+  worktree, and temporary-root audits. A separately authorized one-shot live
+  Mission is now the only M2c gate for this candidate.
+
 ### Design the M2c preview-consumption convergence repair
 
 - Approved a harness-only correction for the observed admission/consumption

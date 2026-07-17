@@ -94,9 +94,9 @@ strict preflight contract to v6 while retaining authority v3.
 - [x] Create fresh detached worktree A at the frozen SHA; run the complete suite
   with absolute `PYTHONPATH`; remove it.
 - [x] Create fresh detached worktree B at the same SHA; repeat; remove it.
-- [ ] Human completes Claude login and verifies only the closed status fields.
-- [ ] Re-audit exact Codex/Claude/Node/tmux/ACP package inputs without mutation.
-- [ ] Run exactly one strict v6 designated preflight on the frozen SHA with
+- [x] Human completes Claude login and verifies only the closed status fields.
+- [x] Re-audit exact Codex/Claude/Node/tmux/ACP package inputs without mutation.
+- [x] Run exactly one strict v6 designated preflight on the frozen SHA with
   Leader `gpt-5.5`.
 - [ ] If and only if ready, request/consume one separate exact live authority.
 - [ ] On real four-stage PASS, close M2c in validation/HISTORY/handoff/roadmap,
