@@ -44,6 +44,7 @@ flowchart LR
     S["Event Ledger + durable State"]
     X["Agent adapters + transports"]
     E["Inbound adapter-event port"]
+    I["Internal recovery/scheduler trigger"]
 
     C -->|commands with id and expected revision| A
     A -->|validated command| D
@@ -58,6 +59,7 @@ flowchart LR
     D -->|effect intent| X
     X -->|asynchronous event| E
     E -->|serialized validated input| D
+    I -->|serialized deterministic input| D
     S -->|one coherent snapshot| A
     A -->|read-only ProjectView and event cursor| C
 ```
@@ -66,7 +68,7 @@ flowchart LR
 | --- | --- | --- |
 | Clients | Human interaction, rendering, command submission, reconnect cursor, and explicit confirm/deny/cancel/takeover actions | Product state writes, scheduling, completion, transport inference, or terminal-pixel truth |
 | ProjectView and application API | Stable command DTOs, validation, command identity/revision checks, read-only ProjectView projection, and compatibility facades | Independent state, execution, policy decisions, or direct adapter access |
-| ProjectDaemon | The serialized command and inbound-event mutation loop, sole write authority, Task scheduling, recovery orchestration, leases, adapter-event validation, persistence calls, and event publication | Model-authored policy, client rendering, transport-specific semantics, or arbitrary acceptance overrides |
+| ProjectDaemon | The serialized client-command, inbound-event, and internal-trigger mutation loop; sole write authority; Task scheduling; recovery orchestration; leases; trigger validation; persistence calls; and event publication | Model-authored policy, client rendering, transport-specific semantics, or arbitrary acceptance overrides |
 | Mission Engine | Pure interpretation of frozen MissionVersions, dependency-aware Task DAG progression, Attempt/Handoff decisions, and bounded recovery proposals returned to the daemon | Append/apply/repository access, permission expansion, confirmation, direct effects, or Verification grades |
 | Governance | Pure evaluation of AuthorizationEnvelopes, permission lineage, scope/budget gates, ordered-route eligibility, and pause/failure classification returned to the daemon | Append/apply/repository access, Task implementation, model selection by guess, or completion |
 | Verification | Pure deterministic evaluation of durable Evidence against frozen acceptance criteria, returning `pass`/`fail`/`unavailable` grades to the daemon | Append/apply/repository access, Worker self-attestation, reviewer authority, transport status, or amendment approval |
@@ -116,8 +118,9 @@ Additional structural consequences follow from those invariants:
 - one project has at most one concurrently mutating Mission, while independent
   Tasks within it may run concurrently only when dependency, shared-scope,
   authorization, route, and budget constraints all allow it;
-- every mutation is attributable to a command, an expected revision, an
-  authorization decision, and one or more append-only intent/outcome events;
+- every accepted mutation has trigger-specific identity, source, decision, and
+  append-only event provenance without borrowing another trigger category's
+  fields;
 - every cross-Worker dependency becomes a durable Handoff rather than informal
   terminal text;
 - every claimed completion resolves through durable Evidence and Verification,
@@ -131,12 +134,14 @@ but closing a client does not pause or cancel a confirmed Mission. If an OS
 lock, socket ownership, or durable daemon lease shows another live writer, the
 new process must refuse mutation rather than compete.
 
-Every mutating application command carries a stable `command_id` and
-`expected_revision`. The daemon atomically records command acceptance and the
-resulting events. Replaying a completed `command_id` returns its recorded
-outcome; reusing it with different input fails closed; a stale expected
-revision returns a conflict and the current revision. This makes reconnect and
-client retry idempotent without making effects implicitly safe to repeat.
+Client-command mutation provenance consists of a stable `command_id`, expected
+project revision, actor provenance, and authorization decision. The command
+carries `expected_revision` as its machine field. The daemon atomically records
+command acceptance and the resulting events. Replaying a completed
+`command_id` returns its recorded outcome; reusing it with different input
+fails closed; a stale expected project revision returns a conflict and the
+current revision. This makes reconnect and client retry idempotent without
+making effects implicitly safe to repeat.
 
 The project daemon control endpoint is local owner-only and authenticated. The
 exact Unix socket permissions, credential exchange, and peer-identity mechanics
@@ -146,12 +151,13 @@ permission, and every other explicit-human mutation command retain actor
 provenance and pass command authorization before entering the mutation loop.
 Read-only observation is distinct from mutation authority.
 
-The ProjectDaemon also owns one inbound adapter-event port. Every asynchronous
-Worker or transport event carries a stable `adapter_event_id`; exact Mission,
+The ProjectDaemon also owns one inbound adapter-event port. Adapter-event
+mutation provenance consists of a stable `adapter_event_id`; exact Mission,
 MissionVersion, Task, Attempt, and AgentSession lineage; per-session and
-per-Attempt ordering information; event kind; and a payload integrity identity.
-The wire schema is deferred, but these facts are mandatory at the boundary.
-Adapters and transports cannot write state or apply a transition themselves.
+per-Attempt ordering information; event kind; ordering and payload-integrity
+identity; and the recorded authorization and validation decision. The wire
+schema is deferred, but these facts are mandatory at the boundary. Adapters and
+transports cannot write state or apply a transition themselves.
 
 Inbound adapter events enter the same serialized daemon mutation loop as
 client commands. The daemon validates event identity, lineage, ordering, kind,
@@ -162,6 +168,18 @@ the state persistence port. Duplicate valid events are idempotent. Stale
 terminal, permission, or Evidence events remain audit observations and cannot
 reactivate terminal work, repeat a permission transition, double-apply an
 effect, or duplicate Evidence credit.
+
+Daemon-internal trigger provenance covers a lease expiry, reconciliation, or
+scheduler/timer decision. Each occurrence carries a stable
+`internal_trigger_id`, source project revision and/or source snapshot identity,
+and deterministic decision provenance. An internal trigger may derive a
+transition only from authoritative durable facts and deterministic policy; it
+cannot invent external facts or bypass authority.
+
+All three trigger categories enter the same serialized ProjectDaemon mutation
+loop, produce append-only event provenance, and use the sole daemon persistence
+call. No adapter event or daemon-internal trigger fabricates a client
+`command_id` or `expected_revision`.
 
 The daemon enforces one running Mission per project. It may schedule multiple
 ready Tasks from that Mission when the DAG, file/semantic scope, permissions,

@@ -32,6 +32,9 @@
   is owner-only/authenticated with actor provenance, and each legacy command
   cuts over with no local-write or direct-execution fallback. This is a
   documentation clarification, not an implementation claim.
+- Defined distinct provenance for client-command, adapter-event, and
+  daemon-internal recovery/scheduler mutations without fabricating client
+  command/revision fields. This is documentation only, not implementation.
 
 ### Freeze the AgentDeck V1 product requirements
 
