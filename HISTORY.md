@@ -20,6 +20,16 @@
   defect. Timeout inflation, batch/automatic approval, prompt-constrained
   permission counts, retry, raw diagnostics, reused authority, and M3 work are
   excluded. The exhausted `e83dcc48...` live authority remains non-retryable.
+- Added the approved implementation plan with separate RED/GREEN commits for
+  effective-state lineage, the bounded attempt driver, exact public
+  preview/confirm binding, closed diagnostics, and shared four-stage completion
+  validation. Deterministic verification, two serial full suites, installed
+  authority audit, and separately authorized preflight/live nodes remain
+  explicit later gates.
+- Clarified diagnostic compatibility: the approved eight permission fields are
+  one exact `permission_progress` projection. Existing compact terminal ledger
+  fields remain available, but valid permission states must be derived from
+  append-only transitions rather than immutable base `pending` values.
 
 ### Pin disposable Claude permission authority for M2c
 

@@ -1,7 +1,7 @@
 # M2c Bounded Sequential Permission Acceptance Design
 
 **Date:** 2026-07-17
-**Status:** Approved design; awaiting written-spec review
+**Status:** Written spec approved; implementation planned
 **Milestone:** Phase 3 M2c real four-stage acceptance closure
 **Scope:** M2c live-acceptance harness, closed diagnostics, and deterministic fixtures
 
@@ -272,7 +272,8 @@ The driver uses exact finite diagnostic codes:
 | `takeover_authority_drift` | attempt/session/turn/permission authority changes across takeover |
 | `permission_wait_timeout` | no new permission, terminal attempt, reply, or handoff becomes durable within the existing bound |
 
-The closed diagnostic shape is restricted to:
+Permission-driver failures add one closed `permission_progress` projection
+restricted to:
 
 ```text
 diagnostic_code
@@ -284,6 +285,13 @@ effective_permission_states
 reply_count
 handoff_count
 ```
+
+The projection is nested beside the already-delivered top-level `stage`,
+`code`, compact cardinalities, and closed terminal ledger. This slice does not
+delete prior terminal-stage observability. The legacy ledger's
+`permission_states` must use the same effective-state derivation whenever
+lineage is valid; it must not present immutable base `pending` values as final
+decisions.
 
 It must not include exception messages, pytest captured output, prompts,
 terminal text, stderr, model/CLI output, paths, tool names, targets, permission
@@ -389,6 +397,8 @@ other, and neither may be automatically retried.
 - Takeover temporarily prevents harness confirmation and return-control
   revalidates exact authority.
 - The failure vocabulary is finite and its projection excludes raw content.
+- The exact eight-field permission projection preserves, rather than replaces,
+  previously delivered closed terminal-stage diagnostics.
 - Product-source changes require new deterministic evidence and explicit human
   scope approval.
 - No placeholder, retry path, silent fallback, merge, push, preflight, live
