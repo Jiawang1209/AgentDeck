@@ -5294,6 +5294,116 @@ def test_m2c_package_metadata_selects_official_entrypoint(
     assert seal.entrypoint.path == root / "dist" / "index.js"
 
 
+@pytest.mark.parametrize(
+    "mutation",
+    (
+        "missing-package-json",
+        "oversized-package-json",
+        "non-utf8-package-json",
+        "invalid-package-json",
+        "duplicate-package-name",
+        "wrong-package-name",
+        "missing-bin",
+        "non-string-bin",
+        "empty-entrypoint",
+        "absolute-entrypoint",
+        "parent-entrypoint",
+        "backslash-entrypoint",
+        "nul-entrypoint",
+    ),
+)
+def test_m2c_package_metadata_rejects_invalid_contract(
+    tmp_path, mutation
+) -> None:
+    root = _fake_acp_package(tmp_path / "package")
+    metadata = root / "package.json"
+    payload: object = {
+        "name": ACP_PACKAGE_NAME,
+        "bin": {ACP_COMMAND_NAME: "dist/index.js"},
+    }
+    if mutation == "missing-package-json":
+        metadata.unlink()
+    elif mutation == "oversized-package-json":
+        metadata.write_bytes(b" " * (MAX_ACP_PACKAGE_JSON_BYTES + 1))
+    elif mutation == "non-utf8-package-json":
+        metadata.write_bytes(b"\xff")
+    elif mutation == "invalid-package-json":
+        metadata.write_text("{", encoding="utf-8")
+    elif mutation == "duplicate-package-name":
+        metadata.write_text(
+            '{"name":"@agentclientprotocol/claude-agent-acp",'
+            '"name":"@agentclientprotocol/claude-agent-acp",'
+            '"bin":{"claude-agent-acp":"dist/index.js"}}\n',
+            encoding="utf-8",
+        )
+    else:
+        if mutation == "wrong-package-name":
+            payload["name"] = "unexpected-package"
+        elif mutation == "missing-bin":
+            payload.pop("bin")
+        elif mutation == "non-string-bin":
+            payload["bin"] = {ACP_COMMAND_NAME: 7}
+        elif mutation == "empty-entrypoint":
+            payload["bin"] = {ACP_COMMAND_NAME: ""}
+        elif mutation == "absolute-entrypoint":
+            payload["bin"] = {ACP_COMMAND_NAME: "/tmp/acp"}
+        elif mutation == "parent-entrypoint":
+            payload["bin"] = {ACP_COMMAND_NAME: "../outside"}
+        elif mutation == "backslash-entrypoint":
+            payload["bin"] = {ACP_COMMAND_NAME: "dist\\index.js"}
+        else:
+            payload["bin"] = {ACP_COMMAND_NAME: "dist/\x00index.js"}
+        metadata.write_text(
+            json.dumps(payload, sort_keys=True) + "\n", encoding="utf-8"
+        )
+
+    seal, blocker = _seal_acp_package_tree(str(root))
+
+    assert seal is None
+    assert blocker == "claude_agent_acp_package_invalid"
+    assert str(tmp_path) not in repr((seal, blocker))
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    (
+        "missing",
+        "symlink",
+        "fifo",
+        "directory",
+        "writable",
+        "non-executable",
+    ),
+)
+def test_m2c_package_metadata_rejects_unsafe_selected_entrypoint(
+    tmp_path, mutation
+) -> None:
+    root = _fake_acp_package(tmp_path / "package")
+    selected = root / "dist" / "selected.js"
+    metadata = {
+        "name": ACP_PACKAGE_NAME,
+        "bin": {ACP_COMMAND_NAME: "dist/selected.js"},
+    }
+    (root / "package.json").write_text(
+        json.dumps(metadata, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    if mutation == "symlink":
+        selected.symlink_to(root / "dist" / "index.js")
+    elif mutation == "fifo":
+        os.mkfifo(selected, 0o700)
+    elif mutation == "directory":
+        selected.mkdir(mode=0o700)
+    elif mutation != "missing":
+        selected.write_text("#!/bin/sh\necho selected\n", encoding="utf-8")
+        selected.chmod(0o720 if mutation == "writable" else 0o600)
+
+    seal, blocker = _seal_acp_package_tree(str(root))
+
+    assert seal is None
+    assert blocker == "claude_agent_acp_package_invalid"
+    assert str(tmp_path) not in repr((seal, blocker))
+
+
 def test_m2c_authority_digest_binds_entrypoint(tmp_path) -> None:
     root = _fake_acp_package(tmp_path / "package")
     package, blocker = _seal_acp_package_tree(str(root))
@@ -5374,16 +5484,21 @@ def test_m2c_package_tree_rejects_unsafe_entries(
     assert blocker == "claude_agent_acp_package_invalid"
 
 
+@pytest.mark.parametrize("target_name", ("package.json", "entrypoint", "support"))
 def test_m2c_package_tree_runtime_seal_rejects_same_content_replacement(
-    tmp_path,
+    tmp_path, target_name
 ) -> None:
     root = _fake_acp_package(tmp_path / "package")
     seal, blocker = _seal_acp_package_tree(str(root))
     assert blocker is None and seal is not None
-    target = root / "lib" / "support.js"
-    replacement = root / "lib" / "replacement.js"
+    target = {
+        "package.json": root / "package.json",
+        "entrypoint": root / "dist" / "index.js",
+        "support": root / "lib" / "support.js",
+    }[target_name]
+    replacement = target.with_name(f"replacement-{target.name}")
     replacement.write_bytes(target.read_bytes())
-    replacement.chmod(0o600)
+    replacement.chmod(stat.S_IMODE(target.stat().st_mode))
     replacement.replace(target)
 
     with pytest.raises(

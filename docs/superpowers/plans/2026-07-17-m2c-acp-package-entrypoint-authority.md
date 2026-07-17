@@ -189,7 +189,7 @@ git commit -m "test: bind M2c ACP entrypoint to package metadata"
 - Modify: `tests/test_m2c_live_acceptance.py`
 - Modify: `HISTORY.md`
 
-- [ ] **Step 1: Add table-driven RED cases**
+- [x] **Step 1: Add table-driven RED cases**
 
 Add parameterized cases for missing/oversized/non-UTF-8/invalid/duplicate-key
 `package.json`, wrong package name, missing bin, non-string bin target, empty,
@@ -205,19 +205,19 @@ assert str(tmp_path) not in repr((seal, blocker))
 Run the selected cases before any additional implementation and confirm new
 cases fail only where validation is incomplete.
 
-- [ ] **Step 2: Implement the minimum missing guards**
+- [x] **Step 2: Implement the minimum missing guards**
 
 Extend only the pure parser/member validation required by each observed RED.
 Do not add fallback, repair, wrapper generation, or package mutation.
 
-- [ ] **Step 3: Prove entrypoint and metadata drift fail closed**
+- [x] **Step 3: Prove entrypoint and metadata drift fail closed**
 
 Seal a valid package, then independently replace `package.json`, change its bin
 target, replace the selected entrypoint with same bytes/new inode, and change a
 support file. `_verify_package_tree_seal` must raise only
 `claude_agent_acp_package_invalid`.
 
-- [ ] **Step 4: Run GREEN and commit**
+- [x] **Step 4: Run GREEN and commit**
 
 ```bash
 PYTHONPATH="$WORKTREE/src" conda run --no-capture-output -n agentdeck \

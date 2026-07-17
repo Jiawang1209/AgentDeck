@@ -4,6 +4,17 @@
 
 ## 2026-07-17
 
+### Close the M2c ACP package metadata safety matrix
+
+- Added table-driven rejection coverage for missing, oversized, non-UTF-8,
+  invalid, and duplicate-key package JSON; wrong package identity; invalid bin
+  shapes; absolute/parent/backslash/NUL paths; and missing, symlink, FIFO,
+  directory, writable, or non-executable selected entrypoints.
+- Expanded runtime drift proof to same-content replacement of `package.json`,
+  the selected entrypoint, and a support file. All failures retain only
+  `claude_agent_acp_package_invalid`; the focused matrix passed `31 passed, 233
+  deselected in 0.86s` without another implementation change.
+
 ### Bind M2c ACP authority to sealed npm bin metadata
 
 - Replaced the fixed ACP entrypoint with bounded, duplicate-safe package JSON
