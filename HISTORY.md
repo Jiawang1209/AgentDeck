@@ -4,6 +4,16 @@
 
 ## 2026-07-17
 
+### Bind declared M2c ACP entrypoint to the sealed package
+
+- Closed a plan-review gap by requiring the explicit
+  `AGENTDECK_M2C_CLAUDE_ACP` input in addition to the package root and proving
+  it is the exact process-local `dist/claude-agent-acp` seal.
+- Missing standalone input now fails closed as
+  `claude_agent_acp_unavailable`; a same-content alternate file fails the
+  package binding instead of becoming an execution substitute. Focused
+  authority/package coverage passed `25`; no real tool or live path ran.
+
 ### Validate complete M2c Claude Agent ACP package authority
 
 - Added non-following package traversal for the fixed

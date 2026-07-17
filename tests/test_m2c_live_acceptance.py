@@ -942,12 +942,35 @@ def _load_explicit_tool_authority(
     package, package_blocker = _seal_acp_package_tree(
         environ.get(ACP_PACKAGE_ENV)
     )
+    declared_acp_entrypoint = _seal_executable(
+        environ.get("AGENTDECK_M2C_CLAUDE_ACP")
+    )
+    if declared_acp_entrypoint is None:
+        failures.append(
+            _PreflightFailure(
+                "claude-agent-acp",
+                "identity",
+                "claude_agent_acp_unavailable",
+            )
+        )
     if package_blocker is not None:
         failures.append(
             _PreflightFailure(
                 "claude-agent-acp",
                 "package-tree",
                 package_blocker,
+            )
+        )
+    elif (
+        declared_acp_entrypoint is not None
+        and package is not None
+        and declared_acp_entrypoint != package.entrypoint
+    ):
+        failures.append(
+            _PreflightFailure(
+                "claude-agent-acp",
+                "binding",
+                "claude_agent_acp_package_invalid",
             )
         )
     if failures or leader_model is None or package is None:
@@ -4595,9 +4618,13 @@ def test_m2c_package_tree_runtime_seal_rejects_same_content_replacement(
 def _fake_explicit_authority_environment(root: Path) -> dict[str, str]:
     binary = root / "bin"
     binary.mkdir(parents=True)
+    package = _fake_acp_package(root / "acp-package")
     values = {
         LEADER_MODEL_ENV: "gpt-5.5",
-        ACP_PACKAGE_ENV: str(_fake_acp_package(root / "acp-package")),
+        "AGENTDECK_M2C_CLAUDE_ACP": str(
+            package.joinpath(*ACP_ENTRYPOINT.parts)
+        ),
+        ACP_PACKAGE_ENV: str(package),
     }
     for name, environment_name in (
         ("codex", "AGENTDECK_M2C_CODEX"),
@@ -4638,6 +4665,7 @@ def test_m2c_explicit_authority_loader_uses_only_declared_inputs(
         ("AGENTDECK_M2C_CLAUDE", _PreflightFailure("claude", "identity", "claude_unavailable")),
         (NODE_ENV, _PreflightFailure("node", "identity", "node_unavailable")),
         ("AGENTDECK_M2C_TMUX", _PreflightFailure("tmux", "identity", "tmux_unavailable")),
+        ("AGENTDECK_M2C_CLAUDE_ACP", _PreflightFailure("claude-agent-acp", "identity", "claude_agent_acp_unavailable")),
         (ACP_PACKAGE_ENV, _PreflightFailure("claude-agent-acp", "package-tree", "claude_agent_acp_package_invalid")),
     ),
 )
@@ -4653,6 +4681,29 @@ def test_m2c_explicit_authority_loader_fails_closed_without_fallback(
     assert authority is None
     assert expected in failures
     assert str(tmp_path) not in repr(failures)
+
+
+def test_m2c_explicit_authority_loader_binds_acp_entrypoint_to_package(
+    tmp_path,
+) -> None:
+    environment = _fake_explicit_authority_environment(tmp_path)
+    alternate = tmp_path / "bin" / "alternate-acp"
+    alternate.write_bytes(
+        Path(environment["AGENTDECK_M2C_CLAUDE_ACP"]).read_bytes()
+    )
+    alternate.chmod(0o700)
+    environment["AGENTDECK_M2C_CLAUDE_ACP"] = str(alternate)
+
+    authority, failures = _load_explicit_tool_authority(environment)
+
+    assert authority is None
+    assert failures == (
+        _PreflightFailure(
+            "claude-agent-acp",
+            "binding",
+            "claude_agent_acp_package_invalid",
+        ),
+    )
 
 
 @pytest.mark.parametrize(
