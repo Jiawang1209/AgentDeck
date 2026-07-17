@@ -112,18 +112,18 @@ git commit -m "test: seal closed npm bin symlink authority"
 - Modify: `tests/test_m2c_live_acceptance.py`
 - Modify: `HISTORY.md`
 
-- [ ] Add table-driven rejection tests for link outside `.bin`, nested
+- [x] Add table-driven rejection tests for link outside `.bin`, nested
   `.bin/command/child`, absolute target, root escape, empty/NUL/backslash text,
   missing target, directory target, FIFO target, and symlink-chain target. Each
   case asserts only `claude_agent_acp_package_invalid` and no temporary path in
   the returned failure.
 
-- [ ] Add runtime tests that seal a valid linked package and then change link
+- [x] Add runtime tests that seal a valid linked package and then change link
   text, replace the link with the same text/new inode, replace the regular target
   with same bytes/new inode, and mutate target bytes. `_verify_package_tree_seal`
   must reject every case.
 
-- [ ] Run the new cases before any missing guard, observe RED if present, add
+- [x] Run the new cases before any missing guard, observe RED if present, add
   only the minimum lexical/runtime guard, and rerun:
 
 ```bash
@@ -132,7 +132,7 @@ PYTHONPATH="$PWD/src" conda run --no-capture-output -n agentdeck \
   -k 'npm_bin_symlink_rejects or npm_bin_symlink_drift' -q
 ```
 
-- [ ] Update HISTORY and commit:
+- [x] Update HISTORY and commit:
 
 ```bash
 git add tests/test_m2c_live_acceptance.py HISTORY.md

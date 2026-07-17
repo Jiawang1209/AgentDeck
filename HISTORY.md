@@ -4,6 +4,16 @@
 
 ## 2026-07-17
 
+### Close npm `.bin` link safety and drift boundaries
+
+- Added rejection coverage for links outside `.bin`, nested link names,
+  absolute/root-escaping targets, invalid text, missing/directory/FIFO targets,
+  and link chains.
+- Added runtime drift coverage for changed link text, same-text/new-inode link
+  replacement, same-content/new-inode target replacement, and target-content
+  mutation. The focused matrix passed `19 passed, 269 deselected in 0.75s`
+  without weakening the initial GREEN.
+
 ### Seal closed npm `.bin` links without following them
 
 - Added a narrow package `symlink` manifest member using stable `lstat`, two

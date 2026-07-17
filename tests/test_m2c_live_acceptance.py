@@ -5399,6 +5399,115 @@ def test_m2c_package_tree_accepts_closed_npm_bin_symlinks(tmp_path) -> None:
 
 
 @pytest.mark.parametrize(
+    "mutation",
+    (
+        "outside-bin",
+        "nested-bin-link",
+        "absolute-target",
+        "escape-target",
+        "missing-target",
+        "directory-target",
+        "fifo-target",
+        "symlink-chain",
+    ),
+)
+def test_m2c_package_tree_npm_bin_symlink_rejects_unsafe_contract(
+    tmp_path, mutation
+) -> None:
+    root = _fake_acp_package(
+        tmp_path / "package", internal_bin_links=True
+    )
+    bin_directory = root / "node_modules" / ".bin"
+    if mutation == "outside-bin":
+        (root / "lib" / "unsafe-link").symlink_to("support.js")
+    elif mutation == "nested-bin-link":
+        nested = bin_directory / "nested"
+        nested.mkdir(mode=0o700)
+        (nested / "child").symlink_to("../../which/bin/node-which")
+    elif mutation == "absolute-target":
+        (bin_directory / "absolute").symlink_to("/tmp/outside")
+    elif mutation == "escape-target":
+        (bin_directory / "escape").symlink_to("../../../outside")
+    elif mutation == "missing-target":
+        (bin_directory / "missing").symlink_to("../missing/bin/tool")
+    elif mutation == "directory-target":
+        (bin_directory / "directory").symlink_to("../which/bin")
+    elif mutation == "fifo-target":
+        fifo = root / "node_modules" / "which" / "bin" / "pipe"
+        os.mkfifo(fifo, 0o600)
+        (bin_directory / "fifo").symlink_to("../which/bin/pipe")
+    else:
+        (bin_directory / "chain").symlink_to("node-which")
+
+    seal, blocker = _seal_acp_package_tree(str(root))
+
+    assert seal is None
+    assert blocker == "claude_agent_acp_package_invalid"
+    assert str(tmp_path) not in repr((seal, blocker))
+
+
+@pytest.mark.parametrize(
+    ("raw_target", "link_path"),
+    (
+        ("", "node_modules/.bin/tool"),
+        ("../which/bin/node-which", "lib/tool"),
+        ("../which/bin/node-which", "node_modules/.bin/tool/child"),
+        ("/tmp/tool", "node_modules/.bin/tool"),
+        ("../../../tool", "node_modules/.bin/tool"),
+        ("..\\which\\bin\\tool", "node_modules/.bin/tool"),
+        ("../which/\x00tool", "node_modules/.bin/tool"),
+    ),
+)
+def test_m2c_internal_bin_symlink_target_rejects_invalid_text(
+    raw_target, link_path
+) -> None:
+    manifest = {
+        "node_modules/which/bin/node-which": _PackageManifestEntry(
+            "node_modules/which/bin/node-which", "file", 1, "0" * 64, True
+        )
+    }
+
+    with pytest.raises(ValueError, match="invalid package symlink"):
+        _canonical_internal_bin_symlink_target(
+            link_path, raw_target, manifest
+        )
+
+
+@pytest.mark.parametrize(
+    "mutation", ("link-text", "link-inode", "target-inode", "target-content")
+)
+def test_m2c_package_tree_npm_bin_symlink_drift_fails_closed(
+    tmp_path, mutation
+) -> None:
+    root = _fake_acp_package(
+        tmp_path / "package", internal_bin_links=True
+    )
+    seal, blocker = _seal_acp_package_tree(str(root))
+    assert blocker is None and seal is not None
+    link = root / "node_modules" / ".bin" / "node-which"
+    target = root / "node_modules" / "which" / "bin" / "node-which"
+    if mutation == "link-text":
+        link.unlink()
+        link.symlink_to("../@anthropic-ai/sdk/bin/cli")
+    elif mutation == "link-inode":
+        raw_target = os.readlink(link)
+        link.unlink()
+        link.symlink_to(raw_target)
+    elif mutation == "target-inode":
+        replacement = target.with_name("replacement-node-which")
+        replacement.write_bytes(target.read_bytes())
+        replacement.chmod(stat.S_IMODE(target.stat().st_mode))
+        replacement.replace(target)
+    else:
+        target.write_bytes(b"changed target content\n")
+
+    with pytest.raises(
+        _LiveHarnessFailure, match="claude_agent_acp_package_invalid"
+    ):
+        _verify_package_tree_seal(seal)
+
+
+@pytest.mark.parametrize(
     "bin_value",
     (
         {"claude-agent-acp": "dist/index.js"},
