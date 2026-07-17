@@ -77,6 +77,23 @@ human authorization naming this same frozen SHA, Leader model, and exact digest
 is now required for the sole real four-stage Mission. M2c is not yet PASS and
 M3 remains locked.
 
+That separately authorized real Mission ran exactly once and failed `1 failed
+in 252.35s` as `third_stage_safe_window_timeout`. Closed durable evidence at
+the terminal showed one step-1 `claude-worker` ACP attempt in `ambiguous` /
+`acp_prompt`, two permission requests both still `pending`, zero validated
+Worker replies, and zero handoffs. No later attempt was admitted. This does not
+match the harness assumption that the first explicit confirmation completes
+the implementation attempt and that the second permission belongs to the
+revision attempt. The detached checkout and disposable project were removed;
+process, daemon, ACP, tmux, worktree, and temporary-root audits were empty.
+This SHA/model/digest live authority is exhausted and must not be retried.
+
+The next action is systematic root-cause analysis of permission request
+lineage and confirmation selection for multiple sequential ACP permissions in
+one attempt. No timeout increase, blanket approval, retry, evidence rewrite,
+or product-source change is authorized. M2c remains **BLOCKED** and M3 remains
+locked pending a new minimal brainstorming/spec/plan/TDD/freeze cycle.
+
 The exhausted authority at frozen `284d8f62...` reached Mission Preview and
 daemon admission, then the live harness read the consume ledger before the
 synchronous confirmation turn had completed. Product tracing proved the event

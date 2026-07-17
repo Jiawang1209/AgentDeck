@@ -90,8 +90,8 @@ unchanged.
 - [x] Remove both worktrees and prove zero residue.
 - [x] Re-audit exact installed inputs and closed Claude login readiness.
 - [x] Run exactly one designated strict v6 preflight.
-- [ ] If and only if ready, obtain a separate SHA/model/digest live authority.
-- [ ] Execute one real four-stage Mission; never retry that authority.
+- [x] If and only if ready, obtain a separate SHA/model/digest live authority.
+- [x] Execute one real four-stage Mission; never retry that authority.
 - [ ] On PASS, close M2c in roadmap/validation/HISTORY/handoff and begin M3
   brainstorming → spec → writing-plans. On failure, record the one-shot result
   and start only the smallest new evidence-led repair cycle.

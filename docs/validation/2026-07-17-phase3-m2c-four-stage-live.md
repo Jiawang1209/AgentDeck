@@ -328,6 +328,41 @@ were removed. This preflight authority is consumed and cannot be rerun. The
 only next M2c operation is one separately authorized real Mission naming the
 same frozen SHA, Leader model, and digest.
 
+The separately authorized live node then ran exactly once and failed `1 failed
+in 252.35s` with the fixed code `third_stage_safe_window_timeout`. Its closed
+terminal projection was:
+
+```json
+{
+  "cardinalities": {
+    "missions": 1,
+    "plans": 1,
+    "mission_attempts": 1,
+    "permission_requests": 2,
+    "mission_worker_replies": 0,
+    "mission_handoffs": 0
+  },
+  "ledger": {
+    "agent_id": "claude-worker",
+    "configured_transport": "acp",
+    "attempt_state": "ambiguous",
+    "attempt_terminal_stage": "acp_prompt",
+    "permission_count": 2,
+    "permission_states": ["pending", "pending"],
+    "classification": "permission_state_inconsistent",
+    "step_position": 1
+  }
+}
+```
+
+No reply, handoff, later attempt, or accepted artifact evidence existed. The
+checkout/project and every audited process/runtime/temporary residue were
+removed. This live authority is exhausted and cannot be retried. The next
+cycle must determine whether the two pending requests are sequential
+permissions within the first ACP attempt and whether the harness confirmed an
+unstable/non-unique selection; it must not increase timeouts, auto-approve,
+reuse authority, or infer success.
+
 ## Frozen authority
 
 - AgentDeck implementation:

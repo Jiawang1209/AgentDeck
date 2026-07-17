@@ -47,6 +47,14 @@
   `sha256:b194c3b4ccbfa3ba2b534bf9cb51e59ecbc077e2576c6eea8ba343f26cc83ffa`.
   Cleanup and residue audits were empty. The preflight is consumed; a separate
   human authorization is required before the one real four-stage Mission.
+- Ran that separately authorized real four-stage Mission exactly once. It
+  failed `1 failed in 252.35s` as `third_stage_safe_window_timeout`: closed
+  evidence contained one ambiguous step-1 Claude ACP attempt, two pending
+  permission requests, and zero replies/handoffs/later attempts.
+- Cleanup and residue audits were empty; the authority is exhausted and will
+  not be retried. The next minimal cycle will investigate exact multi-request
+  permission lineage and confirmation selection without timeout inflation,
+  auto-approval, evidence rewriting, or product-source assumptions.
 
 ### Design M2c first-attempt terminal observability
 
