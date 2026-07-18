@@ -1011,6 +1011,88 @@ def test_no_effect_proof_must_match_attempt_operation_and_source_session(
         ).fetchone() == ("running", 1)
 
 
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("source_sequence", 0),
+        ("operation_id", "op_other"),
+        ("source_session_id", "ses_other"),
+        ("integrity_hash", "sha256:" + "b" * 64),
+    ],
+)
+def test_effect_proof_row_must_remain_anchored_to_source_event_ledger(
+    store, field, value
+) -> None:
+    service = MissionService(store)
+    _confirmed(service)
+    service.release_ready_tasks(
+        _internal("evt_release", "tasks.release", "int_release", 2, {"mission_id": "mis_1"})
+    )
+    request = StartAttemptRequest(
+        "mis_1", 1, "build", "att_1", "ses_1", "codex", "fake", "fake", 0, 4,
+        "op_build",
+    )
+    service.start_attempt(
+        _internal("evt_start", "attempt.start", "int_start", 3, request.to_dict()), request
+    )
+    service.record_evidence(
+        _adapter(
+            "evt_proof", "evidence", "adp_proof",
+            task_id="build", attempt_id="att_1", session_id="ses_1", sequence=1,
+            payload={
+                "evidence_id": "evd_proof",
+                "kind": "effect_proof",
+                "criterion": "effect status",
+                "fact": "proven_no_effect",
+                "operation_id": "op_build",
+                "reason": "adapter receipt proves no write",
+            },
+        )
+    )
+    if field == "integrity_hash":
+        store._connection.execute(  # noqa: SLF001 - deterministic corruption injection
+            "UPDATE evidence SET integrity_hash = ? WHERE evidence_id = 'evd_proof'",
+            (value,),
+        )
+    else:
+        with store.open_reader() as reader:
+            summary = json.loads(
+                reader.execute(
+                    "SELECT summary_json FROM evidence WHERE evidence_id = 'evd_proof'"
+                ).fetchone()[0]
+            )
+        summary[field] = value
+        store._connection.execute(  # noqa: SLF001 - deterministic corruption injection
+            "UPDATE evidence SET summary_json = ? WHERE evidence_id = 'evd_proof'",
+            (json.dumps(summary, sort_keys=True, separators=(",", ":")),),
+        )
+    store._connection.commit()  # noqa: SLF001
+    with pytest.raises(ValueError, match="^effect proof invalid$"):
+        service.record_worker_event(
+            _adapter(
+                "evt_failed", "failed", "adp_failed",
+                task_id="build", attempt_id="att_1", session_id="ses_1", sequence=2,
+                payload={
+                    "reason": "transport ended",
+                    "effect_status": "proven_no_effect",
+                    "operation_id": "op_build",
+                    "proof_evidence_id": "evd_proof",
+                },
+            )
+        )
+    with store.open_reader() as reader:
+        assert reader.execute("SELECT revision FROM projects").fetchone() == (5,)
+        assert reader.execute(
+            "SELECT status FROM tasks WHERE task_id = 'build'"
+        ).fetchone() == ("running",)
+        assert reader.execute(
+            "SELECT status FROM attempts WHERE attempt_id = 'att_1'"
+        ).fetchone() == ("running",)
+        assert reader.execute(
+            "SELECT status, last_sequence FROM sessions WHERE session_id = 'ses_1'"
+        ).fetchone() == ("running", 1)
+
+
 def test_reconciliation_is_bounded_compact_and_counts_all_blocker_facts(store) -> None:
     service = MissionService(store)
     _confirmed(service)
@@ -1092,6 +1174,86 @@ def test_legacy_or_tampered_reconciliation_is_rejected_without_write(store) -> N
         assert reader.execute(
             "SELECT last_sequence FROM sessions WHERE session_id = 'ses_1'"
         ).fetchone() == (0,)
+
+
+@pytest.mark.parametrize("tamper", ["stale", "omitted", "count_too_small"])
+def test_reconciliation_must_match_bounded_event_ledger_projection(
+    store, tamper
+) -> None:
+    service = MissionService(store)
+    _confirmed(service)
+    service.release_ready_tasks(
+        _internal("evt_release", "tasks.release", "int_release", 2, {"mission_id": "mis_1"})
+    )
+    request = StartAttemptRequest(
+        "mis_1", 1, "build", "att_1", "ses_1", "codex", "fake", "fake", 0, 4,
+        "op_build",
+    )
+    service.start_attempt(
+        _internal("evt_start", "attempt.start", "int_start", 3, request.to_dict()), request
+    )
+    service.record_worker_event(
+        _adapter(
+            "evt_permission", "permission_conflict", "adp_permission",
+            task_id="build", attempt_id="att_1", session_id="ses_1", sequence=1,
+            payload={"reason": "scope conflict"},
+        )
+    )
+    service.record_evidence(
+        _adapter(
+            "evt_proof", "evidence", "adp_proof",
+            task_id="build", attempt_id="att_1", session_id="ses_1", sequence=2,
+            payload={
+                "evidence_id": "evd_proof",
+                "kind": "effect_proof",
+                "criterion": "effect status",
+                "fact": "proven_no_effect",
+                "operation_id": "op_build",
+                "reason": "adapter receipt proves no write",
+            },
+        )
+    )
+    with store.open_reader() as reader:
+        reconciliation = json.loads(
+            reader.execute(
+                "SELECT reconciliation_json FROM sessions WHERE session_id = 'ses_1'"
+            ).fetchone()[0]
+        )
+    if tamper == "stale":
+        reconciliation = {"active_blockers": [], "fact_count": 0, "latest_sequence": 0}
+    elif tamper == "omitted":
+        reconciliation["active_blockers"] = []
+    else:
+        reconciliation["fact_count"] = 0
+    store._connection.execute(  # noqa: SLF001 - deterministic corruption injection
+        "UPDATE sessions SET reconciliation_json = ? WHERE session_id = 'ses_1'",
+        (json.dumps(reconciliation, sort_keys=True, separators=(",", ":")),),
+    )
+    store._connection.commit()  # noqa: SLF001
+    with pytest.raises(ValueError, match="^stored reconciliation invalid$"):
+        service.record_worker_event(
+            _adapter(
+                "evt_failed", "failed", "adp_failed",
+                task_id="build", attempt_id="att_1", session_id="ses_1", sequence=3,
+                payload={
+                    "reason": "transport ended",
+                    "effect_status": "proven_no_effect",
+                    "operation_id": "op_build",
+                    "proof_evidence_id": "evd_proof",
+                },
+            )
+        )
+    with store.open_reader() as reader:
+        assert reader.execute("SELECT revision FROM projects").fetchone() == (6,)
+        assert reader.execute(
+            "SELECT status FROM tasks WHERE task_id = 'build'"
+        ).fetchone() == ("paused",)
+        assert reader.execute(
+            "SELECT status FROM attempts WHERE attempt_id = 'att_1'"
+        ).fetchone() == ("paused",)
+        assert reader.execute(
+            "SELECT status, last_sequence FROM sessions WHERE session_id = 'ses_1'"
+        ).fetchone() == ("paused", 2)
 
 
 def test_takeover_scope_conflict_and_terminal_failure_are_persisted_in_order(store) -> None:

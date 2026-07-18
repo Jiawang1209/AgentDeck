@@ -4,6 +4,33 @@
 
 ## 2026-07-18
 
+### Anchor Worker recovery authority to the durable event ledger
+
+- Added a separately row- and byte-bounded, deeply frozen event-ledger view to
+  adapter mutation snapshots. It exposes at most two exact predecessor rows
+  for duplicate detection plus one compact reconciliation projection; client
+  commands and internal mutations receive no adapter ledger. Reconciliation is
+  rebuilt with constant-memory cursor aggregation, so no unbounded raw event
+  history enters the decision snapshot.
+- Changed no-effect recovery proof validation to bind the Evidence row back to
+  the exact preceding event in the same session. AgentDeck now revalidates the
+  source event kind, Mission/Task/Attempt/session/sequence, operation and closed
+  payload, recomputes its adapter integrity digest, and uses constant-time
+  comparison against both ledger provenance and the Evidence digest. A
+  modified Evidence digest or detached summary therefore fails closed without
+  releasing retry state.
+- Stopped trusting mutable session reconciliation as recovery authority. Every
+  active Worker/evidence event compares the canonical compact row with a fresh
+  ledger-derived projection, requires its cursor to equal session sequence and
+  its fact count to cover all blockers, then advances the projection in the
+  same mutation. Stale cursors, omitted blockers and undersized fact counts now
+  write nothing; permission conflict remains absorbing over a later safe retry.
+- Added deterministic RED/GREEN coverage for detached proof provenance,
+  tampered Evidence integrity, stale/omitted reconciliation facts, the exact
+  bounded ledger view and non-adapter isolation. Existing 120-event compact
+  projection, terminal observation, sequence, retry and handoff behavior remain
+  covered without retaining private event reasons in session state.
+
 ### Bind Worker recovery proof to fresh operation lineage
 
 - Added a required bounded `operation_id` to every Attempt start and bound it

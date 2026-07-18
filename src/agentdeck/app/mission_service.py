@@ -497,6 +497,13 @@ def _archived_rows(
     return cast(tuple[Mapping[str, _FrozenJson], ...], rows)
 
 
+def _event_ledger_rows(
+    snapshot: ProjectMutationSnapshot, view: str
+) -> tuple[Mapping[str, _FrozenJson], ...]:
+    rows = snapshot.event_ledger.get(view, ())
+    return cast(tuple[Mapping[str, _FrozenJson], ...], rows)
+
+
 def _identities(
     snapshot: ProjectMutationSnapshot, table: str
 ) -> tuple[Mapping[str, _FrozenJson], ...]:
@@ -1564,20 +1571,90 @@ def _validate_effect_proof(
             cast(str, parsed["fact"]),
             cast(str, parsed["reason"]),
         )
-    except (json.JSONDecodeError, TypeError, ValueError, _InvalidMissionValue):
+        source_rows = _event_ledger_rows(snapshot, "source_events")
+        if len(source_rows) != 1:
+            raise _InvalidMissionValue
+        source = source_rows[0]
+        source_payload = _thaw_json(source["payload"])
+        expected_source_payload = {
+            "evidence_id": proof_evidence_id,
+            "kind": "effect_proof",
+            "criterion": parsed["criterion"],
+            "fact": parsed["fact"],
+            "operation_id": operation_id,
+            "reason": parsed["reason"],
+        }
+        source_integrity = source["integrity_hash"]
+        evidence_integrity = _row_value(row, "integrity_hash")
+        if (
+            source["kind"] != "evidence"
+            or source["mission_id"] != context.lineage["mission_id"]
+            or source["mission_version"] != context.lineage["mission_version"]
+            or source["task_id"] != context.lineage["task_id"]
+            or source["attempt_id"] != context.lineage["attempt_id"]
+            or source["session_id"] != context.lineage["session_id"]
+            or source["sequence"] != failure_sequence - 1
+            or source_payload != expected_source_payload
+            or not isinstance(source_integrity, str)
+            or not isinstance(evidence_integrity, str)
+        ):
+            raise _InvalidMissionValue
+        expected_integrity = adapter_event_integrity_hash(
+            event_id=cast(str, source["event_id"]),
+            kind=cast(str, source["kind"]),
+            adapter_event_id=cast(str, source["adapter_event_id"]),
+            mission_id=cast(str, source["mission_id"]),
+            mission_version=cast(str, source["mission_version"]),
+            task_id=cast(str, source["task_id"]),
+            attempt_id=cast(str, source["attempt_id"]),
+            session_id=cast(str, source["session_id"]),
+            sequence=cast(int, source["sequence"]),
+            payload=source_payload,
+            created_at=cast(str, source["created_at"]),
+        )
+        if not hmac.compare_digest(
+            expected_integrity, source_integrity
+        ) or not hmac.compare_digest(source_integrity, evidence_integrity):
+            raise _InvalidMissionValue
+    except (
+        KeyError,
+        json.JSONDecodeError,
+        MutationValidationError,
+        TypeError,
+        ValueError,
+        _InvalidMissionValue,
+    ):
         raise ValueError("effect proof invalid") from None
 
 
 def _stored_reconciliation(
+    snapshot: ProjectMutationSnapshot,
     session: Mapping[str, _FrozenJson],
 ) -> tuple[list[dict[str, object]], int, int]:
     reconciliation = _row_value(session, "reconciliation_json")
-    if reconciliation is None:
-        return [], 0, 0
     try:
-        stored = json.loads(cast(str, reconciliation))
+        ledger_rows = _event_ledger_rows(snapshot, "reconciliations")
+        if len(ledger_rows) != 1:
+            raise _InvalidMissionValue
+        ledger = ledger_rows[0]
+        expected = {
+            "active_blockers": _thaw_json(ledger["active_blockers"]),
+            "fact_count": ledger["fact_count"],
+            "latest_sequence": ledger["latest_sequence"],
+        }
+        session_id = _row_value(session, "session_id")
+        session_sequence = _row_value(session, "last_sequence")
+        if reconciliation is None:
+            stored = {
+                "active_blockers": [],
+                "fact_count": 0,
+                "latest_sequence": 0,
+            }
+        else:
+            stored = json.loads(cast(str, reconciliation))
         if (
-            not isinstance(reconciliation, str)
+            reconciliation is not None
+            and not isinstance(reconciliation, str)
             or not isinstance(stored, dict)
             or set(stored) != {"active_blockers", "fact_count", "latest_sequence"}
             or not isinstance(stored["active_blockers"], list)
@@ -1611,7 +1688,12 @@ def _stored_reconciliation(
                 }
             )
             != len(stored["active_blockers"])
-            or _canonical_json(stored, maximum=_MAX_PROVENANCE_BYTES)
+            or stored["fact_count"] < len(stored["active_blockers"])
+            or stored["latest_sequence"] != session_sequence
+            or ledger["session_id"] != session_id
+            or stored != expected
+            or reconciliation is not None
+            and _canonical_json(stored, maximum=_MAX_PROVENANCE_BYTES)
             != reconciliation
         ):
             raise _InvalidMissionValue
@@ -1704,7 +1786,9 @@ def _worker_event_decision(
                 "observation_only": True,
             },
         )
-    stored_blockers, fact_count, _latest_sequence = _stored_reconciliation(session)
+    stored_blockers, fact_count, _latest_sequence = _stored_reconciliation(
+        snapshot, session
+    )
     try:
         facts = tuple(
             RuntimeFact(
@@ -1894,6 +1978,9 @@ def _record_evidence_decision(
         for row in _identities(snapshot, "evidence")
     ):
         raise ValueError("evidence identity conflict")
+    stored_blockers, fact_count, _latest_sequence = _stored_reconciliation(
+        snapshot, context.session
+    )
     next_revision = snapshot.revision + 1
     integrity_hash = lineage["integrity_hash"]
     summary: dict[str, object] = {
@@ -1913,7 +2000,17 @@ def _record_evidence_decision(
         changes=(
             EntityChange.update(
                 "sessions",
-                {"last_sequence": lineage["sequence"]},
+                {
+                    "last_sequence": lineage["sequence"],
+                    "reconciliation_json": _canonical_json(
+                        {
+                            "active_blockers": stored_blockers,
+                            "fact_count": fact_count,
+                            "latest_sequence": lineage["sequence"],
+                        },
+                        maximum=_MAX_PROVENANCE_BYTES,
+                    ),
+                },
                 where={"session_id": lineage["session_id"]},
             ),
             EntityChange.insert(

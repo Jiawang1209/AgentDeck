@@ -77,8 +77,46 @@ MAX_IDENTITY_ROWS = 32_768
 MAX_IDENTITY_BYTES = 4 * 1024 * 1024
 MAX_ARCHIVED_LINEAGE_ROWS = 8_192
 MAX_ARCHIVED_LINEAGE_BYTES = 1024 * 1024
+MAX_EVENT_LEDGER_ROWS = 3
+MAX_EVENT_LEDGER_BYTES = 128 * 1024
 MAX_MUTATION_CHANGES = MAX_SNAPSHOT_ROWS
 MAX_MUTATION_CHANGE_BYTES = MAX_SNAPSHOT_BYTES
+
+_EVENT_LEDGER_COLUMNS: dict[str, tuple[str, ...]] = {
+    "source_events": (
+        "event_id",
+        "kind",
+        "adapter_event_id",
+        "mission_id",
+        "mission_version",
+        "task_id",
+        "attempt_id",
+        "session_id",
+        "sequence",
+        "integrity_hash",
+        "payload",
+        "created_at",
+    ),
+    "reconciliations": (
+        "session_id",
+        "active_blockers",
+        "fact_count",
+        "latest_sequence",
+    ),
+}
+_EVENT_ROW_COLUMNS = (
+    "event_id, project_id, project_revision, trigger_kind, kind, "
+    "provenance_json, payload_json, command_id, adapter_event_id, "
+    "internal_trigger_id, created_at"
+)
+_LEDGER_BLOCKER_SCOPES = {
+    "terminal_failed": "task",
+    "terminal_cancelled": "task",
+    "ambiguous_effect": "mission",
+    "permission_conflict": "mission",
+    "task_local_pause": "task",
+    "session_takeover": "session",
+}
 
 
 class _InvalidMutationValue(Exception):
@@ -674,6 +712,9 @@ class ProjectMutationSnapshot:
     archived_lineage: Mapping[
         str, tuple[Mapping[str, _FrozenJsonValue], ...]
     ] = field(default_factory=dict)
+    event_ledger: Mapping[
+        str, tuple[Mapping[str, _FrozenJsonValue], ...]
+    ] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         frozen_entities: dict[str, tuple[Mapping[str, _FrozenJsonValue], ...]] = {}
@@ -687,6 +728,11 @@ class ProjectMutationSnapshot:
         ] = {}
         archived_row_count = 0
         archived_byte_count = 0
+        frozen_event_ledger: dict[
+            str, tuple[Mapping[str, _FrozenJsonValue], ...]
+        ] = {}
+        ledger_row_count = 0
+        ledger_byte_count = 0
         try:
             if (
                 not _valid_mutation_text(self.project_id)
@@ -785,12 +831,44 @@ class ProjectMutationSnapshot:
                     )
                 )
                 frozen_archived[table] = tuple(frozen_rows)
+            if not isinstance(self.event_ledger, dict):
+                raise _InvalidMutationValue
+            for view, rows in self.event_ledger.items():
+                columns = _EVENT_LEDGER_COLUMNS.get(view)
+                if columns is None or not isinstance(rows, (list, tuple)):
+                    raise _InvalidMutationValue
+                maximum_rows = 2 if view == "source_events" else 1
+                if len(rows) > maximum_rows:
+                    raise _InvalidMutationValue
+                ledger_byte_count += len(view.encode("utf-8"))
+                frozen_rows = []
+                for row in rows:
+                    ledger_row_count += 1
+                    if ledger_row_count > MAX_EVENT_LEDGER_ROWS:
+                        raise _InvalidMutationValue
+                    if not isinstance(row, Mapping) or set(row) != set(columns):
+                        raise _InvalidMutationValue
+                    frozen_row = _frozen_mapping(
+                        dict(row), maximum=MAX_EVENT_LEDGER_BYTES
+                    )
+                    ledger_byte_count += len(
+                        _canonical_mutation_bytes(
+                            frozen_row, maximum=MAX_EVENT_LEDGER_BYTES
+                        )
+                    )
+                    if ledger_byte_count > MAX_EVENT_LEDGER_BYTES:
+                        raise _InvalidMutationValue
+                    frozen_rows.append(frozen_row)
+                frozen_event_ledger[view] = tuple(frozen_rows)
         except (_InvalidMutationValue, TypeError, ValueError):
             raise MutationValidationError("mutation snapshot invalid") from None
         object.__setattr__(self, "entities", MappingProxyType(frozen_entities))
         object.__setattr__(self, "identities", MappingProxyType(frozen_identities))
         object.__setattr__(
             self, "archived_lineage", MappingProxyType(frozen_archived)
+        )
+        object.__setattr__(
+            self, "event_ledger", MappingProxyType(frozen_event_ledger)
         )
 
 
@@ -1026,6 +1104,65 @@ def _reconstruct_stored_event(row: tuple[object, ...]) -> DomainEvent:
         _InvalidMutationValue,
     ):
         raise MutationValidationError("stored event invalid") from None
+
+
+def _ledger_source_row(event: DomainEvent) -> dict[str, object]:
+    provenance = event.provenance.to_dict()
+    payload = event.to_dict()["payload"]
+    return {
+        "event_id": event.event_id,
+        "kind": event.kind,
+        "adapter_event_id": provenance["adapter_event_id"],
+        "mission_id": provenance["mission_id"],
+        "mission_version": provenance["mission_version"],
+        "task_id": provenance["task_id"],
+        "attempt_id": provenance["attempt_id"],
+        "session_id": provenance["session_id"],
+        "sequence": provenance["sequence"],
+        "integrity_hash": provenance["integrity_hash"],
+        "payload": payload,
+        "created_at": event.created_at,
+    }
+
+
+def _ledger_runtime_fact(event: DomainEvent) -> tuple[str, str] | None:
+    payload = event.to_dict()["payload"]
+    if not isinstance(payload, dict):
+        raise MutationValidationError("stored event invalid")
+    if event.kind == "failed":
+        effect_status = payload.get("effect_status")
+        expected_fields = (
+            {"reason", "effect_status", "operation_id", "proof_evidence_id"}
+            if effect_status == "proven_no_effect"
+            else {"reason", "effect_status", "operation_id"}
+        )
+        if set(payload) != expected_fields or effect_status not in {
+            "proven_no_effect",
+            "ambiguous_effect",
+            "known_effect",
+        }:
+            raise MutationValidationError("stored event invalid")
+        fact_kind = {
+            "proven_no_effect": "proven_no_effect",
+            "ambiguous_effect": "ambiguous_effect",
+            "known_effect": "terminal_failed",
+        }[cast(str, effect_status)]
+        return (
+            "mission" if effect_status == "ambiguous_effect" else "task",
+            fact_kind,
+        )
+    fact_kind = {
+        "ambiguous_effect": "ambiguous_effect",
+        "permission_conflict": "permission_conflict",
+        "permission_requested": "task_local_pause",
+        "cancelled": "terminal_cancelled",
+        "session_takeover": "session_takeover",
+    }.get(event.kind)
+    if fact_kind is None:
+        return None
+    if set(payload).difference({"reason"}):
+        raise MutationValidationError("stored event invalid")
+    return (_LEDGER_BLOCKER_SCOPES[fact_kind], fact_kind)
 
 
 @dataclass(frozen=True, slots=True)
@@ -1587,6 +1724,113 @@ class SQLiteMissionStore:
             self._database_family_identity,
         )
 
+    def _event_ledger_snapshot(
+        self,
+        event: DomainEvent | None,
+        *,
+        revision: int,
+    ) -> dict[str, list[dict[str, object]]]:
+        if event is None or event.trigger_kind != "adapter_event":
+            return {}
+        lineage = event.provenance.to_dict()
+        session_id = lineage["session_id"]
+        guarded_provenance = (
+            "CASE WHEN json_valid(provenance_json) "
+            "THEN provenance_json ELSE '{}' END"
+        )
+        try:
+            cursor = self._connection.execute(
+                f"SELECT {_EVENT_ROW_COLUMNS} FROM events "
+                "WHERE trigger_kind = 'adapter_event' "
+                f"AND json_extract({guarded_provenance}, '$.session_id') = ? "
+                f"ORDER BY json_extract({guarded_provenance}, '$.sequence'), event_cursor",
+                (session_id,),
+            )
+            blockers: dict[tuple[str, str], dict[str, object]] = {}
+            fact_count = 0
+            latest_sequence = 0
+            try:
+                for row in cursor:
+                    stored = _reconstruct_stored_event(row)
+                    stored_lineage = stored.provenance.to_dict()
+                    sequence = stored_lineage.get("sequence")
+                    if (
+                        row[1] != self._project_id
+                        or not _valid_revision(row[2])
+                        or cast(int, row[2]) > revision
+                        or stored.trigger_kind != "adapter_event"
+                        or stored_lineage.get("session_id") != session_id
+                        or not isinstance(sequence, int)
+                        or isinstance(sequence, bool)
+                        or sequence != latest_sequence + 1
+                    ):
+                        raise MutationValidationError("stored event invalid")
+                    latest_sequence = sequence
+                    runtime_fact = _ledger_runtime_fact(stored)
+                    if runtime_fact is None:
+                        continue
+                    if fact_count == _MAX_SIGNED_64:
+                        raise MutationValidationError("stored event invalid")
+                    fact_count += 1
+                    scope, kind = runtime_fact
+                    if kind in _LEDGER_BLOCKER_SCOPES:
+                        blockers[(scope, kind)] = {
+                            "scope": scope,
+                            "kind": kind,
+                            "sequence": sequence,
+                        }
+            finally:
+                cursor.close()
+
+            source_rows: list[dict[str, object]] = []
+            payload = event.to_dict()["payload"]
+            if (
+                event.kind == "failed"
+                and isinstance(payload, dict)
+                and payload.get("effect_status") == "proven_no_effect"
+            ):
+                source_sequence = cast(int, lineage["sequence"]) - 1
+                source_cursor = self._connection.execute(
+                    f"SELECT {_EVENT_ROW_COLUMNS} FROM events "
+                    "WHERE trigger_kind = 'adapter_event' "
+                    f"AND json_extract({guarded_provenance}, '$.session_id') = ? "
+                    f"AND json_extract({guarded_provenance}, '$.sequence') = ? "
+                    "ORDER BY event_cursor LIMIT 2",
+                    (session_id, source_sequence),
+                )
+                try:
+                    for row in source_cursor:
+                        stored = _reconstruct_stored_event(row)
+                        stored_lineage = stored.provenance.to_dict()
+                        if (
+                            row[1] != self._project_id
+                            or not _valid_revision(row[2])
+                            or cast(int, row[2]) > revision
+                            or stored.trigger_kind != "adapter_event"
+                            or stored_lineage.get("session_id") != session_id
+                            or stored_lineage.get("sequence") != source_sequence
+                        ):
+                            raise MutationValidationError("stored event invalid")
+                        source_rows.append(_ledger_source_row(stored))
+                finally:
+                    source_cursor.close()
+        except sqlite3.Error:
+            raise MutationValidationError("stored event invalid") from None
+        active_blockers = sorted(
+            blockers.values(), key=lambda item: (item["scope"], item["kind"])
+        )
+        return {
+            "source_events": source_rows,
+            "reconciliations": [
+                {
+                    "session_id": session_id,
+                    "active_blockers": active_blockers,
+                    "fact_count": fact_count,
+                    "latest_sequence": latest_sequence,
+                }
+            ],
+        }
+
     def _mutation_snapshot(
         self,
         *,
@@ -1732,6 +1976,7 @@ class SQLiteMissionStore:
             entities=entities,
             identities=identities,
             archived_lineage=archived_lineage,
+            event_ledger=self._event_ledger_snapshot(event, revision=revision),
         )
 
     def _validate_decision(

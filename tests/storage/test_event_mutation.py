@@ -50,12 +50,13 @@ def _adapter(
     *,
     adapter_id: str = "adp_1",
     event_id: str = "evt_adapter_1",
+    kind: str = "worker_message",
     sequence: int = 1,
     payload=None,
 ):
     return DomainEvent.adapter_event(
         event_id=event_id,
-        kind="worker_message",
+        kind=kind,
         adapter_event_id=adapter_id,
         mission_id="mis_1",
         mission_version="1",
@@ -216,6 +217,79 @@ def test_event_insert_failure_rolls_back_prior_change_and_store_is_reusable(stor
         assert reader.execute("SELECT COUNT(*) FROM events").fetchone() == (0,)
         assert reader.execute("SELECT COUNT(*) FROM approvals").fetchone() == (0,)
     assert store.apply_event(event, lambda snapshot: _decision(store, event)).revision == 1
+
+
+def test_adapter_snapshot_exposes_only_exact_bounded_event_ledger_views(store) -> None:
+    source = _adapter(
+        kind="evidence",
+        payload={
+            "evidence_id": "evd_proof",
+            "kind": "effect_proof",
+            "criterion": "effect status",
+            "fact": "proven_no_effect",
+            "operation_id": "op_build",
+            "reason": "receipt",
+        },
+    )
+    store.apply_event(source, lambda snapshot: MutationDecision(events=(source,)))
+    failure = _adapter(
+        adapter_id="adp_2",
+        event_id="evt_adapter_2",
+        kind="failed",
+        sequence=2,
+        payload={
+            "reason": "retry",
+            "effect_status": "proven_no_effect",
+            "operation_id": "op_build",
+            "proof_evidence_id": "evd_proof",
+        },
+    )
+    observed: list[ProjectMutationSnapshot] = []
+
+    def decide(snapshot):
+        observed.append(snapshot)
+        source_rows = snapshot.event_ledger["source_events"]
+        assert len(source_rows) == 1
+        assert source_rows[0]["event_id"] == "evt_adapter_1"
+        assert source_rows[0]["sequence"] == 1
+        assert source_rows[0]["payload"]["evidence_id"] == "evd_proof"  # type: ignore[index]
+        assert snapshot.event_ledger["reconciliations"] == (
+            {
+                "session_id": "ses_1",
+                "active_blockers": (),
+                "fact_count": 0,
+                "latest_sequence": 1,
+            },
+        )
+        with pytest.raises(TypeError):
+            source_rows[0]["sequence"] = 9  # type: ignore[index]
+        with pytest.raises(TypeError):
+            source_rows[0]["payload"]["evidence_id"] = "changed"  # type: ignore[index]
+        return MutationDecision(events=(failure,))
+
+    store.apply_event(failure, decide)
+    assert len(observed) == 1
+
+    internal = _internal(trigger_id="int_no_ledger", revision=2)
+    store.apply_event(
+        internal,
+        lambda snapshot: (
+            pytest.fail("internal snapshot exposed adapter ledger")
+            if snapshot.event_ledger
+            else MutationDecision(events=(internal,))
+        ),
+    )
+
+
+def test_event_ledger_snapshot_is_closed_and_bounded() -> None:
+    with pytest.raises(MutationValidationError, match="^mutation snapshot invalid$"):
+        ProjectMutationSnapshot(
+            project_id="prj_1",
+            revision=0,
+            authority_state="sqlite_active",
+            entities={},
+            event_ledger={"raw_history": []},
+        )
 
 
 def test_archived_lineage_is_independently_bounded_and_deeply_frozen() -> None:
