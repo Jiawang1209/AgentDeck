@@ -64,9 +64,10 @@ readiness.
 ## Next gate
 
 Create and self-review the separate P1 Durable Mission Kernel task-level TDD
-plan with `writing-plans`, commit it with the P0 approval routing update, then
-execute it task by task with Subagent-Driven Development and strict RED/GREEN
-evidence. P1 is limited to the durable Mission kernel, SQLite authority,
+plan with `writing-plans`, then execute it task by task with Subagent-Driven
+Development and strict RED/GREEN evidence. The authoritative plan is
+[AgentDeck P1 Durable Mission Kernel Implementation Plan](../superpowers/plans/2026-07-18-agentdeck-p1-durable-mission-kernel.md).
+P1 is limited to the durable Mission kernel, SQLite authority,
 ProjectDaemon recovery, legacy migration, and ProjectView compatibility
 defined by the approved program. P2 Conversation Product and all real
 Codex/Claude adapter, ACP/tmux live, Golden Mission, merge, and push work remain
@@ -963,7 +964,7 @@ Suggested prompt for Claude Code CLI:
 Continue the approved AgentDeck P1 Durable Mission Kernel work from this repository.
 Read CLAUDE.md, AGENT.md, the top of HISTORY.md, docs/roadmap/product-north-star.md, docs/roadmap/ultimate-goal-roadmap.md, docs/handoff/current-development-state.md, docs/product/agentdeck-v1-prd.md, docs/architecture/agentdeck-v1-kernel-reset.md, docs/architecture/agentdeck-v1-state-migration.md, docs/validation/agentdeck-v1-validation-strategy.md, and docs/superpowers/plans/2026-07-17-agentdeck-v1-architecture-reset-program.md first.
 Use conda activate agentdeck or conda run -n agentdeck for commands.
-The human approved P0 exit and authorized writing the detailed P1 task-level TDD plan followed by direct Subagent-Driven implementation. Follow that plan strictly with RED/GREEN evidence, two-stage review, HISTORY updates, and one focused commit per slice.
+The human approved P0 exit and authorized the detailed plan at docs/superpowers/plans/2026-07-18-agentdeck-p1-durable-mission-kernel.md followed by direct Subagent-Driven implementation. Follow that plan strictly with RED/GREEN evidence, two-stage review, HISTORY updates, and one focused commit per slice.
 Keep P1 limited to the durable Mission domain, SQLite authority and migration, ProjectDaemon/application mutation path, deterministic recovery, ProjectView v2/v1 compatibility, and focused fake/local tests.
 Do not call a real provider, start real ACP/tmux sessions, run preflight/live/Golden Missions, begin P2, merge, push, install tools, or change authentication/global settings.
 ```

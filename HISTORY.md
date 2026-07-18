@@ -18,6 +18,19 @@
   and ProjectView compatibility. P2 conversation product work, real adapters,
   live ACP/tmux, Golden Missions, merge, and push remain under later gates.
 
+### Plan the AgentDeck P1 Durable Mission Kernel
+
+- Converted the approved P1 program slice into the 13-task, TDD-first
+  `docs/superpowers/plans/2026-07-18-agentdeck-p1-durable-mission-kernel.md`.
+  The plan covers pure Mission/authorization/events, SQLite schema and atomic
+  command idempotency, sole-daemon ownership, fake Worker Handoff/Evidence,
+  reconnect and ProjectView v2/v1, deterministic crash recovery, explicit
+  legacy preview/import/cutover/rollback, legacy mutation guards, and one
+  public-daemon fake Golden.
+- Required one RED/GREEN cycle, focused verification, HISTORY update, and
+  local commit per task, followed by spec and quality review. Real providers,
+  ACP/tmux live work, Golden A/B, P2, merge, and push remain outside P1.
+
 ### Complete AgentDeck P0 Product Reset
 
 - Froze seven durable P0 documents for human exit review:
