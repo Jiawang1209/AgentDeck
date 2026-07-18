@@ -4,6 +4,26 @@
 
 ## 2026-07-17
 
+### Define the AgentDeck V1 verification pyramid
+
+- Defined five operational release gates: an offline deterministic commit gate
+  with three sublayers, shared adapter conformance, opt-in isolated real adapter
+  smoke, Golden A, and Golden B; archive remains an evidence lifecycle rather
+  than an execution-validation layer.
+- Specified Golden A as Codex-led Codex implementation with independent Claude
+  review, and Golden B as Claude-led Claude implementation with independent
+  Codex review plus bounded rejection/revision and recovery/governance evidence.
+- Separated prerequisite-only `BLOCKED` from stage-specific execution `FAILED`
+  and durable product `PAUSED`, while keeping completion and acceptance owned by
+  verification.
+- Required semantic authority, transition, lineage, effect, and Evidence
+  assertions instead of brittle model prose, terminal text, internal-row, or
+  fixed-cardinality assertions.
+- Made real smoke and Golden runs explicit, isolated, bounded, and safely
+  rerunnable after root-cause repair, without reviving a historical single-use
+  live authorization ceremony. This documents the validation strategy; it does
+  not claim that the new gates or Goldens have already passed.
+
 ### Replace the M2c mega-gate with layered verification
 
 - Mapped the useful M2c schema, semantic authority, permission, Handoff,
