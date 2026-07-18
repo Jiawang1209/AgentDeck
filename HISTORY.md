@@ -12,7 +12,9 @@
   created through those three trigger-specific constructors; each rejects
   unknown or cross-trigger fields with stable sanitized errors and validates
   explicit revisions, adapter integrity hashes, identifiers, and
-  caller-supplied time.
+  caller-supplied time. Revision and sequence values are bounded to the
+  non-negative signed-64 range required by the later SQLite authority, with
+  the same fixed provenance errors used for every out-of-range value.
 - Restricted event payloads and provenance to bounded canonical JSON, deeply
   detached and froze constructor inputs, and exposed only fresh mutable copies
   plus byte-stable canonical UTF-8 serialization. This slice has no store,

@@ -164,6 +164,24 @@ def test_rejects_invalid_revision_and_sequence(
 
 
 @pytest.mark.parametrize(
+    ("build", "field", "message"),
+    [
+        (client_event, "expected_revision", "client command provenance invalid"),
+        (adapter_event, "sequence", "adapter event provenance invalid"),
+        (internal_event, "source_revision", "internal trigger provenance invalid"),
+    ],
+)
+def test_revision_fields_are_bounded_to_signed_64_bit(
+    build: object, field: str, message: str
+) -> None:
+    event = build(**{field: (2**63) - 1})  # type: ignore[operator]
+    assert event.to_dict()["provenance"][field] == (2**63) - 1  # type: ignore[index]
+
+    with pytest.raises(ValueError, match=f"^{message}$"):
+        build(**{field: 2**63})  # type: ignore[operator]
+
+
+@pytest.mark.parametrize(
     "integrity_hash",
     ["", "sha256:ABC", "sha256:" + ("A" * 64), "sha256:" + ("a" * 63)],
 )

@@ -29,6 +29,7 @@ type FrozenJsonValue = (
 MAX_EVENT_BYTES = 64 * 1024
 MAX_JSON_DEPTH = 16
 _MAX_METADATA_BYTES = 4 * 1024
+_MAX_SIGNED_64 = (2**63) - 1
 _HASH_PATTERN = re.compile(r"sha256:[0-9a-f]{64}\Z")
 
 
@@ -46,7 +47,11 @@ def _valid_text(value: object, *, allow_empty: bool = False) -> bool:
 
 
 def _valid_revision(value: object) -> bool:
-    return isinstance(value, int) and not isinstance(value, bool) and value >= 0
+    return (
+        isinstance(value, int)
+        and not isinstance(value, bool)
+        and 0 <= value <= _MAX_SIGNED_64
+    )
 
 
 def _freeze_json(
