@@ -17,6 +17,11 @@
   Exact retries therefore preserve the original Leader provenance, while a
   changed provenance is either rejected at the service boundary or becomes a
   changed immutable command input and fails with `command input mismatch`.
+  The persisted proposal provenance is now a closed canonical envelope holding
+  both the detached Leader provenance and its hash. Confirmation reparses that
+  envelope under the same 8 KiB/depth/type contract and recomputes the hash;
+  malformed JSON, unknown fields, and content/hash drift fail with one redacted
+  diagnostic before any Task, event, command outcome, or revision is written.
 - Added pure proposal, confirmation, and cancellation decisions over the
   detached `ProjectMutationSnapshot`. Proposal atomically creates the Mission
   and immutable version without materializing Tasks, enforces the V1 single
@@ -35,11 +40,34 @@
   actor, expected revision, and caller-provided timestamp; exact retries replay
   the persisted outcome, while changed, stale, duplicate-transition, and
   terminal inputs fail closed with redacted diagnostics.
+- Redesigned the decision snapshot into two independent bounded views.
+  `entities` now carries only the active Mission working set and related
+  versions, Tasks, Attempts, sessions, permissions, Handoffs, Evidence,
+  task-bound artifacts, and still-relevant compatibility rows, so terminal
+  Mission history is not repeatedly copied into every decision. Its 4,096-row,
+  512 KiB budget covers expansion of any valid at-most-64-KiB Mission
+  specification. A separate deep-frozen `identities` index carries every
+  table's globally sorted primary-key records under a 32,768-row, 4 MiB budget,
+  preserving deterministic global uniqueness checks without exposing a store,
+  connection, lazy query, or terminal payload history to pure decisions. Both
+  views are rebuilt and validated before and after each mutation in the same
+  transaction.
+- Tightened Mission authority and identity failure boundaries. Every Mission
+  command now requires both `actor.kind=human` and a nonblank, bounded UTF-8
+  actor id; anonymous or type-confused self-declarations write nothing. Mission
+  proposal IDs are checked against the global identity index even after a
+  prior Mission becomes terminal, and confirmation preflights every frozen
+  Task ID against all history. A collision now returns `task identity conflict`
+  without leaking SQLite details or changing the still-cancellable proposed
+  Mission.
 - Added integration coverage for proposal/Leader-provenance separation, exact
   digest confirmation, post-confirmation Task materialization, stale revision,
   the one-active-Mission invariant, exact duplicate replay, corrupted stored
   specification rejection, cancellation retention, immutable DTO isolation,
-  and closed canonical provenance bounds. This slice remains local and
+  closed canonical provenance bounds and tamper detection, large valid Mission
+  expansion, compact terminal-history decisions, global Mission/Task identity
+  collision handling, and authenticated-identity-ready human actor shape. This
+  slice remains local and
   deterministic: it does not call a provider, ACP adapter, tmux, runtime, or
   network and does not activate the SQLite cutover.
 

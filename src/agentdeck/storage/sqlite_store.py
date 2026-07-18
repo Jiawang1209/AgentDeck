@@ -67,8 +67,10 @@ _MAX_SIGNED_64 = (2**63) - 1
 _MAX_MUTATION_BYTES = 64 * 1024
 _MAX_MUTATION_DEPTH = 16
 _MAX_TEXT_BYTES = 4096
-MAX_SNAPSHOT_ROWS = 1024
-MAX_SNAPSHOT_BYTES = 64 * 1024
+MAX_SNAPSHOT_ROWS = 4096
+MAX_SNAPSHOT_BYTES = 512 * 1024
+MAX_IDENTITY_ROWS = 32_768
+MAX_IDENTITY_BYTES = 4 * 1024 * 1024
 
 
 class _InvalidMutationValue(Exception):
@@ -168,7 +170,11 @@ def _thaw_mutation_json(value: _FrozenJsonValue) -> _JsonValue:
     return value
 
 
-def _canonical_mutation_bytes(value: _FrozenJsonValue) -> bytes:
+def _canonical_mutation_bytes(
+    value: _FrozenJsonValue,
+    *,
+    maximum: int = _MAX_MUTATION_BYTES,
+) -> bytes:
     try:
         encoded = json.dumps(
             _thaw_mutation_json(value),
@@ -178,7 +184,7 @@ def _canonical_mutation_bytes(value: _FrozenJsonValue) -> bytes:
         ).encode("utf-8")
     except (TypeError, ValueError, UnicodeEncodeError) as exc:
         raise _InvalidMutationValue from exc
-    if len(encoded) > _MAX_MUTATION_BYTES:
+    if len(encoded) > maximum:
         raise _InvalidMutationValue
     return encoded
 
@@ -196,11 +202,15 @@ def _parse_canonical_mutation_json(value: object) -> _JsonValue:
         raise _InvalidMutationValue from None
 
 
-def _frozen_mapping(value: object) -> Mapping[str, _FrozenJsonValue]:
+def _frozen_mapping(
+    value: object,
+    *,
+    maximum: int = _MAX_MUTATION_BYTES,
+) -> Mapping[str, _FrozenJsonValue]:
     frozen = _freeze_mutation_json(value)
     if not isinstance(frozen, Mapping):
         raise _InvalidMutationValue
-    _canonical_mutation_bytes(frozen)
+    _canonical_mutation_bytes(frozen, maximum=maximum)
     return frozen
 
 
@@ -436,6 +446,76 @@ _ENTITY_PRIMARY_KEYS: dict[str, tuple[str, ...]] = {
     "legacy_records": ("record_id",),
 }
 
+_ACTIVE_MISSION_SQL = "status NOT IN ('completed','failed','cancelled')"
+_ACTIVE_ENTITY_WHERE: dict[str, str] = {
+    "missions": _ACTIVE_MISSION_SQL,
+    "mission_versions": (
+        "EXISTS (SELECT 1 FROM missions AS active_mission "
+        "WHERE active_mission.mission_id = mission_versions.mission_id "
+        f"AND active_mission.{_ACTIVE_MISSION_SQL})"
+    ),
+    "tasks": (
+        "EXISTS (SELECT 1 FROM missions AS active_mission "
+        "WHERE active_mission.mission_id = tasks.mission_id "
+        f"AND active_mission.{_ACTIVE_MISSION_SQL})"
+    ),
+    "attempts": (
+        "EXISTS (SELECT 1 FROM tasks AS active_task "
+        "JOIN missions AS active_mission "
+        "ON active_mission.mission_id = active_task.mission_id "
+        "WHERE active_task.task_id = attempts.task_id "
+        f"AND active_mission.{_ACTIVE_MISSION_SQL})"
+    ),
+    "sessions": (
+        "EXISTS (SELECT 1 FROM attempts AS active_attempt "
+        "JOIN tasks AS active_task ON active_task.task_id = active_attempt.task_id "
+        "JOIN missions AS active_mission "
+        "ON active_mission.mission_id = active_task.mission_id "
+        "WHERE active_attempt.attempt_id = sessions.attempt_id "
+        f"AND active_mission.{_ACTIVE_MISSION_SQL})"
+    ),
+    "permissions": (
+        "EXISTS (SELECT 1 FROM missions AS active_mission "
+        "WHERE active_mission.mission_id = permissions.mission_id "
+        f"AND active_mission.{_ACTIVE_MISSION_SQL})"
+    ),
+    "handoffs": (
+        "EXISTS (SELECT 1 FROM missions AS active_mission "
+        "WHERE active_mission.mission_id = handoffs.mission_id "
+        f"AND active_mission.{_ACTIVE_MISSION_SQL})"
+    ),
+    "evidence": (
+        "EXISTS (SELECT 1 FROM tasks AS active_task "
+        "JOIN missions AS active_mission "
+        "ON active_mission.mission_id = active_task.mission_id "
+        "WHERE active_task.task_id = evidence.task_id "
+        f"AND active_mission.{_ACTIVE_MISSION_SQL})"
+    ),
+    "approvals": (
+        "subject_kind != 'mission' OR NOT EXISTS ("
+        "SELECT 1 FROM missions AS subject_mission "
+        "WHERE subject_mission.mission_id = approvals.subject_id) OR EXISTS ("
+        "SELECT 1 FROM missions AS active_mission "
+        "WHERE active_mission.mission_id = approvals.subject_id "
+        f"AND active_mission.{_ACTIVE_MISSION_SQL})"
+    ),
+    "artifacts": (
+        "task_id IS NULL OR EXISTS (SELECT 1 FROM tasks AS active_task "
+        "JOIN missions AS active_mission "
+        "ON active_mission.mission_id = active_task.mission_id "
+        "WHERE active_task.task_id = artifacts.task_id "
+        f"AND active_mission.{_ACTIVE_MISSION_SQL})"
+    ),
+    "learning": (
+        "source_evidence_id IS NULL OR EXISTS (SELECT 1 FROM evidence AS active_evidence "
+        "JOIN tasks AS active_task ON active_task.task_id = active_evidence.task_id "
+        "JOIN missions AS active_mission "
+        "ON active_mission.mission_id = active_task.mission_id "
+        "WHERE active_evidence.evidence_id = learning.source_evidence_id "
+        f"AND active_mission.{_ACTIVE_MISSION_SQL})"
+    ),
+}
+
 _ENTITY_UPDATE_COLUMNS: dict[str, frozenset[str]] = {
     "missions": frozenset({"current_version", "status", "updated_revision"}),
     "mission_versions": frozenset(
@@ -538,7 +618,8 @@ class EntityChange:
                     "table": self.table,
                     "values": dict(values),
                     "where": dict(where),
-                }
+                },
+                maximum=MAX_SNAPSHOT_BYTES,
             )
         except (_InvalidMutationValue, TypeError, ValueError):
             raise MutationValidationError("entity change invalid") from None
@@ -566,11 +647,17 @@ class ProjectMutationSnapshot:
     revision: int
     authority_state: str
     entities: Mapping[str, tuple[Mapping[str, _FrozenJsonValue], ...]]
+    identities: Mapping[str, tuple[Mapping[str, _FrozenJsonValue], ...]] = field(
+        default_factory=dict
+    )
 
     def __post_init__(self) -> None:
         frozen_entities: dict[str, tuple[Mapping[str, _FrozenJsonValue], ...]] = {}
+        frozen_identities: dict[str, tuple[Mapping[str, _FrozenJsonValue], ...]] = {}
         row_count = 0
         byte_count = 0
+        identity_row_count = 0
+        identity_byte_count = 0
         try:
             if (
                 not _valid_mutation_text(self.project_id)
@@ -588,15 +675,54 @@ class ProjectMutationSnapshot:
                     row_count += 1
                     if row_count > MAX_SNAPSHOT_ROWS:
                         raise _InvalidMutationValue
-                    frozen_row = _frozen_mapping(dict(row))
-                    byte_count += len(_canonical_mutation_bytes(frozen_row))
+                    frozen_row = _frozen_mapping(
+                        dict(row), maximum=MAX_SNAPSHOT_BYTES
+                    )
+                    byte_count += len(
+                        _canonical_mutation_bytes(
+                            frozen_row, maximum=MAX_SNAPSHOT_BYTES
+                        )
+                    )
                     if byte_count > MAX_SNAPSHOT_BYTES:
                         raise _InvalidMutationValue
                     frozen_rows.append(frozen_row)
                 frozen_entities[table] = tuple(frozen_rows)
+            if not isinstance(self.identities, dict):
+                raise _InvalidMutationValue
+            for table, rows in self.identities.items():
+                if table not in _ENTITY_COLUMNS or not isinstance(rows, (list, tuple)):
+                    raise _InvalidMutationValue
+                identity_byte_count += len(table.encode("utf-8"))
+                primary_key = _ENTITY_PRIMARY_KEYS[table]
+                frozen_rows: list[Mapping[str, _FrozenJsonValue]] = []
+                seen: set[tuple[None | int | str, ...]] = set()
+                for row in rows:
+                    identity_row_count += 1
+                    if identity_row_count > MAX_IDENTITY_ROWS:
+                        raise _InvalidMutationValue
+                    values = _freeze_sql_values(dict(row))
+                    if set(values) != set(primary_key):
+                        raise _InvalidMutationValue
+                    _validate_entity_primary_key(table, values)
+                    identity = tuple(values[column] for column in primary_key)
+                    if identity in seen:
+                        raise _InvalidMutationValue
+                    seen.add(identity)
+                    frozen_row = _frozen_mapping(dict(values))
+                    identity_byte_count += len(_canonical_mutation_bytes(frozen_row))
+                    if identity_byte_count > MAX_IDENTITY_BYTES:
+                        raise _InvalidMutationValue
+                    frozen_rows.append(frozen_row)
+                frozen_rows.sort(
+                    key=lambda row: tuple(
+                        cast(str | int, row[column]) for column in primary_key
+                    )
+                )
+                frozen_identities[table] = tuple(frozen_rows)
         except (_InvalidMutationValue, TypeError, ValueError):
             raise MutationValidationError("mutation snapshot invalid") from None
         object.__setattr__(self, "entities", MappingProxyType(frozen_entities))
+        object.__setattr__(self, "identities", MappingProxyType(frozen_identities))
 
 
 @dataclass(frozen=True, slots=True)
@@ -1265,8 +1391,11 @@ class SQLiteMissionStore:
         authority_state: str,
     ) -> ProjectMutationSnapshot:
         entities: dict[str, list[dict[str, object]]] = {}
+        identities: dict[str, list[dict[str, object]]] = {}
         row_count = 0
         byte_count = 0
+        identity_row_count = 0
+        identity_byte_count = 0
         for table in _ENTITY_COLUMNS:
             columns = [
                 row[1]
@@ -1276,8 +1405,31 @@ class SQLiteMissionStore:
             ]
             primary_key = _ENTITY_PRIMARY_KEYS[table]
             order_by = ",".join(f'"{column}"' for column in primary_key)
+            identity_columns = ",".join(f'"{column}"' for column in primary_key)
+            identity_cursor = self._connection.execute(
+                f'SELECT {identity_columns} FROM "{table}" ORDER BY {order_by}'
+            )
+            identity_rows: list[dict[str, object]] = []
+            identity_byte_count += len(table.encode("utf-8"))
+            for row in identity_cursor:
+                identity_row_count += 1
+                if identity_row_count > MAX_IDENTITY_ROWS:
+                    raise MutationValidationError("mutation snapshot invalid")
+                value = dict(zip(primary_key, row, strict=True))
+                try:
+                    frozen = _frozen_mapping(value)
+                    identity_byte_count += len(_canonical_mutation_bytes(frozen))
+                except _InvalidMutationValue:
+                    raise MutationValidationError("mutation snapshot invalid") from None
+                if identity_byte_count > MAX_IDENTITY_BYTES:
+                    raise MutationValidationError("mutation snapshot invalid")
+                identity_rows.append(value)
+            identities[table] = identity_rows
+
+            where = _ACTIVE_ENTITY_WHERE.get(table)
+            where_clause = f" WHERE {where}" if where is not None else ""
             cursor = self._connection.execute(
-                f'SELECT * FROM "{table}" ORDER BY {order_by}'
+                f'SELECT * FROM "{table}"{where_clause} ORDER BY {order_by}'
             )
             rows: list[dict[str, object]] = []
             byte_count += len(table.encode("utf-8"))
@@ -1287,8 +1439,12 @@ class SQLiteMissionStore:
                     raise MutationValidationError("mutation snapshot invalid")
                 value = dict(zip(columns, row, strict=True))
                 try:
-                    frozen = _frozen_mapping(value)
-                    byte_count += len(_canonical_mutation_bytes(frozen))
+                    frozen = _frozen_mapping(value, maximum=MAX_SNAPSHOT_BYTES)
+                    byte_count += len(
+                        _canonical_mutation_bytes(
+                            frozen, maximum=MAX_SNAPSHOT_BYTES
+                        )
+                    )
                 except _InvalidMutationValue:
                     raise MutationValidationError("mutation snapshot invalid") from None
                 if byte_count > MAX_SNAPSHOT_BYTES:
@@ -1300,6 +1456,7 @@ class SQLiteMissionStore:
             revision=revision,
             authority_state=authority_state,
             entities=entities,
+            identities=identities,
         )
 
     def _validate_decision(

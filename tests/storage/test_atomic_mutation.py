@@ -9,6 +9,8 @@ import pytest
 
 from agentdeck.domain.events import DomainEvent
 from agentdeck.storage.sqlite_store import (
+    MAX_IDENTITY_BYTES,
+    MAX_IDENTITY_ROWS,
     MAX_SNAPSHOT_ROWS,
     CommandEnvelope,
     EntityChange,
@@ -312,18 +314,19 @@ def test_post_change_snapshot_must_remain_readable_and_failure_is_atomic(
 ) -> None:
     first = _command(command_id="cmd_first")
     first_decision = MutationDecision(
-        changes=(
+        changes=tuple(
             EntityChange.insert(
                 "learning",
                 {
-                    "learning_id": "lrn_1",
+                    "learning_id": f"lrn_{index}",
                     "project_id": store.project_id,
                     "source_evidence_id": None,
-                    "review_json": "a" * 35_000,
+                    "review_json": "a" * 60_000,
                     "application_json": None,
                     "created_revision": 1,
                 },
-            ),
+            )
+            for index in range(8)
         ),
         events=(_event(first, event_id="evt_first"),),
         result={},
@@ -338,8 +341,8 @@ def test_post_change_snapshot_must_remain_readable_and_failure_is_atomic(
                 changes=(
                     EntityChange.update(
                         "learning",
-                        {"application_json": "b" * 35_000},
-                        where={"learning_id": "lrn_1"},
+                        {"application_json": "b" * 60_000},
+                        where={"learning_id": "lrn_0"},
                     ),
                 ),
                 events=(_event(oversized, event_id="evt_oversized"),),
@@ -352,8 +355,10 @@ def test_post_change_snapshot_must_remain_readable_and_failure_is_atomic(
         assert reader.execute("SELECT COUNT(*) FROM commands").fetchone() == (1,)
         assert reader.execute("SELECT COUNT(*) FROM events").fetchone() == (1,)
         assert reader.execute(
-            "SELECT length(review_json), application_json FROM learning"
-        ).fetchone() == (35_000, None)
+            "SELECT length(review_json), application_json FROM learning "
+            "WHERE learning_id = 'lrn_0'"
+        ).fetchone() == (60_000, None)
+        assert reader.execute("SELECT COUNT(*) FROM learning").fetchone() == (8,)
 
     third = _command(command_id="cmd_third", expected_revision=1)
     assert store.apply_command(
@@ -363,7 +368,7 @@ def test_post_change_snapshot_must_remain_readable_and_failure_is_atomic(
                 EntityChange.update(
                     "learning",
                     {"application_json": "applied"},
-                    where={"learning_id": "lrn_1"},
+                    where={"learning_id": "lrn_0"},
                 ),
             ),
             events=(_event(third, event_id="evt_third"),),
@@ -407,10 +412,49 @@ def test_snapshot_rows_are_stably_ordered_by_declared_primary_key(
         observed.extend(
             str(row["approval_id"]) for row in snapshot.entities["approvals"]
         )
+        assert [row["approval_id"] for row in snapshot.identities["approvals"]] == [
+            "apv_a",
+            "apv_m",
+            "apv_z",
+        ]
+        with pytest.raises(TypeError):
+            snapshot.identities["approvals"] = ()  # type: ignore[index]
+        with pytest.raises(TypeError):
+            snapshot.identities["approvals"][0]["approval_id"] = "changed"  # type: ignore[index]
         return MutationDecision(events=(_event(second, event_id="evt_observe"),))
 
     store.apply_command(second, observe)
     assert observed == ["apv_a", "apv_m", "apv_z"]
+
+
+def test_identity_index_has_independent_row_and_byte_limits(monkeypatch) -> None:
+    monkeypatch.setattr("agentdeck.storage.sqlite_store.MAX_IDENTITY_ROWS", 2)
+    with pytest.raises(MutationValidationError, match="^mutation snapshot invalid$"):
+        ProjectMutationSnapshot(
+            project_id="prj_1",
+            revision=0,
+            authority_state="legacy",
+            entities={},
+            identities={
+                "tasks": [
+                    {"task_id": "tsk_a"},
+                    {"task_id": "tsk_b"},
+                    {"task_id": "tsk_c"},
+                ]
+            },
+        )
+
+    monkeypatch.setattr("agentdeck.storage.sqlite_store.MAX_IDENTITY_ROWS", MAX_IDENTITY_ROWS)
+    monkeypatch.setattr("agentdeck.storage.sqlite_store.MAX_IDENTITY_BYTES", 8)
+    with pytest.raises(MutationValidationError, match="^mutation snapshot invalid$"):
+        ProjectMutationSnapshot(
+            project_id="prj_1",
+            revision=0,
+            authority_state="legacy",
+            entities={},
+            identities={"tasks": [{"task_id": "tsk_too_large"}]},
+        )
+    assert MAX_IDENTITY_BYTES > 8
 
 
 def test_post_change_snapshot_row_budget_rolls_back_without_unbounded_commit(

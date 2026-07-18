@@ -217,6 +217,11 @@ class MissionProposal:
             provenance_hash = "sha256:" + hashlib.sha256(
                 canonical_provenance.encode("utf-8")
             ).hexdigest()
+            provenance_envelope = {
+                "leader_provenance": _thaw_json(frozen),
+                "leader_provenance_hash": provenance_hash,
+            }
+            _canonical_json(provenance_envelope, maximum=_MAX_PROVENANCE_BYTES)
             digest = authorization_digest(
                 self.mission_version, self.authorization_envelope
             )
@@ -246,6 +251,12 @@ class MissionProposal:
             "authorization_digest": self.authorization_digest,
         }
 
+    def proposal_provenance_dict(self) -> dict[str, object]:
+        return {
+            "leader_provenance": self.leader_provenance_dict(),
+            "leader_provenance_hash": self.leader_provenance_hash,
+        }
+
 
 def _event_id(command: CommandEnvelope, action: str) -> str:
     identity = f"{command.command_id}\0{action}".encode("utf-8")
@@ -253,7 +264,7 @@ def _event_id(command: CommandEnvelope, action: str) -> str:
 
 
 def _valid_identifier(value: object) -> bool:
-    if not isinstance(value, str) or not value:
+    if not isinstance(value, str) or not value.strip():
         return False
     try:
         return len(value.encode("utf-8")) <= 4096
@@ -294,6 +305,13 @@ def _rows(
     return cast(tuple[Mapping[str, _FrozenJson], ...], rows)
 
 
+def _identities(
+    snapshot: ProjectMutationSnapshot, table: str
+) -> tuple[Mapping[str, _FrozenJson], ...]:
+    rows = snapshot.identities.get(table, ())
+    return cast(tuple[Mapping[str, _FrozenJson], ...], rows)
+
+
 def _row_value(row: Mapping[str, _FrozenJson], key: str) -> object:
     return _thaw_json(row[key])
 
@@ -315,7 +333,10 @@ def propose_mission(
     if mission_version.version != 1:
         raise ValueError("mission version conflict")
     missions = _rows(snapshot, "missions")
-    if any(_row_value(row, "mission_id") == mission_version.mission_id for row in missions):
+    if any(
+        _row_value(row, "mission_id") == mission_version.mission_id
+        for row in _identities(snapshot, "missions")
+    ):
         raise ValueError("mission version conflict")
     active = tuple(
         cast(str, _row_value(row, "mission_id"))
@@ -329,7 +350,7 @@ def propose_mission(
         proposal.specification_dict(), maximum=_MAX_SPECIFICATION_BYTES
     )
     provenance_json = _canonical_json(
-        proposal.leader_provenance_dict(), maximum=_MAX_PROVENANCE_BYTES
+        proposal.proposal_provenance_dict(), maximum=_MAX_PROVENANCE_BYTES
     )
     result = {
         "mission_id": mission_version.mission_id,
@@ -472,12 +493,53 @@ def _decode_stored_specification(value: object) -> ConfirmedMissionVersion:
     except (
         json.JSONDecodeError,
         KeyError,
+        OverflowError,
+        RecursionError,
         TypeError,
         UnicodeEncodeError,
         ValueError,
         _InvalidMissionValue,
     ):
         raise ValueError("stored mission specification invalid") from None
+
+
+def _decode_stored_provenance(value: object) -> tuple[dict[str, object], str]:
+    try:
+        if not isinstance(value, str) or len(value.encode("utf-8")) > _MAX_PROVENANCE_BYTES:
+            raise _InvalidMissionValue
+        parsed = json.loads(value)
+        if not isinstance(parsed, dict) or set(parsed) != {
+            "leader_provenance",
+            "leader_provenance_hash",
+        }:
+            raise _InvalidMissionValue
+        if _canonical_json(parsed, maximum=_MAX_PROVENANCE_BYTES) != value:
+            raise _InvalidMissionValue
+        provenance = parsed["leader_provenance"]
+        persisted_hash = parsed["leader_provenance_hash"]
+        if (
+            not isinstance(provenance, dict)
+            or not provenance
+            or not isinstance(persisted_hash, str)
+            or _DIGEST_PATTERN.fullmatch(persisted_hash) is None
+        ):
+            raise _InvalidMissionValue
+        canonical = _canonical_json(provenance, maximum=_MAX_PROVENANCE_BYTES)
+        recomputed = "sha256:" + hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+        if recomputed != persisted_hash:
+            raise _InvalidMissionValue
+        return provenance, persisted_hash
+    except (
+        json.JSONDecodeError,
+        KeyError,
+        OverflowError,
+        RecursionError,
+        TypeError,
+        UnicodeEncodeError,
+        ValueError,
+        _InvalidMissionValue,
+    ):
+        raise ValueError("stored mission provenance invalid") from None
 
 
 def confirm_mission(
@@ -519,6 +581,7 @@ def confirm_mission(
     stored = versions[0]
     if _row_value(stored, "confirmed_revision") is not None:
         raise ValueError("mission confirmation invalid")
+    _decode_stored_provenance(_row_value(stored, "proposal_provenance_json"))
     confirmed = _decode_stored_specification(_row_value(stored, "specification_json"))
     recomputed = authorization_digest(
         confirmed.mission_version, confirmed.authorization_envelope
@@ -533,6 +596,14 @@ def confirm_mission(
     if digest != recomputed:
         raise ValueError("authorization digest mismatch")
     confirmed.confirm(digest)
+    existing_task_ids = {
+        cast(str, _row_value(row, "task_id"))
+        for row in _identities(snapshot, "tasks")
+    }
+    if any(
+        task.task_id in existing_task_ids for task in confirmed.mission_version.tasks
+    ):
+        raise ValueError("task identity conflict")
 
     next_revision = snapshot.revision + 1
     result = {
@@ -605,6 +676,11 @@ def cancel_mission(
         row for row in _rows(snapshot, "missions") if _row_value(row, "mission_id") == mission_id
     ]
     if len(matching) != 1:
+        if any(
+            _row_value(row, "mission_id") == mission_id
+            for row in _identities(snapshot, "missions")
+        ):
+            raise ValueError("mission terminal")
         raise ValueError("mission cancellation invalid")
     if _row_value(matching[0], "status") in _TERMINAL_MISSION_STATES:
         raise ValueError("mission terminal")
@@ -648,6 +724,7 @@ def _validate_command(
         type(command) is not CommandEnvelope
         or command.kind != kind
         or actor.get("kind") != "human"
+        or not _valid_identifier(actor.get("id"))
         or not payload_matches
     ):
         raise MutationValidationError("mission command invalid")
