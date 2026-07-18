@@ -12,7 +12,7 @@ from agentdeck.domain.authorization import (
     ExternalEffectPolicy,
     authorization_digest,
 )
-from agentdeck.domain.mission import MissionVersion, TaskSpec
+from agentdeck.domain.mission import MAX_CANONICAL_NODES, MissionVersion, TaskSpec
 
 
 def task(task_id: str, *, dependency: str | None = None) -> TaskSpec:
@@ -176,6 +176,44 @@ def test_authorization_envelope_is_frozen_and_detached() -> None:
     assert authority.to_dict()["metadata"] == {"nested": {"paths": ["src"]}}
     with pytest.raises(FrozenInstanceError):
         authority.max_attempts = 4  # type: ignore[misc]
+
+
+def test_envelope_metadata_accepts_signed64_and_exact_canonical_node_boundary() -> None:
+    boundary_metadata = {
+        "items": [0] * (MAX_CANONICAL_NODES - 4),
+        "minimum": -(2**63),
+        "maximum": (2**63) - 1,
+    }
+
+    assert replace(envelope(), metadata=boundary_metadata).to_dict()[
+        "metadata"
+    ] == boundary_metadata
+
+
+@pytest.mark.parametrize("value", [2**63, -(2**63) - 1])
+def test_envelope_metadata_rejects_integer_outside_signed64(value: int) -> None:
+    with pytest.raises(ValueError, match="^authorization envelope invalid$"):
+        replace(envelope(), metadata={"value": value})
+
+
+def test_envelope_metadata_rejects_more_than_canonical_node_limit() -> None:
+    with pytest.raises(ValueError, match="^authorization envelope invalid$"):
+        replace(
+            envelope(),
+            metadata={"items": [0] * (MAX_CANONICAL_NODES - 1)},
+        )
+
+
+def test_authorization_digest_sanitizes_canonical_serialization_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_serialization(_self: MissionVersion) -> dict[str, object]:
+        raise ValueError("raw interpreter detail")
+
+    monkeypatch.setattr(MissionVersion, "to_dict", fail_serialization)
+
+    with pytest.raises(ValueError, match="^authorization digest input invalid$"):
+        authorization_digest(mission_version(), envelope())
 
 
 @pytest.mark.parametrize(

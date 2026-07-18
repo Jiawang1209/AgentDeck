@@ -23,6 +23,16 @@
   field-by-field digest evidence across Mission objective/criteria/constraints
   and Task objective/criteria/dependencies/retry/budget, so every approved
   governance input is demonstrably part of the exact confirmation digest.
+- Replaced recursive Task DAG validation with bounded iterative Kahn traversal,
+  allowing valid 1,100-level reverse-topological chains without leaking
+  `RecursionError` while capping a Mission version at 2,048 Tasks and 8,192
+  dependency edges. Duplicate, missing, cyclic, or over-limit graphs retain
+  the fixed `task graph invalid` diagnostic.
+- Bounded canonical Mission/authorization metadata to signed-64 integers,
+  depth 16, and 4,096 total values/containers before digest construction;
+  both domain constructors and digest serialization now map failures to their
+  fixed sanitized errors. Renamed the domain Mission test module so default
+  pytest collection no longer collides with the legacy top-level Mission test.
 - Bound confirmation to the exact canonical Mission version and authorization
   envelope with a lowercase SHA-256 digest. Declared tuple order remains
   semantically significant while mapping insertion order does not; stale or

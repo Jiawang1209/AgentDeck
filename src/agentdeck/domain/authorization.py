@@ -125,15 +125,18 @@ def authorization_digest(
         envelope, AuthorizationEnvelope
     ):
         raise ValueError("authorization digest input invalid")
-    canonical = json.dumps(
-        {
-            "authorization_envelope": envelope.to_dict(),
-            "mission_version": mission_version.to_dict(),
-        },
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
-    ).encode("utf-8")
+    try:
+        canonical = json.dumps(
+            {
+                "authorization_envelope": envelope.to_dict(),
+                "mission_version": mission_version.to_dict(),
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    except (TypeError, ValueError, UnicodeEncodeError, OverflowError):
+        raise ValueError("authorization digest input invalid") from None
     return "sha256:" + hashlib.sha256(canonical).hexdigest()
 
 

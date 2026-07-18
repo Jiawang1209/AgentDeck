@@ -6,7 +6,9 @@ import pytest
 
 from agentdeck.domain.mission import (
     MAX_BUDGET_UNITS,
+    MAX_CANONICAL_NODES,
     MAX_RETRY_LIMIT,
+    MAX_TASK_COUNT,
     AttemptState,
     MissionVersion,
     TaskSpec,
@@ -68,6 +70,42 @@ def test_task_dag_accepts_declared_dependency_order() -> None:
     assert mission(*tasks).tasks == tasks
 
 
+def test_task_dag_accepts_deep_reverse_topological_chain_without_recursion() -> None:
+    task_count = 1_100
+    tasks = tuple(
+        task(
+            f"task_{index}",
+            dependencies=()
+            if index == task_count - 1
+            else (f"task_{index + 1}",),
+        )
+        for index in range(task_count)
+    )
+
+    assert validate_task_dag(tasks) == tasks
+
+
+def test_task_dag_rejects_unbounded_task_and_dependency_counts() -> None:
+    too_many_tasks = tuple(
+        task(f"task_{index}") for index in range(MAX_TASK_COUNT + 1)
+    )
+    with pytest.raises(ValueError, match="^task graph invalid$"):
+        validate_task_dag(too_many_tasks)
+
+    dependency_heavy = tuple(
+        task(
+            f"task_{index}",
+            dependencies=tuple(
+                f"task_{dependency}"
+                for dependency in range(max(0, index - 5), index)
+            ),
+        )
+        for index in range(MAX_TASK_COUNT)
+    )
+    with pytest.raises(ValueError, match="^task graph invalid$"):
+        validate_task_dag(dependency_heavy)
+
+
 def test_task_and_mission_are_frozen_and_detached() -> None:
     metadata = {"nested": {"owners": ["human"]}}
     version = MissionVersion(
@@ -94,6 +132,82 @@ def test_task_and_mission_are_frozen_and_detached() -> None:
         version.goal = "changed"  # type: ignore[misc]
     with pytest.raises(FrozenInstanceError):
         version.tasks[0].objective = "changed"  # type: ignore[misc]
+
+
+def test_mission_metadata_accepts_signed64_and_exact_canonical_node_boundary() -> None:
+    boundary_metadata = {
+        "items": [0] * (MAX_CANONICAL_NODES - 4),
+        "minimum": -(2**63),
+        "maximum": (2**63) - 1,
+    }
+
+    version = mission(task("build"))
+    bounded = MissionVersion(
+        mission_id=version.mission_id,
+        version=version.version,
+        goal=version.goal,
+        scope=version.scope,
+        exclusions=version.exclusions,
+        tasks=version.tasks,
+        acceptance_criteria=version.acceptance_criteria,
+        constraints=version.constraints,
+        max_parallel_tasks=version.max_parallel_tasks,
+        budget_units=version.budget_units,
+        ordered_routes=version.ordered_routes,
+        expires_at=version.expires_at,
+        provenance_source=version.provenance_source,
+        provenance_id=version.provenance_id,
+        metadata=boundary_metadata,
+    )
+
+    assert bounded.to_dict()["metadata"] == boundary_metadata
+
+
+@pytest.mark.parametrize("value", [2**63, -(2**63) - 1])
+def test_mission_metadata_rejects_integer_outside_signed64(value: int) -> None:
+    version = mission(task("build"))
+
+    with pytest.raises(ValueError, match="^mission version invalid$"):
+        MissionVersion(
+            mission_id=version.mission_id,
+            version=version.version,
+            goal=version.goal,
+            scope=version.scope,
+            exclusions=version.exclusions,
+            tasks=version.tasks,
+            acceptance_criteria=version.acceptance_criteria,
+            constraints=version.constraints,
+            max_parallel_tasks=version.max_parallel_tasks,
+            budget_units=version.budget_units,
+            ordered_routes=version.ordered_routes,
+            expires_at=version.expires_at,
+            provenance_source=version.provenance_source,
+            provenance_id=version.provenance_id,
+            metadata={"value": value},
+        )
+
+
+def test_mission_metadata_rejects_more_than_canonical_node_limit() -> None:
+    version = mission(task("build"))
+
+    with pytest.raises(ValueError, match="^mission version invalid$"):
+        MissionVersion(
+            mission_id=version.mission_id,
+            version=version.version,
+            goal=version.goal,
+            scope=version.scope,
+            exclusions=version.exclusions,
+            tasks=version.tasks,
+            acceptance_criteria=version.acceptance_criteria,
+            constraints=version.constraints,
+            max_parallel_tasks=version.max_parallel_tasks,
+            budget_units=version.budget_units,
+            ordered_routes=version.ordered_routes,
+            expires_at=version.expires_at,
+            provenance_source=version.provenance_source,
+            provenance_id=version.provenance_id,
+            metadata={"items": [0] * (MAX_CANONICAL_NODES - 1)},
+        )
 
 
 @pytest.mark.parametrize(

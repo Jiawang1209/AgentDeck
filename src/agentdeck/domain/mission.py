@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import deque
 from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import Enum
@@ -18,8 +19,13 @@ if TYPE_CHECKING:
 MAX_RETRY_LIMIT = 32
 MAX_BUDGET_UNITS = 1_000_000
 MAX_PARALLEL_TASKS = 256
+MAX_TASK_COUNT = 2_048
+MAX_TASK_DEPENDENCIES = 8_192
+MAX_CANONICAL_NODES = 4_096
 _MAX_TEXT_BYTES = 4 * 1024
 _MAX_METADATA_DEPTH = 16
+_MIN_SIGNED_64 = -(2**63)
+_MAX_SIGNED_64 = (2**63) - 1
 
 
 type CanonicalValue = (
@@ -58,12 +64,23 @@ def _freeze_canonical(
     *,
     depth: int = 0,
     active: set[int] | None = None,
+    remaining_nodes: list[int] | None = None,
 ) -> CanonicalValue:
+    remaining_nodes = (
+        [MAX_CANONICAL_NODES] if remaining_nodes is None else remaining_nodes
+    )
+    remaining_nodes[0] -= 1
+    if remaining_nodes[0] < 0:
+        raise _InvalidCanonicalValue
     if depth > _MAX_METADATA_DEPTH:
         raise _InvalidCanonicalValue
     if value is None or isinstance(value, bool):
         return value
-    if isinstance(value, int) and not isinstance(value, bool):
+    if (
+        isinstance(value, int)
+        and not isinstance(value, bool)
+        and _MIN_SIGNED_64 <= value <= _MAX_SIGNED_64
+    ):
         return value
     if isinstance(value, str):
         try:
@@ -79,7 +96,12 @@ def _freeze_canonical(
         active.add(identity)
         try:
             return tuple(
-                _freeze_canonical(item, depth=depth + 1, active=active)
+                _freeze_canonical(
+                    item,
+                    depth=depth + 1,
+                    active=active,
+                    remaining_nodes=remaining_nodes,
+                )
                 for item in value
             )
         finally:
@@ -100,7 +122,10 @@ def _freeze_canonical(
                 except UnicodeEncodeError as exc:
                     raise _InvalidCanonicalValue from exc
                 frozen[key] = _freeze_canonical(
-                    item, depth=depth + 1, active=active
+                    item,
+                    depth=depth + 1,
+                    active=active,
+                    remaining_nodes=remaining_nodes,
                 )
             return MappingProxyType(frozen)
         finally:
@@ -189,15 +214,20 @@ class TaskSpec:
 def validate_task_dag(tasks: tuple[TaskSpec, ...]) -> tuple[TaskSpec, ...]:
     """Validate a closed DAG while preserving the declared Task order."""
 
-    if not isinstance(tasks, tuple) or not tasks or not all(
-        isinstance(item, TaskSpec) for item in tasks
+    if (
+        not isinstance(tasks, tuple)
+        or not tasks
+        or len(tasks) > MAX_TASK_COUNT
+        or not all(
+            isinstance(item, TaskSpec) for item in tasks
+        )
     ):
         raise ValueError("task graph invalid")
     task_ids = tuple(item.task_id for item in tasks)
     if len(set(task_ids)) != len(task_ids):
         raise ValueError("task graph invalid")
     known = set(task_ids)
-    if any(
+    if sum(len(item.dependencies) for item in tasks) > MAX_TASK_DEPENDENCIES or any(
         len(set(item.dependencies)) != len(item.dependencies)
         or item.task_id in item.dependencies
         or not set(item.dependencies).issubset(known)
@@ -205,23 +235,22 @@ def validate_task_dag(tasks: tuple[TaskSpec, ...]) -> tuple[TaskSpec, ...]:
     ):
         raise ValueError("task graph invalid")
 
-    dependencies = {item.task_id: item.dependencies for item in tasks}
-    visiting: set[str] = set()
-    visited: set[str] = set()
-
-    def visit(task_id: str) -> None:
-        if task_id in visiting:
-            raise ValueError("task graph invalid")
-        if task_id in visited:
-            return
-        visiting.add(task_id)
-        for dependency in dependencies[task_id]:
-            visit(dependency)
-        visiting.remove(task_id)
-        visited.add(task_id)
-
-    for task_id in task_ids:
-        visit(task_id)
+    indegree = {item.task_id: len(item.dependencies) for item in tasks}
+    dependents: dict[str, list[str]] = {task_id: [] for task_id in task_ids}
+    for item in tasks:
+        for dependency in item.dependencies:
+            dependents[dependency].append(item.task_id)
+    ready = deque(task_id for task_id in task_ids if indegree[task_id] == 0)
+    visited_count = 0
+    while ready:
+        task_id = ready.popleft()
+        visited_count += 1
+        for dependent in dependents[task_id]:
+            indegree[dependent] -= 1
+            if indegree[dependent] == 0:
+                ready.append(dependent)
+    if visited_count != len(tasks):
+        raise ValueError("task graph invalid")
     return tasks
 
 
