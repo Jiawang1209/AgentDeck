@@ -4,6 +4,25 @@
 
 ## 2026-07-18
 
+### Model ProductSession and Agent identity
+
+- Completed R1 Task 5 with immutable in-memory ProductSession facts, the exact
+  22-edge declared session state machine, immutable transition authority, and
+  explicit transition rejection that leaves the original session unchanged.
+- Open-goal retention is copy-on-write and setup-only. The retained goal
+  survives the legal setup-to-ready transition without mutating either earlier
+  ProductSession value.
+- Added immutable AgentBackend and AgentInstance identities with the five
+  product roles. A pure tuple-copying validation boundary rejects duplicate
+  Agent Instance or ACP session identifiers while allowing one backend to fill
+  separate roles through distinct identities; this is not inventory or
+  scheduling.
+- TDD RED confirmed both new Kernel modules were absent. Focused tests cover
+  the Cartesian matrix of every state pair, all 22 allowed edges, every
+  disallowed edge, immutable facts and transition authority, setup-only goal
+  retention, duplicate Agent identity rejection, and empty, whitespace, or
+  incorrectly typed identities without persistence or legacy imports.
+
 ### Add kernel event and diagnostic facts
 
 - Completed R1 Task 4 with immutable Kernel `Diagnostic` and `DomainEvent`
