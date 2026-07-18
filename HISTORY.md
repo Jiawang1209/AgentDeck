@@ -76,7 +76,74 @@
   verification passed `123` tests.
   Complete verification passed `662` Product Kernel tests, the approved legacy
   substitute (`213 passed`), and compileall over `src` and `tests`.
+### Validate untrusted Leader Mission proposals
 
+- Completed R3 Task 16 with a new Leader Port whose immutable request carries
+  the bounded user goal, compact project root/summary, exact available Agent
+  instance and ACP route inventory, permission ceiling, resolved backend/
+  adapter/model/version identity, and an internal single schema-repair marker.
+  No legacy provider, orchestration, Mission schema, CLI Leader, Task 12, I/O,
+  provider, ACP, tmux, Store, environment, or filesystem dependency enters the
+  Port or Application service.
+- Added a closed, defensively materialized `LeaderProposal` mapping contract and
+  a fresh closed JSON Schema for later adapters. Validation separates schema
+  faults from semantic faults; it rejects missing or unknown proposal/task
+  fields, invalid types and declared values, unbounded text and collections,
+  hostile nested objects, non-project scope or project-root drift, resolved
+  Leader drift, permission expansion, unknown Agent/backend/ACP bindings,
+  malformed or non-unique four-stage graphs, self-dependencies, budgets above
+  the frozen defaults, and empty Mission or Task evidence criteria. Valid data
+  becomes the existing immutable Kernel `MissionDraft` rather than a second
+  Mission authority.
+- Added `LeaderService` with exactly one schema-only repair request. Semantic
+  failures are never repaired, a second schema failure stops, typed proposals
+  are revalidated against the current request, and timeout, nonzero,
+  authentication, transport, schema, semantic, cancellation, and oversize
+  diagnostic codes retain their exact categories without raw provider data.
+- Closed a spec-review P1 in all three untrusted mapping layers. Top-level
+  proposals, Task objects, and budgets now use one bounded exact-dict snapshot
+  that validates every key as a bounded exact string before any set operation,
+  copy, or value lookup. Non-string, hostile hash/equality, unstable, or
+  otherwise exceptional keys therefore become fixed content-free `schema`
+  failures; `LeaderService` gives them the one allowed schema repair instead of
+  misclassifying raw exceptions as transport failures. Semantic failures remain
+  non-repairable.
+- A second quality review made the content-free boundary cover complete Python
+  exception chains: untrusted UTF-8, Enum, TaskDefinition, and MissionDraft
+  conversion causes are suppressed, and `LeaderService` rebuilds every typed
+  Port failure from its validated category rather than trusting its message.
+  Schema still receives at most one repair and semantic failure still receives
+  none. An exact Task list must contain four items before any item is inspected;
+  available Agent context is capped at 64 before copying or uniqueness sets;
+  and the exported JSON Schema now matches runtime's 1..64 allowed-effect bound.
+- Re-quality removed the remaining hidden exception ancestry. Permission, role,
+  and effect conversion now uses exact local allowlists; UTF-8 and validator
+  failures are reduced to flags before their `except` suites end; and fixed
+  proposal or service failures are raised only afterward. Recursive traversal
+  of both `__cause__` and `__context__` therefore cannot recover untrusted
+  permission, role, effect, TaskDefinition, MissionDraft, or Port messages.
+  The closed JSON Schema and shared proposal fields moved to the cohesive
+  `leader_schema.py` Port module so every touched source file remains bounded.
+- TDD RED first produced the expected two collection errors because the Leader
+  Port and service modules were absent. After initial GREEN, strict-input review
+  produced `2 failed / 25 passed` for task-level evidence categorization and a
+  hostile `deepcopy` escape; graph review then produced `2 failed / 27 passed`
+  for duplicate Task identity and self-dependency categorization. Spec review
+  then produced `6 failed / 47 passed` for deterministic hash-collision keys at
+  the proposal, Task, and budget layers, both directly and through the service.
+  The first P1 focused Leader suites passed `53` tests, and Leader plus Kernel
+  Mission and architecture regression passed `141` tests. The second quality
+  RED then produced `16 failed / 42 passed`; its final focused suites pass `58`
+  tests and the combined regression passes `146` tests. Re-quality then produced
+  `7 failed / 59 passed` for recursive exception ancestry; its focused suites
+  pass `66` tests and combined regression passes `154` tests. A first exclusive full run had
+  one unrelated Task 11 native-executable timing failure (`1 failed / 658
+  passed`); that exact test passed alone, and the next exclusive complete
+  pre-review Product Kernel run passed `659` tests. After the P1 fix, the final
+  review run passed `665` tests; after the second quality fix, the final complete
+  review run passed `670` tests; after re-quality, the final complete Product
+  Kernel run passes `678` tests. The approved legacy substitute passes `213`
+  tests and compileall exits zero.
 ### Discover product backends without side effects
 
 - Completed R2 Task 11 with an immutable configuration resolver whose exact
