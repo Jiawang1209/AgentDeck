@@ -18387,6 +18387,12 @@ def run_loop_command(args: argparse.Namespace) -> int:
     return 0
 
 
+def product_dev_command(args: argparse.Namespace) -> int:
+    from agentdeck.product.bootstrap import run_product_dev
+
+    return run_product_dev(diagnostic=bool(args.diagnostic))
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="agentdeck")
     subparsers = parser.add_subparsers(dest="command")
@@ -19226,6 +19232,16 @@ def build_parser() -> argparse.ArgumentParser:
     internal_serve = internal_subparsers.add_parser("serve", help=argparse.SUPPRESS)
     internal_serve.add_argument("--project", required=True)
     internal_serve.set_defaults(func=daemon_serve_command)
+
+    product_dev = subparsers.add_parser("_product", help=argparse.SUPPRESS)
+    product_dev.add_argument("--diagnostic", action="store_true")
+    product_dev.set_defaults(func=product_dev_command)
+    subparsers._choices_actions[:] = [
+        action for action in subparsers._choices_actions if action.dest != "_product"
+    ]
+    subparsers.metavar = "{" + ",".join(
+        name for name in subparsers.choices if name != "_product"
+    ) + "}"
 
     return parser
 

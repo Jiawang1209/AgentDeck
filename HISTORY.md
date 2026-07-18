@@ -4,6 +4,23 @@
 
 ## 2026-07-18
 
+### Add the hidden Product Kernel development entry
+
+- Completed R0 Task 2: added the isolated Product bootstrap development entry
+  and the temporary lazy CLI composition bridge at `agentdeck _product`.
+  `--diagnostic` returns the human-readable ready signal; the normal entry
+  reports that the Product Kernel remains under development.
+- TDD RED confirmed both absent pieces: `_product` was not a recognized
+  subcommand and `agentdeck.product.bootstrap` did not exist. Minimal GREEN
+  now passes the new two-case entry test, the Product architecture guard, and
+  the existing conversation acceptance regression, preserving bare AgentDeck
+  behavior.
+- Review added a help-surface RED: `argparse.SUPPRESS` left `_product` in the
+  usage and command list. The local parser repair removes only its help
+  pseudo-action and derives the metavar from visible choices, so the hidden
+  command remains parseable while public help remains unchanged otherwise;
+  the expanded entry test is GREEN.
+
 ### Establish the Product Kernel Rewrite package boundary
 
 - Completed R0 Task 1: added the Kernel, Application, Ports, Adapters, and
