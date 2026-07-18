@@ -76,6 +76,7 @@
   verification passed `123` tests.
   Complete verification passed `662` Product Kernel tests, the approved legacy
   substitute (`213 passed`), and compileall over `src` and `tests`.
+
 ### Validate untrusted Leader Mission proposals
 
 - Completed R3 Task 16 with a new Leader Port whose immutable request carries
@@ -144,6 +145,46 @@
   review run passed `670` tests; after re-quality, the final complete Product
   Kernel run passes `678` tests. The approved legacy substitute passes `213`
   tests and compileall exits zero.
+
+### Define the ACP-only Worker Port and stable event contract
+
+- Added the R4 Worker Port with closed `start_task`, `stream_events`,
+  `respond_permission`, `cancel_task`, and `collect_result` operations. Frozen
+  Task, handle, event, and terminal-result values preserve Agent, Task,
+  Attempt, ACP Session, transport, sequence, timestamp, and redacted payload
+  lineage without exposing Store, tmux, PTY, or legacy communication types.
+- Worker Events accept only the ten approved stable kinds and exact `acp`
+  transport. Their recursively defensive payload projection is bounded,
+  immutable, finite, SQLite-integer-safe, and accepts only exact built-in JSON
+  containers. One canonical camel/non-alphanumeric key classifier rejects
+  sensitive word and compact key families at any position; bounded assignment
+  parsing, including quoted JSON keys, reuses that classifier, while
+  Bearer/private-key shapes fail explicitly. Sensitive-shaped observability
+  keys are admitted only for exact numeric/bool values with closed metric
+  suffixes. Immutable payloads can be safely and boundedly re-snapshotted from
+  `MappingProxyType`; every other custom Mapping still fails content-free.
+  Worker Results use the same boundary.
+- Added one reusable async Worker conformance suite and a deterministic
+  `FakeWorker` state machine that exercises all five operations, requires the
+  observed permission request id, validates bounded/redacted reasons, emits one
+  final terminal event, supports pre-terminal cancellation on a fresh Worker,
+  and rejects irreversible late cancellation without any persistence
+  capability. Its re-entrant async iterator cannot advance past a pending
+  permission; response resumes the same cursor, while cancellation/terminal
+  clear pending state and make every later response fail deterministically.
+  Cancellation conformance independently proves full handle lineage, ACP
+  transport, strictly increasing sequence, one final terminal, and matching
+  result; a deliberately wrong-lineage Fake is rejected. TDD RED failed at the
+  missing `agentdeck.ports.worker` module;
+  review RED then proved `api-key` and later `openaiApiKey` were incorrectly
+  accepted; first quality RED proved the shared flow had no permission event;
+  re-quality
+  RED proved permission could advance without response. Focused GREEN passed
+  `47` tests. Final verification passed `61` focused-plus-architecture tests,
+  `659` Product Kernel tests, the approved `213` legacy substitute tests, compileall,
+  diff/scope checks, and the per-file 500-line gate.
+
+
 ### Discover product backends without side effects
 
 - Completed R2 Task 11 with an immutable configuration resolver whose exact
