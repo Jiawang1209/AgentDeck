@@ -45,6 +45,25 @@
   RED failed once for empty recovery actions. Focused GREEN passed all `56`
   Product parser and renderer tests.
 
+### Add the bounded OpenAI-compatible Leader adapter
+
+- Added a stdlib-only OpenAI-compatible Leader Port adapter with frozen
+  provider/model identity, DeepSeek/Kimi/GLM connection presets, and explicit
+  Custom base URL plus credential-source configuration. Credentials are
+  resolved only for a proposal call and are neither retained nor included in
+  diagnostics.
+- Added exact structured Mission schema requests and local validation of the
+  returned proposal against the current request before it can cross the Port.
+  Bounded timeout/response reads and content-free typed failures preserve
+  authentication, nonzero, transport, timeout, oversize, schema, and semantic
+  categories without provider/model fallback.
+- TDD RED failed during collection because the adapter module did not exist.
+  The local-only HTTP contract suite then passed all `33` focused cases,
+  including timeout, authentication, nonzero status, malformed/oversize
+  response, identity drift, schema/semantic failure, and secret/body leakage
+  probes; combined Leader contract and architecture verification passed `88`
+  tests.
+
 ### Correct Task 21 creation inventory
 
 - Corrected Task 21's ACP Worker adapter and adversarial fake fixture from
