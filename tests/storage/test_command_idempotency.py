@@ -339,3 +339,52 @@ def test_entity_insert_rejects_bool_even_for_integer_schema_column() -> None:
             },
         )
     assert raised.value.__cause__ is None
+
+
+@pytest.mark.parametrize(
+    "tamper",
+    ["ghost_event", "event_revision", "command_revision"],
+)
+def test_exact_replay_fails_closed_when_persisted_ledger_does_not_match_outcome(
+    store: SQLiteMissionStore,
+    tamper: str,
+) -> None:
+    command = _command()
+    store.apply_command(command, lambda snapshot: _decision(command, event_id="evt_1"))
+    if tamper == "ghost_event":
+        store._connection.execute(  # noqa: SLF001
+            "INSERT INTO events("
+            "event_id, project_id, project_revision, trigger_kind, kind, "
+            "provenance_json, payload_json, command_id, adapter_event_id, "
+            "internal_trigger_id, created_at"
+            ") VALUES ("
+            "'evt_ghost', 'prj_1', 1, 'client_command', 'ghost', '{}', '{}', "
+            "'cmd_1', NULL, NULL, '2026-07-18T00:00:00Z'"
+            ")"
+        )
+    elif tamper == "event_revision":
+        store._connection.execute(  # noqa: SLF001
+            "UPDATE events SET project_revision = 0 WHERE event_id = 'evt_1'"
+        )
+    else:
+        store._connection.execute(  # noqa: SLF001
+            "UPDATE commands SET completed_revision = 0 WHERE command_id = 'cmd_1'"
+        )
+    called = 0
+
+    def must_not_decide(snapshot: object) -> MutationDecision:
+        nonlocal called
+        called += 1
+        return MutationDecision()
+
+    with pytest.raises(MutationValidationError, match="^command outcome invalid$"):
+        store.apply_command(command, must_not_decide)
+
+    assert called == 0
+    with store.open_reader() as reader:
+        assert reader.execute("SELECT revision FROM projects").fetchone() == (1,)
+        assert reader.execute("SELECT COUNT(*) FROM commands").fetchone() == (1,)
+        expected_events = 2 if tamper == "ghost_event" else 1
+        assert reader.execute("SELECT COUNT(*) FROM events").fetchone() == (
+            expected_events,
+        )

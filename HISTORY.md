@@ -31,6 +31,23 @@
   compare-and-swap project revision in one transaction, advancing exactly once.
   Callback, validation, serialization, SQL, event, revision, and commit failures
   roll back the command, entity rows, events, outcome, and revision together.
+  A store-owned mutation token now rejects and poisons nested `apply_command`
+  calls before they can touch the connection; the outer command also verifies
+  token ownership and transaction liveness after its decision callback, so a
+  caught nested error or callback-ended transaction cannot fall through into
+  partial autocommit writes.
+- Bounded every readable mutation snapshot to 1,024 rows and 64 KiB of
+  canonical row data, streaming rows in each table's declared primary-key
+  order and stopping before unbounded materialization. The store rebuilds and
+  validates the complete post-change snapshot inside the same transaction
+  before it appends events or advances the revision; a change that would make
+  the next command unreadable therefore rolls back while the prior state stays
+  usable.
+- Hardened exact command replay by cross-checking the persisted outcome against
+  completed command revisions, the current project revision, and the complete
+  event-cursor-ordered command ledger. Missing, extra, renamed, or wrong-revision
+  events and mismatched accepted/completed revisions now fail closed with one
+  fixed diagnostic before decision logic is called or state is written.
 - Added deterministic failure-injection, idempotent replay, changed-input,
   stale-revision, callback isolation, canonical-bound, and integrity regression
   tests. Injected failures before events, after the first event, and before the

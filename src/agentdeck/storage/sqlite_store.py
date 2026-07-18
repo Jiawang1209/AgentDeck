@@ -67,10 +67,19 @@ _MAX_SIGNED_64 = (2**63) - 1
 _MAX_MUTATION_BYTES = 64 * 1024
 _MAX_MUTATION_DEPTH = 16
 _MAX_TEXT_BYTES = 4096
+MAX_SNAPSHOT_ROWS = 1024
+MAX_SNAPSHOT_BYTES = 64 * 1024
 
 
 class _InvalidMutationValue(Exception):
     pass
+
+
+class _MutationToken:
+    __slots__ = ("poisoned",)
+
+    def __init__(self) -> None:
+        self.poisoned = False
 
 
 def _valid_mutation_text(value: object) -> bool:
@@ -398,20 +407,20 @@ _ENTITY_COLUMNS: dict[str, frozenset[str]] = {
     ),
 }
 
-_ENTITY_PRIMARY_KEYS: dict[str, frozenset[str]] = {
-    "missions": frozenset({"mission_id"}),
-    "mission_versions": frozenset({"mission_id", "version"}),
-    "tasks": frozenset({"task_id"}),
-    "attempts": frozenset({"attempt_id"}),
-    "sessions": frozenset({"session_id"}),
-    "permissions": frozenset({"permission_id"}),
-    "handoffs": frozenset({"handoff_id"}),
-    "evidence": frozenset({"evidence_id"}),
-    "approvals": frozenset({"approval_id"}),
-    "artifacts": frozenset({"artifact_id"}),
-    "learning": frozenset({"learning_id"}),
-    "suggestions": frozenset({"suggestion_id"}),
-    "legacy_records": frozenset({"record_id"}),
+_ENTITY_PRIMARY_KEYS: dict[str, tuple[str, ...]] = {
+    "missions": ("mission_id",),
+    "mission_versions": ("mission_id", "version"),
+    "tasks": ("task_id",),
+    "attempts": ("attempt_id",),
+    "sessions": ("session_id",),
+    "permissions": ("permission_id",),
+    "handoffs": ("handoff_id",),
+    "evidence": ("evidence_id",),
+    "approvals": ("approval_id",),
+    "artifacts": ("artifact_id",),
+    "learning": ("learning_id",),
+    "suggestions": ("suggestion_id",),
+    "legacy_records": ("record_id",),
 }
 
 _ENTITY_UPDATE_COLUMNS: dict[str, frozenset[str]] = {
@@ -485,8 +494,8 @@ class EntityChange:
             primary_key = _ENTITY_PRIMARY_KEYS[self.table]
             update_columns = _ENTITY_UPDATE_COLUMNS.get(self.table, frozenset())
             if self.operation == "update" and (
-                set(where) != primary_key
-                or not primary_key.isdisjoint(values)
+                set(where) != set(primary_key)
+                or not set(primary_key).isdisjoint(values)
                 or not set(values).issubset(update_columns)
                 or any(where[column] is None for column in primary_key)
             ):
@@ -528,6 +537,8 @@ class ProjectMutationSnapshot:
 
     def __post_init__(self) -> None:
         frozen_entities: dict[str, tuple[Mapping[str, _FrozenJsonValue], ...]] = {}
+        row_count = 0
+        byte_count = 0
         try:
             if (
                 not _valid_mutation_text(self.project_id)
@@ -539,7 +550,18 @@ class ProjectMutationSnapshot:
             for table, rows in self.entities.items():
                 if table not in _ENTITY_COLUMNS or not isinstance(rows, (list, tuple)):
                     raise _InvalidMutationValue
-                frozen_entities[table] = tuple(_frozen_mapping(dict(row)) for row in rows)
+                frozen_rows: list[Mapping[str, _FrozenJsonValue]] = []
+                byte_count += len(table.encode("utf-8"))
+                for row in rows:
+                    row_count += 1
+                    if row_count > MAX_SNAPSHOT_ROWS:
+                        raise _InvalidMutationValue
+                    frozen_row = _frozen_mapping(dict(row))
+                    byte_count += len(_canonical_mutation_bytes(frozen_row))
+                    if byte_count > MAX_SNAPSHOT_BYTES:
+                        raise _InvalidMutationValue
+                    frozen_rows.append(frozen_row)
+                frozen_entities[table] = tuple(frozen_rows)
         except (_InvalidMutationValue, TypeError, ValueError):
             raise MutationValidationError("mutation snapshot invalid") from None
         object.__setattr__(self, "entities", MappingProxyType(frozen_entities))
@@ -974,6 +996,7 @@ class SQLiteMissionStore:
         "_database_family_identity",
         "_project_revision",
         "_owner_pid",
+        "_active_mutation_token",
     )
 
     def __init__(
@@ -1005,6 +1028,7 @@ class SQLiteMissionStore:
         self._database_family_identity = database_family_identity
         self._project_revision = project_revision
         self._owner_pid = owner_pid
+        self._active_mutation_token: _MutationToken | None = None
 
     @classmethod
     def create(
@@ -1195,6 +1219,8 @@ class SQLiteMissionStore:
         authority_state: str,
     ) -> ProjectMutationSnapshot:
         entities: dict[str, list[dict[str, object]]] = {}
+        row_count = 0
+        byte_count = 0
         for table in _ENTITY_COLUMNS:
             columns = [
                 row[1]
@@ -1202,8 +1228,27 @@ class SQLiteMissionStore:
                     f'PRAGMA table_info("{table}")'
                 )
             ]
-            rows = self._connection.execute(f'SELECT * FROM "{table}"').fetchall()
-            entities[table] = [dict(zip(columns, row, strict=True)) for row in rows]
+            primary_key = _ENTITY_PRIMARY_KEYS[table]
+            order_by = ",".join(f'"{column}"' for column in primary_key)
+            cursor = self._connection.execute(
+                f'SELECT * FROM "{table}" ORDER BY {order_by}'
+            )
+            rows: list[dict[str, object]] = []
+            byte_count += len(table.encode("utf-8"))
+            for row in cursor:
+                row_count += 1
+                if row_count > MAX_SNAPSHOT_ROWS:
+                    raise MutationValidationError("mutation snapshot invalid")
+                value = dict(zip(columns, row, strict=True))
+                try:
+                    frozen = _frozen_mapping(value)
+                    byte_count += len(_canonical_mutation_bytes(frozen))
+                except _InvalidMutationValue:
+                    raise MutationValidationError("mutation snapshot invalid") from None
+                if byte_count > MAX_SNAPSHOT_BYTES:
+                    raise MutationValidationError("mutation snapshot invalid")
+                rows.append(value)
+            entities[table] = rows
         return ProjectMutationSnapshot(
             project_id=self._project_id,
             revision=revision,
@@ -1310,13 +1355,21 @@ class SQLiteMissionStore:
     ) -> MutationOutcome:
         """Atomically apply or exactly replay one immutable client command."""
 
+        active = self._active_mutation_token
+        if active is not None:
+            active.poisoned = True
+            raise MutationValidationError("nested mutation rejected") from None
         self._validate_authority()
         if type(command) is not CommandEnvelope or not callable(decide):
             raise MutationValidationError("command envelope invalid")
 
+        token = _MutationToken()
+        self._active_mutation_token = token
         committed_revision: int | None = None
+        began_transaction = False
         try:
             self._connection.execute("BEGIN IMMEDIATE")
+            began_transaction = True
             authority = self._connection.execute(
                 "SELECT project_id, revision, authority_state FROM projects"
             ).fetchall()
@@ -1327,23 +1380,54 @@ class SQLiteMissionStore:
             current_revision = self._project_revision
 
             existing = self._connection.execute(
-                "SELECT input_hash, status, outcome_json FROM commands "
+                "SELECT input_hash, status, outcome_json, accepted_revision, "
+                "completed_revision FROM commands "
                 "WHERE command_id = ? AND project_id = ?",
                 (command.command_id, self._project_id),
             ).fetchone()
             if existing is not None:
-                input_hash, status, outcome_json = existing
+                (
+                    input_hash,
+                    status,
+                    outcome_json,
+                    accepted_revision,
+                    completed_revision,
+                ) = existing
                 if input_hash != command.input_hash:
                     raise CommandConflict("command input mismatch")
                 if status != "completed" or not isinstance(outcome_json, str):
-                    raise SQLiteStoreError(_INVALID_SCHEMA)
+                    raise MutationValidationError("command outcome invalid")
                 try:
                     persisted = MutationOutcome.from_dict(json.loads(outcome_json))
                 except (json.JSONDecodeError, MutationValidationError):
-                    raise SQLiteStoreError(_INVALID_SCHEMA) from None
-                if persisted.command_id != command.command_id:
-                    raise SQLiteStoreError(_INVALID_SCHEMA)
+                    raise MutationValidationError("command outcome invalid") from None
+                if (
+                    persisted.command_id != command.command_id
+                    or not _valid_revision(accepted_revision)
+                    or not _valid_revision(completed_revision)
+                    or accepted_revision != completed_revision
+                    or completed_revision != persisted.revision
+                    or persisted.revision != command.expected_revision + 1
+                    or persisted.revision > current_revision
+                ):
+                    raise MutationValidationError("command outcome invalid")
+                event_rows = self._connection.execute(
+                    "SELECT event_id, project_revision FROM events "
+                    "WHERE command_id = ? ORDER BY event_cursor",
+                    (command.command_id,),
+                )
+                seen_event_ids: list[str] = []
+                for row in event_rows:
+                    if (
+                        len(seen_event_ids) >= len(persisted.event_ids)
+                        or row[1] != persisted.revision
+                    ):
+                        raise MutationValidationError("command outcome invalid")
+                    seen_event_ids.append(row[0])
+                if tuple(seen_event_ids) != persisted.event_ids:
+                    raise MutationValidationError("command outcome invalid")
                 self._connection.rollback()
+                began_transaction = False
                 self._validate_authority()
                 return persisted
 
@@ -1356,7 +1440,19 @@ class SQLiteMissionStore:
                 revision=current_revision,
                 authority_state=self._authority_state,
             )
-            decision = self._validate_decision(command, decide(snapshot))
+            proposed = decide(snapshot)
+            if (
+                self._active_mutation_token is not token
+                or token.poisoned
+                or not self._connection.in_transaction
+            ):
+                message = (
+                    "nested mutation rejected"
+                    if token.poisoned
+                    else "mutation transaction invalid"
+                )
+                raise MutationValidationError(message)
+            decision = self._validate_decision(command, proposed)
 
             self._connection.execute(
                 "INSERT INTO commands("
@@ -1380,6 +1476,10 @@ class SQLiteMissionStore:
             )
             for change in decision.changes:
                 self._apply_entity_change(change, revision=next_revision)
+            self._mutation_snapshot(
+                revision=next_revision,
+                authority_state=self._authority_state,
+            )
             for event in decision.events:
                 self._insert_event(event, revision=next_revision)
 
@@ -1410,12 +1510,20 @@ class SQLiteMissionStore:
             if updated_project.rowcount != 1:
                 raise RevisionConflict("stale project revision")
             self._connection.commit()
+            began_transaction = False
             committed_revision = next_revision
         except BaseException:
-            if self._connection.in_transaction:
+            if (
+                began_transaction
+                and self._active_mutation_token is token
+                and self._connection.in_transaction
+            ):
                 self._connection.rollback()
             self._validate_authority()
             raise
+        finally:
+            if self._active_mutation_token is token:
+                self._active_mutation_token = None
 
         self._project_revision = cast(int, committed_revision)
         self._validate_authority()

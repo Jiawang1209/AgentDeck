@@ -9,10 +9,12 @@ import pytest
 
 from agentdeck.domain.events import DomainEvent
 from agentdeck.storage.sqlite_store import (
+    MAX_SNAPSHOT_ROWS,
     CommandEnvelope,
     EntityChange,
     MutationDecision,
     MutationOutcome,
+    MutationValidationError,
     ProjectMutationSnapshot,
     SQLiteMissionStore,
 )
@@ -254,6 +256,188 @@ def test_outcome_serialization_failure_rolls_back_prior_entity_and_event(
                 events=(_event(command),),
                 result={"x": "a" * 65_480},
             ),
+        )
+
+    _assert_empty_at_revision_zero(store)
+
+
+def test_nested_apply_poisoning_fails_outer_without_partial_rows(
+    store: SQLiteMissionStore,
+) -> None:
+    outer = _command(command_id="cmd_outer")
+    inner = _command(command_id="cmd_inner")
+
+    def decide(snapshot: ProjectMutationSnapshot) -> MutationDecision:
+        with pytest.raises(MutationValidationError, match="^nested mutation rejected$"):
+            store.apply_command(
+                inner,
+                lambda nested: _decision(store, inner),
+            )
+        return _decision(store, outer)
+
+    with pytest.raises(MutationValidationError, match="^nested mutation rejected$"):
+        store.apply_command(outer, decide)
+
+    _assert_empty_at_revision_zero(store)
+    assert store.apply_command(
+        outer,
+        lambda snapshot: _decision(store, outer),
+    ).revision == 1
+
+
+def test_callback_cannot_end_owned_transaction_and_fall_into_autocommit(
+    store: SQLiteMissionStore,
+) -> None:
+    command = _command(command_id="cmd_transaction")
+
+    def decide(snapshot: ProjectMutationSnapshot) -> MutationDecision:
+        store._connection.rollback()  # noqa: SLF001
+        return _decision(store, command)
+
+    with pytest.raises(
+        MutationValidationError,
+        match="^mutation transaction invalid$",
+    ):
+        store.apply_command(command, decide)
+
+    _assert_empty_at_revision_zero(store)
+    assert store.apply_command(
+        command,
+        lambda snapshot: _decision(store, command),
+    ).revision == 1
+
+
+def test_post_change_snapshot_must_remain_readable_and_failure_is_atomic(
+    store: SQLiteMissionStore,
+) -> None:
+    first = _command(command_id="cmd_first")
+    first_decision = MutationDecision(
+        changes=(
+            EntityChange.insert(
+                "learning",
+                {
+                    "learning_id": "lrn_1",
+                    "project_id": store.project_id,
+                    "source_evidence_id": None,
+                    "review_json": "a" * 35_000,
+                    "application_json": None,
+                    "created_revision": 1,
+                },
+            ),
+        ),
+        events=(_event(first, event_id="evt_first"),),
+        result={},
+    )
+    assert store.apply_command(first, lambda snapshot: first_decision).revision == 1
+
+    oversized = _command(command_id="cmd_oversized", expected_revision=1)
+    with pytest.raises(MutationValidationError, match="^mutation snapshot invalid$"):
+        store.apply_command(
+            oversized,
+            lambda snapshot: MutationDecision(
+                changes=(
+                    EntityChange.update(
+                        "learning",
+                        {"application_json": "b" * 35_000},
+                        where={"learning_id": "lrn_1"},
+                    ),
+                ),
+                events=(_event(oversized, event_id="evt_oversized"),),
+                result={},
+            ),
+        )
+
+    with store.open_reader() as reader:
+        assert reader.execute("SELECT revision FROM projects").fetchone() == (1,)
+        assert reader.execute("SELECT COUNT(*) FROM commands").fetchone() == (1,)
+        assert reader.execute("SELECT COUNT(*) FROM events").fetchone() == (1,)
+        assert reader.execute(
+            "SELECT length(review_json), application_json FROM learning"
+        ).fetchone() == (35_000, None)
+
+    third = _command(command_id="cmd_third", expected_revision=1)
+    assert store.apply_command(
+        third,
+        lambda snapshot: MutationDecision(
+            changes=(
+                EntityChange.update(
+                    "learning",
+                    {"application_json": "applied"},
+                    where={"learning_id": "lrn_1"},
+                ),
+            ),
+            events=(_event(third, event_id="evt_third"),),
+            result={},
+        ),
+    ).revision == 2
+
+
+def test_snapshot_rows_are_stably_ordered_by_declared_primary_key(
+    store: SQLiteMissionStore,
+) -> None:
+    first = _command(command_id="cmd_insert")
+
+    def approval(approval_id: str) -> EntityChange:
+        return EntityChange.insert(
+            "approvals",
+            {
+                "approval_id": approval_id,
+                "project_id": store.project_id,
+                "subject_kind": "mission",
+                "subject_id": approval_id,
+                "subject_digest": "sha256:" + "a" * 64,
+                "status": "pending",
+                "actor_json": None,
+                "decision_revision": None,
+            },
+        )
+
+    store.apply_command(
+        first,
+        lambda snapshot: MutationDecision(
+            changes=(approval("apv_z"), approval("apv_a"), approval("apv_m")),
+            events=(_event(first, event_id="evt_insert"),),
+            result={},
+        ),
+    )
+    second = _command(command_id="cmd_observe", expected_revision=1)
+    observed: list[str] = []
+
+    def observe(snapshot: ProjectMutationSnapshot) -> MutationDecision:
+        observed.extend(
+            str(row["approval_id"]) for row in snapshot.entities["approvals"]
+        )
+        return MutationDecision(events=(_event(second, event_id="evt_observe"),))
+
+    store.apply_command(second, observe)
+    assert observed == ["apv_a", "apv_m", "apv_z"]
+
+
+def test_post_change_snapshot_row_budget_rolls_back_without_unbounded_commit(
+    store: SQLiteMissionStore,
+) -> None:
+    command = _command(command_id="cmd_many")
+    changes = tuple(
+        EntityChange.insert(
+            "approvals",
+            {
+                "approval_id": f"apv_{index:05d}",
+                "project_id": store.project_id,
+                "subject_kind": "mission",
+                "subject_id": "mis_1",
+                "subject_digest": "sha256:" + "a" * 64,
+                "status": "pending",
+                "actor_json": None,
+                "decision_revision": None,
+            },
+        )
+        for index in range(MAX_SNAPSHOT_ROWS + 1)
+    )
+
+    with pytest.raises(MutationValidationError, match="^mutation snapshot invalid$"):
+        store.apply_command(
+            command,
+            lambda snapshot: MutationDecision(changes=changes, result={}),
         )
 
     _assert_empty_at_revision_zero(store)
