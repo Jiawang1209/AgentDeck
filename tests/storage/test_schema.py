@@ -750,3 +750,54 @@ def test_open_writer_connect_race_never_creates_or_deletes_database(
             database.unlink()
         if saved.exists():
             shutil.move(saved, database)
+
+
+@pytest.mark.parametrize("suffix", ["-wal", "-shm"])
+@pytest.mark.parametrize("operation", ["property", "reader"])
+def test_active_store_rejects_replaced_database_sidecar_identity(
+    tmp_path: Path,
+    suffix: str,
+    operation: str,
+) -> None:
+    root = tmp_path / "project"
+    other_root = tmp_path / "other"
+    database = _make_valid_database(root)
+    other_database = _make_valid_database(other_root, project_id="prj_other")
+    other_writer = sqlite3.connect(other_database)
+    other_writer.execute("PRAGMA journal_mode=WAL")
+    other_writer.execute("PRAGMA wal_autocheckpoint=0")
+    other_writer.execute("UPDATE projects SET revision = 99")
+    other_writer.commit()
+    assert other_writer.execute(
+        "SELECT revision FROM projects"
+    ).fetchone() == (99,)
+
+    try:
+        with ProjectWriterLease.acquire(root) as lease:
+            with SQLiteMissionStore.open(root, lease=lease) as store:
+                sidecar = Path(f"{database}{suffix}")
+                other_sidecar = Path(f"{other_database}{suffix}")
+                saved = root / ".agentdeck" / f"state.db{suffix}.original"
+                assert sidecar.is_file()
+                assert other_sidecar.is_file()
+                sidecar.rename(saved)
+                shutil.copyfile(other_sidecar, sidecar)
+                os.chmod(sidecar, 0o600)
+                reader: sqlite3.Connection | None = None
+                try:
+                    with pytest.raises(
+                        SQLiteStoreError,
+                        match="^SQLite authority identity invalid$",
+                    ) as raised:
+                        if operation == "property":
+                            _ = store.project_id
+                        else:
+                            reader = store.open_reader()
+                    assert raised.value.__cause__ is None
+                finally:
+                    if reader is not None:
+                        reader.close()
+                    sidecar.unlink()
+                    saved.rename(sidecar)
+    finally:
+        other_writer.close()

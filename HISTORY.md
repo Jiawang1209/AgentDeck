@@ -66,6 +66,15 @@
   authority path. Writer open uses `mode=rw`, so disappearance cannot create an
   empty database; path replacement is rejected without deleting or modifying
   the competing file. All new failures retain fixed redacted diagnostics.
+- Extended the active authority binding from the main database inode to the
+  complete SQLite family. After writer WAL initialization and snapshot
+  revalidation, the store freezes `state.db`, `-wal`, and `-shm` presence plus
+  device/inode identities; every property, reusable mutation guard, and reader
+  open before/after check must match that exact family. WAL growth and other
+  content/size/timestamp changes remain valid on the same inode, while replacing
+  or removing either sidecar fails closed instead of allowing writer/reader
+  split-brain. Controlled checkpoint/connection close may still truncate or
+  remove sidecars after the final owner validation.
 
 ### Freeze the Mission authorization domain
 

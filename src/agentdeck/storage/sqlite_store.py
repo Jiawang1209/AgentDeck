@@ -35,6 +35,7 @@ _INVALID_AUTHORITY = "SQLite authority state invalid"
 _INVALID_PROJECT = "SQLite project identity invalid"
 _INVALID_AUTHORITY_IDENTITY = "SQLite authority identity invalid"
 _STORE_TOKEN = object()
+type _DatabaseFamilyIdentity = tuple[tuple[str, int, int], ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -228,6 +229,27 @@ def _capture_database_family(
     return captured
 
 
+def _database_family_identity(path: Path) -> _DatabaseFamilyIdentity:
+    captured = _capture_database_family(path)
+    return tuple(
+        (suffix, captured[suffix][0], captured[suffix][1])
+        for suffix in ("", "-wal", "-shm")
+        if suffix in captured
+    )
+
+
+def _validate_database_family_identity(
+    path: Path,
+    expected: _DatabaseFamilyIdentity,
+) -> None:
+    try:
+        actual = _database_family_identity(path)
+    except SQLiteStoreError:
+        raise SQLiteStoreError(_INVALID_AUTHORITY_IDENTITY) from None
+    if actual != expected:
+        raise SQLiteStoreError(_INVALID_AUTHORITY_IDENTITY)
+
+
 def _copy_family_member(
     source: Path,
     destination: Path,
@@ -356,7 +378,7 @@ class SQLiteMissionStore:
         "_closed",
         "_lease_claim",
         "_token",
-        "_database_identity",
+        "_database_family_identity",
         "_project_revision",
         "_owner_pid",
     )
@@ -372,7 +394,7 @@ class SQLiteMissionStore:
         authority_state: str,
         lease_claim: object,
         token: object,
-        database_identity: tuple[int, int],
+        database_family_identity: _DatabaseFamilyIdentity,
         project_revision: int,
         owner_pid: int,
     ) -> None:
@@ -387,7 +409,7 @@ class SQLiteMissionStore:
         self._closed = False
         self._lease_claim = lease_claim
         self._token = token
-        self._database_identity = database_identity
+        self._database_family_identity = database_family_identity
         self._project_revision = project_revision
         self._owner_pid = owner_pid
 
@@ -526,6 +548,9 @@ class SQLiteMissionStore:
             _validate_authority_paths(path, database_identity)
             if _validate_connection(connection) != snapshot:
                 raise SQLiteStoreError(_INVALID_AUTHORITY_IDENTITY)
+            database_family_identity = _database_family_identity(path)
+            if database_family_identity[0][1:] != database_identity:
+                raise SQLiteStoreError(_INVALID_AUTHORITY_IDENTITY)
         except BaseException:
             if connection is not None:
                 connection.close()
@@ -539,7 +564,7 @@ class SQLiteMissionStore:
             authority_state=snapshot.authority_state,
             lease_claim=lease_claim,
             token=_STORE_TOKEN,
-            database_identity=database_identity,
+            database_family_identity=database_family_identity,
             project_revision=snapshot.revision,
             owner_pid=os.getpid(),
         )
@@ -565,7 +590,10 @@ class SQLiteMissionStore:
         if os.getpid() != self._owner_pid:
             raise WriterLeaseError("writer lease process mismatch")
         self._lease.validate_store_claim(self._root, self._lease_claim)
-        _validate_authority_paths(self._path, self._database_identity)
+        _validate_database_family_identity(
+            self._path,
+            self._database_family_identity,
+        )
 
     def open_reader(self) -> sqlite3.Connection:
         self._validate_authority()
