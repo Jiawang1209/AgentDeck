@@ -11,7 +11,12 @@
   canonical, size-bounded Leader provenance in a separate value. Leader
   provider, model, and turn identity remain proposal provenance only: they do
   not enter the authorization digest and cannot grant or alter Mission scope,
-  operations, routes, budget, or acceptance authority.
+  operations, routes, budget, or acceptance authority. A separate canonical
+  `leader_provenance_hash` now binds those audit-only bytes into the proposing
+  `CommandEnvelope` input without adding them to the authorization digest.
+  Exact retries therefore preserve the original Leader provenance, while a
+  changed provenance is either rejected at the service boundary or becomes a
+  changed immutable command input and fails with `command input mismatch`.
 - Added pure proposal, confirmation, and cancellation decisions over the
   detached `ProjectMutationSnapshot`. Proposal atomically creates the Mission
   and immutable version without materializing Tasks, enforces the V1 single

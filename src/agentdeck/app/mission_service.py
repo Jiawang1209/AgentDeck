@@ -197,6 +197,7 @@ class MissionProposal:
     authorization_envelope: AuthorizationEnvelope
     leader_provenance: Mapping[str, _FrozenJson]
     authorization_digest: str = field(init=False)
+    leader_provenance_hash: str = field(init=False)
 
     def __post_init__(self) -> None:
         try:
@@ -210,7 +211,12 @@ class MissionProposal:
             frozen = _freeze_json(self.leader_provenance)
             if not isinstance(frozen, Mapping):
                 raise _InvalidMissionValue
-            _canonical_json(_thaw_json(frozen), maximum=_MAX_PROVENANCE_BYTES)
+            canonical_provenance = _canonical_json(
+                _thaw_json(frozen), maximum=_MAX_PROVENANCE_BYTES
+            )
+            provenance_hash = "sha256:" + hashlib.sha256(
+                canonical_provenance.encode("utf-8")
+            ).hexdigest()
             digest = authorization_digest(
                 self.mission_version, self.authorization_envelope
             )
@@ -228,6 +234,7 @@ class MissionProposal:
             cast(Mapping[str, _FrozenJson], frozen),
         )
         object.__setattr__(self, "authorization_digest", digest)
+        object.__setattr__(self, "leader_provenance_hash", provenance_hash)
 
     def leader_provenance_dict(self) -> dict[str, _JsonValue]:
         return cast(dict[str, _JsonValue], _thaw_json(self.leader_provenance))
@@ -666,6 +673,7 @@ class MissionService:
                 "mission_id": proposal.mission_version.mission_id,
                 "version": proposal.mission_version.version,
                 "authorization_digest": proposal.authorization_digest,
+                "leader_provenance_hash": proposal.leader_provenance_hash,
             },
         )
         return self._store.apply_command(

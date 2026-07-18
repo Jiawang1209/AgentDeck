@@ -11,6 +11,7 @@ from agentdeck.domain.authorization import AuthorizationEnvelope, ExternalEffect
 from agentdeck.domain.mission import MissionVersion, TaskSpec
 from agentdeck.storage.ownership import ProjectWriterLease
 from agentdeck.storage.sqlite_store import (
+    CommandConflict,
     CommandEnvelope,
     MutationValidationError,
     RevisionConflict,
@@ -133,6 +134,7 @@ def _propose(service: MissionService, proposal: MissionProposal, *, revision: in
             "mission_id": proposal.mission_version.mission_id,
             "version": proposal.mission_version.version,
             "authorization_digest": proposal.authorization_digest,
+            "leader_provenance_hash": proposal.leader_provenance_hash,
         },
         command_id="cmd_propose",
         expected_revision=revision,
@@ -281,6 +283,7 @@ def test_stale_revision_and_second_active_mission_are_rejected(store) -> None:
             "mission_id": "mis_2",
             "version": 1,
             "authorization_digest": stale_proposal.authorization_digest,
+            "leader_provenance_hash": stale_proposal.leader_provenance_hash,
         },
         command_id="cmd_stale",
         expected_revision=0,
@@ -294,6 +297,7 @@ def test_stale_revision_and_second_active_mission_are_rejected(store) -> None:
             "mission_id": "mis_2",
             "version": 1,
             "authorization_digest": stale_proposal.authorization_digest,
+            "leader_provenance_hash": stale_proposal.leader_provenance_hash,
         },
         command_id="cmd_second",
         expected_revision=1,
@@ -435,6 +439,85 @@ def test_leader_provider_and_model_are_not_authorization_authority() -> None:
     assert codex.leader_provenance_dict() != claude.leader_provenance_dict()
 
 
+def test_leader_provenance_hash_is_canonical_detached_and_separate_from_authority() -> None:
+    mission = _mission()
+    envelope = _authorization(mission)
+    first_source = {
+        "provider": "codex-cli",
+        "nested": {"model": "gpt-5.5", "route": ["codex", "claude"]},
+    }
+    same_semantics = {
+        "nested": {"route": ["codex", "claude"], "model": "gpt-5.5"},
+        "provider": "codex-cli",
+    }
+    changed_nested = {
+        "provider": "codex-cli",
+        "nested": {"model": "gpt-5.5", "route": ["codex"]},
+    }
+    first = MissionProposal(mission, envelope, first_source)
+    same = MissionProposal(mission, envelope, same_semantics)
+    changed = MissionProposal(mission, envelope, changed_nested)
+    saved_hash = first.leader_provenance_hash
+
+    first_source["nested"]["route"].append("human")  # type: ignore[index,union-attr]
+
+    assert saved_hash == first.leader_provenance_hash
+    assert saved_hash.startswith("sha256:")
+    assert len(saved_hash) == 71
+    assert saved_hash == same.leader_provenance_hash
+    assert saved_hash != changed.leader_provenance_hash
+    assert first.authorization_digest == same.authorization_digest
+    assert first.authorization_digest == changed.authorization_digest
+
+
+def test_changed_provenance_is_bound_to_command_input_and_cannot_replace_audit_row(
+    store,
+) -> None:
+    service = MissionService(store)
+    mission = _mission()
+    envelope = _authorization(mission)
+    codex = MissionProposal(
+        mission,
+        envelope,
+        {"provider": "codex-cli", "model": "gpt-5.5"},
+    )
+    claude = MissionProposal(
+        mission,
+        envelope,
+        {"provider": "claude-agent-acp", "model": "opus"},
+    )
+    original_command, original_outcome = _propose(service, codex)
+
+    assert service.propose(original_command, codex) == original_outcome
+
+    changed_command = _command(
+        "mission.propose",
+        {
+            "mission_id": "mis_1",
+            "version": 1,
+            "authorization_digest": claude.authorization_digest,
+            "leader_provenance_hash": claude.leader_provenance_hash,
+        },
+        command_id=original_command.command_id,
+        expected_revision=original_command.expected_revision,
+    )
+    with pytest.raises(CommandConflict, match="^command input mismatch$"):
+        service.propose(changed_command, claude)
+
+    with pytest.raises(MutationValidationError, match="^mission command invalid$"):
+        service.propose(original_command, claude)
+
+    with store.open_reader() as reader:
+        assert reader.execute("SELECT revision FROM projects").fetchone() == (1,)
+        assert reader.execute("SELECT COUNT(*) FROM commands").fetchone() == (1,)
+        persisted = json.loads(
+            reader.execute(
+                "SELECT proposal_provenance_json FROM mission_versions"
+            ).fetchone()[0]
+        )
+    assert persisted == codex.leader_provenance_dict()
+
+
 def test_bool_version_in_bound_command_payload_cannot_alias_integer(store) -> None:
     service = MissionService(store)
     proposal = _proposal()
@@ -444,6 +527,7 @@ def test_bool_version_in_bound_command_payload_cannot_alias_integer(store) -> No
             "mission_id": "mis_1",
             "version": True,
             "authorization_digest": proposal.authorization_digest,
+            "leader_provenance_hash": proposal.leader_provenance_hash,
         },
         command_id="cmd_bool_version",
         expected_revision=0,
@@ -464,6 +548,7 @@ def test_leader_command_cannot_turn_its_own_proposal_into_authority(store) -> No
             "mission_id": "mis_1",
             "version": 1,
             "authorization_digest": proposal.authorization_digest,
+            "leader_provenance_hash": proposal.leader_provenance_hash,
         },
         expected_revision=0,
         created_at="2026-07-18T08:00:00Z",
