@@ -414,17 +414,38 @@ _ENTITY_PRIMARY_KEYS: dict[str, frozenset[str]] = {
     "legacy_records": frozenset({"record_id"}),
 }
 
+_ENTITY_UPDATE_COLUMNS: dict[str, frozenset[str]] = {
+    "missions": frozenset({"current_version", "status", "updated_revision"}),
+    "mission_versions": frozenset(
+        {"authorization_digest", "confirmed_revision"}
+    ),
+    "tasks": frozenset({"status", "updated_revision"}),
+    "attempts": frozenset({"status", "terminal_revision"}),
+    "sessions": frozenset(
+        {"status", "last_sequence", "lease_json", "reconciliation_json"}
+    ),
+    "permissions": frozenset(
+        {"status", "decision_json", "decided_revision"}
+    ),
+    "handoffs": frozenset({"status", "accepted_revision"}),
+    "approvals": frozenset({"status", "actor_json", "decision_revision"}),
+    "learning": frozenset({"application_json"}),
+    "suggestions": frozenset({"status", "applied_revision"}),
+}
 
-def _freeze_sql_values(value: object) -> Mapping[str, None | bool | int | str]:
+
+def _freeze_sql_values(value: object) -> Mapping[str, None | int | str]:
     if not isinstance(value, dict) or not value:
         raise _InvalidMutationValue
-    frozen: dict[str, None | bool | int | str] = {}
+    frozen: dict[str, None | int | str] = {}
     for key, item in value.items():
         if not isinstance(key, str) or not key:
             raise _InvalidMutationValue
-        if item is not None and not isinstance(item, (bool, int, str)):
+        if isinstance(item, bool):
             raise _InvalidMutationValue
-        if isinstance(item, int) and not isinstance(item, bool):
+        if item is not None and not isinstance(item, (int, str)):
+            raise _InvalidMutationValue
+        if isinstance(item, int):
             if not (-_MAX_SIGNED_64 - 1 <= item <= _MAX_SIGNED_64):
                 raise _InvalidMutationValue
         if isinstance(item, str):
@@ -443,8 +464,8 @@ class EntityChange:
 
     operation: str
     table: str
-    values: Mapping[str, None | bool | int | str]
-    where: Mapping[str, None | bool | int | str]
+    values: Mapping[str, None | int | str]
+    where: Mapping[str, None | int | str]
 
     def __post_init__(self) -> None:
         try:
@@ -462,9 +483,11 @@ class EntityChange:
             if self.operation == "update" and (not values or not where):
                 raise _InvalidMutationValue
             primary_key = _ENTITY_PRIMARY_KEYS[self.table]
+            update_columns = _ENTITY_UPDATE_COLUMNS.get(self.table, frozenset())
             if self.operation == "update" and (
                 set(where) != primary_key
                 or not primary_key.isdisjoint(values)
+                or not set(values).issubset(update_columns)
                 or any(where[column] is None for column in primary_key)
             ):
                 raise _InvalidMutationValue

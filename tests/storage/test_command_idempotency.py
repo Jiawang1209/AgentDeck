@@ -248,3 +248,94 @@ def test_entity_update_requires_exact_primary_key_and_cannot_rewrite_identity() 
 def test_entity_change_cannot_reach_authority_or_ledger_tables(table: str) -> None:
     with pytest.raises(MutationValidationError, match="^entity change invalid$"):
         EntityChange.insert(table, {"id": "forbidden"})
+
+
+@pytest.mark.parametrize(
+    ("table", "values", "where"),
+    [
+        (
+            "mission_versions",
+            {"specification_json": "{}"},
+            {"mission_id": "mis_1", "version": 1},
+        ),
+        ("attempts", {"task_id": "tsk_2"}, {"attempt_id": "att_1"}),
+        (
+            "permissions",
+            {"mission_id": "mis_2"},
+            {"permission_id": "per_1"},
+        ),
+        ("evidence", {"task_id": "tsk_2"}, {"evidence_id": "evd_1"}),
+        (
+            "missions",
+            {"created_revision": 2},
+            {"mission_id": "mis_1"},
+        ),
+        (
+            "artifacts",
+            {"summary_json": "{}"},
+            {"artifact_id": "art_1"},
+        ),
+        (
+            "legacy_records",
+            {"record_json": "{}"},
+            {"record_id": "leg_1"},
+        ),
+    ],
+)
+def test_entity_update_rejects_lineage_spec_revision_and_insert_only_changes(
+    table: str,
+    values: dict[str, object],
+    where: dict[str, object],
+) -> None:
+    with pytest.raises(MutationValidationError, match="^entity change invalid$") as raised:
+        EntityChange.update(table, values, where=where)
+    assert raised.value.__cause__ is None
+
+
+@pytest.mark.parametrize(
+    ("table", "values", "where"),
+    [
+        (
+            "approvals",
+            {"decision_revision": True},
+            {"approval_id": "apv_1"},
+        ),
+        (
+            "mission_versions",
+            {"confirmed_revision": 2},
+            {"mission_id": "mis_1", "version": True},
+        ),
+        (
+            "sessions",
+            {"last_sequence": True},
+            {"session_id": "ses_1"},
+        ),
+        (
+            "tasks",
+            {"status": "running"},
+            {"task_id": True},
+        ),
+    ],
+)
+def test_entity_change_rejects_bool_in_values_and_primary_key_where(
+    table: str,
+    values: dict[str, object],
+    where: dict[str, object],
+) -> None:
+    with pytest.raises(MutationValidationError, match="^entity change invalid$") as raised:
+        EntityChange.update(table, values, where=where)
+    assert raised.value.__cause__ is None
+
+
+def test_entity_insert_rejects_bool_even_for_integer_schema_column() -> None:
+    with pytest.raises(MutationValidationError, match="^entity change invalid$") as raised:
+        EntityChange.insert(
+            "mission_versions",
+            {
+                "mission_id": "mis_1",
+                "version": True,
+                "specification_json": "{}",
+                "proposal_provenance_json": "{}",
+            },
+        )
+    assert raised.value.__cause__ is None

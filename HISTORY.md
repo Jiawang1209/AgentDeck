@@ -18,7 +18,12 @@
   callbacks receive detached domain rows rather than the store or connection;
   entity mutations are limited to the schema-v1 domain table/column allowlist,
   while projects, commands, events, schema metadata, arbitrary SQL, and generic
-  delete remain inaccessible to decisions.
+  delete remain inaccessible to decisions. Each mutable domain table now has
+  a separate update-column allowlist: identity, lineage, specification,
+  proposal, request, context, source, hash, and initial revision fields are
+  immutable, while Evidence, artifacts, and legacy records are insert-only.
+  Row values and primary-key predicates also reject booleans globally so
+  Python `True == 1` cannot alias an integer revision, sequence, version, or id.
 - Added one `BEGIN IMMEDIATE` command boundary that validates the cached writer
   lease, process, database-family identity, project identity, authority state,
   and revision before deciding. A new accepted command writes its closed entity
