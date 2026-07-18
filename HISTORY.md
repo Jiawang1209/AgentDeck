@@ -4,6 +4,66 @@
 
 ## 2026-07-19
 
+### Add project-local SQLite authority
+
+- Completed R1 Task 9 with a Store Protocol for transaction, canonical command
+  result, aggregate snapshot, immutable event, and explicit close boundaries.
+  The Port imports only the new Kernel event facts and does not expose secret,
+  environment, terminal-output, hidden-reasoning, or raw-protocol types.
+- Added an exact project-root SQLite adapter that rejects nonexistent/file or
+  symlink roots, `.agentdeck` escapes, database symlinks, hard links, and
+  non-regular paths. It creates only `<resolved-root>/.agentdeck/agentdeck.db`,
+  preserves existing files, uses a bounded five-second connection/busy wait,
+  foreign keys, DELETE rollback journaling, and FULL synchronous durability,
+  and provides idempotent explicit close without a Task 10 writer lock.
+- Added the atomic version-one migration with 14 authority tables, stable
+  primary/foreign/unique/check constraints and indexes, one metadata row, and
+  bounded canonical/sanitized fact columns. `BEGIN IMMEDIATE` covers every DDL
+  statement and version record; SQL failure rolls back the full schema, while
+  higher, missing, damaged, or unrecognized schemas fail closed without
+  rebuild, downgrade, deletion, or partial commit.
+- Spec-review hardening replaces the migration-source digest with a live schema
+  fingerprint over every non-internal SQL-bearing table, explicit index, view,
+  and trigger, stably ordered by object type and name and serialized as strict
+  UTF-8 before SHA-256. Fresh migration computes the fingerprint after all DDL
+  and before the metadata insert in the same transaction; reopen detects added
+  columns, dropped indexes, altered constraints, and injected schema objects
+  without repairing or otherwise changing the damaged database.
+- Quality-review hardening binds metadata to the exact strict-UTF-8 resolved
+  project root and retains the database device/inode/regular-file/link-count
+  identity. Open validates that identity immediately after connect, after
+  migration, and again immediately before return, rejecting deterministic
+  replacement races without changing the replacement and rejecting databases
+  copied from another project. Task 10's writer lock remains intentionally
+  deferred; it will close the remaining same-project concurrent cutover window
+  before mutation transactions are implemented.
+- Store now exposes only transaction entry, read-only command/aggregate lookup,
+  and close; command, aggregate, and event mutation exists only on the
+  transaction Protocol. SQLite's public `connection` is a cached read-only,
+  query-only inspection connection, while the private writer and inspection
+  connections are both explicitly closed. Inspection retains the resolved root,
+  checks path identity immediately after its read-only connect and before
+  return, and revalidates root plus live schema in between; symlink, cross-project,
+  and post-validation replacement races close without exposing external data.
+  Existing authority is validated before persistent journal changes, so
+  rejected WAL databases retain WAL and remain byte-for-byte unchanged. SQLite
+  internal `sqlite_%` maintenance tables created by `ANALYZE` are excluded
+  consistently from tables and fingerprints.
+- Migration recovery now classifies an authority as uninitialized only when the
+  shared live-schema query finds no non-internal SQL-bearing object. This lets a
+  precreated zero-byte database and an atomically rolled-back/crash-created
+  empty SQLite container initialize v1 on the next open without deleting the
+  file, while unknown tables, indexes, views, and triggers without metadata
+  remain unchanged and fail closed. File-creation timing is no longer authority.
+- TDD RED first failed on the expected missing `agentdeck.adapters.sqlite`
+  module. A second hardening RED proved an unrecognized authority table was
+  initially accepted before exact schema validation was added. Fresh GREEN
+  verification passed the SQLite schema suite (`34 passed`), schema plus
+  architecture (`48 passed`), the complete Product Kernel suite (`386 passed`),
+  and `python -m compileall src tests -q`. Production files are 49 lines
+  (`ports/store.py`) and 468 lines (`adapters/sqlite.py`); the consolidated
+  hostile-path/schema test file is 497 lines.
+
 ### Add immutable execution lineage domain facts
 
 - Completed R1 Task 8 with the exact Attempt state set, an explicit closed
