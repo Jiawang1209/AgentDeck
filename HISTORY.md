@@ -4,6 +4,13 @@
 
 ## 2026-07-19
 
+### Correct Task 21 creation inventory
+
+- Corrected Task 21's ACP Worker adapter and adversarial fake fixture from
+  `Modify` to `Create` after repo-truth verification confirmed that neither
+  path exists at the frozen Wave B base. This matches the task's declared RED
+  condition and changes no behavior, authority, or implementation scope.
+
 ### Correct Wave B commit boundaries
 
 - Corrected two copied commit-message labels in the rewrite plan before Wave

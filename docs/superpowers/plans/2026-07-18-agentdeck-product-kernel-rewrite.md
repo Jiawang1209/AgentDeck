@@ -1735,8 +1735,8 @@ git commit -m "feat: add openai compatible leader adapter"
 **Authority:** Design sections 12, 13, 17.1.
 
 **Files:**
-- Modify: src/agentdeck/adapters/acp.py
-- Modify: tests/product_kernel/fixtures/fake_acp_agent.py
+- Create: src/agentdeck/adapters/acp.py
+- Create: tests/product_kernel/fixtures/fake_acp_agent.py
 - Create: tests/product_kernel/test_acp_worker_contract.py
 - Create: tests/product_kernel/test_acp_worker_failures.py
 - Modify: HISTORY.md
