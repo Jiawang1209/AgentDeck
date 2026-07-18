@@ -78,6 +78,7 @@ class ProjectWriterLease:
         "_fd",
         "_active",
         "_store_claim",
+        "_owner_pid",
     )
 
     def __init__(
@@ -91,6 +92,7 @@ class ProjectWriterLease:
         lock_path: Path,
         lock_identity: tuple[int, int],
         fd: int,
+        owner_pid: int,
     ) -> None:
         if token is not _LEASE_TOKEN:
             raise WriterLeaseError(_INVALID_LEASE)
@@ -104,6 +106,7 @@ class ProjectWriterLease:
         self._fd = fd
         self._active = True
         self._store_claim: object | None = None
+        self._owner_pid = owner_pid
 
     @classmethod
     def acquire(cls, root: str | os.PathLike[str]) -> Self:
@@ -144,6 +147,7 @@ class ProjectWriterLease:
                 lock_path=lock_path,
                 lock_identity=(lock_stat.st_dev, lock_stat.st_ino),
                 fd=fd,
+                owner_pid=os.getpid(),
             )
         except BaseException:
             os.close(fd)
@@ -151,13 +155,20 @@ class ProjectWriterLease:
 
     @property
     def active(self) -> bool:
+        self._validate_process()
         return self._active
 
     @property
     def root(self) -> Path:
+        self._validate_process()
         return self._root
 
+    def _validate_process(self) -> None:
+        if os.getpid() != self._owner_pid:
+            raise WriterLeaseError("writer lease process mismatch")
+
     def validate_for(self, root: str | os.PathLike[str]) -> None:
+        self._validate_process()
         if type(self) is not ProjectWriterLease or self._token is not _LEASE_TOKEN:
             raise WriterLeaseError(_INVALID_LEASE)
         if not self._active or self._fd < 0:
@@ -197,6 +208,7 @@ class ProjectWriterLease:
         return claim
 
     def release_store(self, claim: object) -> None:
+        self._validate_process()
         if claim is not self._store_claim:
             raise WriterLeaseError(_INVALID_LEASE)
         self._store_claim = None
@@ -213,17 +225,22 @@ class ProjectWriterLease:
     def close(self) -> None:
         if not self._active:
             return
+        if os.getpid() != self._owner_pid:
+            fd = self._fd
+            self._fd = -1
+            self._active = False
+            self._store_claim = None
+            os.close(fd)
+            return
         if self._store_claim is not None:
             raise WriterLeaseError("writer lease owns an active store")
         fd = self._fd
         self._fd = -1
         self._active = False
-        try:
-            fcntl.flock(fd, fcntl.LOCK_UN)
-        finally:
-            os.close(fd)
+        os.close(fd)
 
     def __enter__(self) -> Self:
+        self._validate_process()
         if not self._active:
             raise WriterLeaseError(_INVALID_LEASE)
         return self

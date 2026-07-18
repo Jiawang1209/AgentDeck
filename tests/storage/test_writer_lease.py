@@ -204,3 +204,54 @@ def test_state_directory_replacement_invalidates_active_lease(
             SQLiteMissionStore.create(root, lease=lease, project_id="prj_1")
     finally:
         lease.close()
+
+
+@pytest.mark.skipif(not hasattr(os, "fork"), reason="requires os.fork")
+def test_fork_child_cleanup_cannot_release_parent_writer_lock(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "project"
+    root.mkdir()
+    lease = ProjectWriterLease.acquire(root)
+    store = SQLiteMissionStore.create(root, lease=lease, project_id="prj_1")
+    read_fd, write_fd = os.pipe()
+    child_pid = os.fork()
+    if child_pid == 0:
+        os.close(read_fd)
+        validation_failed = False
+        try:
+            try:
+                _ = store.project_id
+            except WriterLeaseError as exc:
+                validation_failed = str(exc) == "writer lease process mismatch"
+            store.close()
+            lease.close()
+            os.write(write_fd, b"1" if validation_failed else b"0")
+        except BaseException:
+            os.write(write_fd, b"E")
+        finally:
+            os.close(write_fd)
+            os._exit(0)
+
+    os.close(write_fd)
+    child_result = os.read(read_fd, 1)
+    os.close(read_fd)
+    _, child_status = os.waitpid(child_pid, 0)
+    assert os.WIFEXITED(child_status)
+    assert child_result == b"1"
+
+    competing: ProjectWriterLease | None = None
+    try:
+        with pytest.raises(
+            WriterLeaseError,
+            match="^another project writer is active$",
+        ):
+            competing = ProjectWriterLease.acquire(root)
+    finally:
+        if competing is not None:
+            competing.close()
+        store.close()
+        lease.close()
+
+    with ProjectWriterLease.acquire(root) as replacement:
+        assert replacement.active is True

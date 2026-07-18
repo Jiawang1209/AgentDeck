@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 import sqlite3
 import stat
 from pathlib import Path
@@ -562,3 +563,190 @@ def test_event_schema_rejects_missing_or_mixed_trigger_provenance(
             )
     finally:
         connection.close()
+
+
+def test_preflight_reads_committed_uncheckpointed_wal_authority(
+    tmp_path: Path,
+) -> None:
+    from agentdeck.storage.sqlite_store import _wal_aware_preflight
+
+    root = tmp_path / "project"
+    database = _make_valid_database(root)
+    raw_writer = sqlite3.connect(database)
+    raw_writer.execute("PRAGMA journal_mode=WAL")
+    raw_writer.execute("PRAGMA wal_autocheckpoint=0")
+    raw_writer.execute(
+        "UPDATE projects SET revision = 7, "
+        "authority_state = 'sqlite_installed_quarantined'"
+    )
+    raw_writer.commit()
+
+    immutable = sqlite3.connect(
+        f"file:{database}?mode=ro&immutable=1",
+        uri=True,
+    )
+    try:
+        assert immutable.execute(
+            "SELECT revision, authority_state FROM projects"
+        ).fetchone() == (0, "sqlite_active")
+    finally:
+        immutable.close()
+
+    before_preflight = _snapshot_state_files(root)
+    preflight, _ = _wal_aware_preflight(database)
+    assert preflight.revision == 7
+    assert preflight.authority_state == "sqlite_installed_quarantined"
+    assert _snapshot_state_files(root) == before_preflight
+
+    try:
+        with ProjectWriterLease.acquire(root) as lease:
+            with SQLiteMissionStore.open(root, lease=lease) as store:
+                assert store.authority_state == "sqlite_installed_quarantined"
+                with store.open_reader() as reader:
+                    assert reader.execute(
+                        "SELECT revision, authority_state FROM projects"
+                    ).fetchone() == (7, "sqlite_installed_quarantined")
+    finally:
+        raw_writer.close()
+
+
+def test_create_install_never_overwrites_competing_database(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from agentdeck.storage import sqlite_store
+
+    root = tmp_path / "project"
+    root.mkdir()
+    database = root / ".agentdeck" / "state.db"
+    competitor = b"competitor-owned-bytes"
+    real_link = sqlite_store.os.link
+    real_replace = sqlite_store.os.replace
+    injected = False
+
+    def inject_competitor() -> None:
+        nonlocal injected
+        if injected:
+            return
+        database.write_bytes(competitor)
+        os.chmod(database, 0o600)
+        injected = True
+
+    def racing_link(source: object, destination: object, **kwargs: object) -> None:
+        if Path(os.fspath(destination)) == database:
+            inject_competitor()
+        real_link(source, destination, **kwargs)
+
+    def racing_replace(source: object, destination: object) -> None:
+        if Path(os.fspath(destination)) == database:
+            inject_competitor()
+        real_replace(source, destination)
+
+    monkeypatch.setattr(sqlite_store.os, "link", racing_link)
+    monkeypatch.setattr(sqlite_store.os, "replace", racing_replace)
+    with ProjectWriterLease.acquire(root) as lease:
+        created: SQLiteMissionStore | None = None
+        try:
+            with pytest.raises(SQLiteStoreError, match="^SQLite state path invalid$"):
+                created = SQLiteMissionStore.create(
+                    root,
+                    lease=lease,
+                    project_id="prj_1",
+                )
+        finally:
+            if created is not None:
+                created.close()
+        assert injected is True
+        assert database.read_bytes() == competitor
+
+
+def test_create_cleanup_never_deletes_replacement_after_successful_link(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from agentdeck.storage import sqlite_store
+
+    root = tmp_path / "project"
+    root.mkdir()
+    database = root / ".agentdeck" / "state.db"
+    displaced = root / ".agentdeck" / "state.db.installed"
+    competitor = b"replacement-after-link"
+    real_link = sqlite_store.os.link
+
+    def replacing_link(source: object, destination: object, **kwargs: object) -> None:
+        real_link(source, destination, **kwargs)
+        database.rename(displaced)
+        database.write_bytes(competitor)
+        os.chmod(database, 0o600)
+
+    monkeypatch.setattr(sqlite_store.os, "link", replacing_link)
+    with ProjectWriterLease.acquire(root) as lease:
+        with pytest.raises(
+            SQLiteStoreError,
+            match="^SQLite authority identity invalid$",
+        ):
+            SQLiteMissionStore.create(root, lease=lease, project_id="prj_1")
+        assert database.read_bytes() == competitor
+
+
+@pytest.mark.parametrize("race", ["disappear", "replace"])
+def test_open_writer_connect_race_never_creates_or_deletes_database(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    race: str,
+) -> None:
+    from agentdeck.storage import sqlite_store
+
+    root = tmp_path / "project"
+    database = _make_valid_database(root)
+    original_bytes = database.read_bytes()
+    saved = root / ".agentdeck" / "state.db.saved"
+    competitor_bytes = b""
+    if race == "replace":
+        other_root = tmp_path / "other"
+        other_database = _make_valid_database(other_root, project_id="prj_other")
+        competitor_bytes = other_database.read_bytes()
+
+    real_connect = sqlite_store.sqlite3.connect
+    injected = False
+
+    def racing_connect(*args: object, **kwargs: object) -> sqlite3.Connection:
+        nonlocal injected
+        target = args[0] if args else kwargs.get("database")
+        target_text = os.fspath(target) if target is not None else ""
+        is_writer_open = (
+            target == database
+            or (
+                isinstance(target_text, str)
+                and "mode=rw" in target_text
+                and str(database) in target_text
+            )
+        )
+        if is_writer_open and not injected:
+            database.rename(saved)
+            if race == "replace":
+                database.write_bytes(competitor_bytes)
+                os.chmod(database, 0o600)
+            injected = True
+        return real_connect(*args, **kwargs)
+
+    monkeypatch.setattr(sqlite_store.sqlite3, "connect", racing_connect)
+    try:
+        with ProjectWriterLease.acquire(root) as lease:
+            with pytest.raises(
+                SQLiteStoreError,
+                match="^SQLite authority identity invalid$",
+            ):
+                SQLiteMissionStore.open(root, lease=lease)
+            assert injected is True
+            assert saved.read_bytes() == original_bytes
+            if race == "disappear":
+                assert not database.exists()
+            else:
+                assert database.read_bytes() == competitor_bytes
+    finally:
+        monkeypatch.setattr(sqlite_store.sqlite3, "connect", real_connect)
+        if database.exists():
+            database.unlink()
+        if saved.exists():
+            shutil.move(saved, database)

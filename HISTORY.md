@@ -47,6 +47,25 @@
   events require only `adapter_event_id`, and internal triggers require only
   `internal_trigger_id`. Missing and mixed identities now fail below the
   application layer as well as in the pure domain model.
+- Bound every lease and store operation to the acquiring process id. Forked
+  children now fail validation, close only their inherited descriptors, and
+  can never issue `LOCK_UN` against the parent's shared open-file-description;
+  the parent flock remains held until the parent store and lease both close.
+  Store properties, reader creation, the reusable mutation guard, context
+  entry, and close all preserve that process boundary.
+- Replaced immutable-main-file inspection with an original-byte-preserving,
+  WAL-aware preflight. It copies the inode-validated owner-only database,
+  WAL, and shared-memory family into a private owner-only directory, validates
+  the latest committed schema/project/revision/authority there, and removes
+  the copy. The real authority is then opened with `mode=rw` and must reproduce
+  the exact preflight snapshot before it is cached, so committed uncheckpointed
+  WAL state cannot be mistaken for stale main-file state.
+- Hardened install/open TOCTOU handling: creation uses same-filesystem hard-link
+  no-replace publication instead of overwrite, records the installed inode,
+  and removes a failed install only while that exact inode remains at the
+  authority path. Writer open uses `mode=rw`, so disappearance cannot create an
+  empty database; path replacement is rejected without deleting or modifying
+  the competing file. All new failures retain fixed redacted diagnostics.
 
 ### Freeze the Mission authorization domain
 
