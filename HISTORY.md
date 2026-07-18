@@ -4,6 +4,31 @@
 
 ## 2026-07-18
 
+### Enforce product permission hierarchy
+
+- Completed R1 Task 6 with a pure, immutable permission lattice: the three
+  product profiles retain the full declared effect ceiling while each
+  `PermissionScope.narrow()` call can only create a subset scope and rejects
+  expansion.
+- Decisions are explicit, auditable facts rather than approval execution.
+  Ask-for-approval allows only reads; the default approve-for-me profile allows
+  routine project work, routes network to an independent reviewer, and routes
+  credential, destructive, external-write, and publish effects to a human;
+  full access remains auditable without a pause. Out-of-scope effects fail
+  closed before any profile policy is applied.
+- TDD RED confirmed the new Kernel module was absent. Focused coverage exhausts
+  every profile/effect pair and verifies scope narrowing, immutable alias
+  copying, invalid-type rejection, nonempty actors, frozen decisions, and
+  mutually exclusive decision flags. The implementation has no legacy imports,
+  native-backend flags, I/O, or approval/reviewer identity handling.
+- Quality review reproduced two fail-open direct-construction paths: a decision
+  could declare itself non-auditable, and a corrupted or future unsupported
+  profile fell through to full-access policy. Direct decisions now require
+  `auditable=True`, profile dispatch names all three declared profiles
+  explicitly, and any unsupported profile raises `PermissionError`; focused
+  RED covers allowed, human-review, independent-review, and outside-scope
+  decisions plus a constructor-bypassed corrupted scope.
+
 ### Model ProductSession and Agent identity
 
 - Completed R1 Task 5 with immutable in-memory ProductSession facts, the exact
