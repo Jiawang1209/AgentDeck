@@ -4,6 +4,38 @@
 
 ## 2026-07-18
 
+### Make the Rewrite context firewall executable
+
+- Completed R0 Task 3 with a deterministic context-firewall regression that
+  permits only the active Rewrite Design and Rewrite TDD plan, and prevents
+  removed-authority markers from returning to the active README, agent,
+  handoff, roadmap, or rewrite-spec surfaces.
+- Added the empty Product Kernel Legacy Reuse Register. Legacy code remains
+  unadmitted; any later admission must be recorded in the same commit as its
+  characterization test, Port, Adapter-only boundary, and register row. The
+  register never authorizes Kernel or Application imports.
+- TDD evidence: the initial context-firewall run failed only because the
+  register was absent. The minimal register made the focused suite GREEN
+  (`3 passed`). Quality review then exposed that substring-only checks admitted
+  contradictory or unsupported rows and that top-level globs missed nested
+  active documents. RED cases now require an exact table/status/sentinel,
+  constrained decisions, existing Adapter/Port/characterization evidence for
+  admitted rows, recursive document discovery, and fence-aware authority
+  scanning while keeping rejected rows evidence-free for the later Task 26.
+  Re-review then reproduced an exact counterexample using a non-canonical
+  status, nonexistent legacy namespace, package markers, and the firewall test
+  itself as unrelated evidence (`11 failed, 21 passed`). Admitted rows now
+  require the exact admitted status, a real `agentdeck.*` source module,
+  non-generic Adapter/Port/characterization artifacts, an AST-proven Adapter
+  import of that legacy namespace, and characterization references to the
+  legacy, Adapter, and Port modules. A synthetic valid admission remains GREEN.
+  Structural re-review then reproduced an unused Port plus comments-only test
+  bypass (`4 failed, 32 passed`). The Adapter must now AST-import the registered
+  Port, and characterization evidence must structurally import all three
+  modules, define a `test_*` function, and execute an `assert` inside it.
+  The final context-firewall, architecture, and history regression is GREEN
+  (`64 passed`).
+
 ### Add the hidden Product Kernel development entry
 
 - Completed R0 Task 2: added the isolated Product bootstrap development entry
