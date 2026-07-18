@@ -75,6 +75,8 @@ MAX_SNAPSHOT_ROWS = 4096
 MAX_SNAPSHOT_BYTES = 512 * 1024
 MAX_IDENTITY_ROWS = 32_768
 MAX_IDENTITY_BYTES = 4 * 1024 * 1024
+MAX_ARCHIVED_LINEAGE_ROWS = 8_192
+MAX_ARCHIVED_LINEAGE_BYTES = 1024 * 1024
 MAX_MUTATION_CHANGES = MAX_SNAPSHOT_ROWS
 MAX_MUTATION_CHANGE_BYTES = MAX_SNAPSHOT_BYTES
 
@@ -541,6 +543,19 @@ _ENTITY_UPDATE_COLUMNS: dict[str, frozenset[str]] = {
     "suggestions": frozenset({"status", "applied_revision"}),
 }
 
+_ARCHIVED_LINEAGE_COLUMNS: dict[str, tuple[str, ...]] = {
+    "missions": ("mission_id", "current_version", "status"),
+    "mission_versions": (
+        "mission_id",
+        "version",
+        "confirmed_revision",
+        "authorization_digest",
+    ),
+    "tasks": ("task_id", "mission_id", "mission_version", "status"),
+    "attempts": ("attempt_id", "task_id", "status"),
+    "sessions": ("session_id", "attempt_id", "last_sequence", "status"),
+}
+
 
 def _freeze_sql_values(value: object) -> Mapping[str, None | int | str]:
     if not isinstance(value, dict) or not value:
@@ -656,6 +671,9 @@ class ProjectMutationSnapshot:
     identities: Mapping[str, tuple[Mapping[str, _FrozenJsonValue], ...]] = field(
         default_factory=dict
     )
+    archived_lineage: Mapping[
+        str, tuple[Mapping[str, _FrozenJsonValue], ...]
+    ] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         frozen_entities: dict[str, tuple[Mapping[str, _FrozenJsonValue], ...]] = {}
@@ -664,6 +682,11 @@ class ProjectMutationSnapshot:
         byte_count = 0
         identity_row_count = 0
         identity_byte_count = 0
+        frozen_archived: dict[
+            str, tuple[Mapping[str, _FrozenJsonValue], ...]
+        ] = {}
+        archived_row_count = 0
+        archived_byte_count = 0
         try:
             if (
                 not _valid_mutation_text(self.project_id)
@@ -725,10 +748,50 @@ class ProjectMutationSnapshot:
                     )
                 )
                 frozen_identities[table] = tuple(frozen_rows)
+            if not isinstance(self.archived_lineage, dict):
+                raise _InvalidMutationValue
+            for table, rows in self.archived_lineage.items():
+                columns = _ARCHIVED_LINEAGE_COLUMNS.get(table)
+                if columns is None or not isinstance(rows, (list, tuple)):
+                    raise _InvalidMutationValue
+                archived_byte_count += len(table.encode("utf-8"))
+                frozen_rows = []
+                seen: set[tuple[object, ...]] = set()
+                primary_key = _ENTITY_PRIMARY_KEYS[table]
+                for row in rows:
+                    archived_row_count += 1
+                    if archived_row_count > MAX_ARCHIVED_LINEAGE_ROWS:
+                        raise _InvalidMutationValue
+                    if not isinstance(row, Mapping) or set(row) != set(columns):
+                        raise _InvalidMutationValue
+                    frozen_row = _frozen_mapping(
+                        dict(row), maximum=MAX_ARCHIVED_LINEAGE_BYTES
+                    )
+                    identity = tuple(frozen_row[column] for column in primary_key)
+                    if identity in seen:
+                        raise _InvalidMutationValue
+                    seen.add(identity)
+                    archived_byte_count += len(
+                        _canonical_mutation_bytes(
+                            frozen_row, maximum=MAX_ARCHIVED_LINEAGE_BYTES
+                        )
+                    )
+                    if archived_byte_count > MAX_ARCHIVED_LINEAGE_BYTES:
+                        raise _InvalidMutationValue
+                    frozen_rows.append(frozen_row)
+                frozen_rows.sort(
+                    key=lambda row: tuple(
+                        cast(str | int, row[column]) for column in primary_key
+                    )
+                )
+                frozen_archived[table] = tuple(frozen_rows)
         except (_InvalidMutationValue, TypeError, ValueError):
             raise MutationValidationError("mutation snapshot invalid") from None
         object.__setattr__(self, "entities", MappingProxyType(frozen_entities))
         object.__setattr__(self, "identities", MappingProxyType(frozen_identities))
+        object.__setattr__(
+            self, "archived_lineage", MappingProxyType(frozen_archived)
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -1591,12 +1654,51 @@ class SQLiteMissionStore:
                     raise MutationValidationError("mutation snapshot invalid")
                 rows.append(value)
             entities[table] = rows
+        archived_queries = {
+            "missions": (
+                "SELECT mission_id, current_version, status FROM missions "
+                f"WHERE NOT ({_ACTIVE_MISSION_SQL}) ORDER BY mission_id"
+            ),
+            "mission_versions": (
+                "SELECT v.mission_id, v.version, v.confirmed_revision, "
+                "v.authorization_digest FROM mission_versions AS v "
+                "JOIN missions AS m ON m.mission_id = v.mission_id "
+                f"WHERE NOT (m.{_ACTIVE_MISSION_SQL}) "
+                "ORDER BY v.mission_id, v.version"
+            ),
+            "tasks": (
+                "SELECT t.task_id, t.mission_id, t.mission_version, t.status "
+                "FROM tasks AS t JOIN missions AS m ON m.mission_id = t.mission_id "
+                f"WHERE NOT (m.{_ACTIVE_MISSION_SQL}) ORDER BY t.task_id"
+            ),
+            "attempts": (
+                "SELECT a.attempt_id, a.task_id, a.status FROM attempts AS a "
+                "JOIN tasks AS t ON t.task_id = a.task_id "
+                "JOIN missions AS m ON m.mission_id = t.mission_id "
+                f"WHERE NOT (m.{_ACTIVE_MISSION_SQL}) ORDER BY a.attempt_id"
+            ),
+            "sessions": (
+                "SELECT s.session_id, s.attempt_id, s.last_sequence, s.status "
+                "FROM sessions AS s JOIN attempts AS a ON a.attempt_id = s.attempt_id "
+                "JOIN tasks AS t ON t.task_id = a.task_id "
+                "JOIN missions AS m ON m.mission_id = t.mission_id "
+                f"WHERE NOT (m.{_ACTIVE_MISSION_SQL}) ORDER BY s.session_id"
+            ),
+        }
+        archived_lineage: dict[str, list[dict[str, object]]] = {}
+        for table, query in archived_queries.items():
+            columns = _ARCHIVED_LINEAGE_COLUMNS[table]
+            archived_lineage[table] = [
+                dict(zip(columns, row, strict=True))
+                for row in self._connection.execute(query)
+            ]
         return ProjectMutationSnapshot(
             project_id=self._project_id,
             revision=revision,
             authority_state=authority_state,
             entities=entities,
             identities=identities,
+            archived_lineage=archived_lineage,
         )
 
     def _validate_decision(

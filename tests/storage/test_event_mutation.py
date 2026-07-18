@@ -12,8 +12,11 @@ from agentdeck.storage.sqlite_store import (
     EntityChange,
     EventConflict,
     EventMutationOutcome,
+    MAX_ARCHIVED_LINEAGE_BYTES,
+    MAX_ARCHIVED_LINEAGE_ROWS,
     MutationDecision,
     MutationValidationError,
+    ProjectMutationSnapshot,
     SQLiteMissionStore,
 )
 
@@ -213,3 +216,90 @@ def test_event_insert_failure_rolls_back_prior_change_and_store_is_reusable(stor
         assert reader.execute("SELECT COUNT(*) FROM events").fetchone() == (0,)
         assert reader.execute("SELECT COUNT(*) FROM approvals").fetchone() == (0,)
     assert store.apply_event(event, lambda snapshot: _decision(store, event)).revision == 1
+
+
+def test_archived_lineage_is_independently_bounded_and_deeply_frozen() -> None:
+    snapshot = ProjectMutationSnapshot(
+        project_id="prj_1",
+        revision=7,
+        authority_state="sqlite_active",
+        entities={},
+        archived_lineage={
+            "missions": [
+                {
+                    "mission_id": "mis_1",
+                    "current_version": 1,
+                    "status": "completed",
+                }
+            ],
+            "mission_versions": [
+                {
+                    "mission_id": "mis_1",
+                    "version": 1,
+                    "confirmed_revision": 2,
+                    "authorization_digest": "sha256:" + "a" * 64,
+                }
+            ],
+            "tasks": [
+                {
+                    "task_id": "tsk_1",
+                    "mission_id": "mis_1",
+                    "mission_version": 1,
+                    "status": "completed",
+                }
+            ],
+            "attempts": [
+                {"attempt_id": "att_1", "task_id": "tsk_1", "status": "completed"}
+            ],
+            "sessions": [
+                {
+                    "session_id": "ses_1",
+                    "attempt_id": "att_1",
+                    "last_sequence": 3,
+                    "status": "completed",
+                }
+            ],
+        },
+    )
+    assert snapshot.archived_lineage["sessions"][0]["last_sequence"] == 3
+    with pytest.raises(TypeError):
+        snapshot.archived_lineage["sessions"][0]["last_sequence"] = 4  # type: ignore[index]
+
+    with pytest.raises(MutationValidationError, match="^mutation snapshot invalid$"):
+        ProjectMutationSnapshot(
+            project_id="prj_1",
+            revision=0,
+            authority_state="sqlite_active",
+            entities={},
+            archived_lineage={
+                "missions": [
+                    {
+                        "mission_id": f"mis_{index}",
+                        "current_version": 1,
+                        "status": "completed",
+                    }
+                    for index in range(MAX_ARCHIVED_LINEAGE_ROWS + 1)
+                ]
+            },
+        )
+
+    payload = "x" * 60_000
+    row_count = MAX_ARCHIVED_LINEAGE_BYTES // len(payload.encode("utf-8")) + 2
+    with pytest.raises(MutationValidationError, match="^mutation snapshot invalid$"):
+        ProjectMutationSnapshot(
+            project_id="prj_1",
+            revision=0,
+            authority_state="sqlite_active",
+            entities={},
+            archived_lineage={
+                "sessions": [
+                    {
+                        "session_id": f"ses_{index}",
+                        "attempt_id": f"att_{index}",
+                        "last_sequence": 0,
+                        "status": payload,
+                    }
+                    for index in range(row_count)
+                ]
+            },
+        )

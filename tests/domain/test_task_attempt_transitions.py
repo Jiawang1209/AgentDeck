@@ -6,6 +6,7 @@ import pytest
 
 from agentdeck.domain.mission import (
     AttemptDecision,
+    RecoveryContext,
     RuntimeFact,
     TaskRuntimeState,
     TaskSpec,
@@ -106,6 +107,103 @@ def test_safest_precedence_retains_all_facts_and_terminal_is_absorbing() -> None
     assert terminal.attempt_state == "failed"
     assert terminal.mission_state == "failed"
     assert terminal.facts == facts
+
+
+def test_worker_completion_fact_is_rejected_and_only_verification_can_complete() -> None:
+    with pytest.raises(ValueError, match="^runtime fact invalid$"):
+        RuntimeFact("task", "terminal_completed", "worker claims done")
+    with pytest.raises(ValueError, match="^worker event invalid$"):
+        record_worker_event("running", "running", "completed")
+
+
+def test_failed_attempt_retries_only_with_durable_no_effect_and_all_bounds() -> None:
+    available = RecoveryContext(
+        attempt_number=1,
+        task_retry_limit=1,
+        mission_attempt_count=1,
+        mission_max_attempts=4,
+        mission_retry_count=0,
+        mission_max_retries=2,
+        mission_recovery_count=0,
+        mission_max_recoveries=1,
+        task_budget_used=4,
+        task_budget_limit=10,
+        mission_budget_used=4,
+        mission_budget_limit=20,
+    )
+    safe = record_worker_event(
+        "running",
+        "running",
+        "failed",
+        facts=(RuntimeFact("task", "proven_no_effect", "protocol receipt"),),
+        effect_status="proven_no_effect",
+        recovery=available,
+    )
+    assert safe.task_state is TaskRuntimeState.READY
+    assert safe.attempt_state == "failed"
+    assert safe.mission_state == "running"
+    assert safe.recovery_allowed is True
+
+    exhausted = record_worker_event(
+        "running",
+        "running",
+        "failed",
+        facts=(RuntimeFact("task", "proven_no_effect", "protocol receipt"),),
+        effect_status="proven_no_effect",
+        recovery=RecoveryContext(
+            1, 1, 1, 4, 0, 2, 1, 1, 4, 10, 4, 20
+        ),
+    )
+    assert exhausted.task_state is TaskRuntimeState.FAILED
+    assert exhausted.recovery_allowed is False
+
+    ambiguous = record_worker_event(
+        "running",
+        "running",
+        "failed",
+        facts=(RuntimeFact("mission", "ambiguous_effect", "unknown effect"),),
+        effect_status="ambiguous_effect",
+        recovery=available,
+    )
+    assert ambiguous.task_state is TaskRuntimeState.PAUSED
+    assert ambiguous.mission_state == "paused"
+    assert ambiguous.recovery_allowed is False
+
+
+@pytest.mark.parametrize(
+    ("facts", "expected"),
+    [
+        (
+            (RuntimeFact("session", "session_takeover", "human owns session"),),
+            (TaskRuntimeState.PAUSED, "paused", "running", "session", False, False),
+        ),
+        (
+            (
+                RuntimeFact("session", "session_takeover", "human owns session"),
+                RuntimeFact("mission", "permission_conflict", "scope conflict"),
+            ),
+            (TaskRuntimeState.PAUSED, "paused", "paused", "mission", False, False),
+        ),
+        (
+            (
+                RuntimeFact("session", "session_takeover", "human owns session"),
+                RuntimeFact("task", "terminal_failed", "attempt failed"),
+            ),
+            (TaskRuntimeState.FAILED, "failed", "failed", "mission", False, False),
+        ),
+    ],
+)
+def test_takeover_scope_and_terminal_precedence(facts, expected) -> None:
+    decision = record_worker_event("running", "running", "progress", facts=facts)
+    assert (
+        decision.task_state,
+        decision.attempt_state,
+        decision.mission_state,
+        decision.effective_scope,
+        decision.dispatch_allowed,
+        decision.automation_allowed,
+    ) == expected
+    assert decision.facts == facts
 
 
 def test_handoff_is_only_accepted_from_completed_declared_dependency() -> None:

@@ -4,6 +4,36 @@
 
 ## 2026-07-18
 
+### Enforce governed Worker recovery and terminal observation
+
+- Removed every Worker-side completion claim from the runtime fact vocabulary.
+  Worker text and adapter lifecycle events can only advance a Task to
+  `awaiting_verification`; only AgentDeck Verification may persist Task
+  completion.
+- Closed failed adapter payloads over an explicit effect classification.
+  `proven_no_effect` is the only retryable result, and a retry is released only
+  while the frozen Task retry limit plus Mission authorization attempt, retry,
+  recovery, and cumulative Task/Mission budget limits all remain available.
+  The failed Attempt and session remain terminal and auditable; a retry creates
+  a distinct Attempt row. Ambiguous effects pause the Mission and known effects
+  fail it without implicit fallback.
+- Added a separately bounded, deep-frozen compact archived-lineage projection
+  for terminal Mission/version/Task/Attempt/session identity and sequence.
+  Ordered late adapter observations can therefore append one durable event and
+  advance only the matching session sequence after Mission termination, without
+  restoring terminal history to the active decision snapshot, granting
+  Evidence credit, changing state, or reactivating work. Exact retries continue
+  to replay without a revision.
+- Added a public canonical adapter integrity helper and pre-transaction
+  constant-time verification that binds every ordered event field except the
+  digest itself. Any payload or lineage drift now fails before the decision
+  callback and writes nothing.
+- Added explicit effective-scope and dispatch/automation/recovery gates to
+  Worker decisions. Human session takeover pauses only its session/Task while
+  the Mission remains running; a simultaneous permission conflict widens the
+  pause to Mission scope, and terminal failure remains absorbing. Deterministic
+  domain, storage, and fake-Worker integration tests cover these boundaries.
+
 ### Persist governed Task attempts, Evidence, Verification, and Handoffs
 
 - Added closed, frozen Task runtime decisions for dependency release, bounded

@@ -8,6 +8,7 @@ binding and delegates the one durable transaction to ``SQLiteMissionStore``.
 from __future__ import annotations
 
 import hashlib
+import hmac
 import json
 import re
 from collections.abc import Mapping
@@ -24,6 +25,7 @@ from agentdeck.domain.authorization import (
 from agentdeck.domain.events import DomainEvent
 from agentdeck.domain.mission import (
     MissionVersion,
+    RecoveryContext,
     RuntimeFact,
     TaskSpec,
     TaskRuntimeState,
@@ -303,6 +305,63 @@ def _canonical_json(value: object, *, maximum: int) -> str:
     return encoded.decode("utf-8")
 
 
+def adapter_event_integrity_hash(
+    *,
+    event_id: str,
+    kind: str,
+    adapter_event_id: str,
+    mission_id: str,
+    mission_version: str,
+    task_id: str,
+    attempt_id: str,
+    session_id: str,
+    sequence: int,
+    payload: object,
+    created_at: str,
+) -> str:
+    """Bind every ordered adapter-event field except the digest itself."""
+
+    try:
+        if not all(
+            _valid_identifier(item)
+            for item in (
+                event_id,
+                kind,
+                adapter_event_id,
+                mission_id,
+                mission_version,
+                task_id,
+                attempt_id,
+                session_id,
+                created_at,
+            )
+        ) or not (
+            isinstance(sequence, int)
+            and not isinstance(sequence, bool)
+            and 0 <= sequence <= _MAX_SIGNED_64
+        ):
+            raise _InvalidMissionValue
+        canonical = _canonical_json(
+            {
+                "event_id": event_id,
+                "kind": kind,
+                "adapter_event_id": adapter_event_id,
+                "mission_id": mission_id,
+                "mission_version": mission_version,
+                "task_id": task_id,
+                "attempt_id": attempt_id,
+                "session_id": session_id,
+                "sequence": sequence,
+                "payload": payload,
+                "created_at": created_at,
+            },
+            maximum=_MAX_SPECIFICATION_BYTES,
+        )
+    except (_InvalidMissionValue, TypeError, ValueError):
+        raise MutationValidationError("mission event invalid") from None
+    return "sha256:" + hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
 @dataclass(frozen=True, slots=True)
 class MissionProposal:
     """A Leader proposal preserved as provenance, never mutation authority."""
@@ -416,6 +475,13 @@ def _rows(
     snapshot: ProjectMutationSnapshot, table: str
 ) -> tuple[Mapping[str, _FrozenJson], ...]:
     rows = snapshot.entities.get(table, ())
+    return cast(tuple[Mapping[str, _FrozenJson], ...], rows)
+
+
+def _archived_rows(
+    snapshot: ProjectMutationSnapshot, table: str
+) -> tuple[Mapping[str, _FrozenJson], ...]:
+    rows = snapshot.archived_lineage.get(table, ())
     return cast(tuple[Mapping[str, _FrozenJson], ...], rows)
 
 
@@ -875,12 +941,35 @@ def _validate_internal_event(
 
 
 def _validate_adapter_event(event: DomainEvent, *, kinds: frozenset[str]) -> None:
-    if (
-        type(event) is not DomainEvent
-        or event.trigger_kind != "adapter_event"
-        or event.kind not in kinds
-    ):
+    if type(event) is not DomainEvent or event.trigger_kind != "adapter_event":
         raise MutationValidationError("mission event invalid")
+    try:
+        lineage = event.provenance.to_dict()
+        if event.kind not in kinds:
+            raise _InvalidMissionValue
+        expected = adapter_event_integrity_hash(
+            event_id=event.event_id,
+            kind=event.kind,
+            adapter_event_id=cast(str, lineage["adapter_event_id"]),
+            mission_id=cast(str, lineage["mission_id"]),
+            mission_version=cast(str, lineage["mission_version"]),
+            task_id=cast(str, lineage["task_id"]),
+            attempt_id=cast(str, lineage["attempt_id"]),
+            session_id=cast(str, lineage["session_id"]),
+            sequence=cast(int, lineage["sequence"]),
+            payload=_event_payload(event),
+            created_at=event.created_at,
+        )
+        actual = lineage["integrity_hash"]
+        if not isinstance(actual, str) or not hmac.compare_digest(expected, actual):
+            raise _InvalidMissionValue
+    except (
+        KeyError,
+        TypeError,
+        ValueError,
+        _InvalidMissionValue,
+    ):
+        raise MutationValidationError("mission event invalid") from None
 
 
 def _one_row(
@@ -891,6 +980,21 @@ def _one_row(
     rows = [
         row
         for row in _rows(snapshot, table)
+        if all(_row_value(row, key) == value for key, value in matches.items())
+    ]
+    if len(rows) != 1:
+        raise ValueError("mission lineage invalid")
+    return rows[0]
+
+
+def _one_archived_row(
+    snapshot: ProjectMutationSnapshot,
+    table: str,
+    **matches: object,
+) -> Mapping[str, _FrozenJson]:
+    rows = [
+        row
+        for row in _archived_rows(snapshot, table)
         if all(_row_value(row, key) == value for key, value in matches.items())
     ]
     if len(rows) != 1:
@@ -1034,6 +1138,25 @@ def _release_ready_decision(
     )
 
 
+def _attempt_budget(row: Mapping[str, _FrozenJson]) -> int:
+    value = _row_value(row, "budget_json")
+    try:
+        parsed = json.loads(cast(str, value))
+        if (
+            not isinstance(value, str)
+            or not isinstance(parsed, dict)
+            or set(parsed) != {"budget_units"}
+            or not isinstance(parsed["budget_units"], int)
+            or isinstance(parsed["budget_units"], bool)
+            or parsed["budget_units"] < 1
+            or _canonical_json(parsed, maximum=_MAX_PROVENANCE_BYTES) != value
+        ):
+            raise _InvalidMissionValue
+        return cast(int, parsed["budget_units"])
+    except (json.JSONDecodeError, TypeError, ValueError, _InvalidMissionValue):
+        raise ValueError("stored attempt budget invalid") from None
+
+
 def _start_attempt_decision(
     snapshot: ProjectMutationSnapshot,
     event: DomainEvent,
@@ -1054,7 +1177,6 @@ def _start_attempt_decision(
         or request.route_position >= len(confirmed.authorization_envelope.ordered_routes)
         or confirmed.authorization_envelope.ordered_routes[request.route_position]
         != request.agent_id
-        or request.budget_units > task.budget_units
     ):
         raise ValueError("attempt authorization invalid")
     if any(
@@ -1073,6 +1195,44 @@ def _start_attempt_decision(
         )
     )
     decision = decide_start_attempt(task, cast(str, _row_value(task_row, "status")), prior)
+    mission_task_ids = {
+        cast(str, _row_value(row, "task_id"))
+        for row in _rows(snapshot, "tasks")
+        if _row_value(row, "mission_id") == request.mission_id
+        and _row_value(row, "mission_version") == request.mission_version
+    }
+    mission_attempts = tuple(
+        row
+        for row in _rows(snapshot, "attempts")
+        if _row_value(row, "task_id") in mission_task_ids
+    )
+    task_attempts = tuple(
+        row
+        for row in mission_attempts
+        if _row_value(row, "task_id") == request.task_id
+    )
+    task_budget_used = sum(_attempt_budget(row) for row in task_attempts)
+    mission_budget_used = sum(_attempt_budget(row) for row in mission_attempts)
+    mission_budget_limit = min(
+        confirmed.mission_version.budget_units,
+        confirmed.authorization_envelope.budget_units,
+    )
+    if (
+        task_budget_used + request.budget_units > task.budget_units
+        or mission_budget_used + request.budget_units > mission_budget_limit
+    ):
+        raise ValueError("attempt budget exhausted")
+    retry_count = sum(
+        1
+        for row in mission_attempts
+        if cast(int, _row_value(row, "attempt_number")) > 1
+    ) + (1 if decision.attempt_number > 1 else 0)
+    if (
+        len(mission_attempts) + 1
+        > confirmed.authorization_envelope.max_attempts
+        or retry_count > confirmed.authorization_envelope.max_retries
+    ):
+        raise ValueError("attempt authorization invalid")
     next_revision = snapshot.revision + 1
     changes: list[EntityChange] = [
         EntityChange.update(
@@ -1131,16 +1291,21 @@ def _start_attempt_decision(
     )
 
 
+@dataclass(frozen=True, slots=True)
+class _AdapterContext:
+    lineage: dict[str, object]
+    task_row: Mapping[str, _FrozenJson]
+    task: TaskSpec | None
+    attempt: Mapping[str, _FrozenJson]
+    session: Mapping[str, _FrozenJson]
+    confirmed: ConfirmedMissionVersion | None
+    archived: bool
+
+
 def _adapter_context(
     snapshot: ProjectMutationSnapshot,
     event: DomainEvent,
-) -> tuple[
-    dict[str, object],
-    Mapping[str, _FrozenJson],
-    TaskSpec,
-    Mapping[str, _FrozenJson],
-    Mapping[str, _FrozenJson],
-]:
+) -> _AdapterContext:
     lineage = _event_lineage(event)
     try:
         raw_version = lineage["mission_version"]
@@ -1158,17 +1323,65 @@ def _adapter_context(
         for item in (mission_id, task_id, attempt_id, session_id)
     ):
         raise ValueError("adapter lineage invalid")
-    _confirmed_context(
-        snapshot,
-        cast(str, mission_id),
-        version,
-        allowed_statuses=frozenset({"confirmed", "running", "paused"}),
+    active_missions = tuple(
+        row
+        for row in _rows(snapshot, "missions")
+        if _row_value(row, "mission_id") == mission_id
     )
-    task_row, task = _task_context(
-        snapshot, cast(str, mission_id), version, cast(str, task_id)
-    )
-    attempt = _one_row(snapshot, "attempts", attempt_id=attempt_id)
-    session = _one_row(snapshot, "sessions", session_id=session_id)
+    if active_missions:
+        if len(active_missions) != 1:
+            raise ValueError("adapter lineage invalid")
+        _, confirmed = _confirmed_context(
+            snapshot,
+            cast(str, mission_id),
+            version,
+            allowed_statuses=frozenset({"confirmed", "running", "paused"}),
+        )
+        task_row, task = _task_context(
+            snapshot, cast(str, mission_id), version, cast(str, task_id)
+        )
+        attempt = _one_row(snapshot, "attempts", attempt_id=attempt_id)
+        session = _one_row(snapshot, "sessions", session_id=session_id)
+        archived = False
+    else:
+        mission = _one_archived_row(
+            snapshot, "missions", mission_id=cast(str, mission_id)
+        )
+        if (
+            _row_value(mission, "current_version") != version
+            or _row_value(mission, "status") not in _TERMINAL_MISSION_STATES
+        ):
+            raise ValueError("adapter lineage invalid")
+        version_row = _one_archived_row(
+            snapshot,
+            "mission_versions",
+            mission_id=cast(str, mission_id),
+            version=version,
+        )
+        digest = _row_value(version_row, "authorization_digest")
+        if (
+            _row_value(version_row, "confirmed_revision") is None
+            or not isinstance(digest, str)
+            or _DIGEST_PATTERN.fullmatch(digest) is None
+        ):
+            raise ValueError("mission authorization invalid")
+        task_row = _one_archived_row(
+            snapshot, "tasks", task_id=cast(str, task_id)
+        )
+        if (
+            _row_value(task_row, "mission_id") != mission_id
+            or _row_value(task_row, "mission_version") != version
+        ):
+            raise ValueError("adapter lineage invalid")
+        attempt = _one_archived_row(
+            snapshot, "attempts", attempt_id=cast(str, attempt_id)
+        )
+        session = _one_archived_row(
+            snapshot, "sessions", session_id=cast(str, session_id)
+        )
+        task = None
+        confirmed = None
+        archived = True
     if (
         _row_value(attempt, "task_id") != task_id
         or _row_value(session, "attempt_id") != attempt_id
@@ -1181,40 +1394,157 @@ def _adapter_context(
         or sequence != cast(int, _row_value(session, "last_sequence")) + 1
     ):
         raise ValueError("adapter sequence conflict")
-    return lineage, task_row, task, attempt, session
+    return _AdapterContext(
+        lineage, task_row, task, attempt, session, confirmed, archived
+    )
 
 
 def _runtime_facts(event: DomainEvent) -> tuple[RuntimeFact, ...]:
     payload = _event_payload(event)
+    if event.kind == "failed":
+        if set(payload) != {"reason", "effect_status"}:
+            raise MutationValidationError("worker event payload invalid")
+        reason = payload["reason"]
+        effect_status = payload["effect_status"]
+        if not _valid_identifier(reason) or effect_status not in {
+            "proven_no_effect",
+            "ambiguous_effect",
+            "known_effect",
+        }:
+            raise MutationValidationError("worker event payload invalid")
+        fact_kind = {
+            "proven_no_effect": "proven_no_effect",
+            "ambiguous_effect": "ambiguous_effect",
+            "known_effect": "terminal_failed",
+        }[cast(str, effect_status)]
+        scope = "mission" if effect_status == "ambiguous_effect" else "task"
+        return (RuntimeFact(scope, fact_kind, cast(str, reason)),)
     if event.kind not in {
         "ambiguous_effect",
         "permission_conflict",
         "permission_requested",
-        "failed",
         "cancelled",
+        "session_takeover",
     }:
         return ()
     reason = payload.get("reason", event.kind.replace("_", " "))
     if set(payload).difference({"reason"}) or not _valid_identifier(reason):
         raise MutationValidationError("worker event payload invalid")
     kind = {
-        "failed": "terminal_failed",
         "cancelled": "terminal_cancelled",
         "permission_requested": "task_local_pause",
+        "session_takeover": "session_takeover",
     }.get(event.kind, event.kind)
-    scope = "mission" if event.kind in {"ambiguous_effect", "permission_conflict"} else "task"
+    scope = {
+        "ambiguous_effect": "mission",
+        "permission_conflict": "mission",
+        "session_takeover": "session",
+    }.get(event.kind, "task")
     return (RuntimeFact(scope, kind, cast(str, reason)),)
+
+
+def _stored_reconciliation_facts(
+    session: Mapping[str, _FrozenJson],
+) -> list[dict[str, object]]:
+    reconciliation = _row_value(session, "reconciliation_json")
+    if reconciliation is None:
+        return []
+    try:
+        stored = json.loads(cast(str, reconciliation))
+        if (
+            not isinstance(reconciliation, str)
+            or not isinstance(stored, dict)
+            or set(stored) != {"facts"}
+            or not isinstance(stored["facts"], list)
+            or any(
+                not isinstance(item, dict)
+                or set(item) != {"scope", "kind", "reason"}
+                or not all(isinstance(value, str) for value in item.values())
+                for item in stored["facts"]
+            )
+            or _canonical_json(stored, maximum=_MAX_PROVENANCE_BYTES)
+            != reconciliation
+        ):
+            raise _InvalidMissionValue
+        return cast(list[dict[str, object]], stored["facts"])
+    except (json.JSONDecodeError, TypeError, ValueError, _InvalidMissionValue):
+        raise ValueError("stored reconciliation invalid") from None
+
+
+def _recovery_context(
+    snapshot: ProjectMutationSnapshot,
+    context: _AdapterContext,
+) -> RecoveryContext:
+    if context.confirmed is None or context.task is None or context.archived:
+        raise ValueError("mission lineage invalid")
+    task_ids = {
+        item.task_id for item in context.confirmed.mission_version.tasks
+    }
+    attempts = tuple(
+        row
+        for row in _rows(snapshot, "attempts")
+        if _row_value(row, "task_id") in task_ids
+    )
+    sessions = tuple(
+        row
+        for row in _rows(snapshot, "sessions")
+        if any(
+            _row_value(attempt, "attempt_id") == _row_value(row, "attempt_id")
+            for attempt in attempts
+        )
+    )
+    task_attempts = tuple(
+        row
+        for row in attempts
+        if _row_value(row, "task_id") == context.task.task_id
+    )
+    recovery_count = sum(
+        1
+        for session in sessions
+        for fact in _stored_reconciliation_facts(session)
+        if fact["kind"] == "proven_no_effect"
+    )
+    envelope = context.confirmed.authorization_envelope
+    return RecoveryContext(
+        attempt_number=cast(int, _row_value(context.attempt, "attempt_number")),
+        task_retry_limit=context.task.retry_limit,
+        mission_attempt_count=len(attempts),
+        mission_max_attempts=envelope.max_attempts,
+        mission_retry_count=sum(
+            1
+            for row in attempts
+            if cast(int, _row_value(row, "attempt_number")) > 1
+        ),
+        mission_max_retries=envelope.max_retries,
+        mission_recovery_count=recovery_count,
+        mission_max_recoveries=envelope.max_recoveries,
+        task_budget_used=sum(_attempt_budget(row) for row in task_attempts),
+        task_budget_limit=context.task.budget_units,
+        mission_budget_used=sum(_attempt_budget(row) for row in attempts),
+        mission_budget_limit=min(
+            context.confirmed.mission_version.budget_units,
+            envelope.budget_units,
+        ),
+    )
 
 
 def _worker_event_decision(
     snapshot: ProjectMutationSnapshot,
     event: DomainEvent,
 ) -> MutationDecision:
-    lineage, task_row, _task, attempt, session = _adapter_context(snapshot, event)
+    context = _adapter_context(snapshot, event)
+    lineage = context.lineage
+    task_row = context.task_row
+    attempt = context.attempt
+    session = context.session
     facts = _runtime_facts(event)
     current_task_state = cast(str, _row_value(task_row, "status"))
     current_attempt_state = cast(str, _row_value(attempt, "status"))
-    if current_task_state in {"completed", "failed", "cancelled"}:
+    if context.archived or current_task_state in {
+        "completed",
+        "failed",
+        "cancelled",
+    } or current_attempt_state in {"completed", "failed", "cancelled"}:
         return MutationDecision(
             changes=(
                 EntityChange.update(
@@ -1232,30 +1562,28 @@ def _worker_event_decision(
                 "observation_only": True,
             },
         )
+    effect_status = (
+        cast(str, _event_payload(event)["effect_status"])
+        if event.kind == "failed"
+        else None
+    )
     decision = decide_record_worker_event(
         current_task_state,
         current_attempt_state,
         event.kind,
         facts=facts,
+        effect_status=effect_status,
+        recovery=(
+            _recovery_context(snapshot, context)
+            if event.kind == "failed"
+            else None
+        ),
     )
     next_revision = snapshot.revision + 1
     sequence = cast(int, lineage["sequence"])
     changes: list[EntityChange] = []
     reconciliation = _row_value(session, "reconciliation_json")
-    if reconciliation is None:
-        stored_facts: list[object] = []
-    else:
-        try:
-            stored = json.loads(cast(str, reconciliation))
-            if (
-                not isinstance(stored, dict)
-                or set(stored) != {"facts"}
-                or not isinstance(stored["facts"], list)
-            ):
-                raise _InvalidMissionValue
-            stored_facts = stored["facts"]
-        except (json.JSONDecodeError, TypeError, _InvalidMissionValue):
-            raise ValueError("stored reconciliation invalid") from None
+    stored_facts: list[object] = _stored_reconciliation_facts(session)
     stored_facts.extend(
         {"scope": fact.scope, "kind": fact.kind, "reason": fact.reason}
         for fact in facts
@@ -1308,6 +1636,10 @@ def _worker_event_decision(
             "session_id": lineage["session_id"],
             "task_state": decision.task_state.value,
             "mission_state": decision.mission_state,
+            "effective_scope": decision.effective_scope,
+            "dispatch_allowed": decision.dispatch_allowed,
+            "automation_allowed": decision.automation_allowed,
+            "recovery_allowed": decision.recovery_allowed,
         },
     )
 
@@ -1316,7 +1648,11 @@ def _record_evidence_decision(
     snapshot: ProjectMutationSnapshot,
     event: DomainEvent,
 ) -> MutationDecision:
-    lineage, task_row, task, attempt, session = _adapter_context(snapshot, event)
+    context = _adapter_context(snapshot, event)
+    lineage = context.lineage
+    task_row = context.task_row
+    task = context.task
+    attempt = context.attempt
     payload = _event_payload(event)
     if set(payload) != {"evidence_id", "kind", "criterion", "fact", "reason"}:
         raise MutationValidationError("evidence payload invalid")
@@ -1329,10 +1665,9 @@ def _record_evidence_decision(
         cast(str, payload["fact"]),
         cast(str, payload["reason"]),
     )
-    if evidence.criterion not in task.acceptance_criteria:
-        raise ValueError("evidence criterion invalid")
     if (
-        _row_value(task_row, "status") in {"completed", "failed", "cancelled"}
+        context.archived
+        or _row_value(task_row, "status") in {"completed", "failed", "cancelled"}
         or _row_value(attempt, "status") in {"completed", "failed", "cancelled"}
     ):
         return MutationDecision(
@@ -1350,6 +1685,8 @@ def _record_evidence_decision(
                 "observation_only": True,
             },
         )
+    if task is None or evidence.criterion not in task.acceptance_criteria:
+        raise ValueError("evidence criterion invalid")
     if any(
         _row_value(row, "evidence_id") == evidence_id
         for row in _identities(snapshot, "evidence")
@@ -1705,6 +2042,7 @@ class MissionService:
                     "ambiguous_effect",
                     "failed",
                     "cancelled",
+                    "session_takeover",
                 }
             ),
         )

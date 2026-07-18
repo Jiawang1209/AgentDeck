@@ -192,9 +192,9 @@ _TERMINAL_TASK_STATES = frozenset(
 _RUNTIME_FACT_SCOPES = frozenset({"mission", "task", "session"})
 _RUNTIME_FACT_KINDS = frozenset(
     {
-        "terminal_completed",
         "terminal_failed",
         "terminal_cancelled",
+        "proven_no_effect",
         "ambiguous_effect",
         "permission_conflict",
         "task_local_pause",
@@ -213,6 +213,7 @@ _WORKER_EVENT_KINDS = frozenset(
         "ambiguous_effect",
         "failed",
         "cancelled",
+        "session_takeover",
     }
 )
 _ATTEMPT_RUNTIME_STATES = frozenset(
@@ -265,12 +266,63 @@ class AttemptDecision:
 
 
 @dataclass(frozen=True, slots=True)
+class RecoveryContext:
+    attempt_number: int
+    task_retry_limit: int
+    mission_attempt_count: int
+    mission_max_attempts: int
+    mission_retry_count: int
+    mission_max_retries: int
+    mission_recovery_count: int
+    mission_max_recoveries: int
+    task_budget_used: int
+    task_budget_limit: int
+    mission_budget_used: int
+    mission_budget_limit: int
+
+    def __post_init__(self) -> None:
+        values = tuple(getattr(self, field) for field in self.__dataclass_fields__)
+        if any(not isinstance(item, int) or isinstance(item, bool) for item in values):
+            raise ValueError("recovery context invalid")
+        if not (
+            1 <= self.attempt_number <= MAX_RETRY_LIMIT + 1
+            and 0 <= self.task_retry_limit <= MAX_RETRY_LIMIT
+            and 0 <= self.mission_attempt_count <= _MAX_SIGNED_64
+            and 1 <= self.mission_max_attempts <= _MAX_SIGNED_64
+            and 0 <= self.mission_retry_count <= _MAX_SIGNED_64
+            and 0 <= self.mission_max_retries <= _MAX_SIGNED_64
+            and 0 <= self.mission_recovery_count <= _MAX_SIGNED_64
+            and 0 <= self.mission_max_recoveries <= _MAX_SIGNED_64
+            and 0 <= self.task_budget_used <= MAX_BUDGET_UNITS
+            and 1 <= self.task_budget_limit <= MAX_BUDGET_UNITS
+            and 0 <= self.mission_budget_used <= MAX_BUDGET_UNITS
+            and 1 <= self.mission_budget_limit <= MAX_BUDGET_UNITS
+        ):
+            raise ValueError("recovery context invalid")
+
+    @property
+    def allows_retry(self) -> bool:
+        return (
+            self.attempt_number <= self.task_retry_limit
+            and self.mission_attempt_count < self.mission_max_attempts
+            and self.mission_retry_count < self.mission_max_retries
+            and self.mission_recovery_count < self.mission_max_recoveries
+            and self.task_budget_used < self.task_budget_limit
+            and self.mission_budget_used < self.mission_budget_limit
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class WorkerEventDecision:
     task_state: TaskRuntimeState
     attempt_state: str
     mission_state: str
     facts: tuple[RuntimeFact, ...] = ()
     reasons: tuple[str, ...] = ()
+    effective_scope: str = "task"
+    dispatch_allowed: bool = False
+    automation_allowed: bool = False
+    recovery_allowed: bool = False
 
     def __post_init__(self) -> None:
         if (
@@ -281,6 +333,10 @@ class WorkerEventDecision:
             or not isinstance(self.facts, tuple)
             or not all(type(item) is RuntimeFact for item in self.facts)
             or self.reasons != tuple(item.reason for item in self.facts)
+            or self.effective_scope not in _RUNTIME_FACT_SCOPES
+            or type(self.dispatch_allowed) is not bool
+            or type(self.automation_allowed) is not bool
+            or type(self.recovery_allowed) is not bool
         ):
             raise ValueError("worker event decision invalid")
 
@@ -381,6 +437,8 @@ def record_worker_event(
     event_kind: str,
     *,
     facts: tuple[RuntimeFact, ...] = (),
+    effect_status: str | None = None,
+    recovery: RecoveryContext | None = None,
 ) -> WorkerEventDecision:
     """Classify Worker facts with terminal and widest-scope-safe precedence."""
 
@@ -393,35 +451,123 @@ def record_worker_event(
         or len(facts) > MAX_CANONICAL_NODES
         or sum(len(item.reason.encode("utf-8")) for item in facts)
         > _MAX_RUNTIME_FACT_BYTES
+        or (
+            event_kind == "failed"
+            and (
+                effect_status
+                not in {"proven_no_effect", "ambiguous_effect", "known_effect"}
+                or type(recovery) is not RecoveryContext
+            )
+        )
+        or (
+            event_kind != "failed"
+            and (effect_status is not None or recovery is not None)
+        )
     ):
         raise ValueError("worker event invalid")
     reasons = tuple(item.reason for item in facts)
     if state in _TERMINAL_TASK_STATES:
         terminal = state.value
-        return WorkerEventDecision(state, terminal, terminal, facts, reasons)
+        return WorkerEventDecision(
+            state,
+            terminal,
+            terminal,
+            facts,
+            reasons,
+            effective_scope="mission",
+        )
 
     fact_kinds = {item.kind for item in facts}
-    if event_kind == "failed" or "terminal_failed" in fact_kinds:
-        return WorkerEventDecision(TaskRuntimeState.FAILED, "failed", "failed", facts, reasons)
+    if "terminal_failed" in fact_kinds:
+        return WorkerEventDecision(
+            TaskRuntimeState.FAILED,
+            "failed",
+            "failed",
+            facts,
+            reasons,
+            effective_scope="mission",
+        )
     if event_kind == "cancelled" or "terminal_cancelled" in fact_kinds:
         return WorkerEventDecision(
-            TaskRuntimeState.CANCELLED, "cancelled", "cancelled", facts, reasons
+            TaskRuntimeState.CANCELLED,
+            "cancelled",
+            "cancelled",
+            facts,
+            reasons,
+            effective_scope="mission",
         )
-    if "terminal_completed" in fact_kinds:
+    if event_kind == "failed":
+        assert recovery is not None
+        if effect_status == "ambiguous_effect":
+            return WorkerEventDecision(
+                TaskRuntimeState.PAUSED,
+                "paused",
+                "paused",
+                facts,
+                reasons,
+                effective_scope="mission",
+            )
+        if effect_status == "proven_no_effect" and recovery.allows_retry:
+            return WorkerEventDecision(
+                TaskRuntimeState.READY,
+                "failed",
+                "running",
+                facts,
+                reasons,
+                effective_scope="task",
+                dispatch_allowed=True,
+                automation_allowed=True,
+                recovery_allowed=True,
+            )
         return WorkerEventDecision(
-            TaskRuntimeState.COMPLETED, "completed", "completed", facts, reasons
+            TaskRuntimeState.FAILED,
+            "failed",
+            "failed",
+            facts,
+            reasons,
+            effective_scope="mission",
         )
     if event_kind in {"ambiguous_effect", "permission_conflict"} or fact_kinds.intersection(
         {"ambiguous_effect", "permission_conflict"}
     ):
-        return WorkerEventDecision(TaskRuntimeState.PAUSED, "paused", "paused", facts, reasons)
+        return WorkerEventDecision(
+            TaskRuntimeState.PAUSED,
+            "paused",
+            "paused",
+            facts,
+            reasons,
+            effective_scope="mission",
+        )
+    if "session_takeover" in fact_kinds:
+        return WorkerEventDecision(
+            TaskRuntimeState.PAUSED,
+            "paused",
+            "running",
+            facts,
+            reasons,
+            effective_scope="session",
+        )
     if event_kind == "permission_requested" or "task_local_pause" in fact_kinds:
-        return WorkerEventDecision(TaskRuntimeState.PAUSED, "paused", "running", facts, reasons)
+        return WorkerEventDecision(
+            TaskRuntimeState.PAUSED,
+            "paused",
+            "running",
+            facts,
+            reasons,
+            effective_scope="task",
+        )
     if state is TaskRuntimeState.PAUSED:
-        return WorkerEventDecision(state, "paused", "paused", facts, reasons)
+        return WorkerEventDecision(
+            state, "paused", "paused", facts, reasons, effective_scope="task"
+        )
     if state is TaskRuntimeState.AWAITING_VERIFICATION:
         return WorkerEventDecision(
-            state, "awaiting_verification", "running", facts, reasons
+            state,
+            "awaiting_verification",
+            "running",
+            facts,
+            reasons,
+            effective_scope="task",
         )
     if event_kind == "turn_completed":
         return WorkerEventDecision(
@@ -430,8 +576,18 @@ def record_worker_event(
             "running",
             facts,
             reasons,
+            effective_scope="task",
         )
-    return WorkerEventDecision(TaskRuntimeState.RUNNING, "running", "running", facts, reasons)
+    return WorkerEventDecision(
+        TaskRuntimeState.RUNNING,
+        "running",
+        "running",
+        facts,
+        reasons,
+        effective_scope="session",
+        dispatch_allowed=True,
+        automation_allowed=True,
+    )
 
 
 def record_handoff(
