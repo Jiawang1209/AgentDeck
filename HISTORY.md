@@ -4,6 +4,19 @@
 
 ## 2026-07-19
 
+### Reject Session cookie and SSH credential material
+
+- Extended the existing pre-transaction ProductSession goal validation to
+  reject Cookie and Set-Cookie assignments, `ssh_key` assignments, realistic
+  `ssh-ed25519` public-key material, and the exact legacy OpenAI `sk-` plus
+  48-alphanumeric credential shape.
+- Kept failures content-free and mutation-free across commands,
+  ProductSessions, conversation turns, and events. Ordinary prose discussing
+  Cookie headers, SSH key types or field names, and the `sk-` prefix remains
+  accepted.
+- Second-review TDD RED produced the five expected missing-rejection failures;
+  the complete focused Session suite then passed all `74` tests.
+
 ### Harden Wave A session command replay
 
 - Explicit `accept_text` retries now resolve the original durable command

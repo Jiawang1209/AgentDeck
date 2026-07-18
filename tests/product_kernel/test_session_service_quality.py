@@ -36,6 +36,11 @@ from .test_session_service import AVAILABLE_LEADERS, NOW, _service
     "github_pat_RAWSESSIONTOKEN12345678901234567890",
     "AKIARAWSESSIONTOKEN1",
     "AIzaRAWSESSIONTOKEN12345678901234567890",
+    "Cookie: sid=session-secret-123456789",
+    "Set-Cookie: sid=session-secret-123456789; HttpOnly",
+    "ssh_key=AAAAC3NzaC1lZDI1NTE5AAAAISessionSecretMaterial",
+    "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIKlW0YMdYlwqnU7tx1RzRAt7uBEOuvYC2gRTvYp8 user@example.test",
+    f"sk-{'A' * 48}",
 ])
 def test_credential_shaped_goal_is_rejected_content_free_before_writes(
     tmp_path: Path, goal: str
@@ -62,6 +67,11 @@ def test_credential_shaped_goal_is_rejected_content_free_before_writes(
     "Document the sk-proj- prefix without a credential value",
     "Recognize github_pat_ token names in documentation",
     "Explain AKIA access-key prefixes",
+    "Discuss Cookie and Set-Cookie headers without including their values",
+    "Document how SSH public keys are configured without pasting key material",
+    "Recognize the ssh-ed25519 key type name in documentation",
+    "Rename the ssh_key field in documentation without assigning it",
+    "Explain the sk- prefix without a credential value",
 ])
 def test_ordinary_goal_language_is_not_misclassified_as_credentials(
     tmp_path: Path, goal: str

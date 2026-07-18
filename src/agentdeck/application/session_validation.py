@@ -23,14 +23,19 @@ _ASSIGNMENT_KEY: Final = re.compile(
     r"(?:[ \t]+[A-Za-z][A-Za-z0-9_-]*)?)[\"']?\s*[:=]\s*(?=\S)"
 )
 _SENSITIVE_KEY_SUFFIXES: Final = (
-    "apikey", "authorization", "credential", "credentials", "password",
-    "passphrase", "privatekey", "secret", "token",
+    "apikey", "authorization", "cookie", "credential", "credentials",
+    "password", "passphrase", "privatekey", "secret", "sshkey", "token",
 )
 _BEARER_VALUE: Final = re.compile(r"(?i)\bbearer\s+\S+")
 _PRIVATE_KEY: Final = re.compile(r"(?i)-----BEGIN(?: [A-Z0-9]+)? PRIVATE KEY-----")
+_SSH_PUBLIC_KEY: Final = re.compile(
+    r"(?<![A-Za-z0-9_-])ssh-ed25519[ \t]+"
+    r"[A-Za-z0-9+/]{32,}={0,3}(?![A-Za-z0-9+/=])"
+)
 _BARE_CREDENTIAL: Final = re.compile(
     r"(?<![A-Za-z0-9])(?:"
     r"sk-(?:proj|ant)-[A-Za-z0-9_-]{16,}"
+    r"|sk-[A-Za-z0-9]{48}"
     r"|ghp_[A-Za-z0-9]{20,}"
     r"|github_pat_[A-Za-z0-9_]{20,}"
     r"|AKIA[A-Z0-9]{16}"
@@ -67,6 +72,7 @@ def validate_goal(value: object) -> str:
         any(key.endswith(_SENSITIVE_KEY_SUFFIXES) for key in assignments)
         or _BEARER_VALUE.search(goal)
         or _PRIVATE_KEY.search(goal)
+        or _SSH_PUBLIC_KEY.search(goal)
         or _BARE_CREDENTIAL.search(goal)
     ):
         raise ValueError("goal contains prohibited credential material")
