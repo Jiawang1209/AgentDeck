@@ -136,11 +136,15 @@ after readiness succeeds may it exercise the narrowest real path:
 5. cancel within a bounded deadline; and
 6. prove child-process, PTY, tmux, temporary-state, and daemon cleanup.
 
-The smoke must not install or upgrade global software, alter authentication,
-modify global provider configuration, or select a replacement model unless a
-human separately and explicitly authorizes that action. After a diagnosed root
-cause is fixed, a new isolated smoke may be run safely; there is no historical
-single-use authorization ceremony.
+The smoke itself is unconditionally free of global mutation. It never installs,
+reinstalls, or upgrades tools or adapters; logs in or out; changes global
+authentication, configuration, provider, or model selection; modifies shell
+PATH; or changes package state. Any separately human-authorized setup is a
+distinct pre-smoke administrative action outside the smoke and outside its
+evidence. After setup, the smoke only consumes configured state read-only,
+except for the isolated disposable-project effects that the smoke explicitly
+owns and cleans up. After a diagnosed root cause is fixed, a new isolated smoke
+may be run safely; there is no historical single-use authorization ceremony.
 
 A smoke PASS proves only the selected adapter route can perform that narrow
 interaction. It does not prove orchestration, recovery, peer review, Mission
@@ -251,6 +255,18 @@ ceremony.
 Release evidence accumulates by product phase:
 
 - **Every commit:** the deterministic commit gate passes offline.
+- **P1 exit:** a deterministic fake-adapter Golden passes through public daemon
+  APIs using real SQLite with one ProjectDaemon writer. Evidence covers client
+  and daemon restart, rejection of stale or unauthorized mutations, migration
+  preview/confirm/verify/rollback failure injection, and `project-view/v1` plus
+  `project-view/v2` projecting one authority and committed revision. P1 does not
+  invoke a real model or tmux.
+- **P2 exit:** a complete fake-adapter session passes from bare `agentdeck`
+  through a natural-language goal, explicit Leader selection, Mission Preview
+  edit, exact-version-and-digest confirmation, activity projection, client
+  close/reopen, and reconnect-cursor resume against one consistent state. The
+  legacy script facade reaches the same service and authority. No real adapter
+  is required for P2 exit.
 - **P3 adapters:** the shared conformance suite passes, followed by bounded real
   smokes for both official Agents and each supported release route.
 - **P4 product:** both real Golden A and Golden B pass through the bare

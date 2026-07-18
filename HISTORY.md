@@ -23,6 +23,16 @@
   rerunnable after root-cause repair, without reviving a historical single-use
   live authorization ceremony. This documents the validation strategy; it does
   not claim that the new gates or Goldens have already passed.
+- Closed the phase gates by requiring P1's public-daemon fake Golden with real
+  SQLite, restart, stale-authority rejection, migration failure injection, and
+  same-authority ProjectView projections, followed by P2's complete bare
+  `agentdeck` fake-adapter conversation and reconnect journey through the same
+  service used by the legacy script facade.
+- Made real smoke unconditionally free of global mutation: any separately
+  authorized installation, login, authentication/configuration, PATH, model, or
+  package change is an administrative pre-smoke action outside smoke evidence;
+  the smoke consumes configured state read-only apart from effects owned by its
+  disposable project.
 
 ### Replace the M2c mega-gate with layered verification
 
