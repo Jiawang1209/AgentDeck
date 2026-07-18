@@ -4,6 +4,30 @@
 
 ## 2026-07-19
 
+### Map ACP Workers into stable events
+
+- Completed R4 Task 21 with an ACP-only Worker Adapter that maps official ACP
+  initialization, session, message, tool, permission, cancellation, and prompt
+  result models into the stable five-operation Worker Port. Internal Worker
+  session IDs are derived from raw ACP identities, while raw session IDs and
+  protocol models remain transient decoder state.
+- Stable events retain exact Agent, Task, Attempt, transport, sequence, and
+  terminal lineage. Tool progress and artifact changes are mapped without raw
+  input/output frames; one or multiple permission requests block sequentially
+  until the matching typed response arrives. Cancellation produces one
+  terminal cancelled event and result without relying on PTY or tmux truth.
+- Added bounded individual and cumulative ACP update budgets, including
+  permission request frames. Duplicate identities, out-of-order sequences,
+  protocol/result mismatch, pre-effect disconnect, post-effect disconnect,
+  oversized output, and secret-bearing output produce fixed content-free
+  Diagnostics; only a post-effect disconnect is outcome-unknown.
+- The official-model Fake ACP Agent scripts capabilities/session creation,
+  messages, tool progress, artifacts, sequential permissions, completion,
+  refusal, cancellation, invalid results, and all adversarial transport cases.
+  TDD RED first failed collection twice because the Adapter was absent. Final
+  focused ACP, shared Worker contract, and architecture verification passed
+  `114` tests without starting a real ACP process, provider, network, or tmux.
+
 ### Harden the API Leader transport boundary
 
 - Disabled every HTTP redirect so the exact configured endpoint cannot forward
