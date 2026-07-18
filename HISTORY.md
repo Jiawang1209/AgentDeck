@@ -4,6 +4,33 @@
 
 ## 2026-07-18
 
+### Plan the complete Product Kernel Rewrite execution path
+
+- Added the sole active implementation plan at
+  `docs/superpowers/plans/2026-07-18-agentdeck-product-kernel-rewrite.md`.
+  It translates the approved Rewrite Design into 39 dependency-ordered TDD
+  Tasks across R0-R8, with exact authority sections, files, forbidden legacy
+  imports, admitted evidence, RED reasons, minimal GREEN outcomes, regression
+  commands, and one local commit boundary per Task.
+- Fixed the implementation boundary around a pure Kernel, Application/Port
+  use cases, Adapter-only I/O, and a Product Shell composition root. The plan
+  keeps one project-local SQLite writer, exact Mission Preview confirmation,
+  ACP-only automatic Codex/Claude work, non-authoritative tmux observation,
+  stable Diagnostics, recovery, and explicit migration/cutover.
+- Selected an AgentDeck-provided ACP bridge over Codex's official stable
+  app-server protocol and the installed Claude Agent ACP adapter. PTY prompt
+  injection and tmux completion inference remain prohibited.
+- Defined a deterministic Fake four-stage gate before any live work, followed
+  by separately authorized read-only real preflight and four-Worker website
+  Golden Mission gates. Any source repair invalidates the frozen live identity
+  and requires new deterministic verification and authorization.
+- Preserved the foreground MVP and post-MVP boundary. Background execution,
+  Memory, Skills, governed self-improvement, browser workbench, broader Agents,
+  A2A, and remote clients remain after the Golden Gate and bare-entry cutover.
+- This commit is planning-only. It changes no product source, tests, runtime
+  state, authentication, installed tools, global configuration, merge, push,
+  provider session, ACP/tmux live process, or Mission.
+
 ### Enforce the Product Kernel Rewrite context firewall
 
 - Approved a hard active-context reset so the Product Kernel Rewrite Design is

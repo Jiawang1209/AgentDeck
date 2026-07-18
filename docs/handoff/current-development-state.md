@@ -4,9 +4,9 @@ Updated: 2026-07-18
 
 ## Active goal
 
-Complete human review of the cleaned
-[AgentDeck Product Kernel Rewrite Design](../superpowers/specs/2026-07-18-agentdeck-product-kernel-rewrite-design.md)
-and its Rewrite Context Firewall.
+Complete human review of the sole
+[Product Kernel Rewrite TDD plan](../superpowers/plans/2026-07-18-agentdeck-product-kernel-rewrite.md),
+then begin R0 through the approved execution mode.
 
 This is the only active development route. Historical P1, M2, M2c, daemon,
 ConversationSession, autonomous, Skill, Memory, and GUI work is not an active
@@ -23,6 +23,9 @@ gate, implementation order, or release veto.
   are aligned to the new authority.
 - Existing source, tests, legacy contracts, real validation evidence,
   reference analysis, and the legacy capability inventory remain available.
+- The approved Design is now translated into one 39-Task R0-R8 TDD plan.
+- The plan selects an ACP bridge over Codex app-server and Claude Agent ACP,
+  with deterministic Fake gates before separately authorized real gates.
 - No product implementation has begun.
 
 ## Approved MVP
@@ -75,11 +78,11 @@ authentication change, merge, or push is part of this gate.
 
 ## Next gate
 
-1. Create one local documentation commit for the verified context reset.
-2. Ask the human to review the cleaned written Rewrite Design.
-3. Only after explicit written-spec approval, use `writing-plans` to create
-   the detailed per-file, per-test, per-commit Rewrite TDD plan.
-4. Review that plan separately before R0 implementation.
+1. Review the sole 39-Task Rewrite TDD plan.
+2. Select Subagent-Driven Development or inline executing-plans.
+3. After explicit plan approval, begin Task 1 at R0 with its RED test.
+4. Stop again at Task 35 and Task 36 for exact real-gate authorization; plan
+   approval does not pre-authorize a real provider, ACP/tmux run, or Mission.
 
 ## Canonical handoff inputs
 
@@ -89,8 +92,9 @@ Read only:
 2. `CLAUDE.md` or `AGENT.md`
 3. `docs/superpowers/specs/2026-07-18-agentdeck-product-kernel-rewrite-design.md`
 4. `docs/roadmap/product-north-star.md`
-5. the top of `HISTORY.md`
-6. this file
+5. `docs/superpowers/plans/2026-07-18-agentdeck-product-kernel-rewrite.md`
+6. the top of `HISTORY.md`
+7. this file
 
 Then inspect:
 
