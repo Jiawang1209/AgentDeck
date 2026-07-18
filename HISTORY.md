@@ -11,6 +11,14 @@
   domain values for the P1 kernel. Task graphs now fail closed on duplicate
   identities, missing dependencies, dependency cycles, empty acceptance
   criteria, and non-finite or out-of-range retry and budget bounds.
+- Closed the approved architecture fields as first-class immutable domain
+  values rather than opaque metadata: Tasks carry role, scope, acceptance
+  contribution, and concurrency keys; Mission versions carry scope,
+  exclusions, concurrency/budget limits, route order, expiry, and proposal
+  provenance; authorization envelopes carry semantic/path scope, exclusions,
+  role and Agent constraints, external-effect policy, retry/recovery bounds,
+  acceptance criteria, route order, and expiry. Dangerous authority fields
+  have no permissive constructor defaults.
 - Bound confirmation to the exact canonical Mission version and authorization
   envelope with a lowercase SHA-256 digest. Declared tuple order remains
   semantically significant while mapping insertion order does not; stale or

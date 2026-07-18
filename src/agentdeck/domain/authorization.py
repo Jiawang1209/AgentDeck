@@ -7,6 +7,7 @@ import json
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass
+from enum import Enum
 from types import MappingProxyType
 from typing import cast
 
@@ -33,30 +34,56 @@ def _bounded_int(value: object, *, minimum: int, maximum: int) -> bool:
     )
 
 
+class ExternalEffectPolicy(str, Enum):
+    DENY = "deny"
+    REQUIRE_CONFIRMATION = "require_confirmation"
+    ALLOW_IN_SCOPE = "allow_in_scope"
+
+
 @dataclass(frozen=True, slots=True)
 class AuthorizationEnvelope:
+    semantic_scope: tuple[str, ...]
+    path_scope: tuple[str, ...]
+    exclusions: tuple[str, ...]
     operations: tuple[str, ...]
+    allowed_agents: tuple[str, ...]
+    allowed_roles: tuple[str, ...]
+    external_effect_policy: ExternalEffectPolicy
     max_attempts: int
-    budget_units: int = 1
-    allowed_agents: tuple[str, ...] = ()
-    ordered_routes: tuple[str, ...] = ()
+    max_retries: int
+    max_recoveries: int
+    budget_units: int
+    acceptance_criteria: tuple[str, ...]
+    ordered_routes: tuple[str, ...]
+    expires_at: str | None
     metadata: Mapping[str, CanonicalValue] = MappingProxyType({})
 
     def __post_init__(self) -> None:
         if not (
-            _validate_text_tuple(self.operations, allow_empty=False)
+            _validate_text_tuple(self.semantic_scope, allow_empty=False)
+            and _validate_text_tuple(self.path_scope, allow_empty=True)
+            and _validate_text_tuple(self.exclusions, allow_empty=True)
+            and _validate_text_tuple(self.operations, allow_empty=False)
+            and _validate_text_tuple(self.allowed_agents, allow_empty=True)
+            and _validate_text_tuple(self.allowed_roles, allow_empty=True)
+            and isinstance(self.external_effect_policy, ExternalEffectPolicy)
             and _bounded_int(
                 self.max_attempts,
                 minimum=1,
                 maximum=MAX_AUTHORIZATION_ATTEMPTS,
             )
+            and _bounded_int(self.max_retries, minimum=0, maximum=32)
+            and _bounded_int(self.max_recoveries, minimum=0, maximum=32)
             and _bounded_int(
                 self.budget_units,
                 minimum=1,
                 maximum=MAX_AUTHORIZATION_BUDGET_UNITS,
             )
-            and _validate_text_tuple(self.allowed_agents, allow_empty=True)
-            and _validate_text_tuple(self.ordered_routes, allow_empty=True)
+            and _validate_text_tuple(
+                self.acceptance_criteria, allow_empty=False
+            )
+            and _validate_text_tuple(self.ordered_routes, allow_empty=False)
+            and (self.expires_at is None or _valid_text(self.expires_at))
             and isinstance(self.metadata, Mapping)
         ):
             raise ValueError("authorization envelope invalid")
@@ -70,11 +97,20 @@ class AuthorizationEnvelope:
 
     def to_dict(self) -> dict[str, object]:
         return {
+            "semantic_scope": list(self.semantic_scope),
+            "path_scope": list(self.path_scope),
+            "exclusions": list(self.exclusions),
             "operations": list(self.operations),
-            "max_attempts": self.max_attempts,
-            "budget_units": self.budget_units,
             "allowed_agents": list(self.allowed_agents),
+            "allowed_roles": list(self.allowed_roles),
+            "external_effect_policy": self.external_effect_policy.value,
+            "max_attempts": self.max_attempts,
+            "max_retries": self.max_retries,
+            "max_recoveries": self.max_recoveries,
+            "budget_units": self.budget_units,
+            "acceptance_criteria": list(self.acceptance_criteria),
             "ordered_routes": list(self.ordered_routes),
+            "expires_at": self.expires_at,
             "metadata": _thaw_canonical(cast(CanonicalValue, self.metadata)),
         }
 
@@ -130,4 +166,3 @@ class ConfirmedMissionVersion:
             "authorization_envelope": self.authorization_envelope.to_dict(),
             "authorization_digest": self.authorization_digest,
         }
-

@@ -17,6 +17,7 @@ if TYPE_CHECKING:
 
 MAX_RETRY_LIMIT = 32
 MAX_BUDGET_UNITS = 1_000_000
+MAX_PARALLEL_TASKS = 256
 _MAX_TEXT_BYTES = 4 * 1024
 _MAX_METADATA_DEPTH = 16
 
@@ -139,8 +140,12 @@ class AttemptState(str, Enum):
 class TaskSpec:
     task_id: str
     objective: str
+    role: str
+    scope: tuple[str, ...]
+    acceptance_contribution: tuple[str, ...]
     acceptance_criteria: tuple[str, ...]
     dependencies: tuple[str, ...] = ()
+    concurrency_keys: tuple[str, ...] = ()
     retry_limit: int = 0
     budget_units: int = 1
 
@@ -148,9 +153,15 @@ class TaskSpec:
         if not (
             _valid_text(self.task_id)
             and _valid_text(self.objective)
+            and _valid_text(self.role)
+            and _validate_text_tuple(self.scope, allow_empty=False)
+            and _validate_text_tuple(
+                self.acceptance_contribution, allow_empty=False
+            )
             and isinstance(self.dependencies, tuple)
             and all(_valid_text(item) for item in self.dependencies)
             and _validate_text_tuple(self.acceptance_criteria, allow_empty=False)
+            and _validate_text_tuple(self.concurrency_keys, allow_empty=True)
             and _bounded_int(
                 self.retry_limit, minimum=0, maximum=MAX_RETRY_LIMIT
             )
@@ -164,8 +175,12 @@ class TaskSpec:
         return {
             "task_id": self.task_id,
             "objective": self.objective,
+            "role": self.role,
+            "scope": list(self.scope),
+            "acceptance_contribution": list(self.acceptance_contribution),
             "acceptance_criteria": list(self.acceptance_criteria),
             "dependencies": list(self.dependencies),
+            "concurrency_keys": list(self.concurrency_keys),
             "retry_limit": self.retry_limit,
             "budget_units": self.budget_units,
         }
@@ -229,9 +244,17 @@ class MissionVersion:
     mission_id: str
     version: int
     goal: str
+    scope: tuple[str, ...]
+    exclusions: tuple[str, ...]
     tasks: tuple[TaskSpec, ...]
     acceptance_criteria: tuple[str, ...]
-    constraints: tuple[str, ...] = ()
+    constraints: tuple[str, ...]
+    max_parallel_tasks: int
+    budget_units: int
+    ordered_routes: tuple[str, ...]
+    expires_at: str | None
+    provenance_source: str
+    provenance_id: str
     metadata: Mapping[str, CanonicalValue] = MappingProxyType({})
 
     def __post_init__(self) -> None:
@@ -239,8 +262,26 @@ class MissionVersion:
             _valid_text(self.mission_id)
             and _bounded_int(self.version, minimum=1, maximum=(2**63) - 1)
             and _valid_text(self.goal)
+            and _validate_text_tuple(self.scope, allow_empty=False)
+            and _validate_text_tuple(self.exclusions, allow_empty=True)
             and _validate_text_tuple(self.acceptance_criteria, allow_empty=False)
             and _validate_text_tuple(self.constraints, allow_empty=True)
+            and _bounded_int(
+                self.max_parallel_tasks,
+                minimum=1,
+                maximum=MAX_PARALLEL_TASKS,
+            )
+            and _bounded_int(
+                self.budget_units,
+                minimum=1,
+                maximum=MAX_BUDGET_UNITS,
+            )
+            and _validate_text_tuple(self.ordered_routes, allow_empty=False)
+            and (
+                self.expires_at is None or _valid_text(self.expires_at)
+            )
+            and _valid_text(self.provenance_source)
+            and _valid_text(self.provenance_id)
             and isinstance(self.metadata, Mapping)
         ):
             raise ValueError("mission version invalid")
@@ -258,9 +299,17 @@ class MissionVersion:
             "mission_id": self.mission_id,
             "version": self.version,
             "goal": self.goal,
+            "scope": list(self.scope),
+            "exclusions": list(self.exclusions),
             "tasks": [item.to_dict() for item in self.tasks],
             "acceptance_criteria": list(self.acceptance_criteria),
             "constraints": list(self.constraints),
+            "max_parallel_tasks": self.max_parallel_tasks,
+            "budget_units": self.budget_units,
+            "ordered_routes": list(self.ordered_routes),
+            "expires_at": self.expires_at,
+            "provenance_source": self.provenance_source,
+            "provenance_id": self.provenance_id,
             "metadata": _thaw_canonical(cast(CanonicalValue, self.metadata)),
         }
 
