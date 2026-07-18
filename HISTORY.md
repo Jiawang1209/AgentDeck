@@ -4,6 +4,23 @@
 
 ## 2026-07-18
 
+### Freeze the Mission authorization domain
+
+- Added immutable, transport-independent `TaskSpec`, `MissionVersion`,
+  `AuthorizationEnvelope`, `ConfirmedMissionVersion`, and `AttemptState`
+  domain values for the P1 kernel. Task graphs now fail closed on duplicate
+  identities, missing dependencies, dependency cycles, empty acceptance
+  criteria, and non-finite or out-of-range retry and budget bounds.
+- Bound confirmation to the exact canonical Mission version and authorization
+  envelope with a lowercase SHA-256 digest. Declared tuple order remains
+  semantically significant while mapping insertion order does not; stale or
+  altered bindings return only the fixed `authorization digest mismatch`
+  diagnostic.
+- Expressed the V1 one-concurrently-mutating-Mission rule as a pure validation
+  function, without introducing storage, daemon, provider, runtime,
+  filesystem, network, or clock authority. This slice freezes domain
+  semantics only and does not claim SQLite cutover or P1 completion.
+
 ### Define durable Mission event provenance
 
 - Added a pure, deterministic `DomainEvent` primitive for the P1 durable
