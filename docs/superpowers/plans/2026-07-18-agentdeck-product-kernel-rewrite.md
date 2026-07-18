@@ -64,7 +64,9 @@ Legacy source is `not admitted` unless a task names it under **Approved legacy
 evidence**. Kernel and Application may never import admitted legacy code;
 Adapters are the only legal import boundary.
 
-**Wave A implementation-inventory correction (2026-07-19):** Task 12's
+**Implementation-inventory corrections (2026-07-19):** Task 8's evolved
+execution coverage is split across two cohesive test modules so neither new
+file exceeds the 500-line ceiling. Task 12's
 declared durable `conversation_turns` transaction required the existing Store
 Adapter to save and reload that aggregate, while the 500-line limit and
 fail-closed validation required cohesive helper and quality-test splits. Task
@@ -948,6 +950,7 @@ git commit -m "feat: add exact mission preview confirmation"
 **Files:**
 - Create: `src/agentdeck/kernel/execution.py`
 - Create: `tests/product_kernel/test_kernel_execution.py`
+- Create: `tests/product_kernel/test_kernel_execution_results.py`
 - Modify: `HISTORY.md`
 
 **Forbidden legacy imports:** legacy job/message/reply/workflow models.
@@ -993,8 +996,8 @@ evidence IDs for every criterion.
 - [ ] **Step 3: Verify and commit**
 
 ```bash
-conda run -n agentdeck pytest tests/product_kernel/test_kernel_execution.py tests/product_kernel/test_kernel_mission.py -q
-git add src/agentdeck/kernel/execution.py tests/product_kernel/test_kernel_execution.py HISTORY.md
+conda run -n agentdeck pytest tests/product_kernel/test_kernel_execution.py tests/product_kernel/test_kernel_execution_results.py tests/product_kernel/test_kernel_mission.py -q
+git add src/agentdeck/kernel/execution.py tests/product_kernel/test_kernel_execution.py tests/product_kernel/test_kernel_execution_results.py HISTORY.md
 git commit -m "feat: add execution lineage domain model"
 ```
 
@@ -1250,7 +1253,7 @@ without asking the user to repeat it. Every mutation uses a stable command ID.
 
 ```bash
 conda run -n agentdeck pytest tests/product_kernel/test_session_service.py tests/product_kernel/test_sqlite_transactions.py -q
-git add src/agentdeck/application/session_service.py tests/product_kernel/test_session_service.py HISTORY.md
+git add src/agentdeck/application/session_service.py src/agentdeck/application/session_validation.py src/agentdeck/adapters/sqlite.py src/agentdeck/adapters/sqlite_validation.py tests/product_kernel/test_session_service.py tests/product_kernel/test_session_service_quality.py HISTORY.md
 git commit -m "feat: retain goals across product setup"
 ```
 
@@ -1483,7 +1486,7 @@ and oversize diagnostic codes.
 
 ```bash
 conda run -n agentdeck pytest tests/product_kernel/test_leader_contract.py tests/product_kernel/test_leader_service.py tests/product_kernel/test_kernel_mission.py -q
-git add src/agentdeck/ports/leader.py src/agentdeck/application/leader_service.py tests/product_kernel HISTORY.md
+git add src/agentdeck/ports/leader.py src/agentdeck/ports/leader_schema.py src/agentdeck/application/leader_service.py tests/product_kernel HISTORY.md
 git commit -m "feat: validate untrusted leader proposals"
 ```
 

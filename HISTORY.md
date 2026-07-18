@@ -4,6 +4,18 @@
 
 ## 2026-07-19
 
+### Split oversized Task 8 execution coverage
+
+- Split the evolved Task 8 execution-lineage tests into cohesive Attempt /
+  Evidence and Handoff / Acceptance modules. The same `102` parametrized test
+  cases remain collected, while both files now satisfy the plan's 500-line
+  ceiling; production behavior and coverage semantics are unchanged.
+- Corrected the rewrite plan's Task 8 inventory and verify/stage commands to
+  include the split module. Also aligned the previously corrected Task 12 and
+  Task 16 staging commands with their explicit file inventories. This is a
+  governance and test-layout correction only; it does not change product
+  scope, task order, or admit legacy code.
+
 ### Reject Session cookie and SSH credential material
 
 - Extended the existing pre-transaction ProductSession goal validation to
