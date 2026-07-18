@@ -235,6 +235,33 @@ def test_worker_payload_and_reason_allow_safe_credential_discussion(text: str) -
     assert validate_worker_reason(text) == text
 
 
+@pytest.mark.parametrize("target", ["event", "result", "reason"])
+def test_legacy_openai_key_is_rejected_without_echo(target: str) -> None:
+    secret = "sk-" + "L" * 48
+
+    with pytest.raises(ValueError) as raised:
+        if target == "reason":
+            validate_worker_reason(secret)
+        else:
+            _payload_target(target, {"message": secret})
+
+    expected = (
+        "reason contains sensitive content"
+        if target == "reason"
+        else "payload contains sensitive content"
+    )
+    assert str(raised.value) == expected
+    assert secret not in str(raised.value)
+
+
+def test_legacy_openai_prefix_prose_remains_safe() -> None:
+    text = "Document the legacy sk- prefix without including an API key."
+
+    for target in ("event", "result"):
+        assert _payload_target(target, {"message": text}).payload["message"] == text
+    assert validate_worker_reason(text) == text
+
+
 @pytest.mark.parametrize(
     "key",
     [

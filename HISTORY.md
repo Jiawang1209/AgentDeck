@@ -17,6 +17,19 @@
 - Second-review TDD RED produced the five expected missing-rejection failures;
   the complete focused Session suite then passed all `74` tests.
 
+### Reject legacy Worker API keys
+
+- Extended the existing Task 20 shared naked-credential classifier to reject
+  legacy OpenAI API keys shaped as `sk-` plus exactly 48 alphanumeric
+  characters. `WorkerEvent`, `WorkerResult`, and Worker reason validation keep
+  their fixed content-free diagnostics, while ordinary prose that only names
+  the `sk-` prefix remains accepted.
+- The change stays inside the existing Worker redaction regex and contract
+  tests. It adds no Task 21 event schema, Worker operation, file, transport,
+  persistence, provider, ACP, tmux, or legacy dependency.
+- TDD RED failed the three Event, Result, and reason cases with `3 failed, 82
+  passed`; focused GREEN passed all `85` Worker contract tests.
+
 ### Harden Wave A session command replay
 
 - Explicit `accept_text` retries now resolve the original durable command

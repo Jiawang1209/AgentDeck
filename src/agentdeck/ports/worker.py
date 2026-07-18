@@ -34,6 +34,7 @@ _BEARER = re.compile(r"(?<![A-Za-z0-9])bearer[ \t]+\S", re.IGNORECASE)
 _NAKED_CREDENTIAL = re.compile(
     r"(?<![A-Za-z0-9_-])(?:"
     r"sk-(?:proj|ant)-[A-Za-z0-9_-]{16,}"
+    r"|sk-[A-Za-z0-9]{48}"
     r"|ghp_[A-Za-z0-9]{36,}"
     r"|github_pat_[A-Za-z0-9_]{20,}"
     r"|AKIA[A-Z0-9]{16}"
