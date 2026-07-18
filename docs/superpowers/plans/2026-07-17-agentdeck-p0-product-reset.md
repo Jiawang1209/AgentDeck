@@ -74,7 +74,7 @@ Golden Mission, merge, or push is authorized by this plan.
 - Modify: `docs/handoff/current-development-state.md:1-18`
 - Modify: `HISTORY.md:5`
 
-- [ ] **Step 1: Record the starting repository facts**
+- [x] **Step 1: Record the starting repository facts**
 
 Run:
 
@@ -88,7 +88,7 @@ Expected: the intended architecture-reset worktree is active; no unexpected
 user-owned changes are present. If unrelated changes exist, stop and do not
 overwrite them.
 
-- [ ] **Step 2: Run the routing assertion as RED**
+- [x] **Step 2: Run the routing assertion as RED**
 
 Run:
 
@@ -107,7 +107,7 @@ PY
 
 Expected: FAIL because the three active-route markers are not yet aligned.
 
-- [ ] **Step 3: Replace only the active routing text**
+- [x] **Step 3: Replace only the active routing text**
 
 At the top of the handoff, add this exact authority statement before the old
 M2c material and rename the old `Active goal` heading to `Superseded M2c
@@ -138,7 +138,7 @@ In the ultimate roadmap, add a top-level note that new development follows the
 architecture-reset program; historical M1/M2/M2c/M3 labels remain evidence,
 not current scheduling gates.
 
-- [ ] **Step 4: Record the route change in HISTORY**
+- [x] **Step 4: Record the route change in HISTORY**
 
 Add under `## 2026-07-17`:
 
@@ -153,13 +153,13 @@ Add under `## 2026-07-17`:
   preflight/live runs, merge, and push remain out of scope.
 ```
 
-- [ ] **Step 5: Run the routing assertion as GREEN**
+- [x] **Step 5: Run the routing assertion as GREEN**
 
 Run the Step 2 command again.
 
 Expected: PASS with exit code 0.
 
-- [ ] **Step 6: Verify scope and commit**
+- [x] **Step 6: Verify scope and commit**
 
 Run:
 
@@ -186,7 +186,7 @@ git commit -m "docs: start AgentDeck V1 product reset"
 - Create: `docs/product/agentdeck-v1-prd.md`
 - Modify: `HISTORY.md:5`
 
-- [ ] **Step 1: Run the PRD contract as RED**
+- [x] **Step 1: Run the PRD contract as RED**
 
 Run:
 
@@ -212,7 +212,7 @@ PY
 
 Expected: FAIL because the PRD does not exist.
 
-- [ ] **Step 2: Create the PRD with the approved product contract**
+- [x] **Step 2: Create the PRD with the approved product contract**
 
 Create the file with these sections and concrete statements:
 
@@ -257,19 +257,19 @@ takeover/return, fresh install, and no silent fallback.
 Expand each section with the exact decisions in the program plan. Do not add
 new providers, UI clients, or permissions.
 
-- [ ] **Step 3: Record the PRD in HISTORY**
+- [x] **Step 3: Record the PRD in HISTORY**
 
 Add a `### Freeze the AgentDeck V1 product requirements` entry stating the
 user journey, Codex/Claude scope, one-confirmation autonomy, background
 continuation, graded acceptance, learning suggestions, and explicit non-goals.
 
-- [ ] **Step 4: Run the PRD contract as GREEN**
+- [x] **Step 4: Run the PRD contract as GREEN**
 
 Run the Step 1 command again.
 
 Expected: PASS with exit code 0.
 
-- [ ] **Step 5: Review against the north star and commit**
+- [x] **Step 5: Review against the north star and commit**
 
 Run:
 
@@ -295,7 +295,7 @@ git commit -m "docs: define AgentDeck V1 product requirements"
 - Create: `docs/architecture/agentdeck-v1-kernel-reset.md`
 - Modify: `HISTORY.md:5`
 
-- [ ] **Step 1: Run the architecture contract as RED**
+- [x] **Step 1: Run the architecture contract as RED**
 
 Run:
 
@@ -323,7 +323,7 @@ PY
 
 Expected: FAIL because the architecture document does not exist.
 
-- [ ] **Step 2: Create the architecture document**
+- [x] **Step 2: Create the architecture document**
 
 Write the component diagram and entity chain from the program plan, then state
 these invariants verbatim:
@@ -342,20 +342,20 @@ these invariants verbatim:
 Include the target responsibility map, but explicitly prohibit empty package
 scaffolding or a big-bang file move.
 
-- [ ] **Step 3: Record the architecture in HISTORY**
+- [x] **Step 3: Record the architecture in HISTORY**
 
 Add `### Define the evolutionary V1 kernel reset` and record the single daemon,
 Mission/Task/Attempt/Permission/Handoff/Evidence model, adapter boundaries,
 ACP-first transport, tmux observation, governance/verification separation,
 and safe learning lifecycle.
 
-- [ ] **Step 4: Run the architecture contract as GREEN**
+- [x] **Step 4: Run the architecture contract as GREEN**
 
 Run the Step 1 command again.
 
 Expected: PASS with exit code 0.
 
-- [ ] **Step 5: Check dependency language and commit**
+- [x] **Step 5: Check dependency language and commit**
 
 Run:
 
@@ -381,7 +381,7 @@ git commit -m "docs: define AgentDeck V1 kernel architecture"
 - Create: `docs/architecture/agentdeck-v1-state-migration.md`
 - Modify: `HISTORY.md:5`
 
-- [ ] **Step 1: Run the migration-design contract as RED**
+- [x] **Step 1: Run the migration-design contract as RED**
 
 Run:
 
@@ -410,7 +410,7 @@ PY
 
 Expected: FAIL because the migration design does not exist.
 
-- [ ] **Step 2: Create the migration design**
+- [x] **Step 2: Create the migration design**
 
 Specify:
 
@@ -436,18 +436,18 @@ agentdeck migrate --rollback
 
 State that command spelling is a P1 design input, not implemented by P0.
 
-- [ ] **Step 3: Record the migration decision in HISTORY**
+- [x] **Step 3: Record the migration decision in HISTORY**
 
 Add `### Choose SQLite for the new Mission authority` and state the reversible
 legacy migration, dual ProjectView projection, and no-silent-migration rules.
 
-- [ ] **Step 4: Run the migration-design contract as GREEN**
+- [x] **Step 4: Run the migration-design contract as GREEN**
 
 Run the Step 1 command again.
 
 Expected: PASS with exit code 0.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 Run:
 
@@ -466,7 +466,7 @@ Expected: the documentation commit succeeds without source or test changes.
 - Create: `docs/migrations/2026-07-17-legacy-capability-inventory.md`
 - Modify: `HISTORY.md:5`
 
-- [ ] **Step 1: Capture the reproducible inventory inputs**
+- [x] **Step 1: Capture the reproducible inventory inputs**
 
 Run:
 
@@ -482,7 +482,7 @@ Expected: concrete module paths, test paths, large-file pressure points, and
 current authority classes are visible. Save only summarized facts in the
 document, not generated absolute paths.
 
-- [ ] **Step 2: Run the inventory contract as RED**
+- [x] **Step 2: Run the inventory contract as RED**
 
 Run:
 
@@ -511,7 +511,7 @@ PY
 
 Expected: FAIL because the inventory document does not exist.
 
-- [ ] **Step 3: Write the classification table**
+- [x] **Step 3: Write the classification table**
 
 Use columns:
 
@@ -539,13 +539,13 @@ At minimum classify:
 No row may say only "keep" or "rewrite"; each row requires target owner,
 phase, evidence, and removal gate.
 
-- [ ] **Step 4: Record the inventory in HISTORY**
+- [x] **Step 4: Record the inventory in HISTORY**
 
 Add `### Classify the AgentDeck implementation for V1 migration` and summarize
 the retained foundations, refactoring pressure points, archived mega-harness,
 and missing P1-P4 capabilities.
 
-- [ ] **Step 5: Run the inventory contract as GREEN and commit**
+- [x] **Step 5: Run the inventory contract as GREEN and commit**
 
 Run the Step 2 command again, then:
 
@@ -564,7 +564,7 @@ Expected: assertion and commit pass.
 - Create: `docs/migrations/2026-07-17-m2c-test-migration-matrix.md`
 - Modify: `HISTORY.md:5`
 
-- [ ] **Step 1: Capture the M2c test groups without executing live code**
+- [x] **Step 1: Capture the M2c test groups without executing live code**
 
 Run:
 
@@ -579,7 +579,7 @@ rm /tmp/agentdeck-m2c-test-names.txt
 Expected: only test names and counts are inspected; no pytest node, provider,
 daemon, ACP, or tmux process runs.
 
-- [ ] **Step 2: Run the matrix contract as RED**
+- [x] **Step 2: Run the matrix contract as RED**
 
 Run:
 
@@ -606,7 +606,7 @@ PY
 
 Expected: FAIL because the matrix does not exist.
 
-- [ ] **Step 3: Write the migration matrix**
+- [x] **Step 3: Write the migration matrix**
 
 Use columns:
 
@@ -634,13 +634,13 @@ Map these groups explicitly:
 State that the old file is removed only after every retained invariant has a
 new owner and both Golden Missions have passed.
 
-- [ ] **Step 4: Record the migration matrix in HISTORY**
+- [x] **Step 4: Record the migration matrix in HISTORY**
 
 Add `### Replace the M2c mega-gate with layered verification` and state that
 useful failure cases are preserved, brittle harness-internal assertions are
 retired, and old M2c is not a release veto or retry target.
 
-- [ ] **Step 5: Run the matrix contract as GREEN and commit**
+- [x] **Step 5: Run the matrix contract as GREEN and commit**
 
 Run the Step 2 command again, then:
 
@@ -659,7 +659,7 @@ Expected: assertion and commit pass.
 - Create: `docs/validation/agentdeck-v1-validation-strategy.md`
 - Modify: `HISTORY.md:5`
 
-- [ ] **Step 1: Run the validation-strategy contract as RED**
+- [x] **Step 1: Run the validation-strategy contract as RED**
 
 Run:
 
@@ -687,7 +687,7 @@ PY
 
 Expected: FAIL because the strategy does not exist.
 
-- [ ] **Step 2: Create the validation strategy**
+- [x] **Step 2: Create the validation strategy**
 
 Define the five layers and exact responsibility of each. State these Golden
 requirements:
@@ -709,13 +709,13 @@ State that live smoke is opt-in and isolated, but it is rerunnable after a
 root-cause fix; no single-use authorization ceremony is part of product
 correctness.
 
-- [ ] **Step 3: Record validation strategy in HISTORY**
+- [x] **Step 3: Record validation strategy in HISTORY**
 
 Add `### Define the AgentDeck V1 verification pyramid` and summarize the five
 layers, Golden A/B, precise BLOCKED/FAILED split, and semantic—not textual—live
 assertions.
 
-- [ ] **Step 4: Run the strategy contract as GREEN and commit**
+- [x] **Step 4: Run the strategy contract as GREEN and commit**
 
 Run the Step 1 command again, then:
 
@@ -734,7 +734,7 @@ Expected: assertion and commit pass.
 - Create: `docs/validation/2026-07-17-p0-baseline.md`
 - Modify: `HISTORY.md:5`
 
-- [ ] **Step 1: Verify the P0 source scope before tests**
+- [x] **Step 1: Verify the P0 source scope before tests**
 
 Run:
 
@@ -745,7 +745,7 @@ git diff --name-only HEAD~7..HEAD -- src/agentdeck tests
 Expected: no output. If source or tests changed during P0, stop and investigate
 before running the baseline.
 
-- [ ] **Step 2: Run compile and focused deterministic baselines**
+- [x] **Step 2: Run compile and focused deterministic baselines**
 
 Run serially:
 
@@ -764,7 +764,7 @@ PYTHONPATH="$PWD/src" conda run --no-capture-output -n agentdeck \
 
 Expected: compile exit 0 and focused tests PASS. No opt-in live node executes.
 
-- [ ] **Step 3: Run the complete default suite once**
+- [x] **Step 3: Run the complete default suite once**
 
 Run:
 
@@ -777,7 +777,7 @@ nodes remain skipped. Record the exact pass/skip count and elapsed time. If it
 fails, record the exact first failure and classify it; do not edit production
 code under P0.
 
-- [ ] **Step 4: Create the baseline evidence document**
+- [x] **Step 4: Create the baseline evidence document**
 
 Record:
 
@@ -795,7 +795,7 @@ Record:
 Do not paste prompts, credentials, absolute home paths, raw model output, or
 complete terminal transcripts.
 
-- [ ] **Step 5: Record baseline in HISTORY and commit**
+- [x] **Step 5: Record baseline in HISTORY and commit**
 
 Add `### Record the P0 architecture-reset baseline` with the exact observed
 counts and scope facts, then run:
@@ -817,7 +817,7 @@ Expected: commit succeeds; no live resources were created.
 - Modify: `docs/superpowers/plans/2026-07-17-agentdeck-p0-product-reset.md`
 - Modify: `HISTORY.md:5`
 
-- [ ] **Step 1: Run the complete P0 document contract**
+- [x] **Step 1: Run the complete P0 document contract**
 
 Run:
 
@@ -832,7 +832,7 @@ required = {
     "docs/migrations/2026-07-17-legacy-capability-inventory.md": ("retain", "missing"),
     "docs/migrations/2026-07-17-m2c-test-migration-matrix.md": ("Golden Mission", "not a release veto"),
     "docs/validation/agentdeck-v1-validation-strategy.md": ("Golden A", "Golden B"),
-    "docs/validation/2026-07-17-p0-baseline.md": ("Full suite", "Scope audit"),
+    "docs/validation/2026-07-17-p0-baseline.md": ("Default full", "Scope audit"),
 }
 for name, tokens in required.items():
     path = Path(name)
@@ -845,7 +845,7 @@ PY
 
 Expected: PASS.
 
-- [ ] **Step 2: Perform the scope and contradiction audit**
+- [x] **Step 2: Perform the scope and contradiction audit**
 
 Run:
 
@@ -867,7 +867,7 @@ Expected: first command finds no source/test/runtime changes. The contradiction
 scan may find only clearly labeled historical quotations/evidence, never the
 active route. Future features appear only as non-goals or post-V1 work.
 
-- [ ] **Step 3: Run the writing-plans self-review**
+- [x] **Step 3: Run the writing-plans self-review**
 
 Check all P0 requirements against Tasks 1-8, then run:
 
@@ -880,7 +880,7 @@ rg -n "T[B]D|T[O]DO|implement lat[e]r|fill i[n]|appropriate error handlin[g]|sim
 Expected: no unresolved placeholder language. If a phrase appears as a quoted
 forbidden example, rewrite it so the scan is empty.
 
-- [ ] **Step 4: Freeze the P1 handoff without starting P1**
+- [x] **Step 4: Freeze the P1 handoff without starting P1**
 
 Update the handoff with:
 
@@ -900,13 +900,13 @@ Mission Kernel task-level TDD plan. P1 implementation is not authorized by P0.
 Check P0 in the program progress checklist and check completed steps in this
 plan using the exact observed evidence.
 
-- [ ] **Step 5: Record P0 completion in HISTORY**
+- [x] **Step 5: Record P0 completion in HISTORY**
 
 Add `### Complete AgentDeck P0 Product Reset` and list the exact seven durable
 documents, baseline result, source/test zero-change proof, and P1 planning-only
 next gate.
 
-- [ ] **Step 6: Run final verification and commit**
+- [x] **Step 6: Run final verification and commit**
 
 Run:
 
@@ -963,14 +963,14 @@ baseline and explicitly asks to continue.
 
 ## P0 definition of done
 
-- [ ] Active roadmap and handoff route to P0-P5 rather than old M2c/M3 gates
-- [ ] V1 PRD exists and matches the approved user journey/non-goals
-- [ ] Kernel architecture exists with one authority and explicit invariants
-- [ ] SQLite/legacy migration design is reversible and explicit
-- [ ] Every major current capability has a migration classification
-- [ ] Every useful M2c concern has a new validation owner or archive decision
-- [ ] V1 validation strategy defines deterministic gates, smoke, Golden A/B
-- [ ] Actual deterministic baseline is recorded without a live run
-- [ ] `src/agentdeck/**`, `tests/**`, and `.agentdeck/**` are unchanged by P0
-- [ ] HISTORY and current handoff agree on the next gate
-- [ ] Worktree is clean and no merge/push occurred
+- [x] Active roadmap and handoff route to P0-P5 rather than old M2c/M3 gates
+- [x] V1 PRD exists and matches the approved user journey/non-goals
+- [x] Kernel architecture exists with one authority and explicit invariants
+- [x] SQLite/legacy migration design is reversible and explicit
+- [x] Every major current capability has a migration classification
+- [x] Every useful M2c concern has a new validation owner or archive decision
+- [x] V1 validation strategy defines deterministic gates, smoke, Golden A/B
+- [x] Actual deterministic baseline is recorded without a live run
+- [x] `src/agentdeck/**`, `tests/**`, and `.agentdeck/**` are unchanged by P0
+- [x] HISTORY and current handoff agree on the next gate
+- [x] Worktree is clean and no merge/push occurred

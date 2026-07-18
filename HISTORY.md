@@ -2,6 +2,46 @@
 
 本文件记录 AgentDeck 每一次开发内容。约束：每次新增功能、文档规则、项目骨架、运行环境或用户可见行为变化，都必须同步更新本文件，并在同一次 commit 中提交。
 
+## 2026-07-18
+
+### Complete AgentDeck P0 Product Reset
+
+- Froze seven durable P0 documents for human exit review:
+  `docs/product/agentdeck-v1-prd.md` defines the product contract;
+  `docs/architecture/agentdeck-v1-kernel-reset.md` defines the unified kernel;
+  `docs/architecture/agentdeck-v1-state-migration.md` defines SQLite authority
+  and reversible legacy migration;
+  `docs/migrations/2026-07-17-legacy-capability-inventory.md` classifies reuse,
+  refactor, compatibility, archive, removal, and missing capabilities;
+  `docs/migrations/2026-07-17-m2c-test-migration-matrix.md` moves useful M2c
+  evidence into the V1 verification layers;
+  `docs/validation/agentdeck-v1-validation-strategy.md` defines deterministic,
+  conformance, real-smoke, and Golden A/B gates; and
+  `docs/validation/2026-07-17-p0-baseline.md` records reproducible baseline
+  evidence.
+- Preserved the requirements-driven Task 4 decision: `.agentdeck/state.db` is
+  the sole structured control-plane authority after verified cutover, while
+  source code, large artifacts, full logs, and Skill/Memory source text remain
+  owner-controlled files. Task 5 retains useful existing behavior behind the
+  new authority instead of using a greenfield rewrite; Task 6 makes historical
+  M2c evidence a migration backlog rather than a release veto; Task 7 defines
+  the replacement validation gates.
+- Recorded Task 8 results exactly: compile exited 0 in 0.74s wall time; the
+  focused deterministic suite passed 304 tests with no failures or skips in
+  33.81s pytest time / 34.66s wall time; the default full suite passed 4461
+  tests with 3 explicit opt-in skips in 227.70s pytest time / 228.68s wall
+  time. The skips were the real ACP node, separately authorized M2c strict
+  preflight, and real M2c acceptance node.
+- Confirmed the full P0 range `f3968720..118d0075` changed nothing under
+  `src/agentdeck`, `tests`, or `.agentdeck`. P0 ran no real provider, ACP,
+  tmux, preflight, or live Mission and performed no merge or push. Focused
+  daemon coverage used repository fake Leader, ACP, and tmux paths.
+- Closed the P0 documentation execution and froze its evidence without claiming
+  human approval, V1 readiness, or P1 authorization. Human P0 exit review is
+  the next gate. Only after explicit approval may a separate P1 Durable Mission
+  Kernel task-level TDD plan be created with `writing-plans`; P1 implementation
+  remains locked.
+
 ## 2026-07-17
 
 ### Record the P0 architecture-reset baseline

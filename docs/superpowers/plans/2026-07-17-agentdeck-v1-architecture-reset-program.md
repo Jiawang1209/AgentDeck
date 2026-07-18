@@ -307,9 +307,11 @@ classify current assets before product-code changes.
 - baseline verification record;
 - roadmap, handoff, and HISTORY routing updates.
 
-**Exit gate:** All documents agree that P1 is next, M2c is legacy evidence,
-and no P1 code has begun. Existing deterministic baseline is recorded and the
-current worktree is clean. See the dedicated P0 plan.
+**Exit gate:** All documents agree that P1 is the next program phase, M2c is
+legacy evidence, and no P1 code has begun. The deterministic baseline and P0
+scope audit are frozen, and the worktree is clean. This records execution
+evidence but does not approve the gate: human review remains required before a
+separate P1 task-level plan may be written. See the dedicated P0 plan.
 
 ### P1: Durable Mission Kernel
 
@@ -561,7 +563,8 @@ The architecture reset is complete only when all statements are true:
 
 ## 14. Program progress checklist
 
-- [ ] P0 Product Reset plan executed and exit gate approved
+- [x] P0 Product Reset plan executed and evidence frozen
+- [ ] P0 exit gate approved by human review
 - [ ] P1 task-level plan written and approved
 - [ ] P1 Durable Mission Kernel executed and exit gate approved
 - [ ] P2 task-level plan written and approved

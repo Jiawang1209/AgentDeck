@@ -1,33 +1,63 @@
 # AgentDeck Current Development State
 
-Updated: 2026-07-17
+Updated: 2026-07-18
 
-## Active goal — AgentDeck P0 Product Reset
+## Active goal — AgentDeck P0 exit review
 
-The user approved the complete ten-part AgentDeck V1 architecture-reset
-design and selected the evolutionary-kernel route: preserve and converge the
-existing Conversation, ProjectView, daemon, ledger, approval, ACP/tmux,
-skill, memory, and learning foundations instead of continuing to patch the
-M2c mega-harness or starting a greenfield rewrite.
+The evolutionary-kernel route remains authoritative: preserve and converge
+the existing Conversation, ProjectView, daemon, ledger, approval, ACP/tmux,
+skill, memory, and learning foundations around one durable Mission authority.
+The historical M2c mega-harness is evidence, not the active development route
+or a release veto.
 
-Two plans are authoritative for this route:
+## P0 exit status
 
-- [AgentDeck V1 architecture-reset program](../superpowers/plans/2026-07-17-agentdeck-v1-architecture-reset-program.md)
-  fixes the strictly ordered P0 Product Reset -> P1 Durable Mission Kernel ->
-  P2 Conversation Product -> P3 official Codex/Claude adapters -> P4 reliable
-  multi-Agent closure -> P5 learning/V1 release program.
-- [AgentDeck P0 Product Reset plan](../superpowers/plans/2026-07-17-agentdeck-p0-product-reset.md)
-  is the immediately executable, task-level P0 plan. It writes the PRD,
-  architecture, SQLite/legacy migration design, current-capability inventory,
-  M2c test migration matrix, V1 validation strategy, and deterministic
-  baseline before any product-code change.
+P0 documentation, inventory, migration design, validation strategy, and
+deterministic baseline evidence are complete and frozen for human review. The
+seven durable P0 documents are:
 
-P0 is the sole current scope and is limited to documentation, current-
-capability inventory, migration design, and deterministic baseline evidence.
-It does not authorize product source or test changes, provider calls, ACP/tmux
-sessions, daemons, preflights, live Missions, merge, or push. P1 product
-implementation remains locked until the P0 exit criteria pass and the written
-P0 evidence is reviewed.
+- [V1 product requirements](../product/agentdeck-v1-prd.md) — product promise,
+  user journey, authority boundary, non-goals, and V1 acceptance contract.
+- [V1 kernel reset architecture](../architecture/agentdeck-v1-kernel-reset.md)
+  — unified domain model, ProjectDaemon authority, recovery, adapters,
+  Verification, ProjectView, and governed learning boundaries.
+- [V1 state migration](../architecture/agentdeck-v1-state-migration.md) — the
+  Task 4 decision that `.agentdeck/state.db` becomes the sole structured-state
+  authority through preview, backup, verified cutover, and bounded rollback;
+  filesystem content remains outside SQLite.
+- [Legacy capability inventory](../migrations/2026-07-17-legacy-capability-inventory.md)
+  — Task 5 retain/refactor/compat/archive/remove/missing classification. It
+  preserves useful Conversation, daemon, ledger, governance, ACP/tmux,
+  ProjectView, skill, memory, and learning behavior while removing legacy
+  authority assumptions rather than performing a greenfield rewrite.
+- [M2c test migration matrix](../migrations/2026-07-17-m2c-test-migration-matrix.md)
+  — Task 6 maps useful M2c safety evidence into deterministic, conformance,
+  real-smoke, and Golden Mission owners; M2c is not a release veto or retry
+  target.
+- [V1 validation strategy](../validation/agentdeck-v1-validation-strategy.md)
+  — Task 7 defines the deterministic commit gate, shared adapter conformance,
+  bounded real smoke, Golden A/B, rerun safety, and release evidence rules.
+- [P0 deterministic baseline](../validation/2026-07-17-p0-baseline.md) — Task 8
+  records Python 3.12.13, compile exit 0, focused `304 passed` in 33.81s pytest
+  time / 34.66s wall time, and default full `4461 passed, 3 skipped` in
+  227.70s pytest time / 228.68s wall time.
+
+The full-cycle scope audit from `f3968720` through `118d0075` shows zero
+changes under `src/agentdeck`, `tests`, or `.agentdeck`. P0 did not run a real
+provider, ACP adapter, tmux session, preflight, or live Mission, and it did not
+merge or push. The deterministic daemon tests used only repository fakes.
+These facts prove the P0 documentation baseline only; they do not claim
+V1, real-adapter, Golden, migration-runtime, or release readiness.
+
+## Next gate
+
+A human reviews the frozen P0 evidence. P1 implementation remains locked and
+is not authorized by P0 completion. The program-level P1 specification already
+defines its intended scope; only after explicit human approval may any newly
+unresolved product choice use `brainstorming`, and the separate P1 Durable
+Mission Kernel task-level TDD plan must then be created with `writing-plans`.
+Neither that task-level plan nor P1 implementation is written or executed in
+this P0 exit step.
 
 The historical M2c attempts below remain immutable evidence. They are no
 longer the active development route, a release veto, or authority to rerun a
