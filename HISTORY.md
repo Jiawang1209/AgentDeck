@@ -4,6 +4,20 @@
 
 ## 2026-07-18
 
+### Approve P0 exit and start P1 Durable Mission Kernel planning
+
+- Recorded the human's explicit approval of the frozen P0 exit evidence and
+  authorization to write the detailed P1 task-level TDD plan and begin its
+  Subagent-Driven implementation without another approval pause.
+- Recorded that the completed P0 branch was fast-forwarded into local `main`
+  at `4c0fddf8`, passed the complete default suite again with `4461 passed, 3
+  skipped`, and was not pushed. P1 starts from that exact commit in the
+  isolated `codex/p1-durable-mission-kernel` worktree.
+- Kept P1 bounded to the SQLite-backed Durable Mission Kernel, one
+  ProjectDaemon writer, deterministic recovery, explicit legacy migration,
+  and ProjectView compatibility. P2 conversation product work, real adapters,
+  live ACP/tmux, Golden Missions, merge, and push remain under later gates.
+
 ### Complete AgentDeck P0 Product Reset
 
 - Froze seven durable P0 documents for human exit review:

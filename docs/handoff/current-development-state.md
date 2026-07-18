@@ -2,7 +2,13 @@
 
 Updated: 2026-07-18
 
-## Active goal — AgentDeck P0 exit review
+## Active goal — AgentDeck P1 Durable Mission Kernel
+
+The human approved the P0 exit gate on 2026-07-18 and explicitly authorized
+writing the detailed P1 task-level TDD plan and then executing it without an
+additional approval pause. The P0 branch was fast-forwarded into local `main`
+at `4c0fddf8`; no push occurred. P1 now runs in the isolated
+`codex/p1-durable-mission-kernel` worktree.
 
 The evolutionary-kernel route remains authoritative: preserve and converge
 the existing Conversation, ProjectView, daemon, ledger, approval, ACP/tmux,
@@ -57,13 +63,14 @@ readiness.
 
 ## Next gate
 
-A human reviews the frozen P0 evidence. P1 implementation remains locked and
-is not authorized by P0 completion. The program-level P1 specification already
-defines its intended scope; only after explicit human approval may any newly
-unresolved product choice use `brainstorming`, and the separate P1 Durable
-Mission Kernel task-level TDD plan must then be created with `writing-plans`.
-Neither that task-level plan nor P1 implementation is written or executed in
-this P0 exit step.
+Create and self-review the separate P1 Durable Mission Kernel task-level TDD
+plan with `writing-plans`, commit it with the P0 approval routing update, then
+execute it task by task with Subagent-Driven Development and strict RED/GREEN
+evidence. P1 is limited to the durable Mission kernel, SQLite authority,
+ProjectDaemon recovery, legacy migration, and ProjectView compatibility
+defined by the approved program. P2 Conversation Product and all real
+Codex/Claude adapter, ACP/tmux live, Golden Mission, merge, and push work remain
+outside P1 unless separately reached by the ordered program gates.
 
 The historical M2c attempts below remain immutable evidence. They are no
 longer the active development route, a release veto, or authority to rerun a
@@ -914,16 +921,18 @@ git diff --name-only f3968720..HEAD -- src/agentdeck tests .agentdeck
 ## Current Phase
 
 The approved [AgentDeck V1 architecture-reset program](../superpowers/plans/2026-07-17-agentdeck-v1-architecture-reset-program.md)
-is the current development route and must run in strict P0-P5 order. P0 Tasks
-1–9 are frozen. The current action is Task 10: a read-only human P0 exit
-review of the seven durable documents, deterministic baseline, scope evidence,
-and repository status. Task 10 authorizes no document or product-source change,
-provider call, ACP/tmux session, daemon, preflight, live Mission, merge, or
-push.
+is the current development route and must run in strict P0-P5 order. P0 Tasks 1–10
+are complete and the human approved the P0 exit gate. The current action
+is to write, self-review, and commit the P1 Durable Mission Kernel task-level
+TDD plan, then execute it without another approval pause using
+Subagent-Driven Development. P1 changes may touch only the durable Mission
+domain, SQLite authority and migration, ProjectDaemon/application mutation
+path, deterministic recovery, ProjectView v2/v1 compatibility, focused tests,
+and the documentation/HISTORY required by those slices.
 
-P1 remains locked. Only after explicit human approval of the P0 exit gate may
-a separate P1 Durable Mission Kernel task-level TDD plan be created with
-`writing-plans`; that approval does not itself authorize P1 implementation.
+P2 and later phases remain locked. P1 does not authorize real provider calls,
+ACP/tmux sessions, preflight or live Missions, Golden A/B, merge, push, tool
+installation, or authentication/global-setting changes.
 Old M2c evidence is historical only: it is not a release veto, a current
 scheduling gate, or authority to retry any preflight or live node.
 
@@ -951,12 +960,12 @@ Claude can still continue the same work by treating this repository as the sourc
 Suggested prompt for Claude Code CLI:
 
 ```text
-Please perform the read-only AgentDeck P0 exit review from this repository. Do not continue implementation.
-Read CLAUDE.md, AGENT.md, the top of HISTORY.md, docs/roadmap/product-north-star.md, docs/roadmap/ultimate-goal-roadmap.md, docs/handoff/current-development-state.md, docs/superpowers/plans/2026-07-17-agentdeck-v1-architecture-reset-program.md, and docs/superpowers/plans/2026-07-17-agentdeck-p0-product-reset.md first.
+Continue the approved AgentDeck P1 Durable Mission Kernel work from this repository.
+Read CLAUDE.md, AGENT.md, the top of HISTORY.md, docs/roadmap/product-north-star.md, docs/roadmap/ultimate-goal-roadmap.md, docs/handoff/current-development-state.md, docs/product/agentdeck-v1-prd.md, docs/architecture/agentdeck-v1-kernel-reset.md, docs/architecture/agentdeck-v1-state-migration.md, docs/validation/agentdeck-v1-validation-strategy.md, and docs/superpowers/plans/2026-07-17-agentdeck-v1-architecture-reset-program.md first.
 Use conda activate agentdeck or conda run -n agentdeck for commands.
-P0 Tasks 1-9 are frozen. Execute only Task 10's read-only repository-state and evidence review, including the final f3968720..HEAD source/test/runtime scope audit. Report whether the human P0 exit gate can be approved, but do not mark it approved yourself.
-Do not modify documents, product source, tests, or runtime state. Do not call a provider, start ACP/tmux sessions or daemons, run preflight/live Missions, merge, push, install tools, or change authentication/global settings.
-P1 task-level planning may begin only after explicit human P0 exit approval and must use writing-plans. P1 implementation remains locked until separately authorized.
+The human approved P0 exit and authorized writing the detailed P1 task-level TDD plan followed by direct Subagent-Driven implementation. Follow that plan strictly with RED/GREEN evidence, two-stage review, HISTORY updates, and one focused commit per slice.
+Keep P1 limited to the durable Mission domain, SQLite authority and migration, ProjectDaemon/application mutation path, deterministic recovery, ProjectView v2/v1 compatibility, and focused fake/local tests.
+Do not call a real provider, start real ACP/tmux sessions, run preflight/live/Golden Missions, begin P2, merge, push, install tools, or change authentication/global settings.
 ```
 
 ## Historical development log — not active

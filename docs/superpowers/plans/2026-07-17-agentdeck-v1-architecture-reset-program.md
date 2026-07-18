@@ -564,7 +564,7 @@ The architecture reset is complete only when all statements are true:
 ## 14. Program progress checklist
 
 - [x] P0 Product Reset plan executed and evidence frozen
-- [ ] P0 exit gate approved by human review
+- [x] P0 exit gate approved by human review
 - [ ] P1 task-level plan written and approved
 - [ ] P1 Durable Mission Kernel executed and exit gate approved
 - [ ] P2 task-level plan written and approved

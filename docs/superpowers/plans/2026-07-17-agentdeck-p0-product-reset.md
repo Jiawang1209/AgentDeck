@@ -934,7 +934,7 @@ git commit -m "docs: freeze AgentDeck P0 product reset"
 
 **Files:** None.
 
-- [ ] **Step 1: Verify the final repository state**
+- [x] **Step 1: Verify the final repository state**
 
 Run:
 
@@ -947,7 +947,7 @@ git diff --name-only f3968720..HEAD -- src/agentdeck tests .agentdeck
 Expected: the scope audit produces zero output, the worktree is clean, and the
 log shows the ordered P0 documentation commits.
 
-- [ ] **Step 2: Report the exact P0 outcome**
+- [x] **Step 2: Report the exact P0 outcome**
 
 The handoff must state:
 
@@ -958,7 +958,7 @@ The handoff must state:
 - the P1 planning-only next gate;
 - no merge or push occurred.
 
-- [ ] **Step 3: Stop for review**
+- [x] **Step 3: Stop for review**
 
 Do not write or execute the P1 plan until the user approves the P0 written
 baseline and explicitly asks to continue.
