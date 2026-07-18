@@ -4,6 +4,29 @@
 
 ## 2026-07-17
 
+### Record the P0 architecture-reset baseline
+
+- Recorded the docs-only P0 baseline from
+  `f396872078d2659b6bc2502f91c74045bae043c7` through
+  `353b6aa7662b5ae06f3657244afc384e58200ca3`; both the complete range and the
+  original `HEAD~7..HEAD` audit showed zero changes under `src/agentdeck` and
+  `tests`.
+- Verified Python 3.12.13 and compiled `src` plus `tests` successfully in conda
+  environment `agentdeck` (`exit 0`, 0.74s wall time).
+- Ran the deterministic focused suite serially: 304 passed, 0 failed, 0 skipped
+  in 33.81s pytest time / 34.66s wall time.
+- Ran the default full suite serially: 4461 passed, 0 failed, 3 explicitly
+  opt-in skips in 227.70s pytest time / 228.68s wall time. The skips were one
+  real ACP acceptance node, one separately authorized M2c strict-preflight
+  node, and one real M2c acceptance node.
+- Explicitly removed real/live/provider/ACP/tmux authorization variables from
+  every verification command. Focused daemon coverage used repository fake
+  Leader/ACP/tmux paths; no real provider, ACP, tmux, preflight, or live node
+  ran.
+- Classified only the deterministic P0 baseline as passing. This does not claim
+  V1, adapter, Golden, or release readiness, and it neither changes historical
+  M2c evidence nor authorizes an M2c retry.
+
 ### Define the AgentDeck V1 verification pyramid
 
 - Defined five operational release gates: an offline deterministic commit gate
