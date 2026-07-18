@@ -4,6 +4,35 @@
 
 ## 2026-07-18
 
+### Make durable Mission mutations atomic and command-idempotent
+
+- Added an immutable, caller-timestamped `CommandEnvelope` whose command kind,
+  actor, payload, expected project revision, creation timestamp, and command id
+  are deep-detached, canonical-size-bounded, and bound to one deterministic
+  SHA-256 input identity. Exact command retries now return the persisted
+  immutable outcome without invoking domain decision logic or advancing the
+  project revision; reuse with any changed bound input and stale new commands
+  fail with fixed redacted typed conflicts.
+- Added a frozen `ProjectMutationSnapshot`, `MutationDecision`,
+  `MutationOutcome`, and insert/update-only `EntityChange` contract. Decision
+  callbacks receive detached domain rows rather than the store or connection;
+  entity mutations are limited to the schema-v1 domain table/column allowlist,
+  while projects, commands, events, schema metadata, arbitrary SQL, and generic
+  delete remain inaccessible to decisions.
+- Added one `BEGIN IMMEDIATE` command boundary that validates the cached writer
+  lease, process, database-family identity, project identity, authority state,
+  and revision before deciding. A new accepted command writes its closed entity
+  changes, provenance-checked client events, persisted outcome, and a
+  compare-and-swap project revision in one transaction, advancing exactly once.
+  Callback, validation, serialization, SQL, event, revision, and commit failures
+  roll back the command, entity rows, events, outcome, and revision together.
+- Added deterministic failure-injection, idempotent replay, changed-input,
+  stale-revision, callback isolation, canonical-bound, and integrity regression
+  tests. Injected failures before events, after the first event, and before the
+  revision update leave `PRAGMA integrity_check` healthy and the lease-owned
+  store reusable. This slice does not activate SQLite cutover, call providers,
+  adapters, runtimes, tmux, or the network, and does not claim P1 completion.
+
 ### Add the SQLite Mission schema and exclusive writer lease
 
 - Added the P1 schema-v1 bootstrap for the project-local

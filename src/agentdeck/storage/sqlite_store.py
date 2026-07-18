@@ -2,16 +2,21 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 import shutil
 import sqlite3
 import stat
 import uuid
-from dataclasses import dataclass
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass, field
 from pathlib import Path
-from types import TracebackType
-from typing import Self
+from types import MappingProxyType, TracebackType
+from typing import Self, cast
 from urllib.parse import quote
+
+from agentdeck.domain.events import DomainEvent
 
 from .migrations import (
     AUTHORITY_STATES,
@@ -28,6 +33,18 @@ class SQLiteStoreError(RuntimeError):
     """The SQLite authority cannot be safely created or opened."""
 
 
+class CommandConflict(RuntimeError):
+    """A command id was reused for different immutable input."""
+
+
+class RevisionConflict(RuntimeError):
+    """A new command targeted a revision that is no longer current."""
+
+
+class MutationValidationError(ValueError):
+    """A mutation value violated the closed durable-kernel contract."""
+
+
 _INVALID_PATH = "SQLite state path invalid"
 _INVALID_SCHEMA = "SQLite schema invalid"
 _UNSUPPORTED_SCHEMA = "unsupported SQLite schema"
@@ -36,6 +53,559 @@ _INVALID_PROJECT = "SQLite project identity invalid"
 _INVALID_AUTHORITY_IDENTITY = "SQLite authority identity invalid"
 _STORE_TOKEN = object()
 type _DatabaseFamilyIdentity = tuple[tuple[str, int, int], ...]
+type _JsonValue = None | bool | int | str | list["_JsonValue"] | dict[str, "_JsonValue"]
+type _FrozenJsonValue = (
+    None
+    | bool
+    | int
+    | str
+    | tuple["_FrozenJsonValue", ...]
+    | Mapping[str, "_FrozenJsonValue"]
+)
+
+_MAX_SIGNED_64 = (2**63) - 1
+_MAX_MUTATION_BYTES = 64 * 1024
+_MAX_MUTATION_DEPTH = 16
+_MAX_TEXT_BYTES = 4096
+
+
+class _InvalidMutationValue(Exception):
+    pass
+
+
+def _valid_mutation_text(value: object) -> bool:
+    if not isinstance(value, str) or not value:
+        return False
+    try:
+        return len(value.encode("utf-8")) <= _MAX_TEXT_BYTES
+    except UnicodeEncodeError:
+        return False
+
+
+def _valid_revision(value: object) -> bool:
+    return (
+        isinstance(value, int)
+        and not isinstance(value, bool)
+        and 0 <= value <= _MAX_SIGNED_64
+    )
+
+
+def _freeze_mutation_json(
+    value: object,
+    *,
+    depth: int = 0,
+    active: set[int] | None = None,
+) -> _FrozenJsonValue:
+    if depth > _MAX_MUTATION_DEPTH:
+        raise _InvalidMutationValue
+    if value is None or isinstance(value, bool):
+        return value
+    if isinstance(value, int) and not isinstance(value, bool):
+        if not (-_MAX_SIGNED_64 - 1 <= value <= _MAX_SIGNED_64):
+            raise _InvalidMutationValue
+        return value
+    if isinstance(value, str):
+        try:
+            if len(value.encode("utf-8")) > _MAX_MUTATION_BYTES:
+                raise _InvalidMutationValue
+        except UnicodeEncodeError as exc:
+            raise _InvalidMutationValue from exc
+        return value
+    if isinstance(value, list):
+        active = set() if active is None else active
+        identity = id(value)
+        if identity in active:
+            raise _InvalidMutationValue
+        active.add(identity)
+        try:
+            return tuple(
+                _freeze_mutation_json(item, depth=depth + 1, active=active)
+                for item in value
+            )
+        finally:
+            active.remove(identity)
+    if isinstance(value, Mapping):
+        active = set() if active is None else active
+        identity = id(value)
+        if identity in active:
+            raise _InvalidMutationValue
+        active.add(identity)
+        try:
+            frozen: dict[str, _FrozenJsonValue] = {}
+            for key, item in value.items():
+                if not isinstance(key, str):
+                    raise _InvalidMutationValue
+                try:
+                    if len(key.encode("utf-8")) > _MAX_TEXT_BYTES:
+                        raise _InvalidMutationValue
+                except UnicodeEncodeError as exc:
+                    raise _InvalidMutationValue from exc
+                frozen[key] = _freeze_mutation_json(
+                    item,
+                    depth=depth + 1,
+                    active=active,
+                )
+            return MappingProxyType(frozen)
+        finally:
+            active.remove(identity)
+    raise _InvalidMutationValue
+
+
+def _thaw_mutation_json(value: _FrozenJsonValue) -> _JsonValue:
+    if isinstance(value, Mapping):
+        return {key: _thaw_mutation_json(item) for key, item in value.items()}
+    if isinstance(value, tuple):
+        return [_thaw_mutation_json(item) for item in value]
+    return value
+
+
+def _canonical_mutation_bytes(value: _FrozenJsonValue) -> bytes:
+    try:
+        encoded = json.dumps(
+            _thaw_mutation_json(value),
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    except (TypeError, ValueError, UnicodeEncodeError) as exc:
+        raise _InvalidMutationValue from exc
+    if len(encoded) > _MAX_MUTATION_BYTES:
+        raise _InvalidMutationValue
+    return encoded
+
+
+def _frozen_mapping(value: object) -> Mapping[str, _FrozenJsonValue]:
+    frozen = _freeze_mutation_json(value)
+    if not isinstance(frozen, Mapping):
+        raise _InvalidMutationValue
+    _canonical_mutation_bytes(frozen)
+    return frozen
+
+
+def _input_hash(value: _FrozenJsonValue) -> str:
+    return "sha256:" + hashlib.sha256(_canonical_mutation_bytes(value)).hexdigest()
+
+
+@dataclass(frozen=True, slots=True)
+class CommandEnvelope:
+    """Deeply immutable input identity for one revisioned client command."""
+
+    command_id: str
+    kind: str
+    actor: Mapping[str, _FrozenJsonValue]
+    payload: Mapping[str, _FrozenJsonValue]
+    expected_revision: int
+    created_at: str
+    input_hash: str = field(init=False)
+
+    def __post_init__(self) -> None:
+        try:
+            if not all(
+                _valid_mutation_text(item)
+                for item in (self.command_id, self.kind, self.created_at)
+            ) or not _valid_revision(self.expected_revision):
+                raise _InvalidMutationValue
+            actor_source = (
+                _thaw_mutation_json(self.actor)
+                if type(self.actor) is MappingProxyType
+                else self.actor
+            )
+            payload_source = (
+                _thaw_mutation_json(self.payload)
+                if type(self.payload) is MappingProxyType
+                else self.payload
+            )
+            actor = _frozen_mapping(actor_source)
+            payload = _frozen_mapping(payload_source)
+            if not actor:
+                raise _InvalidMutationValue
+            canonical_input = _frozen_mapping(
+                {
+                    "command_id": self.command_id,
+                    "kind": self.kind,
+                    "actor": _thaw_mutation_json(actor),
+                    "payload": _thaw_mutation_json(payload),
+                    "expected_revision": self.expected_revision,
+                    "created_at": self.created_at,
+                }
+            )
+            digest = _input_hash(canonical_input)
+        except _InvalidMutationValue:
+            raise MutationValidationError("command envelope invalid") from None
+        object.__setattr__(self, "actor", actor)
+        object.__setattr__(self, "payload", payload)
+        object.__setattr__(self, "input_hash", digest)
+
+    def actor_dict(self) -> dict[str, _JsonValue]:
+        return cast(dict[str, _JsonValue], _thaw_mutation_json(self.actor))
+
+    def payload_dict(self) -> dict[str, _JsonValue]:
+        return cast(dict[str, _JsonValue], _thaw_mutation_json(self.payload))
+
+
+_ENTITY_COLUMNS: dict[str, frozenset[str]] = {
+    "missions": frozenset(
+        {
+            "mission_id",
+            "project_id",
+            "current_version",
+            "status",
+            "created_revision",
+            "updated_revision",
+        }
+    ),
+    "mission_versions": frozenset(
+        {
+            "mission_id",
+            "version",
+            "specification_json",
+            "authorization_digest",
+            "proposal_provenance_json",
+            "confirmed_revision",
+        }
+    ),
+    "tasks": frozenset(
+        {
+            "task_id",
+            "mission_id",
+            "mission_version",
+            "specification_json",
+            "status",
+            "created_revision",
+            "updated_revision",
+        }
+    ),
+    "attempts": frozenset(
+        {
+            "attempt_id",
+            "task_id",
+            "attempt_number",
+            "status",
+            "route_position",
+            "budget_json",
+            "started_revision",
+            "terminal_revision",
+        }
+    ),
+    "sessions": frozenset(
+        {
+            "session_id",
+            "attempt_id",
+            "agent_id",
+            "model_id",
+            "transport",
+            "status",
+            "last_sequence",
+            "lease_json",
+            "reconciliation_json",
+        }
+    ),
+    "permissions": frozenset(
+        {
+            "permission_id",
+            "mission_id",
+            "task_id",
+            "attempt_id",
+            "session_id",
+            "request_json",
+            "status",
+            "decision_json",
+            "created_revision",
+            "decided_revision",
+        }
+    ),
+    "handoffs": frozenset(
+        {
+            "handoff_id",
+            "mission_id",
+            "source_task_id",
+            "destination_task_id",
+            "status",
+            "context_json",
+            "created_revision",
+            "accepted_revision",
+        }
+    ),
+    "evidence": frozenset(
+        {
+            "evidence_id",
+            "task_id",
+            "attempt_id",
+            "kind",
+            "integrity_hash",
+            "summary_json",
+            "created_revision",
+        }
+    ),
+    "approvals": frozenset(
+        {
+            "approval_id",
+            "project_id",
+            "subject_kind",
+            "subject_id",
+            "subject_digest",
+            "status",
+            "actor_json",
+            "decision_revision",
+        }
+    ),
+    "artifacts": frozenset(
+        {
+            "artifact_id",
+            "project_id",
+            "task_id",
+            "relative_path",
+            "content_hash",
+            "media_type",
+            "summary_json",
+            "provenance_json",
+            "created_revision",
+        }
+    ),
+    "learning": frozenset(
+        {
+            "learning_id",
+            "project_id",
+            "source_evidence_id",
+            "review_json",
+            "application_json",
+            "created_revision",
+        }
+    ),
+    "suggestions": frozenset(
+        {
+            "suggestion_id",
+            "project_id",
+            "kind",
+            "status",
+            "proposed_hash",
+            "proposed_json",
+            "provenance_json",
+            "created_revision",
+            "applied_revision",
+        }
+    ),
+    "legacy_records": frozenset(
+        {
+            "record_id",
+            "project_id",
+            "collection",
+            "source_identity",
+            "source_hash",
+            "record_json",
+            "imported_revision",
+        }
+    ),
+}
+
+_ENTITY_PRIMARY_KEYS: dict[str, frozenset[str]] = {
+    "missions": frozenset({"mission_id"}),
+    "mission_versions": frozenset({"mission_id", "version"}),
+    "tasks": frozenset({"task_id"}),
+    "attempts": frozenset({"attempt_id"}),
+    "sessions": frozenset({"session_id"}),
+    "permissions": frozenset({"permission_id"}),
+    "handoffs": frozenset({"handoff_id"}),
+    "evidence": frozenset({"evidence_id"}),
+    "approvals": frozenset({"approval_id"}),
+    "artifacts": frozenset({"artifact_id"}),
+    "learning": frozenset({"learning_id"}),
+    "suggestions": frozenset({"suggestion_id"}),
+    "legacy_records": frozenset({"record_id"}),
+}
+
+
+def _freeze_sql_values(value: object) -> Mapping[str, None | bool | int | str]:
+    if not isinstance(value, dict) or not value:
+        raise _InvalidMutationValue
+    frozen: dict[str, None | bool | int | str] = {}
+    for key, item in value.items():
+        if not isinstance(key, str) or not key:
+            raise _InvalidMutationValue
+        if item is not None and not isinstance(item, (bool, int, str)):
+            raise _InvalidMutationValue
+        if isinstance(item, int) and not isinstance(item, bool):
+            if not (-_MAX_SIGNED_64 - 1 <= item <= _MAX_SIGNED_64):
+                raise _InvalidMutationValue
+        if isinstance(item, str):
+            try:
+                if len(item.encode("utf-8")) > _MAX_MUTATION_BYTES:
+                    raise _InvalidMutationValue
+            except UnicodeEncodeError as exc:
+                raise _InvalidMutationValue from exc
+        frozen[key] = item
+    return MappingProxyType(frozen)
+
+
+@dataclass(frozen=True, slots=True)
+class EntityChange:
+    """Closed row-level change; SQL text is always generated by the store."""
+
+    operation: str
+    table: str
+    values: Mapping[str, None | bool | int | str]
+    where: Mapping[str, None | bool | int | str]
+
+    def __post_init__(self) -> None:
+        try:
+            if self.operation not in {"insert", "update"}:
+                raise _InvalidMutationValue
+            columns = _ENTITY_COLUMNS.get(self.table)
+            if columns is None:
+                raise _InvalidMutationValue
+            values = _freeze_sql_values(dict(self.values)) if self.values else MappingProxyType({})
+            where = _freeze_sql_values(dict(self.where)) if self.where else MappingProxyType({})
+            if not set(values).issubset(columns) or not set(where).issubset(columns):
+                raise _InvalidMutationValue
+            if self.operation == "insert" and (not values or where):
+                raise _InvalidMutationValue
+            if self.operation == "update" and (not values or not where):
+                raise _InvalidMutationValue
+            primary_key = _ENTITY_PRIMARY_KEYS[self.table]
+            if self.operation == "update" and (
+                set(where) != primary_key
+                or not primary_key.isdisjoint(values)
+                or any(where[column] is None for column in primary_key)
+            ):
+                raise _InvalidMutationValue
+            _frozen_mapping(
+                {
+                    "operation": self.operation,
+                    "table": self.table,
+                    "values": dict(values),
+                    "where": dict(where),
+                }
+            )
+        except (_InvalidMutationValue, TypeError, ValueError):
+            raise MutationValidationError("entity change invalid") from None
+        object.__setattr__(self, "values", values)
+        object.__setattr__(self, "where", where)
+
+    @classmethod
+    def insert(cls, table: str, values: Mapping[str, object]) -> Self:
+        return cls("insert", table, values, {})  # type: ignore[arg-type]
+
+    @classmethod
+    def update(
+        cls,
+        table: str,
+        values: Mapping[str, object],
+        *,
+        where: Mapping[str, object],
+    ) -> Self:
+        return cls("update", table, values, where)  # type: ignore[arg-type]
+
+
+@dataclass(frozen=True, slots=True)
+class ProjectMutationSnapshot:
+    project_id: str
+    revision: int
+    authority_state: str
+    entities: Mapping[str, tuple[Mapping[str, _FrozenJsonValue], ...]]
+
+    def __post_init__(self) -> None:
+        frozen_entities: dict[str, tuple[Mapping[str, _FrozenJsonValue], ...]] = {}
+        try:
+            if (
+                not _valid_mutation_text(self.project_id)
+                or not _valid_revision(self.revision)
+                or not _valid_mutation_text(self.authority_state)
+                or not isinstance(self.entities, dict)
+            ):
+                raise _InvalidMutationValue
+            for table, rows in self.entities.items():
+                if table not in _ENTITY_COLUMNS or not isinstance(rows, (list, tuple)):
+                    raise _InvalidMutationValue
+                frozen_entities[table] = tuple(_frozen_mapping(dict(row)) for row in rows)
+        except (_InvalidMutationValue, TypeError, ValueError):
+            raise MutationValidationError("mutation snapshot invalid") from None
+        object.__setattr__(self, "entities", MappingProxyType(frozen_entities))
+
+
+@dataclass(frozen=True, slots=True)
+class MutationDecision:
+    changes: tuple[EntityChange, ...] = ()
+    events: tuple[DomainEvent, ...] = ()
+    result: Mapping[str, _FrozenJsonValue] = MappingProxyType({})
+
+    def __post_init__(self) -> None:
+        try:
+            if not isinstance(self.changes, tuple) or not all(
+                type(item) is EntityChange for item in self.changes
+            ):
+                raise _InvalidMutationValue
+            if not isinstance(self.events, tuple) or not all(
+                type(item) is DomainEvent for item in self.events
+            ):
+                raise _InvalidMutationValue
+            event_ids = [event.event_id for event in self.events]
+            if len(event_ids) != len(set(event_ids)):
+                raise _InvalidMutationValue
+            result = _frozen_mapping(dict(self.result))
+        except (_InvalidMutationValue, TypeError, ValueError):
+            raise MutationValidationError("mutation decision invalid") from None
+        object.__setattr__(self, "result", result)
+
+    def result_dict(self) -> dict[str, _JsonValue]:
+        return cast(dict[str, _JsonValue], _thaw_mutation_json(self.result))
+
+
+@dataclass(frozen=True, slots=True)
+class MutationOutcome:
+    command_id: str
+    revision: int
+    event_ids: tuple[str, ...]
+    result: Mapping[str, _FrozenJsonValue]
+
+    def __post_init__(self) -> None:
+        try:
+            if (
+                not _valid_mutation_text(self.command_id)
+                or not _valid_revision(self.revision)
+                or not isinstance(self.event_ids, tuple)
+                or not all(_valid_mutation_text(item) for item in self.event_ids)
+                or len(self.event_ids) != len(set(self.event_ids))
+            ):
+                raise _InvalidMutationValue
+            result = _frozen_mapping(dict(self.result))
+            _frozen_mapping(
+                {
+                    "command_id": self.command_id,
+                    "revision": self.revision,
+                    "event_ids": list(self.event_ids),
+                    "result": _thaw_mutation_json(result),
+                }
+            )
+        except (_InvalidMutationValue, TypeError, ValueError):
+            raise MutationValidationError("mutation outcome invalid") from None
+        object.__setattr__(self, "result", result)
+
+    def to_dict(self) -> dict[str, _JsonValue]:
+        return {
+            "command_id": self.command_id,
+            "revision": self.revision,
+            "event_ids": list(self.event_ids),
+            "result": _thaw_mutation_json(self.result),
+        }
+
+    @classmethod
+    def from_dict(cls, value: object) -> Self:
+        try:
+            if not isinstance(value, dict) or set(value) != {
+                "command_id", "revision", "event_ids", "result"
+            }:
+                raise _InvalidMutationValue
+            event_ids = value["event_ids"]
+            if not isinstance(event_ids, list):
+                raise _InvalidMutationValue
+            return cls(
+                command_id=value["command_id"],
+                revision=value["revision"],
+                event_ids=tuple(event_ids),
+                result=value["result"],
+            )  # type: ignore[arg-type]
+        except (KeyError, TypeError, MutationValidationError, _InvalidMutationValue):
+            raise MutationValidationError("mutation outcome invalid") from None
 
 
 @dataclass(frozen=True, slots=True)
@@ -594,6 +1164,239 @@ class SQLiteMissionStore:
             self._path,
             self._database_family_identity,
         )
+
+    def _mutation_snapshot(
+        self,
+        *,
+        revision: int,
+        authority_state: str,
+    ) -> ProjectMutationSnapshot:
+        entities: dict[str, list[dict[str, object]]] = {}
+        for table in _ENTITY_COLUMNS:
+            columns = [
+                row[1]
+                for row in self._connection.execute(
+                    f'PRAGMA table_info("{table}")'
+                )
+            ]
+            rows = self._connection.execute(f'SELECT * FROM "{table}"').fetchall()
+            entities[table] = [dict(zip(columns, row, strict=True)) for row in rows]
+        return ProjectMutationSnapshot(
+            project_id=self._project_id,
+            revision=revision,
+            authority_state=authority_state,
+            entities=entities,
+        )
+
+    def _validate_decision(
+        self,
+        command: CommandEnvelope,
+        decision: object,
+    ) -> MutationDecision:
+        if type(decision) is not MutationDecision:
+            raise MutationValidationError("mutation decision invalid")
+        expected_actor = command.actor_dict()
+        for event in decision.events:
+            provenance = event.provenance.to_dict()
+            if (
+                event.trigger_kind != "client_command"
+                or provenance.get("command_id") != command.command_id
+                or provenance.get("expected_revision") != command.expected_revision
+                or provenance.get("actor") != expected_actor
+            ):
+                raise MutationValidationError("mutation decision invalid")
+        return decision
+
+    def _apply_entity_change(
+        self,
+        change: EntityChange,
+        *,
+        revision: int,
+    ) -> None:
+        for column, value in change.values.items():
+            if column.endswith("_revision") and value is not None and value != revision:
+                raise MutationValidationError("entity change invalid")
+        if "project_id" in change.values and change.values["project_id"] != self._project_id:
+            raise MutationValidationError("entity change invalid")
+
+        if change.operation == "insert":
+            columns = tuple(sorted(change.values))
+            placeholders = ",".join("?" for _ in columns)
+            quoted = ",".join(f'"{column}"' for column in columns)
+            self._connection.execute(
+                f'INSERT INTO "{change.table}" ({quoted}) VALUES ({placeholders})',
+                tuple(change.values[column] for column in columns),
+            )
+            return
+
+        value_columns = tuple(sorted(change.values))
+        where_columns = tuple(sorted(change.where))
+        assignments = ",".join(f'"{column}" = ?' for column in value_columns)
+        predicates = " AND ".join(f'"{column}" IS ?' for column in where_columns)
+        cursor = self._connection.execute(
+            f'UPDATE "{change.table}" SET {assignments} WHERE {predicates}',
+            tuple(change.values[column] for column in value_columns)
+            + tuple(change.where[column] for column in where_columns),
+        )
+        if cursor.rowcount != 1:
+            raise MutationValidationError("entity change invalid")
+
+    def _insert_event(
+        self,
+        event: DomainEvent,
+        *,
+        revision: int,
+    ) -> None:
+        value = event.to_dict()
+        provenance = cast(dict[str, object], value["provenance"])
+        self._connection.execute(
+            "INSERT INTO events("
+            "event_id, project_id, project_revision, trigger_kind, kind, "
+            "provenance_json, payload_json, command_id, adapter_event_id, "
+            "internal_trigger_id, created_at"
+            ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                event.event_id,
+                self._project_id,
+                revision,
+                event.trigger_kind,
+                event.kind,
+                json.dumps(
+                    provenance,
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ),
+                json.dumps(
+                    value["payload"],
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ),
+                provenance.get("command_id"),
+                provenance.get("adapter_event_id"),
+                provenance.get("internal_trigger_id"),
+                event.created_at,
+            ),
+        )
+
+    def apply_command(
+        self,
+        command: CommandEnvelope,
+        decide: Callable[[ProjectMutationSnapshot], MutationDecision],
+    ) -> MutationOutcome:
+        """Atomically apply or exactly replay one immutable client command."""
+
+        self._validate_authority()
+        if type(command) is not CommandEnvelope or not callable(decide):
+            raise MutationValidationError("command envelope invalid")
+
+        committed_revision: int | None = None
+        try:
+            self._connection.execute("BEGIN IMMEDIATE")
+            authority = self._connection.execute(
+                "SELECT project_id, revision, authority_state FROM projects"
+            ).fetchall()
+            if authority != [
+                (self._project_id, self._project_revision, self._authority_state)
+            ]:
+                raise SQLiteStoreError(_INVALID_AUTHORITY_IDENTITY)
+            current_revision = self._project_revision
+
+            existing = self._connection.execute(
+                "SELECT input_hash, status, outcome_json FROM commands "
+                "WHERE command_id = ? AND project_id = ?",
+                (command.command_id, self._project_id),
+            ).fetchone()
+            if existing is not None:
+                input_hash, status, outcome_json = existing
+                if input_hash != command.input_hash:
+                    raise CommandConflict("command input mismatch")
+                if status != "completed" or not isinstance(outcome_json, str):
+                    raise SQLiteStoreError(_INVALID_SCHEMA)
+                try:
+                    persisted = MutationOutcome.from_dict(json.loads(outcome_json))
+                except (json.JSONDecodeError, MutationValidationError):
+                    raise SQLiteStoreError(_INVALID_SCHEMA) from None
+                if persisted.command_id != command.command_id:
+                    raise SQLiteStoreError(_INVALID_SCHEMA)
+                self._connection.rollback()
+                self._validate_authority()
+                return persisted
+
+            if command.expected_revision != current_revision:
+                raise RevisionConflict("stale project revision")
+            if current_revision == _MAX_SIGNED_64:
+                raise RevisionConflict("stale project revision")
+            next_revision = current_revision + 1
+            snapshot = self._mutation_snapshot(
+                revision=current_revision,
+                authority_state=self._authority_state,
+            )
+            decision = self._validate_decision(command, decide(snapshot))
+
+            self._connection.execute(
+                "INSERT INTO commands("
+                "command_id, project_id, input_hash, expected_revision, status, "
+                "outcome_json, accepted_revision, completed_revision, actor_json, created_at"
+                ") VALUES (?, ?, ?, ?, 'accepted', NULL, ?, NULL, ?, ?)",
+                (
+                    command.command_id,
+                    self._project_id,
+                    command.input_hash,
+                    command.expected_revision,
+                    next_revision,
+                    json.dumps(
+                        command.actor_dict(),
+                        ensure_ascii=False,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    ),
+                    command.created_at,
+                ),
+            )
+            for change in decision.changes:
+                self._apply_entity_change(change, revision=next_revision)
+            for event in decision.events:
+                self._insert_event(event, revision=next_revision)
+
+            outcome = MutationOutcome(
+                command_id=command.command_id,
+                revision=next_revision,
+                event_ids=tuple(event.event_id for event in decision.events),
+                result=decision.result,
+            )
+            outcome_json = json.dumps(
+                outcome.to_dict(),
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+            updated_command = self._connection.execute(
+                "UPDATE commands SET status = 'completed', outcome_json = ?, "
+                "completed_revision = ? WHERE command_id = ? AND status = 'accepted'",
+                (outcome_json, next_revision, command.command_id),
+            )
+            if updated_command.rowcount != 1:
+                raise SQLiteStoreError(_INVALID_SCHEMA)
+            updated_project = self._connection.execute(
+                "UPDATE projects SET revision = ? "
+                "WHERE project_id = ? AND revision = ?",
+                (next_revision, self._project_id, current_revision),
+            )
+            if updated_project.rowcount != 1:
+                raise RevisionConflict("stale project revision")
+            self._connection.commit()
+            committed_revision = next_revision
+        except BaseException:
+            if self._connection.in_transaction:
+                self._connection.rollback()
+            self._validate_authority()
+            raise
+
+        self._project_revision = cast(int, committed_revision)
+        self._validate_authority()
+        return outcome
 
     def open_reader(self) -> sqlite3.Connection:
         self._validate_authority()
