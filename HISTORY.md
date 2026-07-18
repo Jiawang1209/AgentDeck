@@ -4,6 +4,27 @@
 
 ## 2026-07-19
 
+### Harden Wave A session command replay
+
+- Explicit `accept_text` retries now resolve the original durable command
+  before current setup or pending-goal gates, bind replay validation to the
+  caller's original text and deterministic turn ID, and revalidate the exact
+  durable conversation turn. Replaying an earlier command after a later goal
+  or completed setup returns its first result without changing the newer
+  ProductSession state; reusing its command ID with changed text fails closed
+  with a content-free diagnostic and zero writes.
+- Fixed `configure` retries now resolve before discovery and current-state
+  gates, return the original selection even when the reopened service has an
+  empty or changed discovery snapshot, and reject changed Leader, model, or
+  permission input under the same command ID without fallback or mutation.
+  New configure commands continue to require current discovery and setup
+  state validation.
+- Goal validation now rejects common bare OpenAI, Anthropic, GitHub, AWS, and
+  Google credential signatures before transaction entry while retaining
+  ordinary documentation prose about credential prefixes and token counts.
+- TDD RED reproduced five replay failures and six accepted bare-credential
+  cases. The focused session suite then passed all `64` tests.
+
 ### Correct Wave A implementation inventories
 
 - Corrected the approved rewrite plan's Task 12 file inventory to name the

@@ -28,6 +28,15 @@ _SENSITIVE_KEY_SUFFIXES: Final = (
 )
 _BEARER_VALUE: Final = re.compile(r"(?i)\bbearer\s+\S+")
 _PRIVATE_KEY: Final = re.compile(r"(?i)-----BEGIN(?: [A-Z0-9]+)? PRIVATE KEY-----")
+_BARE_CREDENTIAL: Final = re.compile(
+    r"(?<![A-Za-z0-9])(?:"
+    r"sk-(?:proj|ant)-[A-Za-z0-9_-]{16,}"
+    r"|ghp_[A-Za-z0-9]{20,}"
+    r"|github_pat_[A-Za-z0-9_]{20,}"
+    r"|AKIA[A-Z0-9]{16}"
+    r"|AIza[A-Za-z0-9_-]{20,}"
+    r")(?![A-Za-z0-9])"
+)
 
 
 class SessionServiceError(RuntimeError):
@@ -58,6 +67,7 @@ def validate_goal(value: object) -> str:
         any(key.endswith(_SENSITIVE_KEY_SUFFIXES) for key in assignments)
         or _BEARER_VALUE.search(goal)
         or _PRIVATE_KEY.search(goal)
+        or _BARE_CREDENTIAL.search(goal)
     ):
         raise ValueError("goal contains prohibited credential material")
     return goal

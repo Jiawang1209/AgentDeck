@@ -30,6 +30,12 @@ from .test_session_service import AVAILABLE_LEADERS, NOW, _service
     "refreshToken=sensitive-value",
     "idToken=sensitive-value",
     "bearerToken=sensitive-value",
+    "sk-proj-RAWSESSIONTOKEN123456789",
+    "sk-ant-RAWSESSIONTOKEN123456789",
+    "ghp_RAWSESSIONTOKEN12345678901234567890",
+    "github_pat_RAWSESSIONTOKEN12345678901234567890",
+    "AKIARAWSESSIONTOKEN1",
+    "AIzaRAWSESSIONTOKEN12345678901234567890",
 ])
 def test_credential_shaped_goal_is_rejected_content_free_before_writes(
     tmp_path: Path, goal: str
@@ -41,6 +47,8 @@ def test_credential_shaped_goal_is_rejected_content_free_before_writes(
         with pytest.raises(ValueError, match="credential material") as error:
             service.accept_text(goal, command_id="cmd_sensitive")
         assert "sensitive-value" not in str(error.value)
+        assert "RAWSESSIONTOKEN" not in str(error.value)
+        assert goal not in str(error.value)
         assert tuple(store.count(table) for table in tables) == before
         assert store.lookup_command("cmd_sensitive") is None
     finally:
@@ -51,6 +59,9 @@ def test_credential_shaped_goal_is_rejected_content_free_before_writes(
     "Improve token_count=512 handling",
     "Document API key rotation without including a value",
     "Read credentials from the approved store",
+    "Document the sk-proj- prefix without a credential value",
+    "Recognize github_pat_ token names in documentation",
+    "Explain AKIA access-key prefixes",
 ])
 def test_ordinary_goal_language_is_not_misclassified_as_credentials(
     tmp_path: Path, goal: str

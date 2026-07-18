@@ -88,6 +88,57 @@ def test_configured_leader_and_model_restore_after_store_reopen(
         reopened.close()
 
 
+def test_configure_exact_replay_ignores_changed_discovery_without_writes(
+    tmp_path: Path,
+) -> None:
+    service, store = _service(tmp_path)
+    service.accept_text("Durable goal", command_id="cmd_goal")
+    first = service.configure(leader="codex-cli", model="native-default")
+    store.close()
+
+    reopened = SQLiteStore.open(tmp_path, clock=FrozenClock(NOW))
+    restored = SessionService(
+        store=reopened,
+        clock=FrozenClock(NOW),
+        session_id="ses_1",
+        project_root=str(tmp_path),
+        available_leaders={},
+    )
+    tables = ("commands", "product_sessions", "conversation_turns", "events")
+    before_counts = tuple(reopened.count(table) for table in tables)
+    before_session = reopened.load_aggregate("product_sessions", "ses_1")
+    try:
+        replay = restored.configure(leader="codex-cli", model="native-default")
+
+        assert replay == first
+        assert tuple(reopened.count(table) for table in tables) == before_counts
+        assert reopened.load_aggregate("product_sessions", "ses_1") == before_session
+        assert restored.current().leader_backend == "codex-cli"
+        assert restored.current().model == "native-default"
+    finally:
+        reopened.close()
+
+
+def test_configure_replay_rejects_different_selection_as_lineage_failure(
+    tmp_path: Path,
+) -> None:
+    service, store = _service(tmp_path)
+    service.configure(leader="codex-cli", model="native-default")
+    tables = ("commands", "product_sessions", "conversation_turns", "events")
+    before_counts = tuple(store.count(table) for table in tables)
+    before_session = store.load_aggregate("product_sessions", "ses_1")
+    try:
+        with pytest.raises(SessionServiceError, match="selection lineage"):
+            service.configure(leader="claude-cli", model="native-default")
+
+        assert tuple(store.count(table) for table in tables) == before_counts
+        assert store.load_aggregate("product_sessions", "ses_1") == before_session
+        assert service.current().leader_backend == "codex-cli"
+        assert service.current().model == "native-default"
+    finally:
+        store.close()
+
+
 def test_reentry_rejects_configure_result_that_conflicts_with_durable_goal(
     tmp_path: Path,
 ) -> None:
@@ -195,6 +246,68 @@ def test_replayed_command_returns_first_result_without_duplicate_turn(
         assert store.connection.execute(
             "SELECT count(*) FROM conversation_turns WHERE session_id='ses_1'"
         ).fetchone() == (1,)
+    finally:
+        store.close()
+
+
+def test_accept_replay_returns_first_result_after_a_later_goal_without_writes(
+    tmp_path: Path,
+) -> None:
+    service, store = _service(tmp_path)
+    first = service.accept_text("First goal", command_id="cmd_turn_1")
+    service.accept_text("Refined goal", command_id="cmd_turn_2")
+    tables = ("commands", "product_sessions", "conversation_turns", "events")
+    before_counts = tuple(store.count(table) for table in tables)
+    before_session = store.load_aggregate("product_sessions", "ses_1")
+    try:
+        replay = service.accept_text("First goal", command_id="cmd_turn_1")
+
+        assert replay == first
+        assert service.current().pending_goal == "Refined goal"
+        assert tuple(store.count(table) for table in tables) == before_counts
+        assert store.load_aggregate("product_sessions", "ses_1") == before_session
+    finally:
+        store.close()
+
+
+def test_accept_replay_after_configure_returns_first_result_without_writes(
+    tmp_path: Path,
+) -> None:
+    service, store = _service(tmp_path)
+    first = service.accept_text("Durable goal", command_id="cmd_goal")
+    service.configure(leader="codex-cli", model="native-default")
+    tables = ("commands", "product_sessions", "conversation_turns", "events")
+    before_counts = tuple(store.count(table) for table in tables)
+    before_session = store.load_aggregate("product_sessions", "ses_1")
+    try:
+        replay = service.accept_text("Durable goal", command_id="cmd_goal")
+
+        assert replay == first
+        assert service.current().pending_goal == "Durable goal"
+        assert service.current().state.value == "ready"
+        assert tuple(store.count(table) for table in tables) == before_counts
+        assert store.load_aggregate("product_sessions", "ses_1") == before_session
+    finally:
+        store.close()
+
+
+def test_accept_replay_rejects_changed_text_content_free_without_writes(
+    tmp_path: Path,
+) -> None:
+    service, store = _service(tmp_path)
+    service.accept_text("Original goal", command_id="cmd_reused")
+    marker = "RAW-CHANGED-GOAL-MARKER"
+    tables = ("commands", "product_sessions", "conversation_turns", "events")
+    before_counts = tuple(store.count(table) for table in tables)
+    before_session = store.load_aggregate("product_sessions", "ses_1")
+    try:
+        with pytest.raises(SessionServiceError, match="accept command input") as error:
+            service.accept_text(f"Different goal {marker}", command_id="cmd_reused")
+
+        assert marker not in str(error.value)
+        assert service.current().pending_goal == "Original goal"
+        assert tuple(store.count(table) for table in tables) == before_counts
+        assert store.load_aggregate("product_sessions", "ses_1") == before_session
     finally:
         store.close()
 

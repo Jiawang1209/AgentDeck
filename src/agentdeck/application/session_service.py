@@ -111,14 +111,18 @@ class SessionService:
         self, text: str, *, command_id: str | None = None
     ) -> SessionResult:
         goal = validate_goal(text)
-        if self._session.state is not SessionState.SETUP:
-            raise SessionServiceError("goal retention requires setup state")
         stable_id = (
             _new_turn_command_id(self._session.session_id)
             if command_id is None
             else validate_command_id(command_id)
         )
         turn_id = _turn_id(self._session.session_id, stable_id)
+        if command_id is not None:
+            existing = self._store.lookup_command(stable_id, "accept_session_text")
+            if existing is not None:
+                return self._validated_accept_result(existing, goal, turn_id)
+        if self._session.state is not SessionState.SETUP:
+            raise SessionServiceError("goal retention requires setup state")
         updated = self._session.retain_goal(goal)
 
         def retain(transaction: StoreTransaction) -> CommandResult:
@@ -153,20 +157,26 @@ class SessionService:
 
         result = self._store.execute_once(stable_id, "accept_session_text", retain)
         self._reload_session()
-        if result.get("session_id") != self._session.session_id:
-            raise SessionServiceError("stored accept result lineage is invalid")
-        durable_goal = self._session.pending_goal
-        if durable_goal is None:
+        if self._session.pending_goal != goal:
             raise SessionServiceError("stored accept result is malformed")
+        return self._validated_accept_result(result, goal, turn_id)
+
+    def _validated_accept_result(
+        self, result: CommandResult, goal: str, turn_id: str
+    ) -> SessionResult:
+        if result.get("goal") != goal:
+            raise SessionServiceError(
+                "stored accept result does not match accept command input lineage"
+            )
         turn_ordinal, turn_occurred_at = validate_accept_result(
-            result, session_id=self._session.session_id, goal=durable_goal, turn_id=turn_id
+            result, session_id=self._session.session_id, goal=goal, turn_id=turn_id
         )
         turn = self._store.load_aggregate("conversation_turns", turn_id)
         validate_durable_turn(
-            turn, session_id=self._session.session_id, goal=durable_goal, turn_id=turn_id,
+            turn, session_id=self._session.session_id, goal=goal, turn_id=turn_id,
             ordinal=turn_ordinal, occurred_at=turn_occurred_at,
         )
-        return SessionResult(mode="setup_required", accepted=True, goal=durable_goal)
+        return _result_from_command(result, self._session.session_id)
 
     def configure(
         self,
@@ -177,6 +187,19 @@ class SessionService:
     ) -> SessionResult:
         leader = bounded_text(leader, "leader", _MAX_SELECTION_BYTES)
         model = bounded_text(model, "model", _MAX_SELECTION_BYTES)
+        command_id = f"session:configure:{self._session.session_id}"
+        existing = self._store.lookup_command(command_id, "configure_product_session")
+        if existing is not None:
+            parsed = _result_from_command(existing, self._session.session_id)
+            self._apply_configuration_result(existing)
+            if (
+                existing.get("leader_backend"), existing.get("model"),
+                existing.get("permission"),
+            ) != (leader, model, permission):
+                raise SessionServiceError(
+                    "stored setup command selection lineage is invalid"
+                )
+            return parsed
         diagnostic_code = self._selection_error(leader, model, permission)
         if diagnostic_code is not None:
             return SessionResult(
@@ -186,14 +209,8 @@ class SessionService:
                 diagnostic=self._diagnostic(diagnostic_code),
             )
         profile = PermissionProfile(permission)
-        command_id = f"session:configure:{self._session.session_id}"
         if self._session.state is not SessionState.SETUP:
-            existing = self._store.lookup_command(command_id, "configure_product_session")
-            if existing is None:
-                raise SessionServiceError("session setup state is inconsistent")
-            parsed = _result_from_command(existing, self._session.session_id)
-            self._apply_configuration_result(existing)
-            return parsed
+            raise SessionServiceError("session setup state is inconsistent")
         updated = self._session.transition(SessionState.READY)
 
         def persist(transaction: StoreTransaction) -> CommandResult:
