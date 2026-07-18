@@ -1592,6 +1592,7 @@ class SQLiteMissionStore:
         *,
         revision: int,
         authority_state: str,
+        event: DomainEvent | None = None,
     ) -> ProjectMutationSnapshot:
         entities: dict[str, list[dict[str, object]]] = {}
         identities: dict[str, list[dict[str, object]]] = {}
@@ -1654,44 +1655,76 @@ class SQLiteMissionStore:
                     raise MutationValidationError("mutation snapshot invalid")
                 rows.append(value)
             entities[table] = rows
-        archived_queries = {
-            "missions": (
-                "SELECT mission_id, current_version, status FROM missions "
-                f"WHERE NOT ({_ACTIVE_MISSION_SQL}) ORDER BY mission_id"
-            ),
-            "mission_versions": (
-                "SELECT v.mission_id, v.version, v.confirmed_revision, "
-                "v.authorization_digest FROM mission_versions AS v "
-                "JOIN missions AS m ON m.mission_id = v.mission_id "
-                f"WHERE NOT (m.{_ACTIVE_MISSION_SQL}) "
-                "ORDER BY v.mission_id, v.version"
-            ),
-            "tasks": (
-                "SELECT t.task_id, t.mission_id, t.mission_version, t.status "
-                "FROM tasks AS t JOIN missions AS m ON m.mission_id = t.mission_id "
-                f"WHERE NOT (m.{_ACTIVE_MISSION_SQL}) ORDER BY t.task_id"
-            ),
-            "attempts": (
-                "SELECT a.attempt_id, a.task_id, a.status FROM attempts AS a "
-                "JOIN tasks AS t ON t.task_id = a.task_id "
-                "JOIN missions AS m ON m.mission_id = t.mission_id "
-                f"WHERE NOT (m.{_ACTIVE_MISSION_SQL}) ORDER BY a.attempt_id"
-            ),
-            "sessions": (
-                "SELECT s.session_id, s.attempt_id, s.last_sequence, s.status "
-                "FROM sessions AS s JOIN attempts AS a ON a.attempt_id = s.attempt_id "
-                "JOIN tasks AS t ON t.task_id = a.task_id "
-                "JOIN missions AS m ON m.mission_id = t.mission_id "
-                f"WHERE NOT (m.{_ACTIVE_MISSION_SQL}) ORDER BY s.session_id"
-            ),
-        }
         archived_lineage: dict[str, list[dict[str, object]]] = {}
-        for table, query in archived_queries.items():
-            columns = _ARCHIVED_LINEAGE_COLUMNS[table]
-            archived_lineage[table] = [
-                dict(zip(columns, row, strict=True))
-                for row in self._connection.execute(query)
-            ]
+        if event is not None and event.trigger_kind == "adapter_event":
+            lineage = event.provenance.to_dict()
+            raw_version = lineage.get("mission_version")
+            try:
+                version = int(cast(str, raw_version))
+            except (TypeError, ValueError):
+                version = 0
+            if str(version) == raw_version and version > 0:
+                mission_id = lineage.get("mission_id")
+                task_id = lineage.get("task_id")
+                attempt_id = lineage.get("attempt_id")
+                session_id = lineage.get("session_id")
+                archived_queries = {
+                    "missions": (
+                        "SELECT mission_id, current_version, status FROM missions "
+                        f"WHERE mission_id = ? AND NOT ({_ACTIVE_MISSION_SQL}) "
+                        "ORDER BY mission_id LIMIT 2",
+                        (mission_id,),
+                    ),
+                    "mission_versions": (
+                        "SELECT v.mission_id, v.version, v.confirmed_revision, "
+                        "v.authorization_digest FROM mission_versions AS v "
+                        "JOIN missions AS m ON m.mission_id = v.mission_id "
+                        "WHERE v.mission_id = ? AND v.version = ? "
+                        "AND m.current_version = v.version "
+                        f"AND NOT (m.{_ACTIVE_MISSION_SQL}) "
+                        "ORDER BY v.mission_id, v.version LIMIT 2",
+                        (mission_id, version),
+                    ),
+                    "tasks": (
+                        "SELECT t.task_id, t.mission_id, t.mission_version, t.status "
+                        "FROM tasks AS t JOIN missions AS m "
+                        "ON m.mission_id = t.mission_id "
+                        "WHERE t.task_id = ? AND t.mission_id = ? "
+                        "AND t.mission_version = ? "
+                        f"AND NOT (m.{_ACTIVE_MISSION_SQL}) "
+                        "ORDER BY t.task_id LIMIT 2",
+                        (task_id, mission_id, version),
+                    ),
+                    "attempts": (
+                        "SELECT a.attempt_id, a.task_id, a.status FROM attempts AS a "
+                        "JOIN tasks AS t ON t.task_id = a.task_id "
+                        "JOIN missions AS m ON m.mission_id = t.mission_id "
+                        "WHERE a.attempt_id = ? AND a.task_id = ? "
+                        "AND t.mission_id = ? AND t.mission_version = ? "
+                        f"AND NOT (m.{_ACTIVE_MISSION_SQL}) "
+                        "ORDER BY a.attempt_id LIMIT 2",
+                        (attempt_id, task_id, mission_id, version),
+                    ),
+                    "sessions": (
+                        "SELECT s.session_id, s.attempt_id, s.last_sequence, s.status "
+                        "FROM sessions AS s "
+                        "JOIN attempts AS a ON a.attempt_id = s.attempt_id "
+                        "JOIN tasks AS t ON t.task_id = a.task_id "
+                        "JOIN missions AS m ON m.mission_id = t.mission_id "
+                        "WHERE s.session_id = ? AND s.attempt_id = ? "
+                        "AND a.task_id = ? AND t.mission_id = ? "
+                        "AND t.mission_version = ? "
+                        f"AND NOT (m.{_ACTIVE_MISSION_SQL}) "
+                        "ORDER BY s.session_id LIMIT 2",
+                        (session_id, attempt_id, task_id, mission_id, version),
+                    ),
+                }
+                for table, (query, parameters) in archived_queries.items():
+                    columns = _ARCHIVED_LINEAGE_COLUMNS[table]
+                    archived_lineage[table] = [
+                        dict(zip(columns, row, strict=True))
+                        for row in self._connection.execute(query, parameters)
+                    ]
         return ProjectMutationSnapshot(
             project_id=self._project_id,
             revision=revision,
@@ -2124,6 +2157,7 @@ class SQLiteMissionStore:
             snapshot = self._mutation_snapshot(
                 revision=current_revision,
                 authority_state=self._authority_state,
+                event=event,
             )
             proposed = decide(snapshot)
             if (
@@ -2145,6 +2179,7 @@ class SQLiteMissionStore:
             self._mutation_snapshot(
                 revision=next_revision,
                 authority_state=self._authority_state,
+                event=event,
             )
             self._insert_event(event, revision=next_revision)
             updated_project = self._connection.execute(

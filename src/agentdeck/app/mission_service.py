@@ -1206,6 +1206,33 @@ def _start_attempt_decision(
         for row in _rows(snapshot, "attempts")
         if _row_value(row, "task_id") in mission_task_ids
     )
+    active_attempt_states = frozenset(
+        {"running", "awaiting_verification", "paused", "recovering"}
+    )
+    active_task_ids = {
+        cast(str, _row_value(row, "task_id"))
+        for row in mission_attempts
+        if _row_value(row, "status") in active_attempt_states
+    }
+    if len(active_task_ids) >= confirmed.mission_version.max_parallel_tasks:
+        raise ValueError("mission parallel limit reached")
+    task_rows_by_id = {
+        cast(str, _row_value(row, "task_id")): row
+        for row in _rows(snapshot, "tasks")
+        if _row_value(row, "mission_id") == request.mission_id
+        and _row_value(row, "mission_version") == request.mission_version
+    }
+    active_keys: set[str] = set()
+    for active_task_id in active_task_ids:
+        active_row = task_rows_by_id.get(active_task_id)
+        if active_row is None:
+            raise ValueError("mission lineage invalid")
+        active_specification = _decode_task_row(active_row)
+        if active_specification.task_id != active_task_id:
+            raise ValueError("stored task specification invalid")
+        active_keys.update(active_specification.concurrency_keys)
+    if active_keys.intersection(task.concurrency_keys):
+        raise ValueError("task concurrency conflict")
     task_attempts = tuple(
         row
         for row in mission_attempts
@@ -1402,15 +1429,24 @@ def _adapter_context(
 def _runtime_facts(event: DomainEvent) -> tuple[RuntimeFact, ...]:
     payload = _event_payload(event)
     if event.kind == "failed":
-        if set(payload) != {"reason", "effect_status"}:
+        effect_status = payload.get("effect_status")
+        expected_fields = (
+            {"reason", "effect_status", "proof_evidence_id"}
+            if effect_status == "proven_no_effect"
+            else {"reason", "effect_status"}
+        )
+        if set(payload) != expected_fields:
             raise MutationValidationError("worker event payload invalid")
         reason = payload["reason"]
-        effect_status = payload["effect_status"]
         if not _valid_identifier(reason) or effect_status not in {
             "proven_no_effect",
             "ambiguous_effect",
             "known_effect",
         }:
+            raise MutationValidationError("worker event payload invalid")
+        if effect_status == "proven_no_effect" and not _valid_identifier(
+            payload.get("proof_evidence_id")
+        ):
             raise MutationValidationError("worker event payload invalid")
         fact_kind = {
             "proven_no_effect": "proven_no_effect",
@@ -1441,6 +1477,47 @@ def _runtime_facts(event: DomainEvent) -> tuple[RuntimeFact, ...]:
         "session_takeover": "session",
     }.get(event.kind, "task")
     return (RuntimeFact(scope, kind, cast(str, reason)),)
+
+
+def _validate_effect_proof(
+    snapshot: ProjectMutationSnapshot,
+    context: _AdapterContext,
+    proof_evidence_id: object,
+) -> None:
+    if not _valid_identifier(proof_evidence_id):
+        raise ValueError("effect proof invalid")
+    matches = tuple(
+        row
+        for row in _rows(snapshot, "evidence")
+        if _row_value(row, "evidence_id") == proof_evidence_id
+    )
+    if len(matches) != 1:
+        raise ValueError("effect proof invalid")
+    row = matches[0]
+    if (
+        _row_value(row, "task_id") != context.lineage["task_id"]
+        or _row_value(row, "attempt_id") != context.lineage["attempt_id"]
+        or _row_value(row, "kind") != "effect_proof"
+    ):
+        raise ValueError("effect proof invalid")
+    value = _row_value(row, "summary_json")
+    try:
+        parsed = json.loads(cast(str, value))
+        if (
+            not isinstance(value, str)
+            or not isinstance(parsed, dict)
+            or set(parsed) != {"criterion", "fact", "reason"}
+            or parsed["fact"] != "proven_no_effect"
+            or _canonical_json(parsed, maximum=_MAX_PROVENANCE_BYTES) != value
+        ):
+            raise _InvalidMissionValue
+        decide_record_evidence(
+            cast(str, parsed["criterion"]),
+            cast(str, parsed["fact"]),
+            cast(str, parsed["reason"]),
+        )
+    except (json.JSONDecodeError, TypeError, ValueError, _InvalidMissionValue):
+        raise ValueError("effect proof invalid") from None
 
 
 def _stored_reconciliation_facts(
@@ -1537,7 +1614,7 @@ def _worker_event_decision(
     task_row = context.task_row
     attempt = context.attempt
     session = context.session
-    facts = _runtime_facts(event)
+    new_facts = _runtime_facts(event)
     current_task_state = cast(str, _row_value(task_row, "status"))
     current_attempt_state = cast(str, _row_value(attempt, "status"))
     if context.archived or current_task_state in {
@@ -1562,11 +1639,29 @@ def _worker_event_decision(
                 "observation_only": True,
             },
         )
+    stored_fact_values = _stored_reconciliation_facts(session)
+    try:
+        facts = tuple(
+            RuntimeFact(
+                cast(str, item["scope"]),
+                cast(str, item["kind"]),
+                cast(str, item["reason"]),
+            )
+            for item in stored_fact_values
+        ) + new_facts
+    except (KeyError, TypeError, ValueError):
+        raise ValueError("stored reconciliation invalid") from None
     effect_status = (
         cast(str, _event_payload(event)["effect_status"])
         if event.kind == "failed"
         else None
     )
+    if effect_status == "proven_no_effect":
+        _validate_effect_proof(
+            snapshot,
+            context,
+            _event_payload(event).get("proof_evidence_id"),
+        )
     decision = decide_record_worker_event(
         current_task_state,
         current_attempt_state,
@@ -1583,16 +1678,16 @@ def _worker_event_decision(
     sequence = cast(int, lineage["sequence"])
     changes: list[EntityChange] = []
     reconciliation = _row_value(session, "reconciliation_json")
-    stored_facts: list[object] = _stored_reconciliation_facts(session)
+    stored_facts: list[object] = list(stored_fact_values)
     stored_facts.extend(
         {"scope": fact.scope, "kind": fact.kind, "reason": fact.reason}
-        for fact in facts
+        for fact in new_facts
     )
     session_values: dict[str, object] = {
         "status": decision.attempt_state,
         "last_sequence": sequence,
     }
-    if facts or reconciliation is not None:
+    if new_facts or reconciliation is not None:
         session_values["reconciliation_json"] = _canonical_json(
             {"facts": stored_facts}, maximum=_MAX_PROVENANCE_BYTES
         )
@@ -1660,6 +1755,14 @@ def _record_evidence_decision(
     kind = payload["kind"]
     if not _valid_identifier(evidence_id) or not _valid_identifier(kind):
         raise MutationValidationError("evidence payload invalid")
+    if (
+        kind == "effect_proof"
+        and payload.get("fact") != "proven_no_effect"
+    ) or (
+        kind != "effect_proof"
+        and payload.get("fact") not in {"check_passed", "check_failed"}
+    ):
+        raise MutationValidationError("evidence payload invalid")
     evidence = decide_record_evidence(
         cast(str, payload["criterion"]),
         cast(str, payload["fact"]),
@@ -1685,7 +1788,11 @@ def _record_evidence_decision(
                 "observation_only": True,
             },
         )
-    if task is None or evidence.criterion not in task.acceptance_criteria:
+    if (
+        task is None
+        or kind != "effect_proof"
+        and evidence.criterion not in task.acceptance_criteria
+    ):
         raise ValueError("evidence criterion invalid")
     if any(
         _row_value(row, "evidence_id") == evidence_id
@@ -1752,12 +1859,21 @@ def _verification_decision(
         raise ValueError("verification attempt missing")
     attempt = max(attempts, key=lambda row: cast(int, _row_value(row, "attempt_number")))
     attempt_id = cast(str, _row_value(attempt, "attempt_id"))
+    sessions = tuple(
+        row
+        for row in _rows(snapshot, "sessions")
+        if _row_value(row, "attempt_id") == attempt_id
+    )
+    if len(sessions) != 1:
+        raise ValueError("verification session lineage invalid")
+    session_id = cast(str, _row_value(sessions[0], "session_id"))
     facts: list[EvidenceFact] = []
     for row in _rows(snapshot, "evidence"):
         if (
             _row_value(row, "task_id") != task_id
             or _row_value(row, "attempt_id") != attempt_id
-            or _row_value(row, "kind") == "verification_result"
+            or _row_value(row, "kind")
+            in {"verification_result", "effect_proof"}
         ):
             continue
         value = _row_value(row, "summary_json")
@@ -1806,6 +1922,11 @@ def _verification_decision(
                 ),
             },
             where={"attempt_id": attempt_id},
+        ),
+        EntityChange.update(
+            "sessions",
+            {"status": result.aggregate_state.value},
+            where={"session_id": session_id},
         ),
     ]
     all_states = {

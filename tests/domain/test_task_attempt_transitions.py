@@ -169,6 +169,22 @@ def test_failed_attempt_retries_only_with_durable_no_effect_and_all_bounds() -> 
     assert ambiguous.mission_state == "paused"
     assert ambiguous.recovery_allowed is False
 
+    absorbed = record_worker_event(
+        "paused",
+        "paused",
+        "failed",
+        facts=(
+            RuntimeFact("mission", "permission_conflict", "scope conflict"),
+            RuntimeFact("task", "proven_no_effect", "protocol receipt"),
+        ),
+        effect_status="proven_no_effect",
+        recovery=available,
+    )
+    assert absorbed.task_state is TaskRuntimeState.PAUSED
+    assert absorbed.attempt_state == "paused"
+    assert absorbed.mission_state == "paused"
+    assert absorbed.recovery_allowed is False
+
 
 @pytest.mark.parametrize(
     ("facts", "expected"),

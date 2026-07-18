@@ -4,6 +4,36 @@
 
 ## 2026-07-18
 
+### Close Worker scheduling, proof, and session-state gates
+
+- Added transaction-snapshot scheduling gates before every Attempt start.
+  Distinct active Tasks now consume the frozen Mission parallel capacity, and
+  overlapping Task concurrency keys fail closed before a second Attempt is
+  written. Terminal prior Attempts do not consume capacity; disjoint work may
+  still run concurrently within the Mission limit.
+- Replaced self-declared no-effect recovery with durable Evidence authority.
+  `proven_no_effect` failures must cite a same-Task, same-Attempt
+  `effect_proof` Evidence row whose closed canonical summary records that exact
+  fact. Missing, cross-Attempt, malformed, or tampered proof writes nothing.
+  Effect proof is audit/recovery input only and never contributes acceptance
+  Verification credit. Previously persisted permission conflict, ambiguous
+  effect, or session takeover facts remain absorbing over a later safe-recovery
+  claim until a future explicit governance transition clears the pause;
+  known-effect terminal failure retains higher precedence.
+- Synchronized every Verification grade across the latest Task, Attempt, and
+  its exact single session in one revision: pass completes all three, fail
+  fails all three, and unavailable Evidence pauses all three. Missing or
+  duplicate sessions for the latest Attempt now fail lineage validation before
+  Verification Evidence or state is written.
+- Replaced eager terminal-history projection with event-scoped archived
+  lineage selection. Adapter mutations query only their exact terminal
+  Mission/version/Task/Attempt/session primary-key chain using stable bounded
+  `LIMIT 2` reads; internal events and client commands expose no archived
+  projection. A regression fixture with more than 8,192 terminal
+  Mission/version rows proves late ordered observation remains bounded while
+  wrong lineage is rejected. Active entities and global identity indexes keep
+  their existing contracts.
+
 ### Enforce governed Worker recovery and terminal observation
 
 - Removed every Worker-side completion claim from the runtime fact vocabulary.

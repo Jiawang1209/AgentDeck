@@ -365,7 +365,8 @@ class EvidenceDecision:
     def __post_init__(self) -> None:
         if (
             not _valid_text(self.criterion)
-            or self.fact not in {"check_passed", "check_failed"}
+            or self.fact
+            not in {"check_passed", "check_failed", "proven_no_effect"}
             or not _valid_text(self.reason)
         ):
             raise ValueError("evidence decision invalid")
@@ -496,37 +497,6 @@ def record_worker_event(
             reasons,
             effective_scope="mission",
         )
-    if event_kind == "failed":
-        assert recovery is not None
-        if effect_status == "ambiguous_effect":
-            return WorkerEventDecision(
-                TaskRuntimeState.PAUSED,
-                "paused",
-                "paused",
-                facts,
-                reasons,
-                effective_scope="mission",
-            )
-        if effect_status == "proven_no_effect" and recovery.allows_retry:
-            return WorkerEventDecision(
-                TaskRuntimeState.READY,
-                "failed",
-                "running",
-                facts,
-                reasons,
-                effective_scope="task",
-                dispatch_allowed=True,
-                automation_allowed=True,
-                recovery_allowed=True,
-            )
-        return WorkerEventDecision(
-            TaskRuntimeState.FAILED,
-            "failed",
-            "failed",
-            facts,
-            reasons,
-            effective_scope="mission",
-        )
     if event_kind in {"ambiguous_effect", "permission_conflict"} or fact_kinds.intersection(
         {"ambiguous_effect", "permission_conflict"}
     ):
@@ -546,6 +516,28 @@ def record_worker_event(
             facts,
             reasons,
             effective_scope="session",
+        )
+    if event_kind == "failed":
+        assert recovery is not None
+        if effect_status == "proven_no_effect" and recovery.allows_retry:
+            return WorkerEventDecision(
+                TaskRuntimeState.READY,
+                "failed",
+                "running",
+                facts,
+                reasons,
+                effective_scope="task",
+                dispatch_allowed=True,
+                automation_allowed=True,
+                recovery_allowed=True,
+            )
+        return WorkerEventDecision(
+            TaskRuntimeState.FAILED,
+            "failed",
+            "failed",
+            facts,
+            reasons,
+            effective_scope="mission",
         )
     if event_kind == "permission_requested" or "task_local_pause" in fact_kinds:
         return WorkerEventDecision(

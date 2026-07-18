@@ -283,6 +283,94 @@ def test_archived_lineage_is_independently_bounded_and_deeply_frozen() -> None:
             },
         )
 
+
+def test_adapter_snapshot_selects_only_exact_archived_lineage_over_large_history(
+    store,
+) -> None:
+    mission_rows = [
+        (f"mis_{index}", "prj_1", 1, "completed", 0, 0)
+        for index in range(MAX_ARCHIVED_LINEAGE_ROWS + 9)
+    ]
+    version_rows = [
+        (
+            mission_id,
+            1,
+            "{}",
+            "sha256:" + "a" * 64,
+            "{}",
+            0,
+        )
+        for mission_id, *_ in mission_rows
+    ]
+    store._connection.executemany(  # noqa: SLF001 - bounded history fixture
+        "INSERT INTO missions(mission_id, project_id, current_version, status, "
+        "created_revision, updated_revision) VALUES (?, ?, ?, ?, ?, ?)",
+        mission_rows,
+    )
+    store._connection.executemany(  # noqa: SLF001 - bounded history fixture
+        "INSERT INTO mission_versions(mission_id, version, specification_json, "
+        "authorization_digest, proposal_provenance_json, confirmed_revision) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        version_rows,
+    )
+    store._connection.execute(  # noqa: SLF001 - bounded history fixture
+        "INSERT INTO tasks(task_id, mission_id, mission_version, specification_json, "
+        "status, created_revision, updated_revision) "
+        "VALUES ('tsk_1', 'mis_1', 1, '{}', 'completed', 0, 0)"
+    )
+    store._connection.execute(  # noqa: SLF001 - bounded history fixture
+        "INSERT INTO attempts(attempt_id, task_id, attempt_number, status, "
+        "route_position, budget_json, started_revision, terminal_revision) "
+        "VALUES ('att_1', 'tsk_1', 1, 'completed', 0, '{\"budget_units\":1}', 0, 0)"
+    )
+    store._connection.execute(  # noqa: SLF001 - bounded history fixture
+        "INSERT INTO sessions(session_id, attempt_id, agent_id, model_id, transport, "
+        "status, last_sequence, lease_json, reconciliation_json) "
+        "VALUES ('ses_1', 'att_1', 'codex', NULL, 'fake', 'completed', 0, NULL, NULL)"
+    )
+    store._connection.commit()  # noqa: SLF001
+
+    event = _adapter()
+    observed: list[dict[str, tuple[dict[str, object], ...]]] = []
+
+    def decide(snapshot):
+        observed.append(
+            {
+                table: tuple(dict(row) for row in rows)
+                for table, rows in snapshot.archived_lineage.items()
+            }
+        )
+        assert sum(len(rows) for rows in snapshot.archived_lineage.values()) == 5
+        return MutationDecision(
+            changes=(
+                EntityChange.update(
+                    "sessions", {"last_sequence": 1}, where={"session_id": "ses_1"}
+                ),
+            ),
+            events=(event,),
+        )
+
+    store.apply_event(event, decide)
+    assert len(observed) == 1
+    assert tuple(observed[0]) == (
+        "missions",
+        "mission_versions",
+        "tasks",
+        "attempts",
+        "sessions",
+    )
+    assert observed[0]["missions"][0]["mission_id"] == "mis_1"
+
+    internal = _internal(trigger_id="int_after_archive", revision=1)
+    store.apply_event(
+        internal,
+        lambda snapshot: (
+            pytest.fail("internal snapshot exposed archived lineage")
+            if snapshot.archived_lineage
+            else MutationDecision(events=(internal,))
+        ),
+    )
+
     payload = "x" * 60_000
     row_count = MAX_ARCHIVED_LINEAGE_BYTES // len(payload.encode("utf-8")) + 2
     with pytest.raises(MutationValidationError, match="^mutation snapshot invalid$"):
