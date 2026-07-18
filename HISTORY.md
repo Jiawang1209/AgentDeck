@@ -22,6 +22,13 @@
   conformance, and focused real-smoke evidence are prerequisites but cannot
   replace Golden A's normal collaboration journey or Golden B's
   rejection/revision, disconnect/recovery, permission, and takeover journey.
+- Clarified that an expected permission, takeover, reconnect, or recovery pause
+  is only an intermediate Golden B checkpoint: Golden A and Golden B each PASS
+  only after authorized recovery or replanning reaches evidence-backed Mission
+  completion and acceptance. Environment blockers, execution failures, and
+  unresolved actionable pauses remain valid layer-specific diagnoses and
+  release blockers, never Golden acceptance PASS, even though a paused Mission
+  remains a legitimate runtime outcome.
 - Required every retained invariant to have a named implemented replacement
   test and both Goldens to pass before the old mega-harness can be archived or
   removed, aligned with the legacy inventory and SQLite failure-injection

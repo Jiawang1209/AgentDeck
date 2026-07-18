@@ -54,9 +54,10 @@ how expensive a test is.
    natural-language, explicit-Leader, frozen-preview, one-confirmation,
    background collaboration, reconnect, and evidence-backed acceptance path.
    Golden B proves peer-review rejection and revision plus disconnect/recovery,
-   sequential permission handling, human takeover/return-control, and safe
-   completion or a precise actionable pause. Together they are the final V1
-   journey gate; they are not one brittle internal harness.
+   sequential permission handling, and human takeover/return-control, then
+   resumes or replans within the authorized scope to evidence-backed Mission
+   completion and acceptance. Together they are the final V1 journey gate;
+   they are not one brittle internal harness.
 7. **archive** — preserved historical logs, specifications, and the old harness
    after all replacement gates pass. Archived material is read-only evidence,
    never current product authority, a release gate, or authorization for a new
@@ -66,6 +67,17 @@ Unit, contract/security, deterministic integration, adapter conformance, and
 real adapter smoke evidence are necessary but cannot replace either Golden A or
 Golden B. A fake adapter can prove orchestration determinism; it cannot prove
 that the public product works with the real Codex and Claude boundaries.
+
+**Golden PASS requires evidence-backed Mission completion and acceptance.** An
+expected human pause—such as a permission refusal, takeover, reconnect, or
+recovery checkpoint—may be a mandatory intermediate observation in Golden B,
+but the journey must then resume or replan within its existing authorization
+and reach final completion and acceptance. Missing environment capability,
+adapter execution failure, an actionable pause that cannot be recovered, or
+any other unresolved pause produces a layer-specific diagnosis and blocks the
+corresponding release criterion. AgentDeck may still correctly leave a real
+Mission paused as a legitimate runtime outcome; that outcome is not Golden
+acceptance PASS.
 
 ## Legacy-to-V1 migration matrix
 
@@ -79,10 +91,10 @@ that the public product works with the real Codex and Claude boundaries.
 | Permission lineage and sequential requests | One Attempt may produce a bounded sequence of permission requests. Each request has its own exact lineage, is confirmed or rejected once, preserves order, and cannot be skipped, reused, or settled from another Attempt. A Handoff is admitted only after the Attempt completes. | contract/security + deterministic integration | Governance permission contract and daemon permission-bridge integration suite | Approved-then-pending derivation, exact pending identity, consume-once decision, ambiguity refusal, and ordered settlement | General per-request lineage/order/bound tests pass for zero, one, and multiple requests; replacement no longer asserts a scenario-wide exact permission count |
 | Exact permission cardinality | Preserve per-request lineage, ordering, boundedness, and terminal settlement; the total number of permissions is adapter- and Task-dependent. | unit/state machine + contract/security | Permission policy/state-machine parameterized suite | Historical counts as scenario evidence only | Replacement proves the invariants for variable request counts; delete every assertion that requires exactly two permissions or any other global cardinality |
 | Handoff ordering | A downstream Task is not dispatchable until every required predecessor Attempt is terminal and its canonical Handoff is durably recorded with correlated Evidence. Duplicate replay is idempotent. | unit/state machine + deterministic integration | Task DAG release rules and daemon/SQLite Handoff transaction-recovery suite | Missing-Handoff waits, next-stage-before-Handoff refusal, canonical status, event order, and deduplication cases | Variable-DAG unit tests and crash/restart integration prove dependency release and Handoff atomicity without assuming four phases |
-| Daemon disconnect, reconnect, and crash | Confirmed work continues under the sole ProjectDaemon writer after the client disconnects; reconnect returns a compact same-revision ProjectView; crash recovery resumes only from durable, unambiguous facts within bounds. | deterministic integration | ProjectDaemon background Mission, reconnection, crash-matrix, lease, and SQLite recovery suites | Background continuation, bounded wait, restart, consume-once, compact projection, and ambiguity refusal cases | Real SQLite failure-injection covers transaction interruption and restart, reconnect sees the same authority/revision, and Golden B exercises a real disconnect/reconnect journey |
+| Daemon disconnect, reconnect, and crash | Confirmed work continues under the sole ProjectDaemon writer after the client disconnects; reconnect returns a compact same-revision ProjectView; crash recovery resumes only from durable, unambiguous facts within bounds. | deterministic integration | ProjectDaemon background Mission, reconnection, crash-matrix, lease, and SQLite recovery suites | Background continuation, bounded wait, restart, consume-once, compact projection, and ambiguity refusal cases | Real SQLite failure-injection covers transaction interruption and restart, reconnect sees the same authority/revision, and Golden B reconnects, resumes within authority, and reaches accepted completion |
 | ACP transport | ACP updates, permissions, cancellation, completion, and ambiguity map into transport-independent typed events with bounded redacted fields. ACP never owns Mission transitions. | adapter conformance + real adapter smoke | ACP mapping/transport conformance kit plus one focused real ACP lifecycle smoke | Protocol bounds, update mapping, sequential permissions, ambiguity, cancellation, and cleanup cases | Conformance passes against the supported ACP adapter and the focused real smoke proves auth/start/event/permission/cleanup; both Goldens still remain independently required |
 | tmux and CLI/PTY transport | tmux remains visible observation, human takeover, and explicitly governed fallback. Pane text or readiness is never authority for completion, permission, Handoff, or success. CLI/PTY fallback is admitted only after disclosed route selection and safe-effect proof. | adapter conformance + real adapter smoke | CLI/PTY transport conformance, tmux observation/takeover contract, and focused process smoke | Exact-socket cleanup, bounded capture, route disclosure, no silent fallback, prompt-semantic equivalence, and non-authority cases | Conformance and focused smoke pass, and no Mission transition reads pane text as truth; tmux visibility/takeover remains retained rather than deleted |
-| Takeover and return-control | Takeover durably changes session control without broadening Mission scope; scheduling for that session pauses; return-control verifies the same Attempt/session authority before bounded autonomous recovery. | deterministic integration + Golden Mission | Daemon governance/recovery integration suite and at least one real Golden B exercise | Same-attempt identity, authority-drift refusal, pause/resume semantics, and compact audit lineage | Deterministic restart tests prove control ownership and Golden B performs a real takeover/return through the public entry with auditable events |
+| Takeover and return-control | Takeover durably changes session control without broadening Mission scope; scheduling for that session pauses; return-control verifies the same Attempt/session authority before bounded autonomous recovery. | deterministic integration + Golden Mission | Daemon governance/recovery integration suite and at least one real Golden B exercise | Same-attempt identity, authority-drift refusal, pause/resume semantics, and compact audit lineage | Deterministic restart tests prove control ownership and Golden B performs a real takeover/return through the public entry, resumes within authority, and reaches accepted completion with auditable events |
 | Redaction and bounded diagnostics | Errors and projections expose only allowlisted stages, reason codes, bounded counts, stable opaque identities, and hashes where needed. They never expose credentials, raw prompts, terminal transcripts, model output, or absolute paths. | contract/security + adapter conformance | Shared diagnostic validator and hostile-payload conformance cases for every adapter | Path-free permission diagnostics, no terminal/PTY leakage, malformed-ledger closure, and compact cleanup failure cases | Hostile sentinel tests pass at every public contract and adapter boundary, including failure paths, without relying on pytest rendering behavior |
 | Process and probe cleanup | Spawn, timeout, cancellation, interrupt, probe, and parent-exit paths close descriptors, terminate only owned process groups/sockets, bounded-drain output, and report residual ownership compactly. | real adapter smoke infrastructure + adapter conformance | Shared bounded process runner used by all real smokes, with deterministic local conformance/failure-injection tests | PTY spawn failure, child-after-leader-exit, group-kill failure, flood deadline, exact tmux socket, probe cleanup, and interrupt cleanup cases | Shared infrastructure passes deterministic ownership/failure injection and each real smoke uses it; no provider-specific harness duplicates cleanup authority |
 | Global PATH and tool discovery | Readiness resolves the explicitly selected supported tool identity, version/capability, authentication state, and launch mapping without mutating project or global configuration or guessing a fallback. | adapter conformance | Codex/Claude/ACP/CLI readiness conformance suite | Read-only probe behavior, symlink/executable drift, capability detection, logged-out diagnosis, and no global-config access | Each supported adapter passes the same readiness contract and public setup reports actionable compact blockers without frozen machine-specific paths |
@@ -107,21 +119,25 @@ The migration follows these hard gates:
 4. Run focused real adapter smokes only after deterministic and conformance
    gates pass. A smoke is diagnostic evidence, not acceptance of the natural-
    language product journey.
-5. Run both real Golden A and Golden B through the public product entry. Unit,
-   fake-adapter, conformance, and smoke results cannot substitute for either
-   Golden.
+5. Run both real Golden A and Golden B through the public product entry. Each
+   journey must finish with evidence-backed Mission completion and acceptance.
+   Expected pause/recovery checkpoints must be observed and then resolved
+   within the existing authorization; an environment BLOCKED result, execution
+   failure, or unresolved actionable pause fails the corresponding Golden gate.
+   Unit, fake-adapter, conformance, and smoke results cannot substitute for
+   either Golden.
 6. Remove or archive the old M2c file only after **every** retained invariant
    has a named implemented replacement test, a coverage review finds no unique
    safety assertion stranded in the harness, and both real Goldens pass.
 
-A Golden failure produces a layer-specific diagnosis and blocks the
-corresponding release criterion. It does not revive the fixed four-stage
-ceremony, authorize another historical one-shot node, or make the whole old
-harness authoritative again. For example, an authentication/start failure
-routes to readiness or real-smoke repair; a permission-lineage failure routes
-to governance contract/integration repair; a reconnect failure routes to daemon
-recovery; and a user-journey composition failure routes to the Golden product
-boundary.
+A Golden failure or unresolved pause produces a layer-specific diagnosis and
+blocks the corresponding release criterion. It does not count as PASS, revive
+the fixed four-stage ceremony, authorize another historical one-shot node, or
+make the whole old harness authoritative again. For example, an
+authentication/start failure routes to readiness or real-smoke repair; a
+permission-lineage failure routes to governance contract/integration repair; a
+reconnect failure routes to daemon recovery; and a user-journey composition
+failure routes to the Golden product boundary.
 
 ## Alignment with the P0 inventory and SQLite migration
 
