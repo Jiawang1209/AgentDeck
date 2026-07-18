@@ -4,6 +4,19 @@
 
 ## 2026-07-18
 
+### Define durable Mission event provenance
+
+- Added a pure, deterministic `DomainEvent` primitive for the P1 durable
+  Mission kernel with mutually exclusive `client_command`, `adapter_event`,
+  and `internal_trigger` provenance shapes. Each constructor rejects unknown
+  or cross-trigger fields with stable sanitized errors, and validates explicit
+  revisions, adapter integrity hashes, identifiers, and caller-supplied time.
+- Restricted event payloads and provenance to bounded canonical JSON, deeply
+  detached and froze constructor inputs, and exposed only fresh mutable copies
+  plus byte-stable canonical UTF-8 serialization. This slice has no store,
+  daemon, provider, runtime, filesystem, network, or clock dependency and does
+  not claim that the SQLite authority or P1 is complete.
+
 ### Approve P0 exit and start P1 Durable Mission Kernel planning
 
 - Recorded the human's explicit approval of the frozen P0 exit evidence and
