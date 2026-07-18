@@ -4,6 +4,122 @@
 
 ## 2026-07-19
 
+### Discover product backends without side effects
+
+- Completed R2 Task 11 with an immutable configuration resolver whose exact
+  precedence is current session, project, user global, then read-only discovery.
+  Every resolution returns the selected value plus its source; constructor
+  mappings are defensively copied, result facts are frozen, missing keys raise a
+  stable `KeyError`, and non-string, empty, non-UTF-8, or oversized keys and
+  values fail closed without echoing their content.
+- Added read-only discovery for Codex, Claude, tmux, and injected tool catalogs
+  over the actual or explicitly supplied PATH using `shutil.which(..., path=...)`.
+  Empty and relative PATH components are removed before discovery, so neither an
+  empty PATH entry nor `.` can execute a project-local impostor; if no absolute
+  component remains, every tool is deterministically missing and no probe runs.
+  Resolved executables are absolute, canonical, regular, executable files whose
+  device, inode, mode, size, and modification time remain stable across every
+  passive probe. Tool facts and the returned mapping are immutable, and bounded
+  capability metadata distinguishes CLI Leader/Worker/ACP support from tmux
+  observation and human takeover without treating those capabilities as
+  readiness.
+- Readiness uses only the exact states `missing`, `discovered`, `authenticated`,
+  `acp_available`, and `ready`. Executable or version presence alone stops at
+  `discovered`; authentication and ACP availability can become true only through
+  explicit injected passive probes returning exact booleans. Missing tools run
+  no probes, and one tool's version/authentication/ACP failure cannot block facts
+  for another tool.
+- The default version probe opens the resolved executable read-only with
+  `O_NOFOLLOW`, binds device, inode, mode, size, mtime, and ctime to that
+  descriptor, and captures an initial bounded SHA-256 before any probe can run.
+  Codex, Claude, and custom tools admit at most 512 MiB. Their later snapshot
+  digest and complete second source digest must both equal that acquisition
+  digest; ctime is an additional POSIX defense, not a substitute for content
+  identity. The probe copies bytes into a sole mode-`0500` execution snapshot in a
+  mode-`0700` directory under the resolved root-owned sticky `/var/tmp`; project
+  `TMPDIR`, `TEMP`, and `TMP` values cannot redirect it, and its final identity
+  must still match the original `fstat`.
+  This ephemeral sealed copy is the Darwin fallback for the platform's missing
+  `fexecve`; it is removed on every outcome and is not a project write, cache,
+  installation, or PATH mutation. Snapshot creation and verification finish
+  before the child deadline starts. Codex, Claude, and custom-tool snapshot
+  execution uses the exact bounded `--version` tuple, no shell,
+  `stdin=DEVNULL`, a minimal environment, a five-second hard child deadline,
+  and a combined stdout/stderr byte ceiling.
+  A new process session isolates descendants; success, parent-first exit,
+  timeout, flood, nonzero exit, selector construction or registration failure,
+  and other setup failures boundedly terminate/kill the complete process group,
+  reap the immediate child, safely close both pipes and any created selector,
+  and remove temp state. The project remains byte-for-byte unchanged.
+- Observer-only tmux discovery never executes tmux or a relocated copy. It reads
+  at most 16 MiB from the already captured regular-file descriptor with bounded
+  `pread`; both its metadata-read and second-pass digests must match the initial
+  acquisition digest, and pre/post `fstat` must remain stable. It locates one
+  exact compiled `tmux %s` output marker and accepts exactly one strict dotted
+  version occurrence in the preceding 512-byte window. Duplicate occurrences
+  are invalid even when their text is identical. The only returned payload is
+  `tmux <version>`; missing or ambiguous metadata becomes
+  `version_probe_invalid`, and oversize metadata becomes
+  `version_probe_oversize`. It does not call `strings`, inspect a pathname after
+  capture, execute the binary, write a project file, or expose neighboring
+  binary bytes.
+- Version output now uses a narrow anchored public-prefix allowlist. It retains
+  only a bounded `name version` or `version` token such as `codex-cli 1.2.3`,
+  `tmux 3.5a`, `claude-agent-acp 0.58.1`, or `2.1.37`, discarding every trailing
+  line, path, token, or status word. Unknown shapes, injected runner exceptions,
+  timeouts, oversized output, invalid UTF-8, invalid result types, and empty
+  output become fixed diagnostic codes; a legitimate name such as `secret-tool`
+  is not rejected by keyword. Raw stderr is never returned.
+- All four configuration layers and discovery's tool, authentication, ACP, and
+  capability mappings use one bounded 256-item materialization boundary before
+  validation or probes. Hostile `items()`/iteration/hash failures, malformed or
+  unhashable items, duplicate keys, and mutation during iteration fail closed
+  with fixed content-free errors; raw exceptions and marker values cannot escape.
+- TDD RED first produced the expected two collection errors because
+  `agentdeck.adapters.config` and `agentdeck.adapters.discovery` were absent.
+  Initial GREEN passed `30` focused tests. Self-review then added an executable
+  replacement regression that failed once because the replaced tool was
+  incorrectly classified `ready`; identity freezing and inter-probe validation
+  made that test pass without running later probes. The quality-review RED then
+  reproduced two descendant-cleanup failures (`2 failed / 4 passed`), four unsafe
+  PATH selection failures, one isolated swap-and-restore impostor execution,
+  eleven version-output failures (including one corrected macOS `/private` test
+  assertion), and nineteen hostile-mapping failures. An intermediate cleanup
+  GREEN exposed two macOS `killpg` classification regressions before preserving
+  the original timeout/oversize diagnostics. A controller preflight then exposed
+  four real-use gaps: tmux's `-V` convention, the installed 242,445,680-byte
+  Claude executable exceeding the former 64 MiB snapshot ceiling, project-
+  controlled temp selection, and same-inode content drift between copy and
+  execution. The added RED selection ran `4 failed / 3 passed`; a separate
+  exported-deadline RED failed once at the former two-second value. A real
+  read-only preflight showed the sealed Claude child needed about 2.9 seconds
+  end-to-end on this machine, so the bounded child deadline became five seconds
+  while fast timeout tests override it to 0.1 seconds. A required conda-scoped
+  rerun then exposed that the earlier Homebrew tmux success did not cover conda
+  tmux 3.7: its `LC_RPATH=@loader_path/../lib` cannot resolve after relocation.
+  The copied parent produced no stdout or descendants and halted inside dyld
+  before tmux main, so changing argv zero or extending the deadline could not
+  repair it. The static-metadata RED ran `3 failed / 2 passed` before the exact
+  marker parser made unique, ambiguous, missing, oversize, identity-change, and
+  real conda tmux regressions pass without any tmux execution. Three consecutive
+  `conda run -n agentdeck` live probes then returned Codex
+  `codex-cli 0.131.0`, Claude `2.1.211`, and tmux `3.7`; every fact was
+  `discovered` with empty diagnostics, the pre-existing stuck diagnostic PID set
+  did not grow, and no `agentdeck-version-*` temp directory remained. Final
+  quality review then reproduced three selector-setup process leaks, Codex and
+  tmux accepting same-signature content rewrites before their probe reads, one
+  duplicate-version acceptance, and the missing ctime field. The RED selection
+  ran `7 failed / 3 passed`. Moving cleanup around selector creation and both
+  registrations,
+  adding acquisition digests plus ctime, and counting tmux version occurrences
+  made the same selection pass. Final verification passed `95` focused tests,
+  `109` focused-plus-architecture tests, `612` complete Product Kernel tests,
+  the approved legacy substitute
+  (`213 passed`), and compileall.
+  The plan's `tests/test_state.py` baseline is absent; the approved substitute
+  was `test_cli_structured_output.py`, `test_state_mixed_version_lock_race.py`,
+  and `test_conversation_state.py` rather than recreating that legacy file.
+
 ### Make product state atomic and recoverable
 
 - Completed R1 Task 10 with a nonblocking macOS `flock` authority on the stable
