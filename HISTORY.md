@@ -4,6 +4,43 @@
 
 ## 2026-07-18
 
+### Add exact canonical Mission preview confirmation
+
+- Completed R1 Task 7 with pure, frozen Mission proposal, task-definition,
+  preview, and confirmed-version facts. The coding default is the declared
+  four-stage Codex implementation, Claude review, Codex revision, and Claude
+  acceptance chain, with distinct planned Agent and ACP route identities,
+  bounded retry/revision/reconnect budgets, non-goals, risks, and acceptance
+  criteria; it creates no ACP process and performs no I/O.
+- Preview content is recursively JSON-only canonical data encoded as compact,
+  sorted-key UTF-8 JSON and SHA-256 hashed. The preview and confirmation IDs
+  are deterministic projections of that content. Confirmation compares both
+  human-supplied values exactly and rejects stale or drifted previews; the
+  resulting confirmed version keeps the complete canonical content immutable.
+- TDD RED confirmed the new module was absent. Focused coverage verifies the
+  ordered graph, agent/route distinctness, dependencies, Unicode and mapping
+  order determinism, semantic revision drift, immutable copied nested values,
+  invalid versions and confirmation identities, invalid budgets/profiles, and
+  malformed duplicate task graphs. Focused mission and permission tests pass
+  (`123 passed`), along with compile and diff checks.
+- Review hardening closes the projection-constructor boundary: scope, Leader
+  adapter/version, all five declared bounded-execution dimensions, and each
+  worker backend are now independently frozen. Preview and confirmed facts
+  parse an exact JSON schema, rebuild the validated Mission graph, require
+  wrapper/payload version agreement, and require byte-exact recanonicalization
+  before accepting their deterministic hashes and IDs. The graph now requires
+  the exact three dependency edges and ACP backend-bound routes; arbitrary JSON,
+  missing/extra fields, malformed task semantics, stale version wrappers,
+  non-ACP routes, and worker backend swaps are rejected without I/O.
+- Boundary hardening now validates all domain strings as strict UTF-8 at their
+  construction boundary, validates every version and budget as an exact
+  positive SQLite-safe integer, and validates derived IDs and hashes as fixed
+  lowercase-hex ASCII before comparing bytes. Unicode or malformed confirmation
+  strings become stable preview drift, direct wrapper construction rejects bad
+  formats with stable `ValueError`, and isolated surrogates cannot escape into
+  canonical hashing. Fresh focused coverage passes `123 passed`; the complete
+  Product Kernel suite passes `250 passed`.
+
 ### Enforce product permission hierarchy
 
 - Completed R1 Task 6 with a pure, immutable permission lattice: the three
