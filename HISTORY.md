@@ -4,6 +4,23 @@
 
 ## 2026-07-18
 
+### Reject non-exact daemon replay prechecks
+
+- Restricted queue-time completed-command replay admission to exact immutable
+  input only. A reused command id with changed input now fails before
+  `MissionService` or `SQLiteMissionStore.apply_command` is called, while an
+  exact lost-response retry still reaches the store once for authoritative
+  replay validation.
+- Replaced parse-before-bound persisted-row inspection with a closed strict
+  decoder that proves actor/outcome byte limits before JSON parsing, rejects
+  duplicate keys, non-finite values, excessive depth, non-domain JSON types,
+  non-canonical bytes, and malformed digest/revision identity.
+- Bound actor rows exactly to the command actor and validate completed outcomes
+  through the public `MutationOutcome.from_dict()` API before replay admission.
+  Oversized or malformed actor/outcome rows, invalid event ids/results, and
+  non-exact commands now fail closed with zero application/store mutation
+  calls.
+
 ### Preserve daemon Mission replay and reader bounds
 
 - Added a read-only completed-command gate before queue-time authority checks.

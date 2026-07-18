@@ -27,13 +27,16 @@ from agentdeck.storage.ownership import ProjectWriterLease, WriterLeaseError
 from agentdeck.storage.sqlite_store import (
     CommandConflict,
     CommandEnvelope,
+    MutationOutcome,
     MutationValidationError,
     SQLiteMissionStore,
 )
 
 
 _MAX_REQUEST_BYTES = 128 * 1024
+_MAX_PERSISTED_ACTOR_BYTES = 16 * 1024
 _MAX_PERSISTED_COMMAND_BYTES = 64 * 1024
+_MAX_PERSISTED_JSON_DEPTH = 16
 _MAX_TEXT_BYTES = 4096
 _MAX_EVENT_PAGE = 100
 _MAX_SIGNED_64 = (2**63) - 1
@@ -72,6 +75,10 @@ class _InvalidRequest(Exception):
 
 
 class _StartupInterrupted(Exception):
+    pass
+
+
+class _DuplicateJsonKey(Exception):
     pass
 
 
@@ -160,6 +167,76 @@ def _digest(value: object) -> str:
     except ValueError:
         raise _InvalidRequest from None
     return digest
+
+
+def _reject_json_constant(_: str) -> object:
+    raise ValueError("non-finite number")
+
+
+def _object_without_duplicates(
+    pairs: list[tuple[str, object]],
+) -> dict[str, object]:
+    result: dict[str, object] = {}
+    for key, value in pairs:
+        if key in result:
+            raise _DuplicateJsonKey
+        result[key] = value
+    return result
+
+
+def _strict_canonical_json(value: object, *, maximum: int) -> object:
+    """Parse one persisted JSON value only after its byte bound is proven."""
+    if type(value) is not str:
+        raise _InvalidRequest
+    try:
+        encoded = value.encode("utf-8")
+    except UnicodeEncodeError:
+        raise _InvalidRequest from None
+    if len(encoded) > maximum:
+        raise _InvalidRequest
+    try:
+        parsed = json.loads(
+            value,
+            object_pairs_hook=_object_without_duplicates,
+            parse_constant=_reject_json_constant,
+        )
+        stack = [(parsed, 0)]
+        while stack:
+            item, depth = stack.pop()
+            if depth > _MAX_PERSISTED_JSON_DEPTH:
+                raise _InvalidRequest
+            if item is None or type(item) in {bool, str}:
+                continue
+            if type(item) is int:
+                if not -_MAX_SIGNED_64 - 1 <= item <= _MAX_SIGNED_64:
+                    raise _InvalidRequest
+                continue
+            if type(item) is list:
+                stack.extend((child, depth + 1) for child in item)
+                continue
+            if type(item) is dict:
+                stack.extend((child, depth + 1) for child in item.values())
+                continue
+            raise _InvalidRequest
+        canonical = json.dumps(
+            parsed,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        )
+    except (
+        json.JSONDecodeError,
+        _DuplicateJsonKey,
+        RecursionError,
+        TypeError,
+        UnicodeEncodeError,
+        ValueError,
+    ):
+        raise _InvalidRequest from None
+    if canonical != value:
+        raise _InvalidRequest
+    return parsed
 
 
 class DaemonMissionRuntime:
@@ -482,26 +559,26 @@ class DaemonMissionRuntime:
             created_at,
         ) = row
         try:
-            actor = json.loads(actor_json)
-            outcome = json.loads(outcome_json)
-            canonical_actor = json.dumps(
-                actor,
-                ensure_ascii=False,
-                sort_keys=True,
-                separators=(",", ":"),
+            actor = _strict_canonical_json(
+                actor_json,
+                maximum=_MAX_PERSISTED_ACTOR_BYTES,
             )
-            canonical_outcome = json.dumps(
-                outcome,
-                ensure_ascii=False,
-                sort_keys=True,
-                separators=(",", ":"),
+            outcome = _strict_canonical_json(
+                outcome_json,
+                maximum=_MAX_PERSISTED_COMMAND_BYTES,
             )
+            persisted = MutationOutcome.from_dict(outcome)
+            if not isinstance(input_hash, str):
+                raise _InvalidRequest
             exact_input = hmac.compare_digest(input_hash, command.input_hash)
             closed = (
                 project_id == store.project_id
-                and isinstance(input_hash, str)
                 and len(input_hash) == len(_DIGEST_PREFIX) + 64
                 and input_hash.startswith(_DIGEST_PREFIX)
+                and all(
+                    character in "0123456789abcdef"
+                    for character in input_hash[len(_DIGEST_PREFIX) :]
+                )
                 and all(
                     type(item) is int and 0 <= item <= _MAX_SIGNED_64
                     for item in (
@@ -512,26 +589,13 @@ class DaemonMissionRuntime:
                     )
                 )
                 and status == "completed"
-                and isinstance(outcome_json, str)
-                and len(outcome_json.encode("utf-8"))
-                <= _MAX_PERSISTED_COMMAND_BYTES
                 and accepted_revision == completed_revision == expected_revision + 1
                 and project_revision >= completed_revision
-                and canonical_actor == actor_json
                 and isinstance(actor, dict)
-                and bool(actor)
-                and canonical_outcome == outcome_json
-                and isinstance(outcome, dict)
-                and set(outcome) == {
-                    "command_id",
-                    "revision",
-                    "event_ids",
-                    "result",
-                }
-                and outcome.get("command_id") == command.command_id
-                and outcome.get("revision") == completed_revision
-                and isinstance(outcome.get("event_ids"), list)
-                and isinstance(outcome.get("result"), dict)
+                and actor == command.actor_dict()
+                and persisted.command_id == command.command_id
+                and persisted.revision == completed_revision
+                and persisted.to_dict() == outcome
                 and isinstance(created_at, str)
                 and bool(created_at)
                 and (
@@ -544,9 +608,9 @@ class DaemonMissionRuntime:
                 )
             )
         except (
-            json.JSONDecodeError,
+            _InvalidRequest,
+            MutationValidationError,
             TypeError,
-            UnicodeEncodeError,
             ValueError,
         ):
             return "invalid"
@@ -567,7 +631,7 @@ class DaemonMissionRuntime:
         expected_state: str,
     ) -> bool:
         revision, state, command_state = cls._project_authority(store, command)
-        if command_state.startswith("completed_"):
+        if command_state == "completed_exact":
             return state == expected_state == "sqlite_active"
         if command_state != "absent":
             return False
@@ -618,7 +682,7 @@ class DaemonMissionRuntime:
             command_row,
             project_revision=project[0] if project is not None else None,
         )
-        if command_state.startswith("completed_"):
+        if command_state == "completed_exact":
             return bool(
                 project is not None
                 and project[1] == expected_state == "sqlite_active"

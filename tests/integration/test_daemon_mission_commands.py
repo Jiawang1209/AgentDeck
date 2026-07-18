@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import asyncio
 import importlib
+import json
 from pathlib import Path
 import sqlite3
 
 import pytest
 
-from agentdeck.app.mission_service import MissionProposal
+from agentdeck.app.mission_service import MissionProposal, MissionService
 from agentdeck.daemon.protocol import (
     RpcProtocolError,
     RpcRequest,
@@ -137,6 +138,15 @@ def _confirm_params(
         "authorization_digest": proposal.authorization_digest,
         "expected_authority_state": "sqlite_active",
     }
+
+
+def _canonical_json(value: object) -> str:
+    return json.dumps(
+        value,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
 
 
 async def _execute_queued(
@@ -569,10 +579,7 @@ def test_lost_responses_replay_exact_propose_and_confirm_outcomes(
             )
             await asyncio.sleep(0)
             await service.tick()
-            with pytest.raises(
-                runtime_module.MissionRuntimeError,
-                match="^Mission command conflict$",
-            ):
+            with pytest.raises(ServiceError, match="authority is stale"):
                 await conflict
 
             stale = asyncio.create_task(
@@ -596,6 +603,183 @@ def test_lost_responses_replay_exact_propose_and_confirm_outcomes(
                 runtime, service, "mission.confirm", confirm_params
             )
             assert replayed_confirm == first_confirm
+        finally:
+            await runtime.close()
+
+    asyncio.run(case())
+
+
+@pytest.mark.parametrize("operation", ("propose", "confirm"))
+def test_non_exact_completed_command_never_reaches_service_or_store(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    operation: str,
+) -> None:
+    async def case() -> None:
+        runtime_module = importlib.import_module("agentdeck.daemon.mission_runtime")
+        service = _daemon_service()
+        runtime = runtime_module.DaemonMissionRuntime(
+            _prepared_root(tmp_path), daemon_service=service
+        )
+        proposal = _proposal()
+        await runtime.start()
+        try:
+            if operation == "confirm":
+                await _execute_queued(
+                    runtime, service, "mission.propose", _propose_params(proposal)
+                )
+            method = f"mission.{operation}"
+            params = (
+                _propose_params(proposal)
+                if operation == "propose"
+                else _confirm_params(proposal)
+            )
+            first = await _execute_queued(runtime, service, method, params)
+
+            calls = {"service": 0, "store": 0}
+            original_service = getattr(MissionService, operation)
+            original_apply = SQLiteMissionStore.apply_command
+
+            def counted_service(
+                self: object, *args: object, **kwargs: object
+            ) -> object:
+                calls["service"] += 1
+                return original_service(self, *args, **kwargs)
+
+            def counted_apply(self: object, *args: object, **kwargs: object) -> object:
+                calls["store"] += 1
+                return original_apply(self, *args, **kwargs)
+
+            monkeypatch.setattr(MissionService, operation, counted_service)
+            monkeypatch.setattr(SQLiteMissionStore, "apply_command", counted_apply)
+
+            assert await _execute_queued(runtime, service, method, params) == first
+            assert calls == {"service": 1, "store": 1}
+
+            changed = {**params, "command": dict(params["command"])}
+            changed["command"]["created_at"] = "2026-07-18T08:00:01Z"
+            rejected = asyncio.create_task(runtime.handle_rpc(method, changed))
+            await asyncio.sleep(0)
+            await service.tick()
+            with pytest.raises(
+                (runtime_module.MissionRuntimeError, ServiceError)
+            ):
+                await rejected
+            assert calls == {"service": 1, "store": 1}
+        finally:
+            await runtime.close()
+
+    asyncio.run(case())
+
+
+@pytest.mark.parametrize(
+    "malformation",
+    (
+        "oversized_actor",
+        "oversized_outcome",
+        "nan",
+        "duplicate_key",
+        "deep_result",
+        "wrong_event_ids",
+        "wrong_result",
+    ),
+)
+def test_malformed_completed_command_is_rejected_before_service_or_store(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    malformation: str,
+) -> None:
+    async def case() -> None:
+        runtime_module = importlib.import_module("agentdeck.daemon.mission_runtime")
+        service = _daemon_service()
+        root = _prepared_root(tmp_path)
+        runtime = runtime_module.DaemonMissionRuntime(root, daemon_service=service)
+        proposal = _proposal()
+        params = _propose_params(proposal)
+        await runtime.start()
+        try:
+            outcome = await _execute_queued(
+                runtime, service, "mission.propose", params
+            )
+            column = "outcome_json"
+            value = _canonical_json(outcome)
+            if malformation == "oversized_actor":
+                column = "actor_json"
+                value = _canonical_json(
+                    {"id": "x" * (70 * 1024), "kind": "human"}
+                )
+            elif malformation == "oversized_outcome":
+                value = _canonical_json(
+                    {**outcome, "result": {"blob": "x" * (70 * 1024)}}
+                )
+            elif malformation == "nan":
+                value = _canonical_json(
+                    {**outcome, "result": {"value": float("nan")}}
+                )
+            elif malformation == "duplicate_key":
+                value = value.replace(
+                    '"command_id":"cmd_propose"',
+                    '"command_id":"cmd_propose","command_id":"cmd_propose"',
+                    1,
+                )
+            elif malformation == "deep_result":
+                deep: object = {}
+                for _ in range(20):
+                    deep = {"next": deep}
+                value = _canonical_json({**outcome, "result": {"deep": deep}})
+            elif malformation == "wrong_event_ids":
+                value = _canonical_json({**outcome, "event_ids": [1]})
+            elif malformation == "wrong_result":
+                value = _canonical_json({**outcome, "result": []})
+
+            with sqlite3.connect(root / ".agentdeck" / "state.db") as connection:
+                connection.execute(
+                    f"UPDATE commands SET {column} = ? WHERE command_id = ?",
+                    (value, "cmd_propose"),
+                )
+
+            calls = {"service": 0, "store": 0}
+            oversized_parse_attempts = 0
+            original_propose = MissionService.propose
+            original_apply = SQLiteMissionStore.apply_command
+            original_loads = json.loads
+
+            def tracked_loads(
+                document: object, *args: object, **kwargs: object
+            ) -> object:
+                nonlocal oversized_parse_attempts
+                if (
+                    malformation in {"oversized_actor", "oversized_outcome"}
+                    and document == value
+                ):
+                    oversized_parse_attempts += 1
+                return original_loads(document, *args, **kwargs)
+
+            def counted_propose(
+                self: object, *args: object, **kwargs: object
+            ) -> object:
+                calls["service"] += 1
+                return original_propose(self, *args, **kwargs)
+
+            def counted_apply(self: object, *args: object, **kwargs: object) -> object:
+                calls["store"] += 1
+                return original_apply(self, *args, **kwargs)
+
+            monkeypatch.setattr(MissionService, "propose", counted_propose)
+            monkeypatch.setattr(SQLiteMissionStore, "apply_command", counted_apply)
+            monkeypatch.setattr(runtime_module.json, "loads", tracked_loads)
+
+            rejected = asyncio.create_task(
+                runtime.handle_rpc("mission.propose", params)
+            )
+            await asyncio.sleep(0)
+            await service.tick()
+            with pytest.raises(
+                (runtime_module.MissionRuntimeError, ServiceError)
+            ):
+                await rejected
+            assert calls == {"service": 0, "store": 0}
+            assert oversized_parse_attempts == 0
         finally:
             await runtime.close()
 
