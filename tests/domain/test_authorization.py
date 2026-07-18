@@ -61,6 +61,7 @@ def envelope(
     metadata: object = None,
 ) -> AuthorizationEnvelope:
     return AuthorizationEnvelope(
+        goal="ship the durable kernel",
         semantic_scope=("durable-kernel",),
         path_scope=("src", "tests"),
         exclusions=(".env",),
@@ -194,6 +195,7 @@ def test_envelope_rejects_unbounded_or_illegal_attempts_and_budget(
     field: str, value: object
 ) -> None:
     values: dict[str, object] = {
+        "goal": "ship the durable kernel",
         "semantic_scope": ("durable-kernel",),
         "path_scope": (),
         "exclusions": (),
@@ -229,6 +231,9 @@ def test_envelope_rejects_empty_or_duplicate_operations(
 @pytest.mark.parametrize(
     ("field", "value"),
     [
+        ("goal", ""),
+        ("goal", "   "),
+        ("goal", None),
         ("semantic_scope", ()),
         ("path_scope", ("",)),
         ("exclusions", ("",)),
@@ -247,6 +252,7 @@ def test_envelope_rejects_invalid_explicit_governance_fields(
     field: str, value: object
 ) -> None:
     values: dict[str, object] = {
+        "goal": "ship the durable kernel",
         "semantic_scope": ("durable-kernel",),
         "path_scope": ("src",),
         "exclusions": (),
@@ -272,6 +278,7 @@ def test_envelope_explicit_governance_fields_are_serialized() -> None:
     serialized = envelope().to_dict()
 
     assert serialized == {
+        "goal": "ship the durable kernel",
         "semantic_scope": ["durable-kernel"],
         "path_scope": ["src", "tests"],
         "exclusions": [".env"],
@@ -291,10 +298,13 @@ def test_envelope_explicit_governance_fields_are_serialized() -> None:
 
 
 def test_every_explicit_governance_field_changes_authorization_digest() -> None:
-    version = mission_version()
+    version = mission_version(
+        tasks=(task("build"), task("review", dependency="build"))
+    )
     authority = envelope()
     baseline = authorization_digest(version, authority)
     envelope_changes = (
+        {"goal": "ship a different kernel"},
         {"semantic_scope": ("other-scope",)},
         {"path_scope": ("src",)},
         {"exclusions": ("secrets",)},
@@ -311,40 +321,36 @@ def test_every_explicit_governance_field_changes_authorization_digest() -> None:
         {"expires_at": "2026-07-20T00:00:00Z"},
     )
     mission_changes = (
+        {"goal": "ship a different kernel"},
         {"scope": ("other-scope",)},
         {"exclusions": ("secrets",)},
+        {"acceptance_criteria": ("different mission evidence",)},
+        {"constraints": ("different constraint",)},
         {"max_parallel_tasks": 1},
         {"budget_units": 201},
         {"ordered_routes": ("cli_pty", "acp")},
         {"expires_at": "2026-07-20T00:00:00Z"},
         {"provenance_source": "leader"},
         {"provenance_id": "proposal_2"},
-        {
-            "tasks": (
-                replace(version.tasks[0], role="reviewer"),
-            )
-        },
-        {
-            "tasks": (
-                replace(version.tasks[0], scope=("tests",)),
-            )
-        },
-        {
-            "tasks": (
-                replace(
-                    version.tasks[0],
-                    acceptance_contribution=("different evidence",),
-                ),
-            )
-        },
-        {
-            "tasks": (
-                replace(version.tasks[0], concurrency_keys=("tests-write",)),
-            )
-        },
+    )
+    task_changes = (
+        (0, {"objective": "complete a different build"}),
+        (0, {"role": "reviewer"}),
+        (0, {"scope": ("tests",)}),
+        (0, {"acceptance_contribution": ("different evidence",)}),
+        (0, {"acceptance_criteria": ("different task evidence",)}),
+        (0, {"concurrency_keys": ("tests-write",)}),
+        (0, {"retry_limit": 2}),
+        (0, {"budget_units": 21}),
+        (1, {"dependencies": ()}),
     )
 
     for changes in envelope_changes:
         assert authorization_digest(version, replace(authority, **changes)) != baseline
     for changes in mission_changes:
         assert authorization_digest(replace(version, **changes), authority) != baseline
+    for index, changes in task_changes:
+        changed_tasks = list(version.tasks)
+        changed_tasks[index] = replace(changed_tasks[index], **changes)
+        changed_version = replace(version, tasks=tuple(changed_tasks))
+        assert authorization_digest(changed_version, authority) != baseline

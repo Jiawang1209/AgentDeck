@@ -42,6 +42,7 @@ class ExternalEffectPolicy(str, Enum):
 
 @dataclass(frozen=True, slots=True)
 class AuthorizationEnvelope:
+    goal: str
     semantic_scope: tuple[str, ...]
     path_scope: tuple[str, ...]
     exclusions: tuple[str, ...]
@@ -60,7 +61,8 @@ class AuthorizationEnvelope:
 
     def __post_init__(self) -> None:
         if not (
-            _validate_text_tuple(self.semantic_scope, allow_empty=False)
+            _valid_text(self.goal)
+            and _validate_text_tuple(self.semantic_scope, allow_empty=False)
             and _validate_text_tuple(self.path_scope, allow_empty=True)
             and _validate_text_tuple(self.exclusions, allow_empty=True)
             and _validate_text_tuple(self.operations, allow_empty=False)
@@ -97,6 +99,7 @@ class AuthorizationEnvelope:
 
     def to_dict(self) -> dict[str, object]:
         return {
+            "goal": self.goal,
             "semantic_scope": list(self.semantic_scope),
             "path_scope": list(self.path_scope),
             "exclusions": list(self.exclusions),

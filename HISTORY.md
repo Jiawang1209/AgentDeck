@@ -19,6 +19,10 @@
   role and Agent constraints, external-effect policy, retry/recovery bounds,
   acceptance criteria, route order, and expiry. Dangerous authority fields
   have no permissive constructor defaults.
+- Bound the authorization envelope to its explicit non-empty goal and expanded
+  field-by-field digest evidence across Mission objective/criteria/constraints
+  and Task objective/criteria/dependencies/retry/budget, so every approved
+  governance input is demonstrably part of the exact confirmation digest.
 - Bound confirmation to the exact canonical Mission version and authorization
   envelope with a lowercase SHA-256 digest. Declared tuple order remains
   semantically significant while mapping insertion order does not; stale or
