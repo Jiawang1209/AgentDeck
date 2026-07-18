@@ -4,6 +4,30 @@
 
 ## 2026-07-17
 
+### Replace the M2c mega-gate with layered verification
+
+- Mapped the useful M2c schema, semantic authority, permission, Handoff,
+  recovery, transport, redaction, cleanup, and provenance failure cases into
+  unit/state-machine, contract/security, deterministic SQLite/daemon
+  integration, shared adapter conformance, focused real-smoke, and real Golden
+  Mission owners.
+- Retired brittle harness-internal authority assumptions such as fixed four
+  stages, exact permission cardinality, machine-specific frozen seals, and
+  pytest-output parsing while preserving their general safety lessons and
+  historical evidence.
+- Reaffirmed that old M2c is not a release veto or retry target: historical
+  failures are an evidence backlog, and a new layer failure routes to that
+  layer rather than reviving the consumed four-stage ceremony.
+- Kept two real public-entry Goldens mandatory. Unit, fake-adapter,
+  conformance, and focused real-smoke evidence are prerequisites but cannot
+  replace Golden A's normal collaboration journey or Golden B's
+  rejection/revision, disconnect/recovery, permission, and takeover journey.
+- Required every retained invariant to have a named implemented replacement
+  test and both Goldens to pass before the old mega-harness can be archived or
+  removed, aligned with the legacy inventory and SQLite failure-injection
+  migration gates. This is a P0 documentation map, not a claim that replacement
+  tests or live product acceptance already exist.
+
 ### Classify the AgentDeck implementation for V1 migration
 
 - Classified current capabilities by retained behavior, target ownership,
