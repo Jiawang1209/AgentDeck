@@ -2,6 +2,42 @@
 
 本文件记录 AgentDeck 每一次开发内容。约束：每次新增功能、文档规则、项目骨架、运行环境或用户可见行为变化，都必须同步更新本文件，并在同一次 commit 中提交。
 
+## 2026-07-19
+
+### Add immutable execution lineage domain facts
+
+- Completed R1 Task 8 with the exact Attempt state set, an explicit closed
+  transition map, immutable terminal outcomes, and retry-by-new-Attempt
+  semantics. Only explicitly retryable known failures can create the next
+  positive SQLite-safe ordinal; known test failures, login loss, terminal
+  outcomes, same identities, overflow, and `outcome_unknown` fail closed.
+- Review hardening replaces retry denial classification with an exact positive
+  allowlist: only `worker_failed` and `recoverable_transport_interruption` may
+  carry `retryable=True`. Known prohibited causes, whitespace/case variants,
+  arbitrary unknown reasons, transition replacement, and direct construction
+  all raise `ResultError`; explicit `retryable=False` remains valid.
+- Added exact-schema Evidence kinds for test exit status, diff identity,
+  artifact hash, evidence-backed review findings, acceptance results, and
+  explicit human decisions. Payloads are copied into strict UTF-8 canonical
+  JSON, bounded to SQLite-safe integers, and reject arbitrary objects, extra
+  raw-model fields, worker-message acceptance claims, and mutable aliases.
+  Review-finding and acceptance Evidence additionally reject direct references
+  to their own Evidence ID across create, factory, and direct canonical paths;
+  acceptance checks scan criterion mappings linearly with short-circuit
+  membership and no flattening. Aggregate existence and general cycle
+  validation remain outside this fact.
+- Added frozen scoped ReviewFinding, canonical SHA-256 Handoff, and
+  AcceptanceResult facts. Handoff hashes cover complete source/target,
+  artifact, verification, and known-issue lineage; acceptance requires a
+  nonempty typed evidence-ID mapping for every and only every declared
+  criterion, with explicit accepted or failed-result semantics. Direct Handoff
+  construction validates canonical content as an exact strict UTF-8 string
+  before equality and keeps the content hash exact-string boundary closed.
+- TDD RED failed on the expected missing `agentdeck.kernel.execution` module.
+  Fresh GREEN verification passed the focused execution and Mission suite
+  (`176 passed`) and the complete Product Kernel suite (`352 passed`). The
+  production module is 500 lines and performs no I/O or legacy imports.
+
 ## 2026-07-18
 
 ### Add exact canonical Mission preview confirmation
