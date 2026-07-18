@@ -2213,6 +2213,11 @@ class ProjectDaemonService:
             and self._fatal_error is None
         )
 
+    @property
+    def accepting_governed_mutations(self) -> bool:
+        """Expose the exact lifecycle gate used by daemon-owned RPC runtimes."""
+        return self.started
+
     async def start(self) -> None:
         if self._lifecycle_state != "open":
             raise ServiceError("daemon service is closed")

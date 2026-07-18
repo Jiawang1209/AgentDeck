@@ -4,6 +4,33 @@
 
 ## 2026-07-18
 
+### Route durable Mission writes through the sole ProjectDaemon
+
+- Added `DaemonMissionRuntime` as the narrow composition seam that exclusively
+  owns one project writer lease, the lease-bound SQLite Mission store, and the
+  Mission application service for the daemon lifetime. Mutation requests fail
+  closed before startup, during shutdown, and after close; a second runtime
+  cannot fall back around the project writer lease. Cancelled startup releases
+  both the store claim and writer lease before propagating cancellation.
+- Added a closed Mission RPC allowlist for `mission.propose`,
+  `mission.confirm`, `mission.status`, and `events.after`. Proposal and
+  confirmation inputs are deeply bounded JSON DTOs; callers cannot carry a
+  store, SQLite connection, callback, arbitrary SQL, or opaque mutation
+  capability through the request boundary. Domain and storage failures cross
+  the RPC seam only as bounded sanitized errors.
+- Routed both Mission mutations through the daemon's governed mutation queue.
+  The queue-owned callback rechecks the exact project revision, SQLite
+  authority state, and authorization digest/state at execution time, so an
+  admitted request cannot rely on stale enqueue-time authority. Closing the
+  runtime also invalidates admitted but not yet executed commands.
+- Added query-only, transactionally coherent Mission status and cursor event
+  observations with compact closed summaries. They disclose no raw proposal,
+  provider output, prompt, transcript, SQL handle, or mutation authority and
+  do not advance project revision.
+- Added deterministic integration coverage for lifecycle failure, writer
+  contention, closed RPC/schema enforcement, read-only isolation, queue
+  ordering, execution-time authority drift, and bounded event pagination.
+
 ### Anchor Worker recovery authority to the durable event ledger
 
 - Added a separately row- and byte-bounded, deeply frozen event-ledger view to

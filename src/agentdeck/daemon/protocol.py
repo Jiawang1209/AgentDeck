@@ -15,6 +15,9 @@ from typing import TypeAlias
 
 DAEMON_RPC_PROTOCOL_VERSION = "daemon-rpc/v1"
 READ_ONLY_METHODS = frozenset({"handshake", "status"})
+MISSION_RPC_METHODS = frozenset(
+    {"mission.propose", "mission.confirm", "mission.status", "events.after"}
+)
 
 JsonValue: TypeAlias = (
     None
