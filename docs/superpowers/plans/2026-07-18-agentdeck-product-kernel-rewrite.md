@@ -64,6 +64,15 @@ Legacy source is `not admitted` unless a task names it under **Approved legacy
 evidence**. Kernel and Application may never import admitted legacy code;
 Adapters are the only legal import boundary.
 
+**Wave A implementation-inventory correction (2026-07-19):** Task 12's
+declared durable `conversation_turns` transaction required the existing Store
+Adapter to save and reload that aggregate, while the 500-line limit and
+fail-closed validation required cohesive helper and quality-test splits. Task
+16 likewise required one cohesive schema helper split to remain within the
+same limit. The exact files are now listed in those tasks. This correction
+does not add product behavior, change task order, admit legacy code, or widen
+either task's design authority.
+
 ## 2. Permanent file map
 
 ```text
@@ -1197,7 +1206,11 @@ git commit -m "feat: discover product backends without side effects"
 
 **Files:**
 - Create: src/agentdeck/application/session_service.py
+- Create: src/agentdeck/application/session_validation.py
 - Create: tests/product_kernel/test_session_service.py
+- Create: tests/product_kernel/test_session_service_quality.py
+- Modify: src/agentdeck/adapters/sqlite.py
+- Modify: src/agentdeck/adapters/sqlite_validation.py
 - Modify: HISTORY.md
 
 **Forbidden legacy imports:** ConversationSession, daemon, state, legacy setup.
@@ -1413,6 +1426,7 @@ git commit -m "feat: persist product exit and reentry"
 
 **Files:**
 - Create: src/agentdeck/ports/leader.py
+- Create: src/agentdeck/ports/leader_schema.py
 - Create: src/agentdeck/application/leader_service.py
 - Create: tests/product_kernel/test_leader_contract.py
 - Create: tests/product_kernel/test_leader_service.py

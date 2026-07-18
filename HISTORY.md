@@ -4,6 +4,17 @@
 
 ## 2026-07-19
 
+### Correct Wave A implementation inventories
+
+- Corrected the approved rewrite plan's Task 12 file inventory to name the
+  existing Store Adapter support required by its declared atomic
+  `conversation_turns` persistence, plus the validation and quality-test
+  splits required by the repository's 500-line and fail-closed boundaries.
+- Corrected Task 16's inventory to name its cohesive proposal-schema helper
+  split. These are governance corrections to files already implementing the
+  approved Task 12 and Task 16 semantics; they do not expand product scope,
+  change task order, admit legacy code, or authorize later tasks.
+
 ### Retain product goals across first-run setup
 
 - Completed R2 Task 12 with a `SessionService` that creates or loads one
