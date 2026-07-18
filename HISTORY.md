@@ -4,6 +4,27 @@
 
 ## 2026-07-19
 
+### Add deterministic Product presenters
+
+- Added an exact, LLM-free parser for every declared ProductSession slash
+  control. It accepts only a complete trimmed command with its necessary
+  bounded argument, rejects embedded prose and malformed or unknown forms,
+  and does not select providers, execute controls, or call the Product Shell.
+- Added immutable bounded presentation facts and explicit plain-text renderers
+  for setup, status, exact Mission Preview, running, approval, diagnosis, exit,
+  and final results. Mission Preview rendering includes scope, resolved Leader,
+  Worker roles, ordered Tasks and dependencies, ACP routes, permissions,
+  boundary, acceptance, budgets, non-goals, risks, and exact preview identity.
+- Rendering has no repr or raw-JSON fallback. Unknown shapes and modes fail
+  closed, secret-like or structured payload text is rejected content-free, and
+  Diagnostic rendering preserves its stable facts with plain-language impact,
+  protection, recovery, retry, outcome, lineage, and time details.
+- Initial TDD RED failed collection for the absent slash-command and presenter
+  modules. Spec self-review RED then produced `2 failed, 18 passed` for an
+  undeclared status and missing Task dependencies; a final Diagnostic guard
+  RED failed once for empty recovery actions. Focused GREEN passed all `56`
+  Product parser and renderer tests.
+
 ### Correct Task 21 creation inventory
 
 - Corrected Task 21's ACP Worker adapter and adversarial fake fixture from
