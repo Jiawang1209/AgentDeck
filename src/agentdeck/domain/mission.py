@@ -24,6 +24,7 @@ MAX_TASK_DEPENDENCIES = 8_192
 MAX_CANONICAL_NODES = 4_096
 _MAX_TEXT_BYTES = 4 * 1024
 _MAX_METADATA_DEPTH = 16
+_MAX_RUNTIME_FACT_BYTES = 64 * 1024
 _MIN_SIGNED_64 = -(2**63)
 _MAX_SIGNED_64 = (2**63) - 1
 
@@ -159,6 +160,296 @@ class AttemptState(str, Enum):
     FAILED = "failed"
     CANCELLED = "cancelled"
     AMBIGUOUS = "ambiguous"
+
+
+class TaskRuntimeState(str, Enum):
+    """Closed durable Task lifecycle independent of adapter prose."""
+
+    PENDING = "pending"
+    READY = "ready"
+    RUNNING = "running"
+    AWAITING_VERIFICATION = "awaiting_verification"
+    PAUSED = "paused"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+
+
+class VerificationState(str, Enum):
+    PENDING = "pending"
+    PASS = "pass"
+    FAIL = "fail"
+    UNAVAILABLE = "unavailable"
+
+
+_TERMINAL_TASK_STATES = frozenset(
+    {
+        TaskRuntimeState.COMPLETED,
+        TaskRuntimeState.FAILED,
+        TaskRuntimeState.CANCELLED,
+    }
+)
+_RUNTIME_FACT_SCOPES = frozenset({"mission", "task", "session"})
+_RUNTIME_FACT_KINDS = frozenset(
+    {
+        "terminal_completed",
+        "terminal_failed",
+        "terminal_cancelled",
+        "ambiguous_effect",
+        "permission_conflict",
+        "task_local_pause",
+        "session_takeover",
+        "running",
+    }
+)
+_WORKER_EVENT_KINDS = frozenset(
+    {
+        "worker_message",
+        "progress",
+        "turn_completed",
+        "evidence",
+        "permission_requested",
+        "permission_conflict",
+        "ambiguous_effect",
+        "failed",
+        "cancelled",
+    }
+)
+_ATTEMPT_RUNTIME_STATES = frozenset(
+    {
+        "running",
+        "paused",
+        "completed",
+        "failed",
+        "cancelled",
+        "awaiting_verification",
+    }
+)
+
+
+def _task_state(value: object) -> TaskRuntimeState:
+    try:
+        return value if type(value) is TaskRuntimeState else TaskRuntimeState(value)
+    except (TypeError, ValueError):
+        raise ValueError("task runtime state invalid") from None
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimeFact:
+    scope: str
+    kind: str
+    reason: str
+
+    def __post_init__(self) -> None:
+        if (
+            self.scope not in _RUNTIME_FACT_SCOPES
+            or self.kind not in _RUNTIME_FACT_KINDS
+            or not _valid_text(self.reason)
+        ):
+            raise ValueError("runtime fact invalid")
+
+
+@dataclass(frozen=True, slots=True)
+class AttemptDecision:
+    attempt_number: int
+    task_state: TaskRuntimeState
+    attempt_state: str
+
+    def __post_init__(self) -> None:
+        if (
+            not _bounded_int(self.attempt_number, minimum=1, maximum=MAX_RETRY_LIMIT + 1)
+            or type(self.task_state) is not TaskRuntimeState
+            or self.attempt_state not in _ATTEMPT_RUNTIME_STATES
+        ):
+            raise ValueError("attempt decision invalid")
+
+
+@dataclass(frozen=True, slots=True)
+class WorkerEventDecision:
+    task_state: TaskRuntimeState
+    attempt_state: str
+    mission_state: str
+    facts: tuple[RuntimeFact, ...] = ()
+    reasons: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        if (
+            type(self.task_state) is not TaskRuntimeState
+            or self.attempt_state not in _ATTEMPT_RUNTIME_STATES
+            or self.mission_state
+            not in {"running", "paused", "completed", "failed", "cancelled"}
+            or not isinstance(self.facts, tuple)
+            or not all(type(item) is RuntimeFact for item in self.facts)
+            or self.reasons != tuple(item.reason for item in self.facts)
+        ):
+            raise ValueError("worker event decision invalid")
+
+
+@dataclass(frozen=True, slots=True)
+class HandoffDecision:
+    source_task_id: str
+    destination_task_id: str
+    accepted: bool
+
+    def __post_init__(self) -> None:
+        if not (
+            _valid_text(self.source_task_id)
+            and _valid_text(self.destination_task_id)
+            and type(self.accepted) is bool
+        ):
+            raise ValueError("handoff decision invalid")
+
+
+@dataclass(frozen=True, slots=True)
+class EvidenceDecision:
+    criterion: str
+    fact: str
+    reason: str
+
+    def __post_init__(self) -> None:
+        if (
+            not _valid_text(self.criterion)
+            or self.fact not in {"check_passed", "check_failed"}
+            or not _valid_text(self.reason)
+        ):
+            raise ValueError("evidence decision invalid")
+
+
+def release_ready_tasks(
+    tasks: tuple[TaskSpec, ...],
+    task_states: Mapping[str, str | TaskRuntimeState],
+    accepted_handoffs: tuple[tuple[str, str], ...],
+) -> tuple[str, ...]:
+    """Return pending Tasks whose complete dependency Handoffs are durable."""
+
+    validate_task_dag(tasks)
+    if not isinstance(task_states, Mapping) or set(task_states) != {
+        item.task_id for item in tasks
+    } or not isinstance(accepted_handoffs, tuple):
+        raise ValueError("task release invalid")
+    try:
+        states = {key: _task_state(value) for key, value in task_states.items()}
+        handoffs = set(accepted_handoffs)
+    except (TypeError, ValueError):
+        raise ValueError("task release invalid") from None
+    if len(handoffs) != len(accepted_handoffs) or not all(
+        isinstance(item, tuple)
+        and len(item) == 2
+        and all(_valid_text(value) for value in item)
+        for item in accepted_handoffs
+    ):
+        raise ValueError("task release invalid")
+    return tuple(
+        task.task_id
+        for task in tasks
+        if states[task.task_id] is TaskRuntimeState.PENDING
+        and all(
+            states[dependency] is TaskRuntimeState.COMPLETED
+            and (dependency, task.task_id) in handoffs
+            for dependency in task.dependencies
+        )
+    )
+
+
+def start_attempt(
+    task: TaskSpec,
+    task_state: str | TaskRuntimeState,
+    prior_attempt_numbers: tuple[int, ...],
+) -> AttemptDecision:
+    """Allocate the next distinguishable Attempt inside the Task retry bound."""
+
+    if type(task) is not TaskSpec or _task_state(task_state) is not TaskRuntimeState.READY:
+        raise ValueError("task not ready")
+    if (
+        not isinstance(prior_attempt_numbers, tuple)
+        or any(
+            not _bounded_int(item, minimum=1, maximum=MAX_RETRY_LIMIT + 1)
+            for item in prior_attempt_numbers
+        )
+        or prior_attempt_numbers != tuple(range(1, len(prior_attempt_numbers) + 1))
+    ):
+        raise ValueError("attempt history invalid")
+    next_number = len(prior_attempt_numbers) + 1
+    if next_number > task.retry_limit + 1:
+        raise ValueError("task retry limit reached")
+    return AttemptDecision(next_number, TaskRuntimeState.RUNNING, "running")
+
+
+def record_worker_event(
+    task_state: str | TaskRuntimeState,
+    attempt_state: str,
+    event_kind: str,
+    *,
+    facts: tuple[RuntimeFact, ...] = (),
+) -> WorkerEventDecision:
+    """Classify Worker facts with terminal and widest-scope-safe precedence."""
+
+    state = _task_state(task_state)
+    if (
+        attempt_state not in _ATTEMPT_RUNTIME_STATES
+        or event_kind not in _WORKER_EVENT_KINDS
+        or not isinstance(facts, tuple)
+        or not all(type(item) is RuntimeFact for item in facts)
+        or len(facts) > MAX_CANONICAL_NODES
+        or sum(len(item.reason.encode("utf-8")) for item in facts)
+        > _MAX_RUNTIME_FACT_BYTES
+    ):
+        raise ValueError("worker event invalid")
+    reasons = tuple(item.reason for item in facts)
+    if state in _TERMINAL_TASK_STATES:
+        terminal = state.value
+        return WorkerEventDecision(state, terminal, terminal, facts, reasons)
+
+    fact_kinds = {item.kind for item in facts}
+    if event_kind == "failed" or "terminal_failed" in fact_kinds:
+        return WorkerEventDecision(TaskRuntimeState.FAILED, "failed", "failed", facts, reasons)
+    if event_kind == "cancelled" or "terminal_cancelled" in fact_kinds:
+        return WorkerEventDecision(
+            TaskRuntimeState.CANCELLED, "cancelled", "cancelled", facts, reasons
+        )
+    if "terminal_completed" in fact_kinds:
+        return WorkerEventDecision(
+            TaskRuntimeState.COMPLETED, "completed", "completed", facts, reasons
+        )
+    if event_kind in {"ambiguous_effect", "permission_conflict"} or fact_kinds.intersection(
+        {"ambiguous_effect", "permission_conflict"}
+    ):
+        return WorkerEventDecision(TaskRuntimeState.PAUSED, "paused", "paused", facts, reasons)
+    if event_kind == "permission_requested" or "task_local_pause" in fact_kinds:
+        return WorkerEventDecision(TaskRuntimeState.PAUSED, "paused", "running", facts, reasons)
+    if state is TaskRuntimeState.PAUSED:
+        return WorkerEventDecision(state, "paused", "paused", facts, reasons)
+    if state is TaskRuntimeState.AWAITING_VERIFICATION:
+        return WorkerEventDecision(
+            state, "awaiting_verification", "running", facts, reasons
+        )
+    if event_kind == "turn_completed":
+        return WorkerEventDecision(
+            TaskRuntimeState.AWAITING_VERIFICATION,
+            "awaiting_verification",
+            "running",
+            facts,
+            reasons,
+        )
+    return WorkerEventDecision(TaskRuntimeState.RUNNING, "running", "running", facts, reasons)
+
+
+def record_handoff(
+    source_task_id: str,
+    source_state: str | TaskRuntimeState,
+    destination: TaskSpec,
+) -> HandoffDecision:
+    if type(destination) is not TaskSpec or not _valid_text(source_task_id):
+        raise ValueError("handoff invalid")
+    if _task_state(source_state) is not TaskRuntimeState.COMPLETED:
+        raise ValueError("handoff source incomplete")
+    if source_task_id not in destination.dependencies:
+        raise ValueError("handoff dependency invalid")
+    return HandoffDecision(source_task_id, destination.task_id, True)
+
+
+def record_evidence(criterion: str, fact: str, reason: str) -> EvidenceDecision:
+    return EvidenceDecision(criterion, fact, reason)
 
 
 @dataclass(frozen=True, slots=True)

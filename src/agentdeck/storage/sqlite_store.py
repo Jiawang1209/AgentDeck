@@ -41,6 +41,10 @@ class RevisionConflict(RuntimeError):
     """A new command targeted a revision that is no longer current."""
 
 
+class EventConflict(RuntimeError):
+    """A durable trigger or event identity was reused with changed input."""
+
+
 class MutationValidationError(ValueError):
     """A mutation value violated the closed durable-kernel contract."""
 
@@ -828,6 +832,33 @@ class MutationOutcome:
             raise MutationValidationError("mutation outcome invalid") from None
 
 
+@dataclass(frozen=True, slots=True)
+class EventMutationOutcome:
+    """Minimal replayable outcome for one adapter or internal trigger."""
+
+    trigger_id: str
+    revision: int
+    event_ids: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        if (
+            not _valid_mutation_text(self.trigger_id)
+            or not _valid_revision(self.revision)
+            or not isinstance(self.event_ids, tuple)
+            or not self.event_ids
+            or not all(_valid_mutation_text(item) for item in self.event_ids)
+            or len(self.event_ids) != len(set(self.event_ids))
+        ):
+            raise MutationValidationError("event outcome invalid")
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "trigger_id": self.trigger_id,
+            "revision": self.revision,
+            "event_ids": list(self.event_ids),
+        }
+
+
 def _client_event_matches_command(
     event: DomainEvent,
     command: CommandEnvelope,
@@ -840,6 +871,98 @@ def _client_event_matches_command(
         and provenance.get("actor") == command.actor_dict()
         and event.created_at == command.created_at
     )
+
+
+def _event_trigger_id(event: DomainEvent) -> str:
+    provenance = event.provenance.to_dict()
+    key = (
+        "adapter_event_id"
+        if event.trigger_kind == "adapter_event"
+        else "internal_trigger_id"
+    )
+    value = provenance.get(key)
+    if not _valid_mutation_text(value):
+        raise MutationValidationError("event mutation invalid")
+    return cast(str, value)
+
+
+def _reconstruct_stored_event(row: tuple[object, ...]) -> DomainEvent:
+    try:
+        (
+            event_id,
+            _project_id,
+            _project_revision,
+            trigger_kind,
+            kind,
+            provenance_json,
+            payload_json,
+            command_id,
+            adapter_event_id,
+            internal_trigger_id,
+            created_at,
+        ) = row
+        provenance = _parse_canonical_mutation_json(provenance_json)
+        payload = _parse_canonical_mutation_json(payload_json)
+        if not isinstance(provenance, dict):
+            raise _InvalidMutationValue
+        if trigger_kind == "adapter_event":
+            if (
+                set(provenance)
+                != {
+                    "adapter_event_id",
+                    "mission_id",
+                    "mission_version",
+                    "task_id",
+                    "attempt_id",
+                    "session_id",
+                    "sequence",
+                    "integrity_hash",
+                }
+                or command_id is not None
+                or internal_trigger_id is not None
+                or adapter_event_id != provenance["adapter_event_id"]
+            ):
+                raise _InvalidMutationValue
+            return DomainEvent.adapter_event(
+                event_id=event_id,
+                kind=kind,
+                adapter_event_id=provenance["adapter_event_id"],
+                mission_id=provenance["mission_id"],
+                mission_version=provenance["mission_version"],
+                task_id=provenance["task_id"],
+                attempt_id=provenance["attempt_id"],
+                session_id=provenance["session_id"],
+                sequence=provenance["sequence"],
+                integrity_hash=provenance["integrity_hash"],
+                payload=payload,
+                created_at=created_at,
+            )
+        if trigger_kind == "internal_trigger":
+            if (
+                set(provenance)
+                != {"internal_trigger_id", "source_revision", "source_snapshot_id"}
+                or command_id is not None
+                or adapter_event_id is not None
+                or internal_trigger_id != provenance["internal_trigger_id"]
+            ):
+                raise _InvalidMutationValue
+            return DomainEvent.internal_trigger(
+                event_id=event_id,
+                kind=kind,
+                internal_trigger_id=provenance["internal_trigger_id"],
+                source_revision=provenance["source_revision"],
+                source_snapshot_id=provenance["source_snapshot_id"],
+                payload=payload,
+                created_at=created_at,
+            )
+        raise _InvalidMutationValue
+    except (
+        KeyError,
+        TypeError,
+        ValueError,
+        _InvalidMutationValue,
+    ):
+        raise MutationValidationError("stored event invalid") from None
 
 
 @dataclass(frozen=True, slots=True)
@@ -1790,6 +1913,153 @@ class SQLiteMissionStore:
             self._connection.commit()
             began_transaction = False
             committed_revision = next_revision
+        except BaseException:
+            if (
+                began_transaction
+                and self._active_mutation_token is token
+                and self._connection.in_transaction
+            ):
+                self._connection.rollback()
+            self._validate_authority()
+            raise
+        finally:
+            if self._active_mutation_token is token:
+                self._active_mutation_token = None
+
+        self._project_revision = cast(int, committed_revision)
+        self._validate_authority()
+        return outcome
+
+    def apply_event(
+        self,
+        event: DomainEvent,
+        decide: Callable[[ProjectMutationSnapshot], MutationDecision],
+    ) -> EventMutationOutcome:
+        """Atomically apply or exactly replay one adapter/internal event."""
+
+        active = self._active_mutation_token
+        if active is not None:
+            active.poisoned = True
+            raise MutationValidationError("nested mutation rejected") from None
+        self._validate_authority()
+        if (
+            type(event) is not DomainEvent
+            or event.trigger_kind not in {"adapter_event", "internal_trigger"}
+            or not callable(decide)
+        ):
+            raise MutationValidationError("event mutation invalid")
+
+        trigger_id = _event_trigger_id(event)
+        trigger_column = (
+            "adapter_event_id"
+            if event.trigger_kind == "adapter_event"
+            else "internal_trigger_id"
+        )
+        mismatch_message = (
+            "adapter event input mismatch"
+            if event.trigger_kind == "adapter_event"
+            else "internal trigger input mismatch"
+        )
+        token = _MutationToken()
+        self._active_mutation_token = token
+        began_transaction = False
+        committed_revision: int | None = None
+        try:
+            self._connection.execute("BEGIN IMMEDIATE")
+            began_transaction = True
+            authority = self._connection.execute(
+                "SELECT project_id, revision, authority_state FROM projects"
+            ).fetchall()
+            if authority != [
+                (self._project_id, self._project_revision, self._authority_state)
+            ]:
+                raise SQLiteStoreError(_INVALID_AUTHORITY_IDENTITY)
+            current_revision = self._project_revision
+
+            columns = (
+                "event_id, project_id, project_revision, trigger_kind, kind, "
+                "provenance_json, payload_json, command_id, adapter_event_id, "
+                "internal_trigger_id, created_at"
+            )
+            existing = self._connection.execute(
+                f"SELECT {columns} FROM events WHERE {trigger_column} = ?",
+                (trigger_id,),
+            ).fetchone()
+            if existing is not None:
+                reconstructed = _reconstruct_stored_event(existing)
+                if (
+                    existing[1] != self._project_id
+                    or existing[3] != event.trigger_kind
+                    or reconstructed.canonical_bytes() != event.canonical_bytes()
+                ):
+                    raise EventConflict(mismatch_message)
+                revision = existing[2]
+                if not _valid_revision(revision) or cast(int, revision) > current_revision:
+                    raise MutationValidationError("stored event invalid")
+                self._connection.rollback()
+                began_transaction = False
+                self._validate_authority()
+                return EventMutationOutcome(
+                    trigger_id=trigger_id,
+                    revision=cast(int, revision),
+                    event_ids=(event.event_id,),
+                )
+
+            collision = self._connection.execute(
+                "SELECT 1 FROM events WHERE event_id = ?", (event.event_id,)
+            ).fetchone()
+            if collision is not None:
+                raise EventConflict("event identity conflict")
+            provenance = event.provenance.to_dict()
+            if (
+                event.trigger_kind == "internal_trigger"
+                and provenance.get("source_revision") != current_revision
+            ):
+                raise MutationValidationError("internal source revision conflict")
+            if current_revision == _MAX_SIGNED_64:
+                raise RevisionConflict("stale project revision")
+            next_revision = current_revision + 1
+            snapshot = self._mutation_snapshot(
+                revision=current_revision,
+                authority_state=self._authority_state,
+            )
+            proposed = decide(snapshot)
+            if (
+                self._active_mutation_token is not token
+                or token.poisoned
+                or not self._connection.in_transaction
+            ):
+                message = (
+                    "nested mutation rejected"
+                    if token.poisoned
+                    else "mutation transaction invalid"
+                )
+                raise MutationValidationError(message)
+            if type(proposed) is not MutationDecision or proposed.events != (event,):
+                raise MutationValidationError("event mutation decision invalid")
+
+            for change in proposed.changes:
+                self._apply_entity_change(change, revision=next_revision)
+            self._mutation_snapshot(
+                revision=next_revision,
+                authority_state=self._authority_state,
+            )
+            self._insert_event(event, revision=next_revision)
+            updated_project = self._connection.execute(
+                "UPDATE projects SET revision = ? "
+                "WHERE project_id = ? AND revision = ?",
+                (next_revision, self._project_id, current_revision),
+            )
+            if updated_project.rowcount != 1:
+                raise RevisionConflict("stale project revision")
+            self._connection.commit()
+            began_transaction = False
+            committed_revision = next_revision
+            outcome = EventMutationOutcome(
+                trigger_id=trigger_id,
+                revision=next_revision,
+                event_ids=(event.event_id,),
+            )
         except BaseException:
             if (
                 began_transaction

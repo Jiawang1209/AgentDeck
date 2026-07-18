@@ -4,6 +4,47 @@
 
 ## 2026-07-18
 
+### Persist governed Task attempts, Evidence, Verification, and Handoffs
+
+- Added closed, frozen Task runtime decisions for dependency release, bounded
+  and distinguishable Attempt numbering, Worker event classification, Evidence
+  admission, and accepted Handoffs. Completed, failed, and cancelled Task
+  states are absorbing; simultaneous terminal, Mission-wide ambiguous-effect
+  or permission-conflict, Task-local pause, and running facts use safest-state
+  precedence without discarding any recorded fact or reason. Worker messages
+  and `turn_completed` observations can reach only `running` or
+  `awaiting_verification`, never `completed`.
+- Added an AgentDeck-owned deterministic Verification service. It grades every
+  frozen mandatory Task criterion from closed durable `check_passed` or
+  `check_failed` Evidence facts as `pass`, `fail`, or `unavailable`; reviewer
+  or Worker prose cannot supply a grade. A Task completes only when every
+  mandatory criterion passes. Failure is terminal, while unavailable Evidence
+  pauses the Task for additional durable facts.
+- Added the adapter/internal-event sibling of command mutation. Exact durable
+  events are reconstructed and byte-compared before replay, duplicate trigger
+  retries bypass decision callbacks and revision changes, changed trigger
+  input and event-id collisions return fixed typed conflicts, and internal
+  triggers compare their source revision before mutation. Accepted entity
+  changes, one append-only inbound event, and exactly one project revision are
+  committed in the existing single transaction; failures roll back fully and
+  never create a synthetic command row.
+- Extended `MissionService` with deterministic internal release/start/verify/
+  Handoff operations and ordered adapter Worker/Evidence ingestion. Every
+  adapter event must match the confirmed Mission version, Task, Attempt,
+  session, route, authorization, sequence, and integrity lineage. Attempts and
+  sessions preserve explicit Agent/model/transport identity; Evidence and
+  Handoffs are immutable and exact-lineage; downstream Tasks become ready only
+  after all dependencies are verified complete and an accepted AgentDeck-owned
+  Handoff exists. Mission completion is derived only after every Task passes
+  Verification.
+- Added a local fake two-Worker TDD journey proving root release, distinct
+  Attempts, Worker text non-authority, Evidence-required completion,
+  Handoff-gated downstream release, exact adapter replay, changed duplicate
+  rejection, sequence-gap rejection, unavailable Evidence, ambiguous-effect
+  Mission pause, terminal absorption, and transaction rollback/reuse. This
+  slice performs no provider, ACP, tmux, runtime, network, schema, daemon, or
+  global-configuration operation.
+
 ### Add the durable Mission application service
 
 - Added a frozen, deep-detached `MissionProposal` that binds an exact
