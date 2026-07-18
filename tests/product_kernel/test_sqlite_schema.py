@@ -70,8 +70,10 @@ def _valid_database(project: Path) -> Path:
 
 
 def test_store_port_requires_transactions_for_every_mutation() -> None:
-    reads = {"transaction", "lookup_command", "load_aggregate", "close"}
-    mutations = {"record_command", "save_aggregate", "append_event"}
+    reads = {"command", "execute_once", "lookup_command", "load_aggregate",
+             "list_running_attempts", "count", "close"}
+    mutations = {"record_command", "save_aggregate", "save_session", "save_attempt",
+                 "recover_attempt", "append_event"}
     assert reads <= Store.__dict__.keys()
     assert mutations.isdisjoint(Store.__dict__)
     assert mutations | {"lookup_command", "load_aggregate"} <= StoreTransaction.__dict__.keys()
@@ -160,9 +162,9 @@ def test_existing_non_database_file_is_preserved(tmp_path: Path) -> None:
     assert database.read_bytes() == b"not a sqlite database"
 
 
-def test_repeated_open_keeps_one_version_and_root_row(tmp_path: Path) -> None:
+def test_writer_and_read_only_open_keep_one_version_and_root_row(tmp_path: Path) -> None:
     first = SQLiteStore.open(tmp_path)
-    second = SQLiteStore.open(tmp_path)
+    second = SQLiteStore.open_read_only(tmp_path)
     try:
         assert first.path == second.path
         assert first.connection.execute(

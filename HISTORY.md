@@ -4,6 +4,117 @@
 
 ## 2026-07-19
 
+### Make product state atomic and recoverable
+
+- Completed R1 Task 10 with a nonblocking macOS `flock` authority on the stable
+  project-local `.agentdeck` directory inode plus a protected `writer.lock`
+  compatibility marker. The lock is acquired before database preparation,
+  durability, migration, or command writes, retained for the Store lifetime, and
+  released on close and open failure. Symlink, non-regular, hard-linked, or
+  group/world-accessible lock markers fail closed; replacing the marker cannot
+  create a second writer, and replacing the state-directory or database identity
+  makes existing handles fail closed. A second same-project writer
+  receives stable `StoreWriterBusyError`, while different projects and exact
+  read-only inspection remain available.
+- Replaced anonymous mutation entry with command-bound `BEGIN IMMEDIATE`
+  transactions and `execute_once`. Command start, current-state saves, recovery
+  transition, audit events, canonical result, and completion timestamp commit
+  together; exceptions roll back every row. Duplicate same-kind IDs return a
+  defensive copy of the first canonical result without invoking the callback,
+  kind conflicts and incomplete/malformed rows fail closed, and database identity
+  is checked at each write boundary and after commit.
+- Bounded canonical JSON facts now reject SQLite integer overflow, non-finite
+  floats, isolated surrogates, non-string keys, arbitrary/raw payload objects,
+  exact safe metadata plus word-tokenized and lower-alnum-collapsed compound
+  secret/credential/raw key families,
+  including snake/kebab/space/camel/Pascal/uppercase-environment forms,
+  excessive nesting/items/strings,
+  and oversized results without false-positive rejection of metrics such as
+  `token_count`. Only exact provenance keys are exempt: digests require 64
+  lowercase hexadecimal characters and credential-source labels use a bounded
+  allowlisted syntax. Mapping implementations are defensively copied. Injected
+  `Clock` values own command/current-state timestamps, while each event preserves
+  its validated domain timestamp in strict UTC; standalone mutations, nested commands, close
+  during a transaction, duplicate mutation, use-after-context, and read-only
+  mutation are rejected.
+- Attempt persistence now constructs the Kernel `Attempt` value and enforces typed
+  identities, positive ordinals, exact booleans, legal state/result/retry facts,
+  bounded summaries, legal transitions, immutable lineage, and monotonic observed
+  effects. Persisted command rows are accepted only when state, canonical result,
+  and canonical creation/completion timestamps form a coherent durable record;
+  command kinds and event identity fields have dedicated strict UTF-8 bounds.
+- Added the immutable `RunningAttempt` Store read model and an Application-only
+  `RecoveryService` over Store, a minimal transport reconciler Protocol, and
+  Clock. Confirmed reconnect stays running, lost/no-effect becomes interrupted,
+  observed effects plus uncertain or exceptional reconciliation become
+  non-retryable `outcome_unknown`, and a missing ACP session counts as lost.
+  Reports are frozen and deterministically ordered. An explicit, bounded,
+  strict-UTF-8 `recovery_run_id` scopes command identity to one genuine restart:
+  the same run plus Attempt replays without a second transport call or event,
+  while a later run re-reconciles any still-running Attempt. Transport I/O occurs
+  before `BEGIN IMMEDIATE`; only the transition plus event enter the command
+  transaction. Recovery event IDs are deterministic hashes of run-scoped command
+  identity, unique across runs and duplicate-free within one run. No adapter,
+  filesystem, terminal, or legacy recovery/daemon dependency enters Application.
+- Recovery reads validate each complete durable Attempt before transport I/O and
+  validate it again inside the write transaction before applying a Kernel
+  transition. Malformed active facts and post-reconciliation classification drift
+  fail closed without recovery command/event writes. Store-level reads use the
+  writer connection during an active command, providing read-your-writes while
+  preserving rollback and the prohibition on standalone mutation.
+- Each SQLite `RunningAttempt` carries only a validated 64-lowercase-hex digest
+  of all twelve durable Attempt columns. Recovery recomputes that fingerprint
+  inside its command transaction, so individually valid drift in immutable,
+  classification, state, result, effect, or timestamp facts fails before any
+  recovery transition/event/command write; raw rows never enter the transport.
+- Evolved the Task 9 concurrent-open contract: the second simultaneous handle is
+  now `open_read_only`, preserving the original schema/version/root assertions;
+  a separate Task 10 test proves writer reopen after close, and another proves a
+  simultaneous second writer is rejected promptly. To keep every touched code or
+  test file at or below 500 lines, the approved split moves cohesive v1 schema,
+  path/schema identity, migration, and bounded canonical SQLite helpers into
+  `sqlite_schema.py`, while the approved mechanical `sqlite_secrets.py` split
+  owns only the deterministic fact-key firewall; `StoreSchemaError` remains
+  re-exported from `sqlite.py`.
+- TDD RED first failed because Task 10 SQLite exception/APIs were absent, then the
+  Recovery suite failed because `application.recovery_service` was absent. P1
+  review RED subsequently produced `23 failed` when the required run-scoped
+  constructor and restart identities were absent. Fake tests now prove same-run
+  replay and later-run reconciliation; a real SQLite integration seeds valid
+  minimal lineage, completes a confirmed run, closes/reopens the writer, replays
+  the same run without transport I/O, then uses a new run to observe loss and
+  atomically interrupt the Attempt with a second command/event record.
+  Fresh GREEN passed the transaction plus recovery suites (`48 passed`) and the
+  original complete Product Kernel suite (`434 passed`). Post-review hardening
+  added a dedicated SQLite quality suite; the focused SQLite/recovery/schema
+  group first passed `125` tests, the R1 plan command passed `438`, and the complete
+  Product Kernel suite passed `477`. A second quality RED produced `10 failed`
+  for provenance bypasses, malformed recovery rows, and transaction read
+  incoherence; a classification-drift RED then produced the expected single
+  failure before the Store added expected-running-fact comparison. The final
+  focused SQLite/recovery/schema group passed `136` tests, the R1 plan command
+  passed `449`, and the complete Product Kernel suite passed `488`. A third
+  quality RED then produced `9 failed / 50 passed` for seven compound-key
+  bypasses and two valid full-row drifts; a final usage-metadata RED rejected a
+  non-numeric `token_count`. A fourth firewall RED produced `10 failed / 3
+  passed` for fused acronym, lowercase, plural, nested, and family-suffix keys;
+  the safe monkey/keyboard/token-count cases already passed. A fifth exact-alias
+  RED produced `3 failed / 13 passed` for snake, camel, and uppercase
+  `auth_header`; one exact collapsed alias closed it without broad `auth`
+  matching. Final GREEN passes `165` focused tests, `478` R1-plan tests, and
+  `517` complete Product Kernel tests. The plan's
+  exact legacy command
+  cannot run because frozen baseline `81c76ca9` has no `tests/test_state.py`
+  (`git ls-tree` confirmed; pytest exit 4, no tests run); the approved repo-truth
+  substitute `tests/test_cli_structured_output.py`,
+  `tests/test_state_mixed_version_lock_race.py`, and
+  `tests/test_conversation_state.py` passed (`213 passed`). Final touched-file
+  line counts are Store Port 99, SQLite runtime 491, SQLite schema 403,
+  SQLite validation 445, secret firewall 133, RecoveryService 185, transaction
+  tests 362, recovery tests 459, recovery-integrity tests 75, and evolved schema
+  tests 499 lines; the dedicated quality suite is 467 lines and the fused-key
+  firewall suite is 72 lines.
+
 ### Add project-local SQLite authority
 
 - Completed R1 Task 9 with a Store Protocol for transaction, canonical command

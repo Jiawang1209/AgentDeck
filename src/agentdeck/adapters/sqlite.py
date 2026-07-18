@@ -1,403 +1,93 @@
-"""Project-local SQLite authority and version-one schema."""
+"""Single-writer, command-atomic project-local SQLite authority."""
 
 from __future__ import annotations
 
+from collections.abc import Iterator, Mapping
+from contextlib import contextmanager
 from hashlib import sha256
-from hmac import compare_digest
-import json
 import os
 from pathlib import Path
 import sqlite3
-import stat
-from typing import Final, TypeAlias
 
-
-_SCHEMA_VERSION: Final = 1
-_STATE_DIRECTORY: Final = ".agentdeck"
-_DATABASE_NAME: Final = "agentdeck.db"
-_REQUIRED_TABLES: Final = frozenset(
-    {
-        "schema_metadata", "projects", "product_sessions", "conversation_turns",
-        "agent_instances", "missions", "mission_versions", "tasks", "attempts",
-        "handoffs", "approvals", "evidence", "commands", "events",
-    }
+from agentdeck.adapters.sqlite_schema import (
+    FileIdentity,
+    _REQUIRED_TABLES,
+    StoreCommandStateError,
+    StoreSchemaError,
+    StoreSerializationError,
+    _configure_durability,
+    _configure_local,
+    _connect_database,
+    _connect_inspection_database,
+    _database_path,
+    _migration_statements,
+    _migrate_schema,
+    _no_op_path_hook as _after_command_commit,
+    _no_op_path_hook as _after_inspection_validation,
+    _no_op_path_hook as _after_migrate,
+    _require_database_identity,
+    _resolved_project_root,
+    _state_directory,
+    _validate_before_durability,
+    _validate_existing_schema,
 )
-_METADATA_COLUMNS: Final = (
-    ("singleton", "INTEGER", 0, 1),
-    ("schema_version", "INTEGER", 1, 0),
-    ("schema_digest", "TEXT", 1, 0),
-    ("project_root", "TEXT", 1, 0),
+from agentdeck.adapters.sqlite_validation import (
+    StateIdentity,
+    StoreWriterBusyError,
+    _ATTEMPT_COLUMNS,
+    _acquire_writer_lock,
+    _attempt_record,
+    _attempt_from_row,
+    _attempt_fingerprint,
+    _canonical,
+    _decode_canonical,
+    _event_record,
+    _release_writer_lock,
+    _require_state_identity,
+    _session_record,
+    _state_identity,
+    _timestamp,
+    _validate_command_row,
 )
-_FileIdentity: TypeAlias = tuple[int, int, bool, bool]
+from agentdeck.adapters.system_clock import SystemClock
+from agentdeck.kernel.events import DomainEvent
+from agentdeck.kernel.execution import AttemptState
+from agentdeck.ports.clock import Clock
+from agentdeck.ports.store import (
+    CommandResult,
+    RunningAttempt,
+    STORE_COMMAND_ID_MAX_BYTES,
+    STORE_COMMAND_KIND_MAX_BYTES,
+    StoreTransaction,
+)
 
 
-class StoreSchemaError(RuntimeError):
-    """Raised when an existing database cannot be trusted as this schema."""
+class StoreCommandConflictError(RuntimeError): pass
 
 
-def _migration_statements() -> tuple[str, ...]:
-    return (
-        """CREATE TABLE schema_metadata (
-            singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
-            schema_version INTEGER NOT NULL CHECK (schema_version >= 1),
-            schema_digest TEXT NOT NULL CHECK (length(schema_digest) = 64),
-            project_root TEXT NOT NULL CHECK (length(project_root) > 0)
-        )""",
-        """CREATE TABLE projects (
-            project_id TEXT PRIMARY KEY,
-            resolved_root TEXT NOT NULL UNIQUE,
-            created_at TEXT NOT NULL CHECK (length(trim(created_at)) > 0)
-        )""",
-        """CREATE TABLE product_sessions (
-            session_id TEXT PRIMARY KEY,
-            project_id TEXT NOT NULL REFERENCES projects(project_id) ON DELETE RESTRICT,
-            state TEXT NOT NULL CHECK (state IN (
-                'setup','ready','drafting','awaiting_confirmation','running',
-                'awaiting_approval','paused','needs_attention','completed','failed','cancelled'
-            )),
-            permission_profile TEXT CHECK (permission_profile IS NULL OR permission_profile IN (
-                'ask_for_approval','approve_for_me','full_access'
-            )),
-            pending_goal TEXT,
-            created_at TEXT NOT NULL CHECK (length(trim(created_at)) > 0),
-            updated_at TEXT NOT NULL CHECK (length(trim(updated_at)) > 0)
-        )""",
-        """CREATE TABLE conversation_turns (
-            turn_id TEXT PRIMARY KEY,
-            session_id TEXT NOT NULL REFERENCES product_sessions(session_id) ON DELETE RESTRICT,
-            ordinal INTEGER NOT NULL CHECK (ordinal > 0),
-            actor_role TEXT NOT NULL CHECK (actor_role IN ('human','leader','system')),
-            sanitized_content TEXT NOT NULL CHECK (length(trim(sanitized_content)) > 0),
-            occurred_at TEXT NOT NULL CHECK (length(trim(occurred_at)) > 0),
-            UNIQUE (session_id, ordinal)
-        )""",
-        """CREATE TABLE agent_instances (
-            instance_id TEXT PRIMARY KEY,
-            session_id TEXT NOT NULL REFERENCES product_sessions(session_id) ON DELETE RESTRICT,
-            backend_id TEXT NOT NULL,
-            transport TEXT NOT NULL,
-            backend_version TEXT NOT NULL,
-            role TEXT NOT NULL CHECK (role IN (
-                'leader','implementer','reviewer','reviser','acceptance_reviewer'
-            )),
-            acp_session_id TEXT UNIQUE,
-            state TEXT NOT NULL CHECK (state IN ('planned','ready','active','stopped','lost')),
-            created_at TEXT NOT NULL CHECK (length(trim(created_at)) > 0),
-            updated_at TEXT NOT NULL CHECK (length(trim(updated_at)) > 0)
-        )""",
-        """CREATE TABLE missions (
-            mission_id TEXT PRIMARY KEY,
-            session_id TEXT NOT NULL REFERENCES product_sessions(session_id) ON DELETE RESTRICT,
-            state TEXT NOT NULL CHECK (state IN (
-                'draft','awaiting_confirmation','confirmed','running','completed','failed','cancelled'
-            )),
-            current_version INTEGER NOT NULL CHECK (current_version > 0),
-            created_at TEXT NOT NULL CHECK (length(trim(created_at)) > 0),
-            updated_at TEXT NOT NULL CHECK (length(trim(updated_at)) > 0)
-        )""",
-        """CREATE TABLE mission_versions (
-            mission_id TEXT NOT NULL REFERENCES missions(mission_id) ON DELETE RESTRICT,
-            version INTEGER NOT NULL CHECK (version > 0),
-            preview_id TEXT NOT NULL UNIQUE,
-            content_hash TEXT NOT NULL CHECK (length(content_hash) = 64),
-            canonical_mission_facts TEXT NOT NULL,
-            confirmed_at TEXT,
-            PRIMARY KEY (mission_id, version),
-            UNIQUE (mission_id, content_hash)
-        )""",
-        """CREATE TABLE tasks (
-            task_id TEXT PRIMARY KEY,
-            mission_id TEXT NOT NULL,
-            mission_version INTEGER NOT NULL CHECK (mission_version > 0),
-            ordinal INTEGER NOT NULL CHECK (ordinal > 0),
-            name TEXT NOT NULL,
-            role TEXT NOT NULL CHECK (role IN (
-                'implementer','reviewer','reviser','acceptance_reviewer'
-            )),
-            planned_backend TEXT NOT NULL,
-            planned_agent_instance_id TEXT NOT NULL,
-            acp_route TEXT NOT NULL,
-            state TEXT NOT NULL CHECK (state IN (
-                'pending','ready','running','awaiting_approval','completed','failed','cancelled'
-            )),
-            canonical_task_facts TEXT NOT NULL,
-            created_at TEXT NOT NULL CHECK (length(trim(created_at)) > 0),
-            updated_at TEXT NOT NULL CHECK (length(trim(updated_at)) > 0),
-            FOREIGN KEY (mission_id, mission_version)
-                REFERENCES mission_versions(mission_id, version) ON DELETE RESTRICT,
-            UNIQUE (mission_id, mission_version, ordinal)
-        )""",
-        """CREATE TABLE attempts (
-            attempt_id TEXT PRIMARY KEY,
-            task_id TEXT NOT NULL REFERENCES tasks(task_id) ON DELETE RESTRICT,
-            agent_instance_id TEXT REFERENCES agent_instances(instance_id) ON DELETE RESTRICT,
-            ordinal INTEGER NOT NULL CHECK (ordinal > 0),
-            state TEXT NOT NULL CHECK (state IN (
-                'pending','running','awaiting_approval','human_controlled','completed',
-                'failed','cancelled','interrupted','outcome_unknown'
-            )),
-            reason TEXT,
-            result_summary TEXT,
-            retryable INTEGER NOT NULL DEFAULT 0 CHECK (retryable IN (0, 1)),
-            acp_session_id TEXT,
-            effect_observed INTEGER NOT NULL DEFAULT 0 CHECK (effect_observed IN (0, 1)),
-            created_at TEXT NOT NULL CHECK (length(trim(created_at)) > 0),
-            updated_at TEXT NOT NULL CHECK (length(trim(updated_at)) > 0),
-            UNIQUE (task_id, ordinal)
-        )""",
-        """CREATE TABLE handoffs (
-            handoff_id TEXT PRIMARY KEY,
-            source_attempt_id TEXT NOT NULL REFERENCES attempts(attempt_id) ON DELETE RESTRICT,
-            target_task_id TEXT NOT NULL REFERENCES tasks(task_id) ON DELETE RESTRICT,
-            result_summary TEXT NOT NULL,
-            canonical_handoff_facts TEXT NOT NULL,
-            content_hash TEXT NOT NULL CHECK (length(content_hash) = 64),
-            created_at TEXT NOT NULL CHECK (length(trim(created_at)) > 0),
-            UNIQUE (source_attempt_id, target_task_id, content_hash)
-        )""",
-        """CREATE TABLE approvals (
-            approval_id TEXT PRIMARY KEY,
-            mission_id TEXT NOT NULL,
-            mission_version INTEGER NOT NULL CHECK (mission_version > 0),
-            attempt_id TEXT REFERENCES attempts(attempt_id) ON DELETE RESTRICT,
-            effect TEXT NOT NULL CHECK (effect IN (
-                'read','write_project','command_project','network','write_external',
-                'credential','destructive','publish'
-            )),
-            state TEXT NOT NULL CHECK (state IN ('pending','approved','denied','cancelled','expired')),
-            scope_hash TEXT NOT NULL CHECK (length(scope_hash) = 64),
-            canonical_request_facts TEXT NOT NULL,
-            canonical_decision_facts TEXT,
-            requested_at TEXT NOT NULL CHECK (length(trim(requested_at)) > 0),
-            decided_at TEXT,
-            FOREIGN KEY (mission_id, mission_version)
-                REFERENCES mission_versions(mission_id, version) ON DELETE RESTRICT
-        )""",
-        """CREATE TABLE evidence (
-            evidence_id TEXT PRIMARY KEY,
-            task_id TEXT REFERENCES tasks(task_id) ON DELETE RESTRICT,
-            attempt_id TEXT REFERENCES attempts(attempt_id) ON DELETE RESTRICT,
-            kind TEXT NOT NULL CHECK (kind IN (
-                'test_exit_status','diff_identity','artifact_hash','review_finding',
-                'acceptance_result','human_decision'
-            )),
-            canonical_evidence_facts TEXT NOT NULL,
-            content_hash TEXT NOT NULL CHECK (length(content_hash) = 64),
-            created_at TEXT NOT NULL CHECK (length(trim(created_at)) > 0)
-        )""",
-        """CREATE TABLE commands (
-            command_id TEXT PRIMARY KEY,
-            command_kind TEXT NOT NULL CHECK (length(trim(command_kind)) > 0),
-            state TEXT NOT NULL CHECK (state IN ('started','completed','failed')),
-            canonical_result_facts TEXT,
-            created_at TEXT NOT NULL CHECK (length(trim(created_at)) > 0),
-            completed_at TEXT
-        )""",
-        """CREATE TABLE events (
-            event_id TEXT PRIMARY KEY,
-            command_id TEXT REFERENCES commands(command_id) ON DELETE RESTRICT,
-            kind TEXT NOT NULL CHECK (length(trim(kind)) > 0),
-            aggregate_type TEXT NOT NULL CHECK (length(trim(aggregate_type)) > 0),
-            aggregate_id TEXT NOT NULL CHECK (length(trim(aggregate_id)) > 0),
-            canonical_payload_facts TEXT NOT NULL,
-            occurred_at TEXT NOT NULL CHECK (length(trim(occurred_at)) > 0)
-        )""",
-        "CREATE INDEX idx_turns_session_ordinal ON conversation_turns(session_id, ordinal)",
-        "CREATE INDEX idx_agents_session_state ON agent_instances(session_id, state)",
-        "CREATE INDEX idx_missions_session_state ON missions(session_id, state)",
-        "CREATE INDEX idx_tasks_mission_state ON tasks(mission_id, mission_version, state)",
-        "CREATE INDEX idx_attempts_task_ordinal ON attempts(task_id, ordinal)",
-        "CREATE INDEX idx_attempts_state ON attempts(state)",
-        "CREATE INDEX idx_approvals_state ON approvals(state)",
-        "CREATE INDEX idx_evidence_attempt ON evidence(attempt_id)",
-        "CREATE INDEX idx_commands_state ON commands(state)",
-        "CREATE INDEX idx_events_aggregate ON events(aggregate_type, aggregate_id, occurred_at)",
-    )
-
-
-def _live_schema_objects(connection: sqlite3.Connection) -> list[tuple[str, ...]]:
-    return connection.execute(
-        """SELECT type, name, tbl_name, sql FROM sqlite_schema
-           WHERE sql IS NOT NULL AND name NOT LIKE 'sqlite_%'
-           ORDER BY type, name"""
-    ).fetchall()
-
-
-def _live_schema_fingerprint(connection: sqlite3.Connection) -> str:
-    serialized = json.dumps(
-        _live_schema_objects(connection), ensure_ascii=False, separators=(",", ":")
-    ).encode("utf-8", "strict")
-    return sha256(serialized).hexdigest()
-
-
-def _path_exists(path: Path) -> bool:
-    return os.path.lexists(path)
-
-
-def _resolved_project_root(project_root: str | os.PathLike[str]) -> Path:
-    supplied = Path(project_root).expanduser()
-    if supplied.is_symlink():
-        raise ValueError("project root must not be a symlink")
-    if not supplied.exists():
-        raise FileNotFoundError(f"project root does not exist: {supplied}")
-    if not supplied.is_dir():
-        raise NotADirectoryError(f"project root is not a directory: {supplied}")
-    resolved = supplied.resolve(strict=True)
+def _validate_text_reference(value: object, label: str, maximum: int) -> None:
+    if type(value) is not str or not value.strip():
+        raise ValueError(f"{label} must be a nonempty string")
     try:
-        str(resolved).encode("utf-8", "strict")
+        encoded = value.encode("utf-8", "strict")
     except UnicodeEncodeError as error:
-        raise ValueError("project root must be strict UTF-8") from error
-    return resolved
+        raise ValueError(f"{label} must be strict UTF-8") from error
+    if len(encoded) > maximum:
+        raise ValueError(f"{label} is too large")
 
 
-def _file_identity(path: Path) -> _FileIdentity:
-    info = path.lstat()
-    return (info.st_dev, info.st_ino, stat.S_ISREG(info.st_mode), info.st_nlink == 1)
-
-
-def _prepare_database_path(root: Path) -> tuple[Path, _FileIdentity]:
-    state_directory = root / _STATE_DIRECTORY
-    if _path_exists(state_directory):
-        if state_directory.is_symlink():
-            raise ValueError(".agentdeck must not be a symlink")
-        if not state_directory.is_dir():
-            raise NotADirectoryError(".agentdeck must be a directory")
-    else:
-        state_directory.mkdir(mode=0o700)
-    if state_directory.resolve(strict=True).parent != root:
-        raise ValueError(".agentdeck escapes the resolved project root")
-
-    database = state_directory / _DATABASE_NAME
-    if _path_exists(database):
-        identity = _file_identity(database)
-        if database.is_symlink():
-            raise ValueError("database path must not be a symlink")
-        if not identity[2]:
-            raise ValueError("database path must be a regular file")
-        if not identity[3]:
-            raise ValueError("database path must not be a hard link")
-    else:
-        flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY
-        flags |= getattr(os, "O_NOFOLLOW", 0)
-        descriptor = os.open(database, flags, 0o600)
-        os.close(descriptor)
-        identity = _file_identity(database)
-    return database, identity
-
-
-def _connect_database(path: Path) -> sqlite3.Connection:
-    return sqlite3.connect(path, timeout=5.0, isolation_level=None)
-
-
-def _configure_local(connection: sqlite3.Connection) -> None:
-    connection.execute("PRAGMA busy_timeout = 5000")
-    connection.execute("PRAGMA foreign_keys = ON")
-
-
-def _configure_durability(connection: sqlite3.Connection) -> None:
-    mode = connection.execute("PRAGMA journal_mode = DELETE").fetchone()
-    if mode != ("delete",):
-        raise StoreSchemaError("SQLite rollback journal mode is unavailable")
-    connection.execute("PRAGMA synchronous = FULL")
-
-
-def _table_names(connection: sqlite3.Connection) -> set[str]:
-    return {
-        row[0]
-        for row in connection.execute(
-            """SELECT name FROM sqlite_schema
-               WHERE type = 'table' AND name NOT LIKE 'sqlite_%'"""
-        )
-    }
-
-
-def _validate_existing_schema(connection: sqlite3.Connection, root: Path) -> None:
-    columns = tuple(
-        (row[1], row[2].upper(), row[3], row[5])
-        for row in connection.execute("PRAGMA table_info(schema_metadata)")
-    )
-    if columns != _METADATA_COLUMNS:
-        raise StoreSchemaError("schema metadata is damaged")
-    rows = connection.execute(
-        "SELECT singleton, schema_version, schema_digest, project_root FROM schema_metadata"
-    ).fetchall()
-    if (
-        len(rows) != 1
-        or rows[0][:2] != (1, _SCHEMA_VERSION)
-        or type(rows[0][2]) is not str
-        or len(rows[0][2]) != 64
-        or type(rows[0][3]) is not str
-    ):
-        raise StoreSchemaError("schema version is unknown or damaged")
-    try:
-        rows[0][3].encode("utf-8", "strict")
-    except UnicodeEncodeError as error:
-        raise StoreSchemaError("stored project root is not strict UTF-8") from error
-    if rows[0][3] != str(root):
-        raise StoreSchemaError("database belongs to a different project root")
-    if _table_names(connection) != _REQUIRED_TABLES:
-        raise StoreSchemaError("versioned schema is damaged")
-    if not compare_digest(rows[0][2], _live_schema_fingerprint(connection)):
-        raise StoreSchemaError("live schema drifted from its version authority")
-
-
-def _validate_before_durability(connection: sqlite3.Connection, root: Path) -> None:
-    if not _live_schema_objects(connection):
-        return
-    tables = _table_names(connection)
-    if "schema_metadata" not in tables:
-        raise StoreSchemaError("database has no recognized schema authority")
-    _validate_existing_schema(connection, root)
+def _validate_command_reference(command_id: object, command_kind: object | None) -> None:
+    _validate_text_reference(command_id, "command_id", STORE_COMMAND_ID_MAX_BYTES)
+    if command_kind is not None:
+        _validate_text_reference(command_kind, "command_kind", STORE_COMMAND_KIND_MAX_BYTES)
 
 
 def _migrate(connection: sqlite3.Connection, root: Path) -> None:
-    statements = _migration_statements()
-    connection.execute("BEGIN IMMEDIATE")
-    try:
-        objects = _live_schema_objects(connection)
-        if not objects:
-            for statement in statements:
-                connection.execute(statement)
-            connection.execute(
-                "INSERT INTO schema_metadata VALUES (?, ?, ?, ?)",
-                (1, _SCHEMA_VERSION, _live_schema_fingerprint(connection), str(root)),
-            )
-        elif "schema_metadata" in _table_names(connection):
-            _validate_existing_schema(connection, root)
-        else:
-            raise StoreSchemaError("database has no recognized schema authority")
-        connection.execute("COMMIT")
-    except BaseException:
-        if connection.in_transaction:
-            connection.execute("ROLLBACK")
-        raise
-
-
-def _require_database_identity(path: Path, expected: _FileIdentity) -> None:
-    try:
-        current = _file_identity(path)
-    except OSError as error:
-        raise StoreSchemaError("database identity is unavailable") from error
-    if current != expected or not current[2] or not current[3]:
-        raise StoreSchemaError("database identity changed during open")
-
-
-def _after_migrate(path: Path) -> None:
-    """Private deterministic race-test seam."""
-
-
-def _connect_inspection_database(path: Path) -> sqlite3.Connection:
-    return sqlite3.connect(
-        f"{path.as_uri()}?mode=ro", uri=True, timeout=5.0, isolation_level=None
-    )
-
-
-def _after_inspection_validation(path: Path) -> None:
-    """Private deterministic race-test seam."""
+    _migrate_schema(connection, root, _migration_statements())
 
 
 def _open_inspection_connection(
-    path: Path, expected: _FileIdentity, root: Path
+    path: Path, expected: FileIdentity, root: Path
 ) -> sqlite3.Connection:
     connection = _connect_inspection_database(path)
     try:
@@ -413,25 +103,181 @@ def _open_inspection_connection(
         raise
 
 
+class _SQLiteCommandTransaction:
+    def __init__(self, store: "SQLiteStore", command_id: str, command_kind: str) -> None:
+        self._store = store
+        self.command_id = command_id
+        self.command_kind = command_kind
+        self._active = True
+        self._result: CommandResult | None = None
+        self.duplicate_result: CommandResult | None = None
+
+    def _require_mutable(self) -> sqlite3.Connection:
+        if not self._active:
+            raise StoreCommandStateError("command transaction is inactive")
+        if self.duplicate_result is not None:
+            raise StoreCommandStateError("duplicate command transaction is read-only")
+        return self._store._require_writer()
+
+    def set_result(self, result: CommandResult) -> None:
+        self._require_mutable()
+        _, self._result = _canonical(result)
+
+    def lookup_command(self, command_id: str, command_kind: str | None = None) -> CommandResult | None:
+        return self._store._lookup_command(self._store._require_writer(), command_id, command_kind)
+
+    def record_command(
+        self, command_id: str, command_kind: str, result: CommandResult
+    ) -> None:
+        if (command_id, command_kind) != (self.command_id, self.command_kind):
+            raise StoreCommandStateError("transaction cannot record another command")
+        self.set_result(result)
+
+    def load_aggregate(self, aggregate_type: str, aggregate_id: str) -> CommandResult | None:
+        return self._store._load_aggregate(
+            self._store._require_writer(), aggregate_type, aggregate_id
+        )
+
+    def save_aggregate(
+        self, aggregate_type: str, aggregate_id: str, snapshot: CommandResult
+    ) -> None:
+        _validate_text_reference(aggregate_type, "aggregate_type", 128)
+        _validate_text_reference(aggregate_id, "aggregate_id", 255)
+        if aggregate_type == "product_sessions":
+            if snapshot.get("session_id", aggregate_id) != aggregate_id:
+                raise ValueError("aggregate identity does not match session_id")
+            self.save_session({"session_id": aggregate_id, **snapshot})
+            return
+        if aggregate_type == "attempts":
+            if snapshot.get("attempt_id", aggregate_id) != aggregate_id:
+                raise ValueError("aggregate identity does not match attempt_id")
+            self.save_attempt({"attempt_id": aggregate_id, **snapshot})
+            return
+        raise ValueError("unsupported aggregate type")
+
+    def save_session(self, snapshot: Mapping[str, object]) -> None:
+        connection = self._require_mutable()
+        if not isinstance(snapshot, Mapping):
+            raise StoreSerializationError("session snapshot must be an object")
+        now = _timestamp(self._store._clock)
+        session_id = snapshot.get("session_id")
+        existing = connection.execute(
+            "SELECT project_id,created_at,updated_at FROM product_sessions WHERE session_id=?",
+            (session_id,),
+        ).fetchone() if type(session_id) is str else None
+        record = _session_record(snapshot, self._store._project_id, now, existing)
+        connection.execute(
+            "INSERT OR IGNORE INTO projects VALUES (?, ?, ?)",
+            (record[1], str(self._store._project_root), now),
+        )
+        connection.execute(
+            """INSERT INTO product_sessions VALUES (?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT(session_id) DO UPDATE SET
+                 state=excluded.state, permission_profile=excluded.permission_profile,
+                 pending_goal=excluded.pending_goal, updated_at=excluded.updated_at""",
+            record,
+        )
+
+    def save_attempt(self, snapshot: Mapping[str, object]) -> None:
+        connection = self._require_mutable()
+        if not isinstance(snapshot, Mapping):
+            raise StoreSerializationError("attempt snapshot must be an object")
+        now = _timestamp(self._store._clock)
+        attempt_id = snapshot.get("attempt_id")
+        existing = connection.execute(
+            """SELECT attempt_id,task_id,agent_instance_id,ordinal,state,reason,
+                      result_summary,retryable,acp_session_id,effect_observed,
+                      created_at,updated_at FROM attempts WHERE attempt_id=?""",
+            (attempt_id,),
+        ).fetchone() if type(attempt_id) is str else None
+        record = _attempt_record(snapshot, existing, now)
+        connection.execute(
+            """INSERT INTO attempts VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT(attempt_id) DO UPDATE SET state=excluded.state,
+                 reason=excluded.reason, result_summary=excluded.result_summary,
+                 retryable=excluded.retryable,
+                 effect_observed=excluded.effect_observed, updated_at=excluded.updated_at""",
+            record,
+        )
+
+    def recover_attempt(
+        self, attempt_id: str, state: AttemptState, reason: str | None,
+        *, expected: RunningAttempt | None = None,
+    ) -> None:
+        connection = self._require_mutable()
+        if state not in {AttemptState.RUNNING, AttemptState.INTERRUPTED, AttemptState.OUTCOME_UNKNOWN}:
+            raise ValueError("unsupported recovery state")
+        row = connection.execute(
+            f"SELECT {','.join(_ATTEMPT_COLUMNS)} FROM attempts WHERE attempt_id=?",
+            (attempt_id,),
+        ).fetchone()
+        if row is None:
+            raise StoreCommandStateError("running attempt disappeared before recovery")
+        attempt, values = _attempt_from_row(row)
+        if attempt.state is not AttemptState.RUNNING:
+            raise StoreCommandStateError("running attempt changed before recovery")
+        current = RunningAttempt(
+            attempt.attempt_id, attempt.task_id, values["acp_session_id"],
+            bool(values["effect_observed"]), _attempt_fingerprint(values),
+        )
+        if expected is None or expected.durable_fingerprint is None:
+            raise StoreCommandStateError("recovery requires a durable attempt fingerprint")
+        if current != expected:
+            raise StoreCommandStateError("running attempt drifted after reconciliation")
+        if state is AttemptState.RUNNING:
+            if reason is not None:
+                raise ValueError("confirmed running recovery cannot have a reason")
+        else:
+            attempt.transition(state, reason=reason)
+        changed = connection.execute(
+            """UPDATE attempts SET state=?, reason=?, result_summary=NULL, retryable=0,
+               updated_at=? WHERE attempt_id=? AND state='running'""",
+            (state.value, reason, _timestamp(self._store._clock), attempt_id),
+        ).rowcount
+        if changed != 1:
+            raise StoreCommandStateError("running attempt changed before recovery")
+
+    def append_event(self, event: DomainEvent | Mapping[str, object]) -> None:
+        connection = self._require_mutable()
+        record = _event_record(event, self.command_id)
+        connection.execute(
+            "INSERT INTO events VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (record[0], self.command_id, *record[1:]),
+        )
+
+
 class SQLiteStore:
-    """Own the resolved project's SQLite connection; mutations arrive in Task 10."""
+    """Own one writer lock or an exact read-only project inspection handle."""
 
     def __init__(
-        self, path: Path, connection: sqlite3.Connection,
-        identity: _FileIdentity, project_root: Path,
+        self, path: Path, identity: FileIdentity, project_root: Path, clock: Clock,
+        *, writer: sqlite3.Connection | None, inspection: sqlite3.Connection | None,
+        lock_descriptor: int | None, state_identity: StateIdentity,
     ) -> None:
         self.path = path
-        self._writer: sqlite3.Connection | None = connection
-        self._inspection: sqlite3.Connection | None = None
         self._database_identity = identity
+        self._state_path = path.parent
+        self._state_identity = state_identity
         self._project_root = project_root
+        self._project_id = f"prj_{sha256(str(project_root).encode()).hexdigest()[:24]}"
+        self._clock = clock
+        self._writer = writer
+        self._inspection = inspection
+        self._lock_descriptor = lock_descriptor
+        self._closed = False
+        self._active_transaction: _SQLiteCommandTransaction | None = None
 
     @classmethod
-    def open(cls, project_root: str | os.PathLike[str]) -> "SQLiteStore":
+    def open(
+        cls, project_root: str | os.PathLike[str], *, clock: Clock | None = None
+    ) -> "SQLiteStore":
         root = _resolved_project_root(project_root)
-        path, identity = _prepare_database_path(root)
+        state = _state_directory(root, create=True)
+        lock_descriptor: int | None = None
         connection: sqlite3.Connection | None = None
         try:
+            lock_descriptor, _, state_identity = _acquire_writer_lock(state)
+            path, identity = _database_path(state, create=True)
             connection = _connect_database(path)
             _require_database_identity(path, identity)
             _configure_local(connection)
@@ -441,28 +287,205 @@ class SQLiteStore:
             _require_database_identity(path, identity)
             _after_migrate(path)
             _require_database_identity(path, identity)
-            return cls(path, connection, identity, root)
+            _require_state_identity(state, state_identity)
+            return cls(
+                path, identity, root, clock or SystemClock(), writer=connection,
+                inspection=None, lock_descriptor=lock_descriptor,
+                state_identity=state_identity,
+            )
         except BaseException:
-            if connection is not None:
-                connection.close()
+            try:
+                if connection is not None:
+                    connection.close()
+            finally:
+                _release_writer_lock(lock_descriptor)
             raise
+
+    @classmethod
+    def open_read_only(
+        cls, project_root: str | os.PathLike[str], *, clock: Clock | None = None
+    ) -> "SQLiteStore":
+        root = _resolved_project_root(project_root)
+        state = _state_directory(root, create=False)
+        state_identity = _state_identity(state)
+        path, identity = _database_path(state, create=False)
+        inspection = _open_inspection_connection(path, identity, root)
+        try:
+            _require_state_identity(state, state_identity)
+        except BaseException:
+            inspection.close()
+            raise
+        return cls(
+            path, identity, root, clock or SystemClock(), writer=None,
+            inspection=inspection, lock_descriptor=None, state_identity=state_identity,
+        )
+
+    def _require_open(self) -> None:
+        if self._closed:
+            raise RuntimeError("SQLiteStore is closed")
+        _require_state_identity(self._state_path, self._state_identity)
+        _require_database_identity(self.path, self._database_identity)
+
+    def _require_writer(self) -> sqlite3.Connection:
+        self._require_open()
+        if self._writer is None:
+            raise StoreCommandStateError("read-only store cannot mutate")
+        return self._writer
 
     @property
     def connection(self) -> sqlite3.Connection:
-        """Return a cached query-only inspection connection."""
-        if self._writer is None:
-            raise RuntimeError("SQLiteStore is closed")
-        _require_database_identity(self.path, self._database_identity)
+        self._require_open()
         if self._inspection is None:
             self._inspection = _open_inspection_connection(
                 self.path, self._database_identity, self._project_root
             )
         return self._inspection
 
+    def _read_connection(self) -> sqlite3.Connection:
+        if self._active_transaction is not None:
+            return self._require_writer()
+        return self.connection
+
+    def _lookup_command(self, connection: sqlite3.Connection, command_id: str,
+                        command_kind: str | None) -> CommandResult | None:
+        _validate_command_reference(command_id, command_kind)
+        row = connection.execute(
+            """SELECT command_kind, state, canonical_result_facts, created_at, completed_at
+               FROM commands WHERE command_id=?""",
+            (command_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        if command_kind is not None and row[0] != command_kind:
+            raise StoreCommandConflictError("command_id already has a different kind")
+        return _validate_command_row(row)
+
+    def lookup_command(self, command_id: str,
+                       command_kind: str | None = None) -> CommandResult | None:
+        return self._lookup_command(self._read_connection(), command_id, command_kind)
+
+    def _load_aggregate(
+        self, connection: sqlite3.Connection, aggregate_type: str, aggregate_id: str
+    ) -> CommandResult | None:
+        _validate_text_reference(aggregate_type, "aggregate_type", 128)
+        _validate_text_reference(aggregate_id, "aggregate_id", 255)
+        specs = {
+            "product_sessions": ("session_id", (
+                "session_id", "project_id", "state", "permission_profile", "pending_goal",
+                "created_at", "updated_at",
+            )),
+            "attempts": ("attempt_id", (
+                "attempt_id", "task_id", "agent_instance_id", "ordinal", "state", "reason",
+                "result_summary", "retryable", "acp_session_id", "effect_observed",
+                "created_at", "updated_at",
+            )),
+        }
+        if aggregate_type not in specs:
+            raise ValueError("unsupported aggregate type")
+        identity, columns = specs[aggregate_type]
+        row = connection.execute(
+            f"SELECT {','.join(columns)} FROM {aggregate_type} WHERE {identity}=?",
+            (aggregate_id,),
+        ).fetchone()
+        return None if row is None else dict(zip(columns, row, strict=True))
+
+    def load_aggregate(self, aggregate_type: str, aggregate_id: str) -> CommandResult | None:
+        return self._load_aggregate(self._read_connection(), aggregate_type, aggregate_id)
+
+    def list_running_attempts(self):
+        rows = self._read_connection().execute(
+            f"""SELECT {','.join(_ATTEMPT_COLUMNS)}
+               FROM attempts WHERE state='running' ORDER BY attempt_id"""
+        ).fetchall()
+        validated = (_attempt_from_row(row)[1] for row in rows)
+        return tuple(RunningAttempt(
+            row["attempt_id"], row["task_id"], row["acp_session_id"],
+            bool(row["effect_observed"]), _attempt_fingerprint(row),
+        ) for row in validated)
+
+    def count(self, table: str) -> int:
+        if table not in _REQUIRED_TABLES:
+            raise ValueError("count requires an authority table name")
+        return self._read_connection().execute(f"SELECT count(*) FROM {table}").fetchone()[0]
+
+    @contextmanager
+    def command(
+        self, command_id: str, command_kind: str
+    ) -> Iterator[StoreTransaction]:
+        connection = self._require_writer()
+        if self._active_transaction is not None:
+            raise StoreCommandStateError("another command transaction is active")
+        _validate_command_reference(command_id, command_kind)
+        _validate_existing_schema(connection, self._project_root)
+        _require_database_identity(self.path, self._database_identity)
+        connection.execute("BEGIN IMMEDIATE")
+        transaction = _SQLiteCommandTransaction(self, command_id, command_kind)
+        self._active_transaction = transaction
+        committed = False
+        try:
+            row = connection.execute(
+                """SELECT command_kind, state, canonical_result_facts, created_at, completed_at
+                   FROM commands WHERE command_id=?""",
+                (command_id,),
+            ).fetchone()
+            if row is not None:
+                if row[0] != command_kind:
+                    raise StoreCommandConflictError("command_id already has a different kind")
+                transaction.duplicate_result = _validate_command_row(row)
+                connection.execute("ROLLBACK")
+                yield transaction
+                return
+            now = _timestamp(self._clock)
+            connection.execute(
+                "INSERT INTO commands VALUES (?, ?, 'started', NULL, ?, NULL)",
+                (command_id, command_kind, now),
+            )
+            yield transaction
+            result = transaction._result if transaction._result is not None else {}
+            result_text, transaction._result = _canonical(result)
+            connection.execute(
+                """UPDATE commands SET state='completed', canonical_result_facts=?,
+                   completed_at=? WHERE command_id=? AND state='started'""",
+                (result_text, _timestamp(self._clock), command_id),
+            )
+            _require_state_identity(self._state_path, self._state_identity)
+            _require_database_identity(self.path, self._database_identity)
+            connection.execute("COMMIT")
+            committed = True
+        except BaseException:
+            if connection.in_transaction:
+                connection.execute("ROLLBACK")
+            raise
+        finally:
+            transaction._active = False
+            self._active_transaction = None
+        if committed:
+            _after_command_commit(self.path)
+            _require_state_identity(self._state_path, self._state_identity)
+            _require_database_identity(self.path, self._database_identity)
+
+    def execute_once(self, command_id: str, command_kind: str, callback) -> CommandResult:
+        with self.command(command_id, command_kind) as transaction:
+            concrete = transaction
+            if concrete.duplicate_result is not None:
+                return _decode_canonical(_canonical(concrete.duplicate_result)[0])
+            result = callback(concrete)
+            concrete.set_result(result)
+        return _decode_canonical(_canonical(concrete._result)[0])
+
     def close(self) -> None:
+        if self._closed:
+            return
+        if self._active_transaction is not None:
+            raise StoreCommandStateError("cannot close while a command transaction is active")
+        self._closed = True
         inspection, self._inspection = self._inspection, None
         writer, self._writer = self._writer, None
-        if inspection is not None:
-            inspection.close()
-        if writer is not None:
-            writer.close()
+        descriptor, self._lock_descriptor = self._lock_descriptor, None
+        try:
+            if inspection is not None:
+                inspection.close()
+            if writer is not None:
+                writer.close()
+        finally:
+            _release_writer_lock(descriptor)
