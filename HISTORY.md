@@ -24,6 +24,11 @@
   immutable, while Evidence, artifacts, and legacy records are insert-only.
   Row values and primary-key predicates also reject booleans globally so
   Python `True == 1` cannot alias an integer revision, sequence, version, or id.
+  Inserts must now carry the complete table primary key: text identities are
+  non-empty bounded UTF-8 strings, and the composite Mission-version number is
+  a genuine positive signed-64 integer. Updates apply the same type contract to
+  their exact primary-key predicate, preventing missing, null, empty, zero, or
+  wrong-type identities from reaching SQLite or advancing a revision.
 - Added one `BEGIN IMMEDIATE` command boundary that validates the cached writer
   lease, process, database-family identity, project identity, authority state,
   and revision before deciding. A new accepted command writes its closed entity
@@ -44,10 +49,15 @@
   the next command unreadable therefore rolls back while the prior state stays
   usable.
 - Hardened exact command replay by cross-checking the persisted outcome against
-  completed command revisions, the current project revision, and the complete
-  event-cursor-ordered command ledger. Missing, extra, renamed, or wrong-revision
-  events and mismatched accepted/completed revisions now fail closed with one
-  fixed diagnostic before decision logic is called or state is written.
+  the full canonical command identity, completed command revisions, the current
+  project revision, and the complete event-cursor-ordered command ledger.
+  Replay reparses canonical actor, outcome, provenance, and payload JSON and
+  reconstructs every persisted client `DomainEvent`; project, trigger, closed
+  provenance columns, command/revision/actor identity, creation time, event
+  order, and outcome ids must all agree. Missing, extra, renamed, malformed, or
+  wrong-revision events and mismatched accepted/completed revisions now fail
+  closed with one fixed diagnostic before decision logic is called or state is
+  written.
 - Added deterministic failure-injection, idempotent replay, changed-input,
   stale-revision, callback isolation, canonical-bound, and integrity regression
   tests. Injected failures before events, after the first event, and before the

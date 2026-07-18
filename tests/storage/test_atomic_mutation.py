@@ -441,3 +441,19 @@ def test_post_change_snapshot_row_budget_rolls_back_without_unbounded_commit(
         )
 
     _assert_empty_at_revision_zero(store)
+
+
+def test_invalid_insert_primary_key_inside_decision_writes_nothing(
+    store: SQLiteMissionStore,
+) -> None:
+    command = _command(command_id="cmd_invalid_pk")
+
+    with pytest.raises(MutationValidationError, match="^entity change invalid$"):
+        store.apply_command(
+            command,
+            lambda snapshot: MutationDecision(
+                changes=(EntityChange.insert("missions", {"status": "proposed"}),),
+            ),
+        )
+
+    _assert_empty_at_revision_zero(store)

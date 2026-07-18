@@ -388,3 +388,191 @@ def test_exact_replay_fails_closed_when_persisted_ledger_does_not_match_outcome(
         assert reader.execute("SELECT COUNT(*) FROM events").fetchone() == (
             expected_events,
         )
+
+
+@pytest.mark.parametrize(
+    ("table", "values"),
+    [
+        ("missions", {"status": "proposed"}),
+        ("mission_versions", {"mission_id": "mis_1"}),
+        ("tasks", {"status": "pending"}),
+        ("attempts", {"status": "running"}),
+        ("sessions", {"status": "active"}),
+        ("permissions", {"status": "pending"}),
+        ("handoffs", {"status": "pending"}),
+        ("evidence", {"kind": "test"}),
+        ("approvals", {"status": "pending"}),
+        ("artifacts", {"content_hash": "sha256:" + "a" * 64}),
+        ("learning", {"review_json": "{}"}),
+        ("suggestions", {"status": "pending"}),
+        ("legacy_records", {"collection": "plans"}),
+    ],
+)
+def test_entity_insert_requires_complete_primary_key(
+    table: str,
+    values: dict[str, object],
+) -> None:
+    with pytest.raises(MutationValidationError, match="^entity change invalid$") as raised:
+        EntityChange.insert(table, values)
+    assert raised.value.__cause__ is None
+
+
+@pytest.mark.parametrize("mission_id", [None, "", 1, "x" * 4097])
+def test_text_primary_key_must_be_nonempty_bounded_text(mission_id: object) -> None:
+    with pytest.raises(MutationValidationError, match="^entity change invalid$") as raised:
+        EntityChange.insert(
+            "missions",
+            {"mission_id": mission_id, "status": "proposed"},
+        )
+    assert raised.value.__cause__ is None
+
+
+@pytest.mark.parametrize("version", [None, 0, -1, "1", 2**63])
+def test_composite_integer_primary_key_requires_positive_signed64_int(
+    version: object,
+) -> None:
+    with pytest.raises(MutationValidationError, match="^entity change invalid$") as raised:
+        EntityChange.insert(
+            "mission_versions",
+            {
+                "mission_id": "mis_1",
+                "version": version,
+                "specification_json": "{}",
+                "proposal_provenance_json": "{}",
+            },
+        )
+    assert raised.value.__cause__ is None
+
+
+@pytest.mark.parametrize(
+    ("table", "values", "where"),
+    [
+        ("missions", {"status": "confirmed"}, {"mission_id": ""}),
+        (
+            "mission_versions",
+            {"confirmed_revision": 2},
+            {"mission_id": "mis_1", "version": 0},
+        ),
+    ],
+)
+def test_entity_update_primary_key_uses_same_strict_type_validation(
+    table: str,
+    values: dict[str, object],
+    where: dict[str, object],
+) -> None:
+    with pytest.raises(MutationValidationError, match="^entity change invalid$") as raised:
+        EntityChange.update(table, values, where=where)
+    assert raised.value.__cause__ is None
+
+
+@pytest.mark.parametrize(
+    "tamper_sql",
+    [
+        "UPDATE commands SET expected_revision = 1 WHERE command_id = 'cmd_1'",
+        "UPDATE commands SET actor_json = '{\"id\":\"other\",\"kind\":\"human\"}' "
+        "WHERE command_id = 'cmd_1'",
+        "UPDATE commands SET actor_json = "
+        "'{\"id\": \"user_1\", \"kind\": \"human\"}' "
+        "WHERE command_id = 'cmd_1'",
+        "UPDATE commands SET actor_json = '[]' WHERE command_id = 'cmd_1'",
+        "UPDATE commands SET created_at = '2026-07-18T00:00:01Z' "
+        "WHERE command_id = 'cmd_1'",
+    ],
+)
+def test_exact_replay_validates_full_persisted_command_identity(
+    store: SQLiteMissionStore,
+    tamper_sql: str,
+) -> None:
+    command = _command()
+    store.apply_command(command, lambda snapshot: _decision(command, event_id="evt_1"))
+    store._connection.execute(tamper_sql)  # noqa: SLF001
+    called = 0
+
+    def must_not_decide(snapshot: object) -> MutationDecision:
+        nonlocal called
+        called += 1
+        return MutationDecision()
+
+    with pytest.raises(MutationValidationError, match="^command outcome invalid$"):
+        store.apply_command(command, must_not_decide)
+    assert called == 0
+    with store.open_reader() as reader:
+        assert reader.execute("SELECT revision FROM projects").fetchone() == (1,)
+        assert reader.execute("SELECT COUNT(*) FROM commands").fetchone() == (1,)
+        assert reader.execute("SELECT COUNT(*) FROM events").fetchone() == (1,)
+
+
+@pytest.mark.parametrize(
+    "tamper",
+    [
+        "empty_provenance",
+        "wrong_actor",
+        "wrong_expected_revision",
+        "wrong_trigger",
+        "wrong_project",
+        "invalid_payload_json",
+        "wrong_created_at",
+    ],
+)
+def test_exact_replay_reconstructs_and_validates_full_client_event(
+    store: SQLiteMissionStore,
+    tamper: str,
+) -> None:
+    command = _command()
+    store.apply_command(command, lambda snapshot: _decision(command, event_id="evt_1"))
+    connection = store._connection  # noqa: SLF001
+    if tamper == "empty_provenance":
+        connection.execute("UPDATE events SET provenance_json = '{}' WHERE event_id = 'evt_1'")
+    elif tamper == "wrong_actor":
+        connection.execute(
+            "UPDATE events SET provenance_json = "
+            "'{\"actor\":{\"id\":\"other\",\"kind\":\"human\"},"
+            "\"command_id\":\"cmd_1\",\"expected_revision\":0}' "
+            "WHERE event_id = 'evt_1'"
+        )
+    elif tamper == "wrong_expected_revision":
+        connection.execute(
+            "UPDATE events SET provenance_json = "
+            "'{\"actor\":{\"id\":\"user_1\",\"kind\":\"human\"},"
+            "\"command_id\":\"cmd_1\",\"expected_revision\":1}' "
+            "WHERE event_id = 'evt_1'"
+        )
+    elif tamper == "wrong_trigger":
+        connection.execute("PRAGMA ignore_check_constraints=ON")
+        try:
+            connection.execute(
+                "UPDATE events SET trigger_kind = 'adapter_event' WHERE event_id = 'evt_1'"
+            )
+        finally:
+            connection.execute("PRAGMA ignore_check_constraints=OFF")
+    elif tamper == "wrong_project":
+        connection.execute("PRAGMA foreign_keys=OFF")
+        try:
+            connection.execute(
+                "UPDATE events SET project_id = 'prj_other' WHERE event_id = 'evt_1'"
+            )
+        finally:
+            connection.execute("PRAGMA foreign_keys=ON")
+    elif tamper == "invalid_payload_json":
+        connection.execute(
+            "UPDATE events SET payload_json = '{' WHERE event_id = 'evt_1'"
+        )
+    else:
+        connection.execute(
+            "UPDATE events SET created_at = '2026-07-18T00:00:01Z' "
+            "WHERE event_id = 'evt_1'"
+        )
+    called = 0
+
+    def must_not_decide(snapshot: object) -> MutationDecision:
+        nonlocal called
+        called += 1
+        return MutationDecision()
+
+    with pytest.raises(MutationValidationError, match="^command outcome invalid$"):
+        store.apply_command(command, must_not_decide)
+    assert called == 0
+    with store.open_reader() as reader:
+        assert reader.execute("SELECT revision FROM projects").fetchone() == (1,)
+        assert reader.execute("SELECT COUNT(*) FROM commands").fetchone() == (1,)
+        assert reader.execute("SELECT COUNT(*) FROM events").fetchone() == (1,)
