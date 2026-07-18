@@ -4,6 +4,41 @@
 
 ## 2026-07-18
 
+### Establish the Product Kernel Rewrite package boundary
+
+- Completed R0 Task 1: added the Kernel, Application, Ports, Adapters, and
+  Product package markers, plus an executable architecture guard for package
+  existence, forbidden legacy imports, and the declared layer dependency
+  direction. `product/bootstrap.py` remains the explicit future composition
+  root exception.
+- TDD RED was confirmed with `kernel` absent; the minimal package markers made
+  the new architecture test GREEN (`4 passed`). The structured CLI compatibility
+  regression also passed (`195 passed`).
+- Review found three bypasses in the initial guard: `from agentdeck import cli`
+  dropped the imported alias, bare `startswith` admitted names such as
+  `agentdeck.kernel_evil`, and shallow globbing missed nested Python modules.
+  Deterministic RED tests exposed all four related cases, including relative
+  import normalization; the repaired parser, namespace matcher, and recursive
+  walker are GREEN (`8 passed`) while the structured CLI compatibility
+  regression remains GREEN (`195 passed`).
+- A second review found that bare `import agentdeck` was omitted from internal
+  layer checks and legacy descendant imports such as
+  `agentdeck.daemon.recovery` escaped exact-set matching. New RED fixtures
+  confirmed both failures and verified that `product/bootstrap.py` is exempt
+  only from layer direction, never legacy detection. A single namespace-aware
+  predicate now governs allowed, forbidden, and internal checks; the repaired
+  guard is GREEN (`11 passed`) with the structured CLI regression still GREEN
+  (`195 passed`).
+- Quality review then found that the whole-file bootstrap exception admitted
+  arbitrary legacy namespaces such as `agentdeck.runtime`, while recording the
+  parent of `from agentdeck import kernel` made a legal new-layer import look
+  like a forbidden bare-root import. RED tests captured both failures and also
+  constrained bootstrap to the five explicit rewrite namespaces. `ImportFrom`
+  now records only complete imported members, and the composition root uses an
+  explicit namespace allowlist rather than skipping validation. The final
+  architecture guard is GREEN (`14 passed`), and the structured CLI regression
+  remains GREEN (`195 passed`).
+
 ### Plan the complete Product Kernel Rewrite execution path
 
 - Added the sole active implementation plan at
