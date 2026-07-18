@@ -1,10 +1,15 @@
 # AgentDeck Product Kernel Rewrite Design
 
-**Status:** Approved design; implementation remains locked pending written-spec review and a separate `writing-plans` TDD plan
+**Status:** Approved design and Rewrite Context Firewall; implementation
+remains locked pending review of this cleaned written spec and a separate
+`writing-plans` TDD plan
 
 **Date:** 2026-07-18
 
-**Authority:** Product North Star first; this document supersedes the active P1-first implementation order but preserves P0/P1/M2/M2c as historical evidence
+**Authority:** This document is the active implementation authority. The
+Product North Star protects long-term product intent. P0/P1/M2/M2c remain
+recoverable historical evidence but cannot create requirements, dictate task
+order, or veto the rewrite.
 
 **Branch:** `codex/product-kernel-rewrite`
 
@@ -304,6 +309,44 @@ The new main path cannot depend on:
 - concurrent JSON/JSONL and SQLite write authorities;
 - M2c harness-specific cardinality and one-shot assumptions;
 - the old daemon as an MVP prerequisite.
+
+### 7.4 Rewrite Context Firewall
+
+The active implementation-authority order is:
+
+```text
+this Product Kernel Rewrite Design
+  -> Product North Star for long-term invariants
+  -> separately approved Rewrite TDD plan
+  -> current Task acceptance criteria
+  -> real validation evidence
+  -> explicitly admitted legacy Adapter evidence
+```
+
+HISTORY, old source, old tests, validation prose, and legacy contracts cannot
+add an MVP requirement or change the R0-R8 sequence. Existing code is
+`not admitted` by default. A task may inspect or reuse it only when the plan
+names the evidence and the reuse is protected by a new Port, characterization
+test, Adapter-only integration, reuse-register entry, and architecture test.
+
+Root coding-agent instructions must remain compact and point here. They must
+not embed the removed P1/M2c/daemon/Skill/Memory implementation backlog.
+Implementation tasks must name their authority sections, allowed files,
+forbidden legacy imports, approved evidence, RED reason, minimal GREEN
+behavior, regression commands, and commit boundary. General repository-wide
+legacy exploration is not part of normal task context.
+
+Architecture and documentation checks must fail when:
+
+- Kernel imports legacy modules or performs I/O;
+- Application bypasses Ports;
+- Product calls the old CLI as an internal API;
+- a non-admitted Adapter imports legacy implementation;
+- the new path reads legacy JSON/JSONL as authority;
+- automatic Codex/Claude transport falls back to CLI/PTY;
+- tmux is treated as communication or completion truth;
+- active documents restore a removed design as current work;
+- README, handoff, North Star, and this spec disagree on the MVP boundary.
 
 ## 8. Domain model
 
@@ -811,11 +854,30 @@ The incomplete P1 branch remains an architecture reference, not the parent of
 the rewrite. Useful P1 invariants and tests can migrate; P1 TOCTOU/WAL/SHM and
 daemon hardening remain deferred until a real post-MVP need exists.
 
+### 20.1 Active-document reset
+
+The working tree contains one current construction design: this document.
+Historical specs, plans, architecture proposals, the old V1 PRD, M2c migration
+plan, obsolete live SOPs, and legacy walkthroughs are removed from the active
+tree. Git history remains their archive.
+
+Real validation results, reference analysis, and the legacy capability
+inventory remain as evidence. `HISTORY.md` remains an audit timeline, but its
+historical paths do not imply current files or authority. Legacy structured
+CLI contract documents remain temporarily for compatibility and carry a
+directory-level non-authority notice.
+
+The root README files, `AGENTS.md`, `AGENT.md`, `CLAUDE.md`, and current
+handoff must describe only the rewrite, current gate, retained compatibility
+boundary, and approved post-MVP sequence. The documentation reset is an atomic
+docs-only commit; it cannot modify product source, tests, runtime state,
+environment definitions, authentication, or installed tools.
+
 ## 21. Development and commit discipline
 
 Every implementation slice must:
 
-1. reread the Product North Star and this spec;
+1. reread this spec and the Product North Star;
 2. write a deterministic RED test;
 3. confirm the RED failure reason;
 4. implement the smallest GREEN behavior;
@@ -824,6 +886,13 @@ Every implementation slice must:
 7. update HISTORY and affected durable docs;
 8. self-review scope, security, and product behavior;
 9. create one local commit with no unrelated files.
+
+Every task in the Rewrite TDD plan must additionally identify the exact
+authority sections, allowed files, forbidden legacy imports, approved legacy
+evidence, expected RED reason, smallest GREEN outcome, regression scope, and
+commit boundary. Old regression tests protect compatibility only; when an old
+expectation conflicts with this design, the expectation is retired or
+reclassified rather than imposed on the new Kernel.
 
 The rewrite occurs in an isolated worktree. No push, merge, global auth change,
 adapter installation, real provider run, or live acceptance is implied by this

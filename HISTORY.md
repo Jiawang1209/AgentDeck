@@ -4,6 +4,40 @@
 
 ## 2026-07-18
 
+### Enforce the Product Kernel Rewrite context firewall
+
+- Approved a hard active-context reset so the Product Kernel Rewrite Design is
+  the only construction design in the working tree. Product North Star remains
+  the long-term invariant source; an approved Rewrite TDD plan and current Task
+  criteria will narrow execution. HISTORY, validation evidence, legacy code,
+  tests, and contracts cannot create current requirements.
+- Removed 87 obsolete design-authority files: 37 prior specs, 40 prior plans,
+  three old architecture proposals, the old V1 PRD, the M2c test-migration
+  matrix, three obsolete validation strategy/SOP files, and two legacy
+  walkthroughs. Git history remains the lossless archive.
+- Retained real validation results, reference analysis, the legacy capability
+  inventory, source, tests, and structured CLI contracts. Added a contracts
+  directory notice that those schemas are compatibility surfaces, not new
+  Kernel models.
+- Replaced the oversized root Agent instructions and current handoff with
+  compact rewrite-only authority. Added tracked `AGENTS.md` for coding agents
+  and rewrote the bilingual README around the foreground MVP, ACP-only
+  automatic communication, tmux observation, SQLite single-writer authority,
+  and real four-Worker Golden Product Gate.
+- Added the Rewrite Context Firewall to the formal design: legacy code is
+  not admitted by default; reuse requires a new Port, characterization test,
+  Adapter-only integration, reuse record, and architecture test. Every planned
+  Task must declare authority sections, allowed files, forbidden imports,
+  evidence, RED/GREEN behavior, verification, and commit boundary.
+- This cleanup is documentation-only. It starts no implementation, provider,
+  ACP/tmux live session, daemon, preflight, or Mission, and changes no
+  authentication, installation, global configuration, merge, or push state.
+- Fresh verification in the isolated `agentdeck` conda environment passed
+  `python -m compileall src tests -q` and the complete suite with
+  `4461 passed, 3 skipped in 200.95s`; the final pre-commit rerun also passed
+  `4461 passed, 3 skipped in 209.74s`. Exact diff auditing found zero changes
+  under product source, tests, runtime state, packaging, or environment files.
+
 ### Approve and freeze the AgentDeck Product Kernel Rewrite design
 
 - Replaced the active P1-first evolutionary implementation order with an

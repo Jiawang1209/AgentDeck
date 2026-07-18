@@ -1,131 +1,84 @@
 # AgentDeck
 
-**A local-first, governable, protocol-native multi-agent workbench.**
-
-AgentDeck turns a natural-language goal into a reviewable Mission, coordinates real Codex, Claude, and other Agents, and keeps execution visible, auditable, and recoverable.
-
-> North star: Hermes-like conversation, ACP-native communication, CCB-style real multi-agent collaboration, and a stronger orchestration and governance kernel.
+**A local-first product for governed Codex and Claude collaboration.**
 
 [中文](README.zh-CN.md)
 
-## Start with a conversation
+AgentDeck is being rebuilt around one simple product journey:
 
-```bash
-conda env create -f environment.yml
-conda activate agentdeck
-python -m pip install -e .
-agentdeck
-```
+> Run `agentdeck`, choose a real Leader and permission profile, describe a
+> development goal, review one human-readable Mission, confirm it once, and
+> watch Codex and Claude implement, review, revise, and accept the result
+> through ACP while tmux shows their real work streams.
 
-Running bare `agentdeck` in a terminal now opens the Phase 3 M1 foreground conversation. In an uninitialized directory it first shows an exact project-setup preview. In a project it can use the configured API-backed LLM or Agent CLI as Leader, turn an open request into a frozen Mission preview, and execute only after natural-language confirmation of that exact preview.
+## Current status
 
-When a project has a background Mission recovery fact, bare `agentdeck` first
-prints the validated ProjectView `mission_recovery` card and then enters the
-normal conversation UI. A project with no Mission to recover remains quiet.
-This reconnect rendering is deterministic and does not call an LLM, inspect
-tmux, write state, or reconstruct a transcript. Semantic Missions expose only
-their compact step hash, bound across the frozen step, attempt, and validated
-result; legacy recovery cards keep their existing exact shape.
+The Product Kernel Rewrite is the only active development route. The existing
+structured CLI remains available as a legacy compatibility and debugging
+surface while the new Kernel is developed side by side. It is not the
+architecture of the new product.
 
-```text
-You       › Let Codex implement this and Claude review it.
-AgentDeck › Mission preview: 2 Workers, approval required.
-You       › Confirm the current preview.
-AgentDeck › Mission started. Use /status or open the workbench to inspect it.
-```
+The foreground MVP will provide:
 
-`agentdeck leader chat --message "..."` remains available for scripts and debugging.
+- Codex CLI, Claude CLI, or an OpenAI-compatible API Leader;
+- explicit model selection and three permission profiles;
+- natural-language goals and an exact Mission Preview;
+- Codex implementation, Claude review, Codex revision, and Claude acceptance;
+- ACP-only automatic Codex/Claude communication;
+- tmux panes showing decoded real Agent events;
+- one project-local SQLite database and deterministic exit/re-entry;
+- plain-language diagnostics instead of opaque internal failure labels.
 
-## What works today
-
-- explicit API or Agent-CLI Leader identity and readiness;
-- deterministic `/help`, `/status`, `/approvals`, `/trace`, setup, and exit intents without an LLM call;
-- bounded foreground conversation context with compact, transcript-free conversation state;
-- exact, expiring, consume-once preview confirmation;
-- one authoritative on-demand project daemon that continues a confirmed Mission after the client disconnects;
-- deterministic reconnect, crash reconciliation, and exact permission/ownership/safety pauses;
-- Mission planning, approval, dispatch, inbox/reply/ack, trace, workflow, and recovery primitives;
-- ACP Worker routing when configured and ready, with no silent transport fallback;
-- visible read-only tmux mirrors, explicit reroute/takeover, and single-writer ownership;
-- ProjectView and versioned GUI-ready contracts for conversation, Leader, and Worker transport facts;
-- governed Skill and Memory provenance.
-
-Useful observation commands:
-
-```bash
-agentdeck status
-agentdeck workbench
-agentdeck controls
-agentdeck events --limit 20
-agentdeck contract conversation-runtime --example
-agentdeck contract leader-backend --example
-agentdeck contract worker-transport --example
-agentdeck contract migration --example
-agentdeck project migration-preview
-```
-
-## Safety boundary
-
-Natural language is never execution authority. AgentDeck binds confirmation to exact execution facts, does not silently change ACP to tmux, and keeps permission, approval, runtime-safety, and ownership gates independent. Common inline credential assignments are redacted from durable Mission provenance.
-
-For semantic Missions, AgentDeck is the control plane around LLM reasoning, not
-a replacement for it. The user supplies required authority; the Leader may add
-separately visible proposals; ambiguous facts remain unresolved; and only the
-exact confirmed preview becomes frozen authority. AgentDeck then compiles the
-Worker tasks deterministically and binds confirmation to the authority,
-compiled-task, policy, and preview-generation facts. That single Mission
-confirmation does not grant later ACP tool permissions or bypass runtime
-safety, ownership, or approval gates.
-
-ProjectView exposes only compact semantic provenance: schema/state, hashes,
-counts, compiled-step count, and blockers. It does not expose full effects,
-before/after literals, prompts, or secrets. This slice does not add A2A, remote
-execution, a GUI redesign, or a terminal emulator.
-
-Phase 3 M2 now runs daemon-admitted frozen Missions in one verified, on-demand
-project daemon. Closing the interactive client does not revoke the frozen
-authority or stop the scheduler. AgentDeck mediates every Worker transition,
-records compact handoffs before starting the next Worker, and uses the exact
-configured ACP or tmux transport without fallback. New permission, ambiguity,
-ownership conflict, drift, or safety escalation pauses for an exact human
-decision. Bare `agentdeck` reconnects from compact ProjectView facts without an
-LLM or transcript reconstruction. Existing projects use read-only migration
-preview followed by an expiring explicit confirmation; incomplete historical
-Missions remain inspect-only.
-
-M2 is project-local. A2A, remote daemons, global roaming, notifications,
-Desktop/IDE Workspace Clients, full transcript recovery, automatic adapter
-installation/login, Windows IPC, and a terminal emulator remain future work.
+Background-after-exit execution, Memory, Skills, self-improvement, a browser
+GUI, A2A, and remote clients are post-MVP work.
 
 ## Architecture
 
 ```text
-Human / CLI / future TUI or Desktop
-              |
-      ConversationSession
-              |
- Mission / Approval / Ledger / Recovery
-              |
-   Protocol-native Runtime Kernel
-       /                 \
-     ACP            tmux visible plane
-       \                 /
-   Codex / Claude / other Agents
+Product -> Application -> Kernel
+                   \-> Ports <- Adapters
+
+Legacy code -> admitted Adapters only
 ```
 
-ACP standardizes Agent communication; it does not replace AgentDeck's Mission, policy, scheduler, audit, or recovery layers.
+The domain Kernel owns Mission, permission, scheduling, handoff, evidence, and
+recovery invariants. ACP is the automatic transport. tmux is an observation and
+manual-takeover surface, never task or completion authority.
 
-## Documentation
+## Golden Product Gate
 
-- [Product north star](docs/roadmap/product-north-star.md)
-- [Phase 3 M1 design](docs/superpowers/specs/2026-07-13-agentdeck-foreground-conversation-design.md)
-- [Current development state](docs/handoff/current-development-state.md)
-- [Contract index](docs/contracts/contract-index-schema.md)
-- [Architecture](docs/architecture/)
+The bare `agentdeck` entrypoint will switch only after a real four-Worker
+acceptance reproduces a frozen local copy of the IAE homepage:
 
-Run verification in the project environment:
+1. Codex implements.
+2. Claude reviews.
+3. Codex revises.
+4. Claude accepts.
+
+The gate requires real ACP lineage, tmux visibility, browser/visual evidence,
+SQLite recovery, safe exit/re-entry, and human product acceptance.
+
+## Development
 
 ```bash
-conda run --no-capture-output -n agentdeck pytest -q
-conda run --no-capture-output -n agentdeck python -m compileall src tests -q
+conda activate agentdeck
+python -m pip install -e .
+pytest -q
 ```
+
+All development commands must run in the `agentdeck` conda environment.
+Product implementation is locked until the Rewrite Design and its separate TDD
+plan have both passed human review.
+
+## Authoritative documents
+
+- [Product Kernel Rewrite Design](docs/superpowers/specs/2026-07-18-agentdeck-product-kernel-rewrite-design.md)
+- [Product North Star](docs/roadmap/product-north-star.md)
+- [Current development state](docs/handoff/current-development-state.md)
+- [Ultimate goal roadmap](docs/roadmap/ultimate-goal-roadmap.md)
+- [Legacy capability inventory](docs/migrations/2026-07-17-legacy-capability-inventory.md)
+
+Historical designs and plans were removed from the active working tree to
+prevent them from becoming accidental implementation authority. They remain
+recoverable from Git history. Existing contract documents describe the legacy
+compatibility surface unless the Rewrite Design explicitly adopts them.
