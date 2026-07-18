@@ -941,9 +941,11 @@ Run:
 ```bash
 git status --short --branch
 git log -10 --oneline --decorate
+git diff --name-only f3968720..HEAD -- src/agentdeck tests .agentdeck
 ```
 
-Expected: clean worktree and the ordered P0 documentation commits.
+Expected: the scope audit produces zero output, the worktree is clean, and the
+log shows the ordered P0 documentation commits.
 
 - [ ] **Step 2: Report the exact P0 outcome**
 
