@@ -71,6 +71,8 @@ MAX_SNAPSHOT_ROWS = 4096
 MAX_SNAPSHOT_BYTES = 512 * 1024
 MAX_IDENTITY_ROWS = 32_768
 MAX_IDENTITY_BYTES = 4 * 1024 * 1024
+MAX_MUTATION_CHANGES = MAX_SNAPSHOT_ROWS
+MAX_MUTATION_CHANGE_BYTES = MAX_SNAPSHOT_BYTES
 
 
 class _InvalidMutationValue(Exception):
@@ -735,8 +737,23 @@ class MutationDecision:
         try:
             if not isinstance(self.changes, tuple) or not all(
                 type(item) is EntityChange for item in self.changes
-            ):
+            ) or len(self.changes) > MAX_MUTATION_CHANGES:
                 raise _InvalidMutationValue
+            canonical_changes = _freeze_mutation_json(
+                [
+                    {
+                        "operation": change.operation,
+                        "table": change.table,
+                        "values": dict(change.values),
+                        "where": dict(change.where),
+                    }
+                    for change in self.changes
+                ]
+            )
+            _canonical_mutation_bytes(
+                canonical_changes,
+                maximum=MAX_MUTATION_CHANGE_BYTES,
+            )
             if not isinstance(self.events, tuple) or not all(
                 type(item) is DomainEvent for item in self.events
             ):

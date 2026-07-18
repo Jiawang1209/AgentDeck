@@ -11,6 +11,7 @@ from agentdeck.domain.events import DomainEvent
 from agentdeck.storage.sqlite_store import (
     MAX_IDENTITY_BYTES,
     MAX_IDENTITY_ROWS,
+    MAX_SNAPSHOT_BYTES,
     MAX_SNAPSHOT_ROWS,
     CommandEnvelope,
     EntityChange,
@@ -457,7 +458,7 @@ def test_identity_index_has_independent_row_and_byte_limits(monkeypatch) -> None
     assert MAX_IDENTITY_BYTES > 8
 
 
-def test_post_change_snapshot_row_budget_rolls_back_without_unbounded_commit(
+def test_mutation_change_count_budget_rejects_before_unbounded_commit(
     store: SQLiteMissionStore,
 ) -> None:
     command = _command(command_id="cmd_many")
@@ -478,13 +479,107 @@ def test_post_change_snapshot_row_budget_rolls_back_without_unbounded_commit(
         for index in range(MAX_SNAPSHOT_ROWS + 1)
     )
 
-    with pytest.raises(MutationValidationError, match="^mutation snapshot invalid$"):
+    with pytest.raises(MutationValidationError, match="^mutation decision invalid$"):
         store.apply_command(
             command,
             lambda snapshot: MutationDecision(changes=changes, result={}),
         )
 
     _assert_empty_at_revision_zero(store)
+
+
+def test_terminal_row_batch_is_bounded_before_any_sql_write(
+    store: SQLiteMissionStore,
+) -> None:
+    command = _command(command_id="cmd_terminal_overflow")
+
+    def decide(snapshot: ProjectMutationSnapshot) -> MutationDecision:
+        changes: list[EntityChange] = []
+        for index in range(9):
+            mission_id = f"mis_terminal_{index}"
+            changes.extend(
+                (
+                    EntityChange.insert(
+                        "missions",
+                        {
+                            "mission_id": mission_id,
+                            "project_id": store.project_id,
+                            "current_version": 1,
+                            "status": "completed",
+                            "created_revision": 1,
+                            "updated_revision": 1,
+                        },
+                    ),
+                    EntityChange.insert(
+                        "mission_versions",
+                        {
+                            "mission_id": mission_id,
+                            "version": 1,
+                            "specification_json": "x" * 60_000,
+                            "authorization_digest": None,
+                            "proposal_provenance_json": "{}",
+                            "confirmed_revision": None,
+                        },
+                    ),
+                )
+            )
+        return MutationDecision(changes=tuple(changes))
+
+    with pytest.raises(MutationValidationError, match="^mutation decision invalid$") as raised:
+        store.apply_command(command, decide)
+
+    assert raised.value.__cause__ is None
+    _assert_empty_at_revision_zero(store)
+
+
+def test_terminal_row_batch_below_aggregate_limit_can_commit(
+    store: SQLiteMissionStore,
+) -> None:
+    command = _command(command_id="cmd_terminal_bounded")
+
+    def decide(snapshot: ProjectMutationSnapshot) -> MutationDecision:
+        changes: list[EntityChange] = []
+        for index in range(8):
+            mission_id = f"mis_terminal_{index}"
+            changes.extend(
+                (
+                    EntityChange.insert(
+                        "missions",
+                        {
+                            "mission_id": mission_id,
+                            "project_id": store.project_id,
+                            "current_version": 1,
+                            "status": "completed",
+                            "created_revision": 1,
+                            "updated_revision": 1,
+                        },
+                    ),
+                    EntityChange.insert(
+                        "mission_versions",
+                        {
+                            "mission_id": mission_id,
+                            "version": 1,
+                            "specification_json": "x" * 60_000,
+                            "authorization_digest": None,
+                            "proposal_provenance_json": "{}",
+                            "confirmed_revision": None,
+                        },
+                    ),
+                )
+            )
+        return MutationDecision(changes=tuple(changes))
+
+    outcome = store.apply_command(command, decide)
+
+    assert outcome.revision == 1
+    assert MAX_SNAPSHOT_BYTES == 512 * 1024
+    with store.open_reader() as reader:
+        assert reader.execute("SELECT COUNT(*) FROM missions").fetchone() == (8,)
+        assert reader.execute("SELECT COUNT(*) FROM mission_versions").fetchone() == (
+            8,
+        )
+        assert reader.execute("SELECT COUNT(*) FROM commands").fetchone() == (1,)
+        assert reader.execute("SELECT COUNT(*) FROM events").fetchone() == (0,)
 
 
 def test_invalid_insert_primary_key_inside_decision_writes_nothing(

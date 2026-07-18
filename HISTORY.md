@@ -52,6 +52,13 @@
   connection, lazy query, or terminal payload history to pure decisions. Both
   views are rebuilt and validated before and after each mutation in the same
   transaction.
+- Bounded the mutation batch independently of both snapshot views. Before any
+  SQL executes, `MutationDecision` now rejects more than 4,096 entity changes
+  or more than 512 KiB of their complete canonical
+  operation/table/values/where representation, including JSON structure
+  overhead. This prevents a single oversized batch of immediately terminal
+  rows from evading the active working-set budget, while valid large Mission
+  confirmation and incremental terminal history remain supported.
 - Tightened Mission authority and identity failure boundaries. Every Mission
   command now requires both `actor.kind=human` and a nonblank, bounded UTF-8
   actor id; anonymous or type-confused self-declarations write nothing. Mission
