@@ -457,3 +457,36 @@ def test_invalid_insert_primary_key_inside_decision_writes_nothing(
         )
 
     _assert_empty_at_revision_zero(store)
+
+
+def test_client_event_timestamp_must_match_command_before_first_commit(
+    store: SQLiteMissionStore,
+) -> None:
+    command = _command(command_id="cmd_time")
+    mismatched = DomainEvent.client_command(
+        event_id="evt_time",
+        kind="approval_recorded",
+        command_id=command.command_id,
+        expected_revision=command.expected_revision,
+        actor=command.actor_dict(),
+        payload={},
+        created_at="2026-07-18T00:00:01Z",
+    )
+
+    with pytest.raises(MutationValidationError, match="^mutation decision invalid$"):
+        store.apply_command(
+            command,
+            lambda snapshot: MutationDecision(events=(mismatched,)),
+        )
+    _assert_empty_at_revision_zero(store)
+
+    aligned = _event(command, event_id="evt_time")
+    first = store.apply_command(
+        command,
+        lambda snapshot: MutationDecision(events=(aligned,)),
+    )
+
+    def must_not_decide(snapshot: object) -> MutationDecision:
+        raise AssertionError("exact replay called decision")
+
+    assert store.apply_command(command, must_not_decide) == first

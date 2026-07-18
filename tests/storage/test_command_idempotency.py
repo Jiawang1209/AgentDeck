@@ -576,3 +576,22 @@ def test_exact_replay_reconstructs_and_validates_full_client_event(
         assert reader.execute("SELECT revision FROM projects").fetchone() == (1,)
         assert reader.execute("SELECT COUNT(*) FROM commands").fetchone() == (1,)
         assert reader.execute("SELECT COUNT(*) FROM events").fetchone() == (1,)
+
+
+def test_replay_event_lookup_uses_command_cursor_index(
+    store: SQLiteMissionStore,
+) -> None:
+    command = _command()
+    store.apply_command(command, lambda snapshot: _decision(command, event_id="evt_1"))
+
+    plan = store._connection.execute(  # noqa: SLF001
+        "EXPLAIN QUERY PLAN "
+        "SELECT event_id, project_id, project_revision, trigger_kind, kind, "
+        "provenance_json, payload_json, command_id, adapter_event_id, "
+        "internal_trigger_id, created_at FROM events "
+        "WHERE command_id = ? ORDER BY event_cursor",
+        (command.command_id,),
+    ).fetchall()
+    details = [str(row[3]) for row in plan]
+    assert any("USING INDEX events_command_cursor_idx" in item for item in details)
+    assert not any("SCAN events" in item for item in details)

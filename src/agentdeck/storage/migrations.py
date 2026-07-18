@@ -259,6 +259,8 @@ CREATE INDEX events_project_cursor_idx
     ON events(project_id, event_cursor);
 CREATE INDEX events_project_revision_idx
     ON events(project_id, project_revision, event_cursor);
+CREATE INDEX events_command_cursor_idx
+    ON events(command_id, event_cursor);
 CREATE INDEX missions_project_status_idx
     ON missions(project_id, status);
 CREATE INDEX tasks_mission_status_idx

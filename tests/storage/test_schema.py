@@ -119,6 +119,12 @@ def test_create_installs_schema_v1_with_closed_authority_and_pragmas(
                     "SELECT revision, authority_state FROM projects "
                     "WHERE project_id = 'prj_1'"
                 ).fetchone() == (0, "sqlite_active")
+                assert [
+                    row[2]
+                    for row in reader.execute(
+                        "PRAGMA index_info('events_command_cursor_idx')"
+                    )
+                ] == ["command_id", "event_cursor"]
                 with pytest.raises(sqlite3.OperationalError):
                     reader.execute(
                         "UPDATE projects SET revision = 1 WHERE project_id = 'prj_1'"

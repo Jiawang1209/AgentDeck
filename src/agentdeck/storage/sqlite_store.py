@@ -685,6 +685,20 @@ class MutationOutcome:
             raise MutationValidationError("mutation outcome invalid") from None
 
 
+def _client_event_matches_command(
+    event: DomainEvent,
+    command: CommandEnvelope,
+) -> bool:
+    provenance = event.provenance.to_dict()
+    return (
+        event.trigger_kind == "client_command"
+        and provenance.get("command_id") == command.command_id
+        and provenance.get("expected_revision") == command.expected_revision
+        and provenance.get("actor") == command.actor_dict()
+        and event.created_at == command.created_at
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class _AuthoritySnapshot:
     schema_version: int
@@ -1295,15 +1309,8 @@ class SQLiteMissionStore:
     ) -> MutationDecision:
         if type(decision) is not MutationDecision:
             raise MutationValidationError("mutation decision invalid")
-        expected_actor = command.actor_dict()
         for event in decision.events:
-            provenance = event.provenance.to_dict()
-            if (
-                event.trigger_kind != "client_command"
-                or provenance.get("command_id") != command.command_id
-                or provenance.get("expected_revision") != command.expected_revision
-                or provenance.get("actor") != expected_actor
-            ):
+            if not _client_event_matches_command(event, command):
                 raise MutationValidationError("mutation decision invalid")
         return decision
 
@@ -1516,12 +1523,7 @@ class SQLiteMissionStore:
                         or event_command_id != command.command_id
                         or adapter_event_id is not None
                         or internal_trigger_id is not None
-                        or event_created_at != command.created_at
-                        or reconstructed.provenance.command_id != command.command_id
-                        or reconstructed.provenance.expected_revision
-                        != command.expected_revision
-                        or reconstructed.provenance.to_dict().get("actor")
-                        != command.actor_dict()
+                        or not _client_event_matches_command(reconstructed, command)
                         or event_id != persisted.event_ids[len(seen_event_ids)]
                     ):
                         raise MutationValidationError("command outcome invalid")

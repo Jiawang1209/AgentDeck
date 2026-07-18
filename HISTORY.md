@@ -57,7 +57,14 @@
   order, and outcome ids must all agree. Missing, extra, renamed, malformed, or
   wrong-revision events and mismatched accepted/completed revisions now fail
   closed with one fixed diagnostic before decision logic is called or state is
-  written.
+  written. Initial acceptance and replay now share the same event-to-command
+  validator, including exact caller-provided creation time, so a command can no
+  longer commit an event that its own exact replay would reject.
+- Added the schema-v1 `events_command_cursor_idx` over
+  `(command_id, event_cursor)`. Exact replay can validate one command's ordered
+  event ledger with an indexed search instead of scanning the complete event
+  history; the executable schema fingerprint and structural schema tests bind
+  that index without raising the not-yet-activated P1 schema version.
 - Added deterministic failure-injection, idempotent replay, changed-input,
   stale-revision, callback isolation, canonical-bound, and integrity regression
   tests. Injected failures before events, after the first event, and before the
