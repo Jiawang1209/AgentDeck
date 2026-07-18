@@ -538,6 +538,157 @@ def test_queued_commands_revalidate_revision_and_authority_at_execution(
     asyncio.run(case())
 
 
+def test_lost_responses_replay_exact_propose_and_confirm_outcomes(
+    tmp_path: Path,
+) -> None:
+    async def case() -> None:
+        runtime_module = importlib.import_module("agentdeck.daemon.mission_runtime")
+        service = _daemon_service()
+        runtime = runtime_module.DaemonMissionRuntime(
+            _prepared_root(tmp_path), daemon_service=service
+        )
+        proposal = _proposal()
+        propose_params = _propose_params(proposal)
+        await runtime.start()
+        try:
+            first_propose = await _execute_queued(
+                runtime, service, "mission.propose", propose_params
+            )
+            replayed_propose = await _execute_queued(
+                runtime, service, "mission.propose", propose_params
+            )
+            assert replayed_propose == first_propose
+
+            conflicting = _propose_params(proposal)
+            conflicting["command"] = {
+                **conflicting["command"],
+                "created_at": "2026-07-18T08:00:01Z",
+            }
+            conflict = asyncio.create_task(
+                runtime.handle_rpc("mission.propose", conflicting)
+            )
+            await asyncio.sleep(0)
+            await service.tick()
+            with pytest.raises(
+                runtime_module.MissionRuntimeError,
+                match="^Mission command conflict$",
+            ):
+                await conflict
+
+            stale = asyncio.create_task(
+                runtime.handle_rpc(
+                    "mission.propose",
+                    _propose_params(
+                        proposal, command_id="cmd_new_stale", revision=0
+                    ),
+                )
+            )
+            await asyncio.sleep(0)
+            await service.tick()
+            with pytest.raises(ServiceError, match="authority is stale"):
+                await stale
+
+            confirm_params = _confirm_params(proposal)
+            first_confirm = await _execute_queued(
+                runtime, service, "mission.confirm", confirm_params
+            )
+            replayed_confirm = await _execute_queued(
+                runtime, service, "mission.confirm", confirm_params
+            )
+            assert replayed_confirm == first_confirm
+        finally:
+            await runtime.close()
+
+    asyncio.run(case())
+
+
+@pytest.mark.parametrize(
+    "operation", ("propose", "confirm", "status", "events")
+)
+@pytest.mark.parametrize("fail_execute", (False, True))
+def test_every_runtime_reader_is_explicitly_closed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    operation: str,
+    fail_execute: bool,
+) -> None:
+    class _TrackingReader:
+        def __init__(self, connection: object) -> None:
+            self.connection = connection
+            self.close_count = 0
+
+        def execute(self, *args: object, **kwargs: object) -> object:
+            if fail_execute:
+                raise RuntimeError("private reader failure")
+            return self.connection.execute(*args, **kwargs)
+
+        def commit(self) -> None:
+            self.connection.commit()
+
+        def close(self) -> None:
+            self.close_count += 1
+            self.connection.close()
+
+    async def case() -> None:
+        runtime_module = importlib.import_module("agentdeck.daemon.mission_runtime")
+        service = _daemon_service()
+        runtime = runtime_module.DaemonMissionRuntime(
+            _prepared_root(tmp_path), daemon_service=service
+        )
+        proposal = _proposal()
+        await runtime.start()
+        try:
+            if operation == "confirm":
+                await _execute_queued(
+                    runtime, service, "mission.propose", _propose_params(proposal)
+                )
+            original_open = SQLiteMissionStore.open_reader
+            readers: list[_TrackingReader] = []
+
+            def tracked_open(store: SQLiteMissionStore) -> _TrackingReader:
+                reader = _TrackingReader(original_open(store))
+                readers.append(reader)
+                return reader
+
+            monkeypatch.setattr(SQLiteMissionStore, "open_reader", tracked_open)
+            if operation in {"propose", "confirm"}:
+                method = f"mission.{operation}"
+                params = (
+                    _propose_params(proposal)
+                    if operation == "propose"
+                    else _confirm_params(proposal)
+                )
+                pending = asyncio.create_task(runtime.handle_rpc(method, params))
+                await asyncio.sleep(0)
+                await service.tick()
+                if fail_execute:
+                    with pytest.raises(runtime_module.MissionRuntimeError):
+                        await pending
+                else:
+                    assert (await pending)["revision"] in {1, 2}
+            else:
+                method = "mission.status" if operation == "status" else "events.after"
+                params = (
+                    {"mission_id": "mis_1"}
+                    if operation == "status"
+                    else {"cursor": 0, "limit": 10}
+                )
+                if fail_execute:
+                    with pytest.raises(
+                        runtime_module.MissionRuntimeError,
+                        match="observation is unavailable",
+                    ):
+                        await runtime.handle_rpc(method, params)
+                else:
+                    await runtime.handle_rpc(method, params)
+            assert len(readers) == 1
+            assert readers[0].close_count == 1
+        finally:
+            await runtime.close()
+
+    asyncio.run(case())
+
+
 def test_events_after_returns_only_closed_sanitized_event_summaries(
     tmp_path: Path,
 ) -> None:

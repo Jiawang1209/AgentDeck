@@ -8,14 +8,13 @@ import json
 import os
 import sqlite3
 from collections.abc import Mapping
+from contextlib import closing
 from pathlib import Path
 from typing import cast
 
 from agentdeck.app.mission_service import (
     MissionProposal,
     MissionService,
-    _parse_authorization,
-    _parse_mission_version,
 )
 from agentdeck.daemon.protocol import (
     MISSION_RPC_METHODS,
@@ -26,14 +25,15 @@ from agentdeck.daemon.protocol import (
 from agentdeck.daemon.service import ProjectDaemonService, ServiceError
 from agentdeck.storage.ownership import ProjectWriterLease, WriterLeaseError
 from agentdeck.storage.sqlite_store import (
+    CommandConflict,
     CommandEnvelope,
     MutationValidationError,
     SQLiteMissionStore,
-    SQLiteStoreError,
 )
 
 
 _MAX_REQUEST_BYTES = 128 * 1024
+_MAX_PERSISTED_COMMAND_BYTES = 64 * 1024
 _MAX_TEXT_BYTES = 4096
 _MAX_EVENT_PAGE = 100
 _MAX_SIGNED_64 = (2**63) - 1
@@ -314,24 +314,8 @@ class DaemonMissionRuntime:
             raise MissionRuntimeError("Mission RPC method is not allowed")
         try:
             closed = _validate_request_size(params, method=method)
-            if method == "mission.status":
-                try:
-                    return self._mission_status(store, closed)
-                except MissionRuntimeError:
-                    raise
-                except (SQLiteStoreError, sqlite3.Error, RuntimeError):
-                    raise MissionRuntimeError(
-                        "Mission observation is unavailable"
-                    ) from None
-            if method == "events.after":
-                try:
-                    return self._events_after(store, closed)
-                except MissionRuntimeError:
-                    raise
-                except (SQLiteStoreError, sqlite3.Error, RuntimeError):
-                    raise MissionRuntimeError(
-                        "Mission observation is unavailable"
-                    ) from None
+            if method in {"mission.status", "events.after"}:
+                return self._read_observation(store, method, closed)
             if method == "mission.propose":
                 command, proposal, expected_state = self._parse_propose(closed)
                 revalidate = lambda: self._state == "started" and self._revalidate_propose(
@@ -372,21 +356,47 @@ class DaemonMissionRuntime:
             raise
         except ServiceError:
             raise
+        except CommandConflict:
+            raise MissionRuntimeError("Mission command conflict") from None
         except Exception:
             raise MissionRuntimeError("Mission RPC mutation failed") from None
         if not isinstance(result, dict):
             raise MissionRuntimeError("Mission RPC response is invalid")
         return result
 
+    @classmethod
+    def _read_observation(
+        cls,
+        store: SQLiteMissionStore,
+        method: str,
+        params: dict[str, object],
+    ) -> dict[str, object]:
+        """Route one closed read method and sanitize every reader failure."""
+        try:
+            if method == "mission.status":
+                return cls._mission_status(store, params)
+            if method == "events.after":
+                return cls._events_after(store, params)
+            raise _InvalidRequest
+        except MissionRuntimeError:
+            raise
+        except (sqlite3.Error, RuntimeError):
+            raise MissionRuntimeError(
+                "Mission observation is unavailable"
+            ) from None
+
     @staticmethod
     def _parse_propose(
         params: dict[str, object],
     ) -> tuple[CommandEnvelope, MissionProposal, str]:
         item = _object(params, _PROPOSE_FIELDS)
-        proposal = MissionProposal(
-            _parse_mission_version(item["mission_version"]),
-            _parse_authorization(item["authorization_envelope"]),
-            _object(item["leader_provenance"]),
+        proposal = MissionProposal.from_rpc_dict(
+            {
+                "mission_version": item["mission_version"],
+                "authorization_envelope": item["authorization_envelope"],
+                "authorization_digest": item["authorization_digest"],
+                "leader_provenance": item["leader_provenance"],
+            }
         )
         expected_digest = _digest(item["authorization_digest"])
         if not hmac.compare_digest(proposal.authorization_digest, expected_digest):
@@ -427,17 +437,126 @@ class DaemonMissionRuntime:
     @staticmethod
     def _project_authority(
         store: SQLiteMissionStore,
-    ) -> tuple[object, object]:
-        with store.open_reader() as reader:
+        command: CommandEnvelope,
+    ) -> tuple[object, object, str]:
+        with closing(store.open_reader()) as reader:
             reader.execute("BEGIN")
-            row = reader.execute(
+            project = reader.execute(
                 "SELECT revision, authority_state FROM projects WHERE project_id = ?",
                 (store.project_id,),
             ).fetchone()
+            command_row = reader.execute(
+                "SELECT project_id, input_hash, expected_revision, status, "
+                "outcome_json, accepted_revision, completed_revision, "
+                "actor_json, created_at FROM commands WHERE command_id = ?",
+                (command.command_id,),
+            ).fetchone()
             reader.commit()
-        if row is None or len(row) != 2:
-            return None, None
-        return row[0], row[1]
+        if project is None or len(project) != 2:
+            return None, None, "invalid"
+        return project[0], project[1], DaemonMissionRuntime._command_state(
+            store, command, command_row, project_revision=project[0]
+        )
+
+    @staticmethod
+    def _command_state(
+        store: SQLiteMissionStore,
+        command: CommandEnvelope,
+        row: object,
+        *,
+        project_revision: object,
+    ) -> str:
+        if row is None:
+            return "absent"
+        if not isinstance(row, tuple) or len(row) != 9:
+            return "invalid"
+        (
+            project_id,
+            input_hash,
+            expected_revision,
+            status,
+            outcome_json,
+            accepted_revision,
+            completed_revision,
+            actor_json,
+            created_at,
+        ) = row
+        try:
+            actor = json.loads(actor_json)
+            outcome = json.loads(outcome_json)
+            canonical_actor = json.dumps(
+                actor,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+            canonical_outcome = json.dumps(
+                outcome,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+            exact_input = hmac.compare_digest(input_hash, command.input_hash)
+            closed = (
+                project_id == store.project_id
+                and isinstance(input_hash, str)
+                and len(input_hash) == len(_DIGEST_PREFIX) + 64
+                and input_hash.startswith(_DIGEST_PREFIX)
+                and all(
+                    type(item) is int and 0 <= item <= _MAX_SIGNED_64
+                    for item in (
+                        project_revision,
+                        expected_revision,
+                        accepted_revision,
+                        completed_revision,
+                    )
+                )
+                and status == "completed"
+                and isinstance(outcome_json, str)
+                and len(outcome_json.encode("utf-8"))
+                <= _MAX_PERSISTED_COMMAND_BYTES
+                and accepted_revision == completed_revision == expected_revision + 1
+                and project_revision >= completed_revision
+                and canonical_actor == actor_json
+                and isinstance(actor, dict)
+                and bool(actor)
+                and canonical_outcome == outcome_json
+                and isinstance(outcome, dict)
+                and set(outcome) == {
+                    "command_id",
+                    "revision",
+                    "event_ids",
+                    "result",
+                }
+                and outcome.get("command_id") == command.command_id
+                and outcome.get("revision") == completed_revision
+                and isinstance(outcome.get("event_ids"), list)
+                and isinstance(outcome.get("result"), dict)
+                and isinstance(created_at, str)
+                and bool(created_at)
+                and (
+                    not exact_input
+                    or (
+                        expected_revision == command.expected_revision
+                        and actor == command.actor_dict()
+                        and created_at == command.created_at
+                    )
+                )
+            )
+        except (
+            json.JSONDecodeError,
+            TypeError,
+            UnicodeEncodeError,
+            ValueError,
+        ):
+            return "invalid"
+        if not closed:
+            return "invalid"
+        return (
+            "completed_exact"
+            if exact_input
+            else "completed_conflict"
+        )
 
     @classmethod
     def _revalidate_propose(
@@ -447,7 +566,11 @@ class DaemonMissionRuntime:
         proposal: MissionProposal,
         expected_state: str,
     ) -> bool:
-        revision, state = cls._project_authority(store)
+        revision, state, command_state = cls._project_authority(store, command)
+        if command_state.startswith("completed_"):
+            return state == expected_state == "sqlite_active"
+        if command_state != "absent":
+            return False
         return (
             revision == command.expected_revision
             and state == expected_state == "sqlite_active"
@@ -467,7 +590,7 @@ class DaemonMissionRuntime:
         digest: str,
         expected_state: str,
     ) -> bool:
-        with store.open_reader() as reader:
+        with closing(store.open_reader()) as reader:
             reader.execute("BEGIN")
             project = reader.execute(
                 "SELECT revision, authority_state FROM projects WHERE project_id = ?",
@@ -482,7 +605,26 @@ class DaemonMissionRuntime:
                 "FROM mission_versions WHERE mission_id = ? AND version = ?",
                 (mission_id, version),
             ).fetchone()
+            command_row = reader.execute(
+                "SELECT project_id, input_hash, expected_revision, status, "
+                "outcome_json, accepted_revision, completed_revision, "
+                "actor_json, created_at FROM commands WHERE command_id = ?",
+                (command.command_id,),
+            ).fetchone()
             reader.commit()
+        command_state = cls._command_state(
+            store,
+            command,
+            command_row,
+            project_revision=project[0] if project is not None else None,
+        )
+        if command_state.startswith("completed_"):
+            return bool(
+                project is not None
+                and project[1] == expected_state == "sqlite_active"
+            )
+        if command_state != "absent":
+            return False
         return bool(
             project == (command.expected_revision, expected_state)
             and expected_state == "sqlite_active"
@@ -502,7 +644,7 @@ class DaemonMissionRuntime:
     ) -> dict[str, object]:
         item = _object(params, frozenset({"mission_id"}))
         mission_id = _text(item["mission_id"])
-        with store.open_reader() as reader:
+        with closing(store.open_reader()) as reader:
             reader.execute("BEGIN")
             project = reader.execute(
                 "SELECT revision, authority_state FROM projects WHERE project_id = ?",
@@ -558,7 +700,7 @@ class DaemonMissionRuntime:
         limit = _positive(item["limit"])
         if limit > _MAX_EVENT_PAGE:
             raise _InvalidRequest
-        with store.open_reader() as reader:
+        with closing(store.open_reader()) as reader:
             reader.execute("BEGIN")
             project = reader.execute(
                 "SELECT revision FROM projects WHERE project_id = ?",

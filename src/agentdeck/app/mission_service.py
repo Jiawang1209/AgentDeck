@@ -442,6 +442,45 @@ class MissionProposal:
             "leader_provenance_hash": self.leader_provenance_hash,
         }
 
+    @classmethod
+    def from_rpc_dict(cls, value: object) -> "MissionProposal":
+        """Decode one closed untrusted RPC proposal without stored-row semantics."""
+        try:
+            item = _mapping(value)
+            if set(item) != {
+                "mission_version",
+                "authorization_envelope",
+                "authorization_digest",
+                "leader_provenance",
+            }:
+                raise _InvalidMissionValue
+            asserted_digest = item["authorization_digest"]
+            if (
+                not isinstance(asserted_digest, str)
+                or _DIGEST_PATTERN.fullmatch(asserted_digest) is None
+            ):
+                raise _InvalidMissionValue
+            proposal = cls(
+                _parse_mission_version(item["mission_version"]),
+                _parse_authorization(item["authorization_envelope"]),
+                _mapping(item["leader_provenance"]),
+            )
+            if not hmac.compare_digest(
+                proposal.authorization_digest, asserted_digest
+            ):
+                raise _InvalidMissionValue
+            return proposal
+        except (
+            KeyError,
+            OverflowError,
+            RecursionError,
+            TypeError,
+            UnicodeEncodeError,
+            ValueError,
+            _InvalidMissionValue,
+        ):
+            raise ValueError("mission proposal RPC invalid") from None
+
 
 def _event_id(command: CommandEnvelope, action: str) -> str:
     identity = f"{command.command_id}\0{action}".encode("utf-8")

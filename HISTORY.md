@@ -4,6 +4,27 @@
 
 ## 2026-07-18
 
+### Preserve daemon Mission replay and reader bounds
+
+- Added a read-only completed-command gate before queue-time authority checks.
+  An exact `mission.propose` or `mission.confirm` retry can now reach the
+  durable store after a lost response even when the project revision has
+  advanced; same-id/different-input commands still conflict and fresh stale
+  commands still fail. `SQLiteMissionStore.apply_command` remains the final
+  authority that validates and returns the original closed outcome.
+- Explicitly close every temporary SQLite reader used by proposal and
+  confirmation revalidation, Mission status, and event-cursor observation on
+  both success and failure. Completed replay rows are accepted only after
+  closed actor, revision, canonical outcome, size, and project binding checks.
+- Added the public bounded `MissionProposal.from_rpc_dict()` codec so the
+  daemon boundary no longer imports private application parsers. Regression
+  coverage now binds exact digest/schema decoding, lost-response replay,
+  command conflict/staleness, and reader closure.
+- Clarified that P1 Task 7 is a dormant in-process `DaemonMissionRuntime`
+  application seam. It is not registered on the production Unix socket,
+  `DaemonClient`, or CLI and is not a shipped/live entry; production socket
+  composition remains explicitly deferred to P2.
+
 ### Close daemon Mission lifecycle races
 
 - Made Mission runtime startup enter an explicit `starting` state before it

@@ -110,6 +110,28 @@ def _proposal(*, mission_id: str = "mis_1") -> MissionProposal:
     )
 
 
+def test_mission_proposal_public_rpc_codec_is_closed_and_digest_bound() -> None:
+    proposal = _proposal()
+    payload = {
+        "mission_version": proposal.mission_version.to_dict(),
+        "authorization_envelope": proposal.authorization_envelope.to_dict(),
+        "authorization_digest": proposal.authorization_digest,
+        "leader_provenance": proposal.leader_provenance_dict(),
+    }
+
+    decoded = MissionProposal.from_rpc_dict(payload)
+
+    assert decoded.specification_dict() == proposal.specification_dict()
+    assert decoded.proposal_provenance_dict() == proposal.proposal_provenance_dict()
+    for invalid in (
+        {**payload, "extra": "not allowed"},
+        {**payload, "authorization_digest": "sha256:" + "0" * 64},
+        {**payload, "leader_provenance": {"private": "x" * (9 * 1024)}},
+    ):
+        with pytest.raises(ValueError, match="^mission proposal RPC invalid$"):
+            MissionProposal.from_rpc_dict(invalid)
+
+
 def _command(
     kind: str,
     payload: dict[str, object],

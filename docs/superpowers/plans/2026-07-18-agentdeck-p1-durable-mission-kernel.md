@@ -307,6 +307,12 @@ Prove client requests cannot hold a store/connection, mutations fail before daem
 
 `DaemonMissionRuntime` acquires `ProjectWriterLease`, opens `SQLiteMissionStore`, owns `MissionService`, and maps closed RPC methods (`mission.propose`, `mission.confirm`, `mission.status`, `events.after`) into `ProjectDaemonService.submit_governed_mutation`. Do not expose arbitrary callback or SQL execution over RPC.
 
+P1 deliberately leaves this as a dormant, in-process application seam. Task 7
+does not register these methods on the production Unix socket, `DaemonClient`,
+or CLI, and must not be described as a shipped/live user entry. Production
+socket composition belongs to P2, after P1 has frozen activation and legacy
+writer guards.
+
 - [ ] **Step 4: Run GREEN and daemon regression**
 
 Run new tests plus daemon protocol/service/acceptance focused suites.
@@ -468,7 +474,14 @@ Commit: `feat: guard legacy state after SQLite cutover`
 
 - [ ] **Step 1: Write the RED fake Golden**
 
-Through public daemon APIs only: create version, confirm exact digest, dispatch fake Worker, record Evidence/Handoff, close client, reconnect by cursor, crash/restart daemon, reject stale/unauthorized command, resume safely, verify accepted completion, and compare v1/v2 revision/authority. No direct store calls in the journey test.
+Through the public in-process `DaemonMissionRuntime` application API only:
+create version, confirm exact digest, dispatch fake Worker, record
+Evidence/Handoff, close the runtime consumer, reconnect by cursor,
+crash/restart the runtime, reject stale/unauthorized command, resume safely,
+verify accepted completion, and compare v1/v2 revision/authority. For P1,
+"public daemon APIs" means this closed application seam, not production Unix
+socket, `DaemonClient`, or CLI wiring. No direct store calls appear in the
+journey test; production user-facing socket composition remains P2 scope.
 
 - [ ] **Step 2: Run RED, then add the deterministic fake adapter composition**
 
