@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
 
+from agentdeck.app.mission_service import adapter_event_integrity_hash
 from agentdeck.projections.project_view import ProjectViewProjection, ProjectionError
 from agentdeck.storage.ownership import ProjectWriterLease
 from agentdeck.storage.sqlite_store import SQLiteMissionStore
@@ -11,9 +13,14 @@ from agentdeck.storage.sqlite_store import SQLiteMissionStore
 
 
 def _canonical(value: object) -> str:
-    import json
-
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+
+def _projection(store: SQLiteMissionStore) -> ProjectViewProjection:
+    return ProjectViewProjection(
+        Path(store._root),  # noqa: SLF001 - controlled read-authority fixture
+        expected_project_id=store.project_id,
+    )
 
 
 def _seed_durable_state(store: SQLiteMissionStore) -> None:
@@ -48,6 +55,40 @@ def _seed_durable_state(store: SQLiteMissionStore) -> None:
     store._project_revision = 3  # noqa: SLF001
 
 
+def _make_second_event_adapter(store: SQLiteMissionStore) -> None:
+    payload: object = {"fact": "bounded"}
+    created_at = "2026-07-18T10:00:02Z"
+    integrity = adapter_event_integrity_hash(
+        event_id="evt_2",
+        kind="worker_message",
+        adapter_event_id="adp_2",
+        mission_id="mis_1",
+        mission_version="1",
+        task_id="tsk_1",
+        attempt_id="att_1",
+        session_id="ses_1",
+        sequence=1,
+        payload=payload,
+        created_at=created_at,
+    )
+    provenance = {
+        "adapter_event_id": "adp_2",
+        "mission_id": "mis_1",
+        "mission_version": "1",
+        "task_id": "tsk_1",
+        "attempt_id": "att_1",
+        "session_id": "ses_1",
+        "sequence": 1,
+        "integrity_hash": integrity,
+    }
+    store._connection.execute(  # noqa: SLF001
+        "UPDATE events SET trigger_kind='adapter_event',kind='worker_message',"
+        "provenance_json=?,payload_json=?,command_id=NULL,adapter_event_id='adp_2',"
+        "internal_trigger_id=NULL,created_at=? WHERE event_cursor=2",
+        (_canonical(provenance), _canonical(payload), created_at),
+    )
+
+
 @pytest.fixture
 def store(tmp_path: Path):
     root = tmp_path / "project"
@@ -63,7 +104,7 @@ def store(tmp_path: Path):
 
 
 def test_cursor_pages_are_global_monotonic_and_snapshot_after_page_is_coherent(store) -> None:
-    projection = ProjectViewProjection(store)
+    projection = _projection(store)
 
     first = projection.events_after(0, 2)
     assert first == {
@@ -136,10 +177,10 @@ def test_invalid_cursor_rejects_before_reader_and_writes_nothing(
         calls += 1
         raise AssertionError("reader must not open")
 
-    monkeypatch.setattr(SQLiteMissionStore, "open_reader", forbidden)
+    monkeypatch.setattr(ProjectViewProjection, "_open_reader", forbidden)
     before = store._connection.total_changes  # noqa: SLF001
     with pytest.raises(ValueError, match="^event cursor invalid$"):
-        ProjectViewProjection(store).events_after(cursor, 10)  # type: ignore[arg-type]
+        _projection(store).events_after(cursor, 10)  # type: ignore[arg-type]
     assert calls == 0
     assert store._connection.total_changes == before  # noqa: SLF001
 
@@ -155,10 +196,10 @@ def test_invalid_limit_rejects_before_reader_and_writes_nothing(
         calls += 1
         raise AssertionError("reader must not open")
 
-    monkeypatch.setattr(SQLiteMissionStore, "open_reader", forbidden)
+    monkeypatch.setattr(ProjectViewProjection, "_open_reader", forbidden)
     before = store._connection.total_changes  # noqa: SLF001
     with pytest.raises(ValueError, match="^event page limit invalid$"):
-        ProjectViewProjection(store).events_after(0, limit)  # type: ignore[arg-type]
+        _projection(store).events_after(0, limit)  # type: ignore[arg-type]
     assert calls == 0
     assert store._connection.total_changes == before  # noqa: SLF001
 
@@ -170,7 +211,7 @@ def test_reconnect_validates_hidden_event_json_and_sanitizes_failure(store) -> N
     )
 
     with pytest.raises(ProjectionError) as raised:
-        ProjectViewProjection(store).events_after(0, 10)
+        _projection(store).events_after(0, 10)
 
     assert str(raised.value) == "ProjectView event reconnect unavailable"
     assert "PRIVATE" not in str(raised.value)
@@ -183,7 +224,7 @@ def test_reconnect_validates_lookahead_before_claiming_has_more(store) -> None:
     )
 
     with pytest.raises(ProjectionError, match="^ProjectView event reconnect unavailable$"):
-        ProjectViewProjection(store).events_after(0, 1)
+        _projection(store).events_after(0, 1)
 
 
 def test_reconnect_accepts_bounded_canonical_non_object_event_payload(store) -> None:
@@ -192,16 +233,65 @@ def test_reconnect_accepts_bounded_canonical_non_object_event_payload(store) -> 
         (_canonical(["bounded-fact"]),),
     )
 
-    page = ProjectViewProjection(store).events_after(0, 1)
+    page = _projection(store).events_after(0, 1)
 
     assert page["cursor"] == 1
     assert "bounded-fact" not in str(page)
 
 
+@pytest.mark.parametrize(
+    ("column", "value"),
+    [
+        ("payload_json", _canonical({"fact": "tampered"})),
+        ("kind", "progress"),
+        ("created_at", "2026-07-18T10:00:09Z"),
+        ("event_id", "evt_tampered"),
+    ],
+)
+def test_adapter_integrity_recomputation_rejects_metadata_or_payload_tamper_in_lookahead(
+    store, column: str, value: object
+) -> None:
+    _make_second_event_adapter(store)
+    store._connection.execute(  # noqa: SLF001
+        f'UPDATE events SET "{column}"=? WHERE event_cursor=2',
+        (value,),
+    )
+
+    with pytest.raises(
+        ProjectionError, match="^ProjectView event reconnect unavailable$"
+    ):
+        _projection(store).events_after(0, 1)
+
+
+def test_adapter_integrity_recomputation_rejects_sequence_or_hash_tamper(store) -> None:
+    _make_second_event_adapter(store)
+    provenance = json.loads(
+        store._connection.execute(  # noqa: SLF001
+            "SELECT provenance_json FROM events WHERE event_cursor=2"
+        ).fetchone()[0]
+    )
+    provenance["sequence"] = 2
+    store._connection.execute(  # noqa: SLF001
+        "UPDATE events SET provenance_json=? WHERE event_cursor=2",
+        (_canonical(provenance),),
+    )
+    with pytest.raises(ProjectionError):
+        _projection(store).events_after(0, 1)
+
+    provenance["sequence"] = 1
+    provenance["integrity_hash"] = "sha256:" + "0" * 64
+    store._connection.execute(  # noqa: SLF001
+        "UPDATE events SET provenance_json=? WHERE event_cursor=2",
+        (_canonical(provenance),),
+    )
+    with pytest.raises(ProjectionError):
+        _projection(store).events_after(0, 1)
+
+
 def test_reader_is_closed_on_success_and_projection_failure(
     store, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    original = SQLiteMissionStore.open_reader
+    original = ProjectViewProjection._open_reader
     closed: list[bool] = []
 
     class ReaderProxy:
@@ -224,8 +314,8 @@ def test_reader_is_closed_on_success_and_projection_failure(
     def tracked(self):
         return ReaderProxy(original(self))
 
-    monkeypatch.setattr(SQLiteMissionStore, "open_reader", tracked)
-    assert ProjectViewProjection(store).events_after(0, 1)["cursor"] == 1
+    monkeypatch.setattr(ProjectViewProjection, "_open_reader", tracked)
+    assert _projection(store).events_after(0, 1)["cursor"] == 1
     assert closed == [True]
 
     store._connection.execute(  # noqa: SLF001
@@ -233,5 +323,5 @@ def test_reader_is_closed_on_success_and_projection_failure(
         ('{ "prompt": "PRIVATE" }',),
     )
     with pytest.raises(ProjectionError):
-        ProjectViewProjection(store).events_after(0, 1)
+        _projection(store).events_after(0, 1)
     assert closed == [True, True]

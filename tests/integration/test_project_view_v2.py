@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import os
+import shutil
 from pathlib import Path
 
 import pytest
@@ -27,6 +29,13 @@ def store(tmp_path: Path):
 
 def _canonical(value: object) -> str:
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+
+def _projection(store: SQLiteMissionStore) -> ProjectViewProjection:
+    return ProjectViewProjection(
+        Path(store._root),  # noqa: SLF001 - controlled read-authority fixture
+        expected_project_id=store.project_id,
+    )
 
 
 def _seed_durable_state(store: SQLiteMissionStore) -> None:
@@ -147,7 +156,7 @@ def _walk(value: object):
 
 
 def test_v1_and_v2_share_one_sqlite_authority_and_bounded_summaries(store) -> None:
-    projection = ProjectViewProjection(store)
+    projection = _projection(store)
 
     v1 = projection.snapshot("v1")
     v2 = projection.snapshot("v2")
@@ -224,7 +233,7 @@ def test_snapshot_is_query_only_and_does_not_touch_legacy_json(store) -> None:
         "SELECT revision FROM projects"
     ).fetchone()
 
-    result = ProjectViewProjection(store).snapshot("v1")
+    result = _projection(store).snapshot("v1")
 
     assert result["project_revision"] == 3
     assert store._connection.total_changes == before  # noqa: SLF001
@@ -253,7 +262,7 @@ def test_corrupt_noncanonical_or_oversize_rows_fail_closed_without_raw_values(
     store._connection.execute(statement, params)  # noqa: SLF001
 
     with pytest.raises(ProjectionError) as raised:
-        ProjectViewProjection(store).snapshot("v2")
+        _projection(store).snapshot("v2")
 
     assert str(raised.value) == "ProjectView projection unavailable"
     assert "worker" not in str(raised.value)
@@ -271,7 +280,167 @@ def test_unknown_snapshot_version_is_rejected_before_opening_reader(
         calls += 1
         raise AssertionError("reader must not open")
 
-    monkeypatch.setattr(SQLiteMissionStore, "open_reader", forbidden)
+    monkeypatch.setattr(ProjectViewProjection, "_open_reader", forbidden)
     with pytest.raises(ValueError, match="^ProjectView version invalid$"):
-        ProjectViewProjection(store).snapshot(version)  # type: ignore[arg-type]
+        _projection(store).snapshot(version)  # type: ignore[arg-type]
     assert calls == 0
+
+
+def test_projection_holds_no_writer_store_lease_or_mutation_capability(store) -> None:
+    projection = _projection(store)
+
+    assert projection.snapshot("v2")["project_revision"] == 3
+    assert not any(name in {"_store", "store", "lease", "_lease"} for name in dir(projection))
+    assert not any(
+        hasattr(projection, name)
+        for name in ("apply_command", "apply_event", "execute", "connection")
+    )
+
+
+@pytest.mark.parametrize(
+    ("table", "column"),
+    [
+        ("missions", "status"),
+        ("tasks", "status"),
+        ("attempts", "status"),
+        ("handoffs", "status"),
+        ("evidence", "kind"),
+    ],
+)
+def test_unknown_lifecycle_or_evidence_kind_fails_closed(
+    store, table: str, column: str
+) -> None:
+    projection = _projection(store)
+    store._connection.execute(  # noqa: SLF001
+        f'UPDATE "{table}" SET "{column}" = ?',
+        ("PRIVATESECRET",),
+    )
+
+    with pytest.raises(ProjectionError) as raised:
+        projection.snapshot("v2")
+
+    assert str(raised.value) == "ProjectView projection unavailable"
+    assert "PRIVATESECRET" not in str(raised.value)
+
+
+@pytest.mark.parametrize(
+    "statement",
+    [
+        "UPDATE mission_versions SET confirmed_revision=NULL WHERE mission_id='mis_1'",
+        "UPDATE attempts SET terminal_revision=NULL WHERE attempt_id='att_1'",
+        "UPDATE tasks SET mission_version=2 WHERE task_id='tsk_1'",
+        "UPDATE attempts SET task_id='tsk_missing' WHERE attempt_id='att_1'",
+        "UPDATE evidence SET task_id='tsk_missing' WHERE evidence_id='evd_1'",
+        "UPDATE handoffs SET mission_id='mis_missing' WHERE handoff_id='hnd_1'",
+    ],
+)
+def test_cross_entity_and_terminal_lineage_contradictions_fail_closed(
+    store, statement: str
+) -> None:
+    projection = _projection(store)
+    store._connection.execute("PRAGMA foreign_keys=OFF")  # noqa: SLF001
+    store._connection.execute(statement)  # noqa: SLF001
+    store._connection.execute("PRAGMA foreign_keys=ON")  # noqa: SLF001
+
+    with pytest.raises(ProjectionError, match="^ProjectView projection unavailable$"):
+        projection.snapshot("v2")
+
+
+def test_read_authority_rejects_mode_owner_and_identity_drift(
+    store, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import agentdeck.projections.project_view as projection_module
+
+    projection = _projection(store)
+    path = Path(store._path)  # noqa: SLF001
+    path.chmod(0o644)
+    try:
+        with pytest.raises(ProjectionError, match="^ProjectView projection unavailable$"):
+            projection.snapshot("v2")
+    finally:
+        path.chmod(0o600)
+
+    monkeypatch.setattr(projection_module, "_owner_uid", lambda: os.getuid() + 1)
+    with pytest.raises(ProjectionError, match="^ProjectView projection unavailable$"):
+        projection.snapshot("v2")
+
+
+def test_read_authority_rejects_symlink_nonregular_and_database_swap(tmp_path: Path) -> None:
+    for mutation in ("symlink", "directory", "swap"):
+        root = tmp_path / mutation
+        root.mkdir()
+        lease = ProjectWriterLease.acquire(root)
+        store = SQLiteMissionStore.create(root, lease=lease, project_id="prj_1")
+        path = root / ".agentdeck" / "state.db"
+        store.close()
+        lease.close()
+        projection = ProjectViewProjection(root, expected_project_id="prj_1")
+        original = root / ".agentdeck" / "original.db"
+        if mutation == "symlink":
+            path.rename(original)
+            path.symlink_to(original.name)
+        elif mutation == "directory":
+            path.rename(original)
+            path.mkdir()
+        else:
+            replacement = root / ".agentdeck" / "replacement.db"
+            shutil.copy2(path, replacement)
+            os.replace(replacement, path)
+
+        with pytest.raises(ProjectionError, match="^ProjectView projection unavailable$"):
+            projection.snapshot("v2")
+
+
+def test_read_authority_rejects_noncanonical_root_symlink(tmp_path: Path) -> None:
+    root = tmp_path / "real"
+    root.mkdir()
+    lease = ProjectWriterLease.acquire(root)
+    store = SQLiteMissionStore.create(root, lease=lease, project_id="prj_1")
+    alias = tmp_path / "alias"
+    alias.symlink_to(root, target_is_directory=True)
+    try:
+        with pytest.raises(ValueError, match="^ProjectView read authority invalid$"):
+            ProjectViewProjection(alias, expected_project_id="prj_1")
+    finally:
+        store.close()
+        lease.close()
+
+
+def test_read_authority_rejects_wrong_expected_project_identity(store) -> None:
+    projection = ProjectViewProjection(
+        Path(store._root),  # noqa: SLF001
+        expected_project_id="prj_other",
+    )
+    with pytest.raises(ProjectionError, match="^ProjectView projection unavailable$"):
+        projection.snapshot("v2")
+
+
+def test_read_authority_revalidates_database_identity_after_reader_close(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "project"
+    root.mkdir()
+    lease = ProjectWriterLease.acquire(root)
+    store = SQLiteMissionStore.create(root, lease=lease, project_id="prj_1")
+    store.close()
+    lease.close()
+    projection = ProjectViewProjection(root, expected_project_id="prj_1")
+    path = root / ".agentdeck" / "state.db"
+    replacement = root / ".agentdeck" / "replacement.db"
+    shutil.copy2(path, replacement)
+    original = ProjectViewProjection._validate_database_identity
+    calls = 0
+
+    def swap_on_post_close(self):
+        nonlocal calls
+        calls += 1
+        if calls == 3:
+            os.replace(replacement, path)
+        return original(self)
+
+    monkeypatch.setattr(
+        ProjectViewProjection, "_validate_database_identity", swap_on_post_close
+    )
+    with pytest.raises(ProjectionError, match="^ProjectView projection unavailable$"):
+        projection.snapshot("v2")
+    assert calls == 3

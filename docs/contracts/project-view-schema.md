@@ -26,6 +26,18 @@ path reads `state.json`, an archive, a backup, tmux, provider output, or a
 transport. P1 does not yet replace the established `agentdeck status` builder;
 activation and the full compatibility-facade cutover remain later tasks.
 
+The projection is constructed from one canonical project root plus an expected
+project id; it never accepts, stores, or retains `SQLiteMissionStore`,
+`ProjectWriterLease`, a writer connection, or an apply/execute callback. It
+opens only the fixed `.agentdeck/state.db` URI with SQLite `mode=ro`, enables
+and verifies `query_only`, and closes that connection before returning. The
+root and `.agentdeck` directory must be canonical owner-controlled real
+directories. The database and every present WAL/SHM family member must be an
+owner-only `0600` regular file, never a symlink or other special file. Device
+and inode identity for the complete family are captured at construction and
+must match before open, after open, and after reader close; path substitution,
+mode/owner drift, sidecar drift, or project-id mismatch fails closed.
+
 The durable source shape is closed:
 
 ```json
@@ -53,6 +65,20 @@ total JSON inspected by one snapshot is byte bounded. Non-canonical,
 duplicate-key, over-depth, over-size, cross-revision, malformed-hash, or unsafe
 identity rows fail closed with a fixed diagnostic and no partial response.
 
+Lifecycle values are closed in source: Missions accept only
+`proposed|confirmed|running|paused|completed|failed|cancelled`; Tasks accept
+only `pending|ready|running|awaiting_verification|paused|completed|failed|cancelled`;
+Attempts accept only
+`pending|running|paused|recovering|awaiting_verification|completed|failed|cancelled|ambiguous`;
+Handoffs currently accept only `accepted`; Evidence kinds accept only
+`test_result|effect_proof|verification_result`. Proposed Mission versions must
+have no confirmation revision, while every later Mission state must have one.
+Attempt terminal revision presence must exactly match terminal status. Every
+Task must resolve to its Mission/version, every Attempt to its Task, every
+Evidence row to that same Task/Attempt pair, and both Handoff Tasks to the
+Handoff Mission. Unknown lifecycle/kind strings and any contradictory lineage
+produce only the fixed projection-unavailable diagnostic.
+
 `events_after(cursor, limit)` is the cursor reconnect source. Cursor is a
 non-negative signed-64 integer; limit is `1..100`. It uses one query-only
 transaction, returns only rows with global `event_cursor > cursor`, orders them
@@ -61,6 +87,10 @@ to the last returned row, and derives `has_more` only after that validation.
 Each item contains exactly `cursor`, `event_id`, `project_revision`,
 `trigger_kind`, `kind`, and `created_at`; provenance and payload are validated
 against the trigger-specific durable identity but are not disclosed. The
+adapter-event path additionally recomputes the exact canonical integrity hash
+through the same `adapter_event_integrity_hash()` helper used by Mission
+ingestion and compares it in constant time. Payload, metadata, sequence, and
+hash tampering therefore fail closed for visible and lookahead rows alike. The
 response also carries the transaction's `project_revision` and
 `authority_generation`, so a client can consume pages and then refresh a
 coherent snapshot. Readers are explicitly closed on success and failure.

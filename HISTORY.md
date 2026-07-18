@@ -4,6 +4,27 @@
 
 ## 2026-07-18
 
+### Close ProjectView read authority and durable lineage
+
+- Removed the writer-bound `SQLiteMissionStore` reference from
+  `ProjectViewProjection`. The projection now accepts only a canonical project
+  root and expected project id, captures the owner-only regular SQLite/WAL/SHM
+  family identity, opens the fixed database with `mode=ro` plus verified
+  `query_only`, and revalidates device/inode identity before open, after open,
+  and after close. It retains no writer lease, writer connection, store, SQL
+  callback, or apply capability; symlink, special-file, mode, owner, identity,
+  and project-id drift fail closed.
+- Closed every durable lifecycle and cross-entity relationship before
+  projection. Mission confirmation state, Attempt terminal revisions,
+  Task-to-Mission/version, Attempt-to-Task, Evidence-to-same-Task/Attempt, and
+  Handoff-to-Mission Tasks must agree. Unknown state or Evidence kind values
+  and contradictory lineage produce only a fixed sanitized error with no
+  partial payload.
+- Bound reconnecting adapter events to the same canonical
+  `adapter_event_integrity_hash()` used at Mission ingestion and a constant-time
+  digest comparison. Payload, event metadata, sequence, or digest tampering is
+  rejected for both visible rows and the pagination lookahead row.
+
 ### Project durable Mission state for reconnecting clients
 
 - Added a query-only `ProjectViewProjection` that builds `project-view/v1` and

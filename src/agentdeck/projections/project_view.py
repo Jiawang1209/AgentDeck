@@ -7,16 +7,20 @@ query-only SQLite transaction and closes its reader on every exit path.
 from __future__ import annotations
 
 import json
+import hmac
+import os
 import re
 import sqlite3
+import stat
 from collections.abc import Callable
-from contextlib import closing
+from pathlib import Path
 from typing import cast
+from urllib.parse import quote
 
+from agentdeck.app.mission_service import adapter_event_integrity_hash
 from agentdeck.domain.events import DomainEvent
 from agentdeck.models import PROJECT_VIEW_SCHEMA_VERSION, PROJECT_VIEW_V2_SCHEMA_VERSION
 from agentdeck.storage.migrations import AUTHORITY_STATES
-from agentdeck.storage.sqlite_store import SQLiteMissionStore, SQLiteStoreError
 
 
 _MAX_SIGNED_64 = (2**63) - 1
@@ -32,6 +36,39 @@ _VERSIONS = {
     "v1": PROJECT_VIEW_SCHEMA_VERSION,
     "v2": PROJECT_VIEW_V2_SCHEMA_VERSION,
 }
+MISSION_PROJECTION_STATES = frozenset(
+    {"proposed", "confirmed", "running", "paused", "completed", "failed", "cancelled"}
+)
+TASK_PROJECTION_STATES = frozenset(
+    {
+        "pending",
+        "ready",
+        "running",
+        "awaiting_verification",
+        "paused",
+        "completed",
+        "failed",
+        "cancelled",
+    }
+)
+ATTEMPT_PROJECTION_STATES = frozenset(
+    {
+        "pending",
+        "running",
+        "paused",
+        "recovering",
+        "awaiting_verification",
+        "completed",
+        "failed",
+        "cancelled",
+        "ambiguous",
+    }
+)
+HANDOFF_PROJECTION_STATES = frozenset({"accepted"})
+EVIDENCE_PROJECTION_KINDS = frozenset(
+    {"test_result", "effect_proof", "verification_result"}
+)
+_TERMINAL_ATTEMPT_STATES = frozenset({"completed", "failed", "cancelled"})
 
 
 class ProjectionError(RuntimeError):
@@ -162,6 +199,85 @@ def _digest(value: object) -> str:
     return value
 
 
+def _state(value: object, allowed: frozenset[str]) -> str:
+    result = _token(value)
+    if result not in allowed:
+        raise _InvalidProjection
+    return result
+
+
+def _owner_uid() -> int:
+    return os.getuid()
+
+
+def _canonical_root(value: str | os.PathLike[str]) -> Path:
+    try:
+        raw = os.fspath(value)
+        if type(raw) is not str or not raw:
+            raise _InvalidProjection
+        absolute = Path(os.path.abspath(raw))
+        if os.path.realpath(absolute) != os.fspath(absolute):
+            raise _InvalidProjection
+        root_stat = os.lstat(absolute)
+        state_stat = os.lstat(absolute / ".agentdeck")
+        if (
+            stat.S_ISLNK(root_stat.st_mode)
+            or not stat.S_ISDIR(root_stat.st_mode)
+            or root_stat.st_uid != _owner_uid()
+            or stat.S_ISLNK(state_stat.st_mode)
+            or not stat.S_ISDIR(state_stat.st_mode)
+            or state_stat.st_uid != _owner_uid()
+        ):
+            raise _InvalidProjection
+        return absolute
+    except (OSError, TypeError, ValueError):
+        raise _InvalidProjection from None
+
+
+type _DatabaseIdentity = tuple[tuple[str, int, int], ...]
+type _DirectoryIdentity = tuple[tuple[int, int], tuple[int, int]]
+
+
+def _directory_identity(root: Path) -> _DirectoryIdentity:
+    values: list[tuple[int, int]] = []
+    for directory in (root, root / ".agentdeck"):
+        try:
+            item = os.lstat(directory)
+        except OSError:
+            raise _InvalidProjection from None
+        if (
+            stat.S_ISLNK(item.st_mode)
+            or not stat.S_ISDIR(item.st_mode)
+            or item.st_uid != _owner_uid()
+        ):
+            raise _InvalidProjection
+        values.append((item.st_dev, item.st_ino))
+    return cast(_DirectoryIdentity, tuple(values))
+
+
+def _database_family_identity(path: Path) -> _DatabaseIdentity:
+    rows: list[tuple[str, int, int]] = []
+    for suffix in ("", "-wal", "-shm"):
+        member = Path(f"{path}{suffix}")
+        try:
+            value = os.lstat(member)
+        except FileNotFoundError:
+            if suffix:
+                continue
+            raise _InvalidProjection from None
+        except OSError:
+            raise _InvalidProjection from None
+        if (
+            stat.S_ISLNK(value.st_mode)
+            or not stat.S_ISREG(value.st_mode)
+            or value.st_uid != _owner_uid()
+            or stat.S_IMODE(value.st_mode) != 0o600
+        ):
+            raise _InvalidProjection
+        rows.append((suffix, value.st_dev, value.st_ino))
+    return tuple(rows)
+
+
 def _bounded_rows(cursor: sqlite3.Cursor) -> list[tuple[object, ...]]:
     rows = cursor.fetchmany(_MAX_ROWS_PER_COLLECTION + 1)
     if len(rows) > _MAX_ROWS_PER_COLLECTION:
@@ -248,6 +364,24 @@ def _event_item(row: tuple[object, ...], project_revision: int) -> dict[str, obj
         )
         if provenance["adapter_event_id"] != adapter_id:
             raise _InvalidProjection
+        expected_integrity = adapter_event_integrity_hash(
+            event_id=event_id,
+            kind=kind,
+            adapter_event_id=adapter_id,
+            mission_id=cast(str, provenance["mission_id"]),
+            mission_version=cast(str, provenance["mission_version"]),
+            task_id=cast(str, provenance["task_id"]),
+            attempt_id=cast(str, provenance["attempt_id"]),
+            session_id=cast(str, provenance["session_id"]),
+            sequence=cast(int, provenance["sequence"]),
+            payload=payload,
+            created_at=created_at,
+        )
+        stored_integrity = provenance["integrity_hash"]
+        if type(stored_integrity) is not str or not hmac.compare_digest(
+            stored_integrity, expected_integrity
+        ):
+            raise _InvalidProjection
     elif trigger == "internal_trigger":
         if set(provenance) != {
             "internal_trigger_id",
@@ -286,16 +420,69 @@ def _event_item(row: tuple[object, ...], project_revision: int) -> dict[str, obj
 class ProjectViewProjection:
     """Build compact v1/v2 compatibility views from the SQLite authority."""
 
-    __slots__ = ("_store",)
+    __slots__ = (
+        "_root",
+        "_path",
+        "_project_id",
+        "_directory_identity",
+        "_database_identity",
+    )
 
-    def __init__(self, store: SQLiteMissionStore) -> None:
-        if type(store) is not SQLiteMissionStore:
+    def __init__(
+        self,
+        root: str | os.PathLike[str],
+        *,
+        expected_project_id: str,
+    ) -> None:
+        if type(expected_project_id) is not str or not expected_project_id:
             raise ValueError("ProjectView read authority invalid")
-        self._store = store
+        try:
+            if len(expected_project_id.encode("utf-8")) > _MAX_TEXT_BYTES:
+                raise _InvalidProjection
+            canonical_root = _canonical_root(root)
+            path = canonical_root / ".agentdeck" / "state.db"
+            directory_identity = _directory_identity(canonical_root)
+            identity = _database_family_identity(path)
+        except (UnicodeEncodeError, _InvalidProjection):
+            raise ValueError("ProjectView read authority invalid") from None
+        self._root = canonical_root
+        self._path = path
+        self._project_id = expected_project_id
+        self._directory_identity = directory_identity
+        self._database_identity = identity
+
+    def _validate_database_identity(self) -> None:
+        if (
+            _directory_identity(self._root) != self._directory_identity
+            or _database_family_identity(self._path) != self._database_identity
+        ):
+            raise _InvalidProjection
+
+    def _open_reader(self) -> sqlite3.Connection:
+        self._validate_database_identity()
+        try:
+            reader = sqlite3.connect(
+                "file:" + quote(os.fspath(self._path), safe="/") + "?mode=ro",
+                uri=True,
+                isolation_level=None,
+                timeout=0,
+            )
+        except sqlite3.Error:
+            raise _InvalidProjection from None
+        try:
+            self._validate_database_identity()
+            reader.execute("PRAGMA query_only=ON")
+            if reader.execute("PRAGMA query_only").fetchone() != (1,):
+                raise _InvalidProjection
+            return reader
+        except BaseException:
+            reader.close()
+            raise
 
     def _read(self, build: Callable[[sqlite3.Connection], dict[str, object]], error: str):
         try:
-            with closing(self._store.open_reader()) as reader:
+            reader = self._open_reader()
+            try:
                 reader.execute("BEGIN")
                 try:
                     result = build(reader)
@@ -306,12 +493,16 @@ class ProjectViewProjection:
                     except sqlite3.Error:
                         pass
                     raise
-                return result
+            finally:
+                try:
+                    reader.close()
+                finally:
+                    self._validate_database_identity()
+            return result
         except (ProjectionError, KeyboardInterrupt, SystemExit):
             raise
         except (
             sqlite3.Error,
-            SQLiteStoreError,
             _InvalidProjection,
             RuntimeError,
             TypeError,
@@ -324,7 +515,7 @@ class ProjectViewProjection:
             raise ValueError("ProjectView version invalid")
 
         def build(reader: sqlite3.Connection) -> dict[str, object]:
-            project_id = self._store.project_id
+            project_id = self._project_id
             project = reader.execute(
                 "SELECT revision, authority_state, authority_generation "
                 "FROM projects WHERE project_id = ?",
@@ -351,33 +542,78 @@ class ProjectViewProjection:
                 reader.execute(
                     "SELECT m.mission_id,m.current_version,m.status,m.created_revision,"
                     "m.updated_revision,v.authorization_digest,v.specification_json,"
-                    "v.proposal_provenance_json "
-                    "FROM missions m JOIN mission_versions v "
+                    "v.proposal_provenance_json,v.confirmed_revision "
+                    "FROM missions m LEFT JOIN mission_versions v "
                     "ON v.mission_id=m.mission_id AND v.version=m.current_version "
                     "WHERE m.project_id=? ORDER BY m.mission_id",
                     (project_id,),
                 )
             )
             missions: list[dict[str, object]] = []
+            mission_keys: set[tuple[str, int]] = set()
+            mission_ids: set[str] = set()
             for row in mission_rows:
-                if len(row) != 8:
+                if len(row) != 9:
                     raise _InvalidProjection
                 validate_json(row[6])
                 validate_json(row[7])
+                mission_id = _token(row[0])
+                mission_version = _positive(row[1])
+                status = _state(row[2], MISSION_PROJECTION_STATES)
                 created = _coherent_revision(row[3], project_revision)
                 updated = _coherent_revision(row[4], project_revision)
+                confirmed = _nullable_revision(row[8])
+                if confirmed is not None and confirmed > project_revision:
+                    raise _InvalidProjection
                 if created > updated:
                     raise _InvalidProjection
+                if status == "proposed":
+                    if confirmed is not None:
+                        raise _InvalidProjection
+                elif (
+                    confirmed is None
+                    or confirmed < created
+                    or confirmed > updated
+                ):
+                    raise _InvalidProjection
+                key = (mission_id, mission_version)
+                if key in mission_keys:
+                    raise _InvalidProjection
+                mission_keys.add(key)
+                mission_ids.add(mission_id)
                 missions.append(
                     {
-                        "mission_id": _token(row[0]),
-                        "version": _positive(row[1]),
-                        "status": _token(row[2]),
+                        "mission_id": mission_id,
+                        "version": mission_version,
+                        "status": status,
                         "authorization_digest": _digest(row[5]),
                         "created_revision": created,
                         "updated_revision": updated,
                     }
                 )
+
+            version_rows = _bounded_rows(
+                reader.execute(
+                    "SELECT mission_id,version,confirmed_revision FROM mission_versions "
+                    "ORDER BY mission_id,version"
+                )
+            )
+            all_mission_versions: dict[tuple[str, int], int | None] = {}
+            for row in version_rows:
+                if len(row) != 3:
+                    raise _InvalidProjection
+                key = (_token(row[0]), _positive(row[1]))
+                if key[0] not in mission_ids or key in all_mission_versions:
+                    raise _InvalidProjection
+                confirmed_revision = _nullable_revision(row[2])
+                if (
+                    confirmed_revision is not None
+                    and confirmed_revision > project_revision
+                ):
+                    raise _InvalidProjection
+                all_mission_versions[key] = confirmed_revision
+            if not mission_keys.issubset(all_mission_versions.keys()):
+                raise _InvalidProjection
 
             task_rows = _bounded_rows(
                 reader.execute(
@@ -386,20 +622,29 @@ class ProjectViewProjection:
                 )
             )
             tasks: list[dict[str, object]] = []
+            task_lineage: dict[str, tuple[str, int]] = {}
             for row in task_rows:
                 if len(row) != 7:
                     raise _InvalidProjection
                 validate_json(row[3])
+                task_id = _token(row[0])
+                mission_id = _token(row[1])
+                mission_version = _positive(row[2])
+                if all_mission_versions.get((mission_id, mission_version)) is None:
+                    raise _InvalidProjection
+                if task_id in task_lineage:
+                    raise _InvalidProjection
+                task_lineage[task_id] = (mission_id, mission_version)
                 created = _coherent_revision(row[5], project_revision)
                 updated = _coherent_revision(row[6], project_revision)
                 if created > updated:
                     raise _InvalidProjection
                 tasks.append(
                     {
-                        "task_id": _token(row[0]),
-                        "mission_id": _token(row[1]),
-                        "mission_version": _positive(row[2]),
-                        "status": _token(row[4]),
+                        "task_id": task_id,
+                        "mission_id": mission_id,
+                        "mission_version": mission_version,
+                        "status": _state(row[4], TASK_PROJECTION_STATES),
                         "created_revision": created,
                         "updated_revision": updated,
                     }
@@ -413,20 +658,29 @@ class ProjectViewProjection:
                 )
             )
             attempts: list[dict[str, object]] = []
+            attempt_lineage: dict[str, str] = {}
             for row in attempt_rows:
                 if len(row) != 8:
                     raise _InvalidProjection
                 validate_json(row[5])
+                attempt_id = _token(row[0])
+                task_id = _token(row[1])
+                if task_id not in task_lineage or attempt_id in attempt_lineage:
+                    raise _InvalidProjection
+                attempt_lineage[attempt_id] = task_id
+                status = _state(row[3], ATTEMPT_PROJECTION_STATES)
                 started = _coherent_revision(row[6], project_revision)
                 terminal = _nullable_revision(row[7])
                 if terminal is not None and (terminal > project_revision or terminal < started):
                     raise _InvalidProjection
+                if (status in _TERMINAL_ATTEMPT_STATES) != (terminal is not None):
+                    raise _InvalidProjection
                 attempts.append(
                     {
-                        "attempt_id": _token(row[0]),
-                        "task_id": _token(row[1]),
+                        "attempt_id": attempt_id,
+                        "task_id": task_id,
                         "attempt_number": _positive(row[2]),
-                        "status": _token(row[3]),
+                        "status": status,
                         "route_position": _revision(row[4]),
                         "started_revision": started,
                         "terminal_revision": terminal,
@@ -445,17 +699,33 @@ class ProjectViewProjection:
                 if len(row) != 8:
                     raise _InvalidProjection
                 validate_json(row[5])
+                mission_id = _token(row[1])
+                source_task_id = _token(row[2])
+                destination_task_id = _token(row[3])
+                source_lineage = task_lineage.get(source_task_id)
+                destination_lineage = task_lineage.get(destination_task_id)
+                if (
+                    source_lineage is None
+                    or destination_lineage is None
+                    or source_lineage[0] != mission_id
+                    or destination_lineage[0] != mission_id
+                ):
+                    raise _InvalidProjection
                 created = _coherent_revision(row[6], project_revision)
                 accepted = _nullable_revision(row[7])
-                if accepted is not None and (accepted > project_revision or accepted < created):
+                if (
+                    accepted is None
+                    or accepted > project_revision
+                    or accepted < created
+                ):
                     raise _InvalidProjection
                 handoffs.append(
                     {
                         "handoff_id": _token(row[0]),
-                        "mission_id": _token(row[1]),
-                        "source_task_id": _token(row[2]),
-                        "destination_task_id": _token(row[3]),
-                        "status": _token(row[4]),
+                        "mission_id": mission_id,
+                        "source_task_id": source_task_id,
+                        "destination_task_id": destination_task_id,
+                        "status": _state(row[4], HANDOFF_PROJECTION_STATES),
                         "created_revision": created,
                         "accepted_revision": accepted,
                     }
@@ -472,12 +742,19 @@ class ProjectViewProjection:
                 if len(row) != 7:
                     raise _InvalidProjection
                 validate_json(row[5])
+                task_id = _token(row[1])
+                attempt_id = _token(row[2])
+                if (
+                    task_id not in task_lineage
+                    or attempt_lineage.get(attempt_id) != task_id
+                ):
+                    raise _InvalidProjection
                 evidence.append(
                     {
                         "evidence_id": _token(row[0]),
-                        "task_id": _token(row[1]),
-                        "attempt_id": _token(row[2]),
-                        "kind": _token(row[3]),
+                        "task_id": task_id,
+                        "attempt_id": attempt_id,
+                        "kind": _state(row[3], EVIDENCE_PROJECTION_KINDS),
                         "integrity_hash": _digest(row[4]),
                         "created_revision": _coherent_revision(row[6], project_revision),
                     }
@@ -515,7 +792,7 @@ class ProjectViewProjection:
             raise ValueError("event page limit invalid")
 
         def build(reader: sqlite3.Connection) -> dict[str, object]:
-            project_id = self._store.project_id
+            project_id = self._project_id
             project = reader.execute(
                 "SELECT revision,authority_generation FROM projects WHERE project_id=?",
                 (project_id,),
