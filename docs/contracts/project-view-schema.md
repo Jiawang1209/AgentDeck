@@ -6,7 +6,67 @@
 
 GUI clients should consume ProjectView first. They should not scan `.agentdeck/state/state.json`, parse tmux panes, or infer workflow state from command strings when ProjectView already exposes the same fact.
 
-The source-of-truth schema version constant is `PROJECT_VIEW_SCHEMA_VERSION` in `src/agentdeck/models.py`. Current value: `project-view/v1`. The protocol-lineage summaries described below are an additive-v1 extension: the version remains `project-view/v1`, while current producers and validators require the new top-level fields.
+The source-of-truth schema version constants are `PROJECT_VIEW_SCHEMA_VERSION`
+and `PROJECT_VIEW_V2_SCHEMA_VERSION` in `src/agentdeck/models.py`. Their values
+are `project-view/v1` and `project-view/v2`; adding v2 does not change the
+existing v1 constant. The protocol-lineage summaries described below are an
+additive-v1 extension: the public status version remains `project-view/v1`,
+while current producers and validators require the new top-level fields.
+
+## Durable Mission source projection (P1)
+
+`ProjectViewProjection` in `src/agentdeck/projections/project_view.py` is the
+read-only SQLite source used to establish the P1 dual-projection and reconnect
+invariants before public CLI cutover. `snapshot("v1")` and `snapshot("v2")`
+select the two public schema identities without changing the existing v1
+constant. Both are built from one query-only SQLite transaction and report the
+same `project_id`, `project_revision`, `authority.state`,
+`authority.generation`, and `event_cursor`. During `sqlite_active`, neither
+path reads `state.json`, an archive, a backup, tmux, provider output, or a
+transport. P1 does not yet replace the established `agentdeck status` builder;
+activation and the full compatibility-facade cutover remain later tasks.
+
+The durable source shape is closed:
+
+```json
+{
+  "schema_version": "project-view/v2",
+  "project_id": "prj_example",
+  "project_revision": 7,
+  "authority": {"state": "sqlite_active", "generation": 1},
+  "event_cursor": 7,
+  "missions": {"count": 1, "items": []},
+  "tasks": {"count": 2, "items": []},
+  "attempts": {"count": 1, "items": []},
+  "handoffs": {"count": 0, "items": []},
+  "evidence": {"count": 0, "items": []}
+}
+```
+
+Collection items are stable primary-key ordered and expose only identifiers,
+closed lifecycle fields, revisions, and integrity/authorization digests.
+Mission specifications, Task objectives, attempt budget/operation details,
+Handoff context, Evidence summaries, prompts, transcripts, secrets, provider
+output, and content snapshots are validated as bounded canonical persisted JSON
+but never copied into the response. Each collection is row bounded and the
+total JSON inspected by one snapshot is byte bounded. Non-canonical,
+duplicate-key, over-depth, over-size, cross-revision, malformed-hash, or unsafe
+identity rows fail closed with a fixed diagnostic and no partial response.
+
+`events_after(cursor, limit)` is the cursor reconnect source. Cursor is a
+non-negative signed-64 integer; limit is `1..100`. It uses one query-only
+transaction, returns only rows with global `event_cursor > cursor`, orders them
+ascending, validates the visible page and its lookahead row, advances `cursor`
+to the last returned row, and derives `has_more` only after that validation.
+Each item contains exactly `cursor`, `event_id`, `project_revision`,
+`trigger_kind`, `kind`, and `created_at`; provenance and payload are validated
+against the trigger-specific durable identity but are not disclosed. The
+response also carries the transaction's `project_revision` and
+`authority_generation`, so a client can consume pages and then refresh a
+coherent snapshot. Readers are explicitly closed on success and failure.
+Unknown versions, invalid cursors, and invalid limits are rejected before a
+reader opens. These read paths do not acquire a writer lease, issue mutating
+SQL, append an event, call a provider, inspect tmux, or use the network.
 
 Reusable contract response, payload, and example fixture helpers live in `src/agentdeck/contracts.py`. The CLI discovery command uses `project_view_contract_response()` directly so command output and reusable module output stay identical.
 

@@ -4,6 +4,26 @@
 
 ## 2026-07-18
 
+### Project durable Mission state for reconnecting clients
+
+- Added a query-only `ProjectViewProjection` that builds `project-view/v1` and
+  the new `project-view/v2` identity from the same coherent SQLite transaction.
+  Both projections carry one project revision, authority state/generation, and
+  durable event cursor together with stable, bounded Mission, Task, Attempt,
+  Handoff, and Evidence summaries. The existing v1 schema constant remains
+  unchanged, and this P1 source projection is not yet a public CLI cutover.
+- Added cursor-based durable event reconnect with strictly increasing global
+  cursors, closed `1..100` pagination, validated lookahead, and transaction-
+  coherent revision/authority metadata. Reconnecting after cursor N returns
+  only later events; a following snapshot can prove which committed revision
+  and authority generation it represents.
+- Made both read surfaces fail closed on non-canonical, duplicate-key,
+  over-depth, oversized, cross-revision, malformed-hash, or trigger-lineage
+  rows. They explicitly close query-only readers on success and failure, never
+  consult legacy JSON after SQLite activation, and exclude raw specifications,
+  prompts, transcripts, secrets, Handoff context, Evidence summaries, provider
+  output, and content snapshots.
+
 ### Reject non-exact daemon replay prechecks
 
 - Restricted queue-time completed-command replay admission to exact immutable

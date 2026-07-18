@@ -7,6 +7,7 @@ from uuid import uuid4
 
 
 PROJECT_VIEW_SCHEMA_VERSION = "project-view/v1"
+PROJECT_VIEW_V2_SCHEMA_VERSION = "project-view/v2"
 MIGRATION_SCHEMA_VERSION = "migration/v1"
 PROJECT_VIEW_SEMANTIC_AUTHORITY_FIELDS = (
     "schema_version",
