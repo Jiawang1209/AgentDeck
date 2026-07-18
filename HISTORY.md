@@ -17,14 +17,21 @@
 - Recorded the main refactor pressure in `cli.py`, `contracts.py`, `state.py`,
   daemon service, Conversation session, and the M2c mega-harness without treating
   line count as a rewrite mandate.
-- Classified the M2c mega-harness for archive only after replacement coverage
-  exists and fixed phase/count/one-shot authority assertions for removal after
-  general Mission invariants are proven; M2c remains evidence, not a V1 release
-  veto or live-run authorization.
-- Marked the SQLite Mission store, V2 domain/ProjectView, shared Codex/Claude
-  adapter conformance suite, and Golden A/B product acceptance as missing P1-P4
-  capabilities. Comprehensive SQLite means structured-state authority migration,
-  not deletion of filesystem content, ACP, tmux, or user-facing contracts.
+- Classified the M2c mega-harness for archive only after every retained invariant
+  has a new owner and named test and both real Golden A/B pass through public
+  product entrypoints; unit, fake, conformance, and real-adapter smoke evidence
+  are prerequisites, not a replacement for either Golden. M2c remains
+  evidence, not a V1 release veto or live-run authorization.
+- Required P1 authority cutover to move all Skill/Memory/Learning structured
+  records and provenance into the sole SQLite authority while preserving source
+  text as filesystem content, and to daemon-delegate or fail-close every legacy
+  CLI structured mutator before `sqlite_active`; P2-P4 handler extraction and P5
+  governed learning service/UX integration happen only after that gate.
+- Marked the SQLite Mission store and V1 Mission domain/ProjectView v2 as missing
+  P1 capabilities, the shared Codex/Claude adapter conformance suite as missing
+  P3, and real Golden A/B product acceptance as missing P4. Comprehensive SQLite
+  means structured-state authority migration, not deletion of filesystem
+  content, ACP, tmux, or user-facing contracts.
 
 ### Choose SQLite for the new Mission authority
 
