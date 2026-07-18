@@ -4,6 +4,31 @@
 
 ## 2026-07-18
 
+### Add the SQLite Mission schema and exclusive writer lease
+
+- Added the P1 schema-v1 bootstrap for the project-local
+  `.agentdeck/state.db` authority with the exact closed table set for project
+  revision, command outcome/idempotency, monotonic events, Mission versions,
+  Tasks, Attempts, sessions, permissions, Handoffs, Evidence, approvals,
+  artifacts, learning, suggestions, and legacy import records. New stores
+  record one of the three closed authority states and enable foreign keys,
+  WAL, and `synchronous=FULL` before becoming active.
+- Added an owner-only, non-blocking `fcntl.flock` Project writer lease bound to
+  the exact project root and lock inode. A competing writer fails with a
+  stable diagnostic; closed, foreign, forged, replaced-root, replaced-lock,
+  symlink, and non-regular lease paths fail closed before a mutating store can
+  open.
+- Made store creation off-path and cleanup-safe, with deterministic `0700`
+  state-directory and `0600` database/lock/sidecar modes independent of the
+  process umask. Existing databases pass an immutable read-only schema,
+  authority, integrity, and ownership preflight before any writer connection,
+  writer PRAGMA, or transaction is allowed; unsupported or malformed stores
+  are rejected without changing database-family bytes.
+- Exposed only independent `mode=ro` plus `query_only=ON` reader connections;
+  the lease-owned writer connection remains private. This slice neither
+  mutates legacy JSON/JSONL nor contacts providers, runtimes, tmux, adapters,
+  or the network, and it does not claim SQLite cutover or P1 completion.
+
 ### Freeze the Mission authorization domain
 
 - Added immutable, transport-independent `TaskSpec`, `MissionVersion`,
