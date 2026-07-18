@@ -4,6 +4,28 @@
 
 ## 2026-07-18
 
+### Add kernel event and diagnostic facts
+
+- Completed R1 Task 4 with immutable Kernel `Diagnostic` and `DomainEvent`
+  facts, injected clock values represented at the Kernel boundary as ISO time
+  strings, canonical event payload tuples, and the stable `Severity` values.
+- Added the Clock Port, UTC SystemClock adapter, and deterministic FrozenClock
+  test fake without admitting any legacy imports. TDD RED confirmed all Task 4
+  modules were absent; focused Kernel and architecture guards are GREEN.
+- Quality review reproduced mutable nested event aliases, non-explicit
+  Diagnostic construction, and unvalidated timestamps. Event payloads now
+  recursively copy lists and mappings into closed, sorted, hashable facts and
+  reject unsupported values, non-string keys, and non-finite floats.
+  Diagnostic creation now names every field explicitly and defends direct
+  construction invariants. Both facts reject malformed or naive timestamps and
+  canonicalize aware timestamps to UTC; focused RED covered all three defects.
+- Follow-up review reproduced a semantic collision where a nested mapping and
+  an array of key/value-shaped arrays froze to the same tuple. Nested values
+  now retain explicit immutable `FactObject` or `FactArray` identity while the
+  top-level event payload remains the plan-defined sorted tuple. Canonical
+  object keys remain sorted and unique, array order remains stable, and direct
+  construction rejects untagged mutable nested values.
+
 ### Make the Rewrite context firewall executable
 
 - Completed R0 Task 3 with a deterministic context-firewall regression that
