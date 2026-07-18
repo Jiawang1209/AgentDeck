@@ -2,15 +2,58 @@
 
 Updated: 2026-07-18
 
-## Active goal — AgentDeck P0 exit review
+## Active goal — AgentDeck Product Kernel Rewrite written-spec review
 
-The evolutionary-kernel route remains authoritative: preserve and converge
-the existing Conversation, ProjectView, daemon, ledger, approval, ACP/tmux,
-skill, memory, and learning foundations around one durable Mission authority.
-The historical M2c mega-harness is evidence, not the active development route
-or a release veto.
+The approved active route is the side-by-side Product Kernel Rewrite defined in
+`docs/superpowers/specs/2026-07-18-agentdeck-product-kernel-rewrite-design.md`.
+It creates a clean Kernel/Application/Ports/Adapters/Product boundary, makes
+ACP the only automatic Codex/Claude orchestration transport, uses tmux to show
+real decoded Agent work streams, and proves the foreground MVP with a real
+four-Worker website-reproduction Golden Product Gate before switching bare
+`agentdeck`.
 
-## P0 exit status
+The old implementation and incomplete P1 branch remain historical capability,
+test, and adapter evidence. They are not the parent architecture, and
+historical M2c failure is not the active gate or a release veto. Memory, skill,
+Hermes-inspired governed self-improvement, background daemon execution, and a
+Hive-style GUI are explicitly post-MVP work.
+
+## Current written-design status
+
+- The ten-part product design was approved in conversation.
+- The formal rewrite spec is written on isolated branch
+  `codex/product-kernel-rewrite`.
+- This step changes documentation only; it does not implement the Kernel,
+  install adapters, change authentication, run a provider, or run a real live
+  Mission.
+- The new worktree baseline passed `4461 passed, 3 skipped` in the existing
+  `agentdeck` conda environment before documentation edits.
+- The next gate is human review of the written spec.
+- Only after written-spec approval may `writing-plans` produce the detailed
+  per-file, per-test, per-commit TDD implementation plan.
+- Implementation remains locked until that plan is reviewed and approved.
+
+## Approved MVP boundary
+
+The MVP includes:
+
+- bare `agentdeck` continuous natural-language ProductSession;
+- explicit Codex CLI, Claude CLI, or OpenAI-compatible API Leader selection;
+- model selection and three Codex-style permission profiles;
+- exact human-readable Mission Preview and one confirmation;
+- Codex implementation, Claude review, Codex revision, and Claude acceptance;
+- ACP-only automatic communication and permission bridge;
+- tmux panes showing each Agent's real decoded ACP events;
+- one project-local SQLite database and one foreground writer;
+- human-readable diagnostics, safe exit, and deterministic re-entry;
+- a local-only reproduction of the frozen `https://www.iae.cas.cn/` home page
+  by four independent Worker Instances as the real Golden Product Gate.
+
+The MVP excludes background-after-exit execution, arbitrary Agent graphs,
+CLI/PTY automatic fallback, memory/skill learning, self-evolution, GUI, A2A,
+remote/mobile clients, and WispTerm-class terminal work.
+
+## Historical P0 exit evidence
 
 P0 documentation, inventory, migration design, validation strategy, and
 deterministic baseline evidence are complete and frozen for human review. The
@@ -55,15 +98,12 @@ only repository fakes. These facts prove the P0 documentation baseline only;
 they do not claim V1, real-adapter, Golden, migration-runtime, or release
 readiness.
 
-## Next gate
+## Superseded P0 next gate
 
-A human reviews the frozen P0 evidence. P1 implementation remains locked and
-is not authorized by P0 completion. The program-level P1 specification already
-defines its intended scope; only after explicit human approval may any newly
-unresolved product choice use `brainstorming`, and the separate P1 Durable
-Mission Kernel task-level TDD plan must then be created with `writing-plans`.
-Neither that task-level plan nor P1 implementation is written or executed in
-this P0 exit step.
+This retained P0 text no longer controls scheduling. P0 received the later
+human architecture-reset decisions captured in the active rewrite spec above.
+The incomplete P1 branch remains frozen as evidence; no P1 or M2c continuation
+may bypass the active written-spec review and rewrite planning gates.
 
 The historical M2c attempts below remain immutable evidence. They are no
 longer the active development route, a release veto, or authority to rerun a
@@ -899,33 +939,33 @@ When switching from Codex to Claude Code CLI or another local agent, read these 
 3. Top of `HISTORY.md`
 4. `docs/roadmap/product-north-star.md`
 5. `docs/roadmap/ultimate-goal-roadmap.md`
-6. `docs/superpowers/plans/2026-07-17-agentdeck-v1-architecture-reset-program.md`
-7. `docs/superpowers/plans/2026-07-17-agentdeck-p0-product-reset.md`
-8. This file
+6. `docs/superpowers/specs/2026-07-18-agentdeck-product-kernel-rewrite-design.md`
+7. This file
 
 Then inspect current state with:
 
 ```bash
 git status --short
 git log --oneline -5
-git diff --name-only f3968720..HEAD -- src/agentdeck tests .agentdeck
+git diff --name-only main...HEAD
 ```
 
 ## Current Phase
 
-The approved [AgentDeck V1 architecture-reset program](../superpowers/plans/2026-07-17-agentdeck-v1-architecture-reset-program.md)
-is the current development route and must run in strict P0-P5 order. P0 Tasks
-1–9 are frozen. The current action is Task 10: a read-only human P0 exit
-review of the seven durable documents, deterministic baseline, scope evidence,
-and repository status. Task 10 authorizes no document or product-source change,
-provider call, ACP/tmux session, daemon, preflight, live Mission, merge, or
-push.
+The approved
+[AgentDeck Product Kernel Rewrite](../superpowers/specs/2026-07-18-agentdeck-product-kernel-rewrite-design.md)
+is the current development route and must run in strict R0-R8 order. The
+current action is a human review of the written spec and its North Star,
+HISTORY, and handoff alignment. This review authorizes no product-source or
+test change, provider call, ACP/tmux session, daemon, preflight, live Mission,
+merge, push, installation, authentication change, or global configuration
+change.
 
-P1 remains locked. Only after explicit human approval of the P0 exit gate may
-a separate P1 Durable Mission Kernel task-level TDD plan be created with
-`writing-plans`; that approval does not itself authorize P1 implementation.
-Old M2c evidence is historical only: it is not a release veto, a current
-scheduling gate, or authority to retry any preflight or live node.
+Only after explicit approval of the written spec may a separate detailed TDD
+implementation plan be created with `writing-plans`. That planning approval
+does not itself authorize implementation. The incomplete P1 branch and old
+M2c evidence are historical only: they are not a release veto, current
+scheduling gate, or authority to retry a preflight or live node.
 
 Earlier implementation and validation facts remain available in
 [`HISTORY.md`](../../HISTORY.md),
@@ -944,19 +984,19 @@ Claude can still continue the same work by treating this repository as the sourc
 - `CLAUDE.md` and `AGENT.md` are the behavioral constraints.
 - `docs/roadmap/product-north-star.md` is the active product north star.
 - `docs/roadmap/ultimate-goal-roadmap.md` is the historical capability roadmap.
-- The architecture-reset program and P0 plan define the current task order.
+- The Product Kernel Rewrite spec defines the current task order.
 - This handoff file carries the current active goal and next slice.
 - Git commits are the durable recovery points.
 
 Suggested prompt for Claude Code CLI:
 
 ```text
-Please perform the read-only AgentDeck P0 exit review from this repository. Do not continue implementation.
-Read CLAUDE.md, AGENT.md, the top of HISTORY.md, docs/roadmap/product-north-star.md, docs/roadmap/ultimate-goal-roadmap.md, docs/handoff/current-development-state.md, docs/superpowers/plans/2026-07-17-agentdeck-v1-architecture-reset-program.md, and docs/superpowers/plans/2026-07-17-agentdeck-p0-product-reset.md first.
+Please perform the read-only AgentDeck Product Kernel Rewrite written-spec review. Do not begin implementation or write the TDD plan.
+Read CLAUDE.md, AGENT.md, the top of HISTORY.md, docs/roadmap/product-north-star.md, docs/roadmap/ultimate-goal-roadmap.md, docs/handoff/current-development-state.md, and docs/superpowers/specs/2026-07-18-agentdeck-product-kernel-rewrite-design.md first.
 Use conda activate agentdeck or conda run -n agentdeck for commands.
-P0 Tasks 1-9 are frozen. Execute only Task 10's read-only repository-state and evidence review, including the final f3968720..HEAD source/test/runtime scope audit. Report whether the human P0 exit gate can be approved, but do not mark it approved yourself.
+Check that the ten approved design parts, ACP-only automatic communication, tmux real-Agent observation, three permission profiles, one-writer foreground MVP, four-Agent website Golden Gate, side-by-side cutover, and post-MVP memory/skill/self-evolution/GUI boundary are internally consistent.
 Do not modify documents, product source, tests, or runtime state. Do not call a provider, start ACP/tmux sessions or daemons, run preflight/live Missions, merge, push, install tools, or change authentication/global settings.
-P1 task-level planning may begin only after explicit human P0 exit approval and must use writing-plans. P1 implementation remains locked until separately authorized.
+The detailed TDD plan may begin only after explicit written-spec approval and must use writing-plans. Implementation remains locked until the plan is separately reviewed and approved.
 ```
 
 ## Historical development log — not active

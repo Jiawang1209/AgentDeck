@@ -4,6 +4,15 @@
 
 本项目中的 agent 是有名字、有角色、有 runtime 绑定、有消息队列、有权限边界的工作单元。
 
+当前开发权威（2026-07-18）是
+`docs/superpowers/specs/2026-07-18-agentdeck-product-kernel-rewrite-design.md`。
+新产品内核在独立分支中重写并与旧实现并存；自动 Leader/Worker Task、进度、
+权限、结果、review、revision 和 acceptance 通信必须走 ACP，tmux 只是各
+Agent 真实 ACP 事件的可见观察面和显式人工接管入口。Worker 不得直接调度
+Worker、写 AgentDeck SQLite 或把 pane 文本当 completion。旧 P1/M2/M2c
+仅作历史能力和测试证据。书面 spec 与独立 TDD plan 未批准前不得实现；
+memory、skill、自我进化和 Hive 风格 GUI 均为 MVP 后续。
+
 真实基线：2026-07-11 的 fresh-project 自然语言 Mission 只用 preview 请求与一次整体确认两条用户消息，让 Codex/Claude Worker 完成 8 步冻结串行接龙；验收与 lineage 见 `docs/validation/2026-07-11-natural-language-mission-acceptance.md`。目录 trust 是显式 human setup，不能当作 Worker 任务或自动提交。
 
 Protocol-native Phase 1 已实现协议 records、append-only lineage、compact ProjectView、`protocol-runtime/v1` contract、只读 `agentdeck protocol status` 和 runtime capability metadata。Phase 2 foreground ACP v1 vertical slice 已完成 fake-Agent conformance，并于 2026-07-12 通过真实 `@agentclientprotocol/claude-agent-acp@0.58.1` 验收；证据见 `docs/validation/phase2-claude-agent-acp-vertical-slice.md`。Phase 3 M1 已交付裸 `agentdeck` 持续自然语言会话、显式 Leader/Worker transport 与精确 Mission preview/confirm；M2 已交付单项目 authoritative daemon，使确认后的 frozen Mission 可在客户端断开后继续，通过 AgentDeck 按顺序调度 ACP/tmux Worker、持久化 compact handoff、恢复、权限、接管和重连。证据见 `docs/validation/2026-07-13-phase3-m1-foreground-conversation.md` 与 `docs/validation/2026-07-13-phase3-m2-project-daemon.md`。`protocol status` 与 `agentdeck protocol acp preflight --agent <id>` 都必须只读，不得写 state/event、调用 provider、读取或输入 tmux、改变 permission、启动 adapter 或认证；能力元数据不是执行授权。tmux 只能声明真实的 observable fallback 能力，不得标为 ACP compatible，也不得与 ACP 互相静默 fallback。A2A、remote daemon、global roaming、Workspace Client、自动安装/认证和完整 transcript 恢复仍未实现。真实 gate 只允许人类在 AgentDeck 外安装/认证 adapter 后按验证 SOP 显式运行；不得使用 `npx`、`npm`、`pip`、自动下载或自动修改认证。
@@ -25,7 +34,9 @@ Protocol-native Phase 1 已实现协议 records、append-only lineage、compact 
 - 触发验证。
 - 输出最终结论。
 
-默认 provider 边界：Leader 使用 API-backed LLM provider 抽象。DeepSeek/OpenAI-compatible 可以作为初始候选，但 Leader 逻辑不能绑定到单一 provider。
+Leader provider 边界：Leader 可以使用 ACP-backed Codex/Claude CLI Agent
+或 OpenAI-compatible API provider。DeepSeek/Kimi/GLM/Custom 只是显式 API
+preset，不能成为静默默认值；Leader 逻辑不能绑定到单一 provider。
 
 默认 skill 边界：Leader 和 Worker 可以使用内置 skill、项目本地 skill 或显式 allowlist 的外源 skill，但 skill 必须通过 Skill Registry 加载并记录 path/source、hash、content snapshot、调用者和用途；skill 是可审计工作流上下文，不是绕过 approval、runtime safety 或 tool 权限的后门。
 

@@ -4,6 +4,51 @@
 
 ## 2026-07-18
 
+### Approve and freeze the AgentDeck Product Kernel Rewrite design
+
+- Replaced the active P1-first evolutionary implementation order with an
+  approved side-by-side Product Kernel Rewrite. The new Kernel, Application,
+  Ports, Adapters, and Product boundaries are independent of the legacy giant
+  CLI, ConversationSession, daemon, and M2c harness; existing work is retained
+  as selectively admitted adapter, invariant, and test evidence rather than
+  discarded or blindly merged.
+- Defined the foreground MVP journey: bare `agentdeck`, read-only Codex/Claude
+  discovery, explicit CLI/API Leader and model selection, three Codex-style
+  permission profiles, natural-language goal, human-readable exact Mission
+  Preview, one confirmation, and durable exit/re-entry.
+- Made ACP the only automatic orchestration transport for the MVP. The required
+  coding flow is Codex implementation, Claude review, AgentDeck-validated
+  Revision Task, Codex revision, and Claude acceptance. CLI/PTY is manual-only
+  compatibility/takeover; tmux observes real decoded ACP Agent events and is
+  not communication or completion authority.
+- Selected one project-local `.agentdeck/agentdeck.db`, ordinary rollback
+  journaling, and one foreground AgentDeck writer for the MVP. Background
+  daemon execution and WAL/SHM multi-process hardening are deferred until the
+  product path is proven.
+- Defined stable human Diagnostics that replace unexplained `BLOCKED`,
+  `backend_failure`, and timeout-only output; bounded retry, outcome-unknown,
+  permission lineage, evidence-backed acceptance, and cursor-safe tmux
+  observation are mandatory contracts.
+- Defined the real Golden Product Gate as a local-only reproduction of the
+  frozen `https://www.iae.cas.cn/` home page by four independent Worker
+  Instances: Codex implementer, Claude reviewer, Codex reviser, and Claude
+  acceptance. Real ACP lineage, browser/visual evidence, tmux four-pane Agent
+  streams, SQLite recovery, `/exit`, re-entry, and human product acceptance are
+  all required for PASS.
+- Explicitly moved memory, Skill Registry integration, Hermes-inspired
+  governed self-improvement, background execution, Hive-inspired browser UI,
+  broader Agent support, A2A, remote/mobile clients, and WispTerm-class clients
+  after the MVP cutover.
+- Created isolated branch/worktree `codex/product-kernel-rewrite` from main and
+  installed it into the existing `agentdeck` conda environment. The clean
+  pre-documentation baseline passed `4461 passed, 3 skipped in 220.91s`.
+- Added the formal approved design at
+  `docs/superpowers/specs/2026-07-18-agentdeck-product-kernel-rewrite-design.md`
+  and aligned the Product North Star, Ultimate Goal Roadmap, and current
+  handoff. This commit is documentation-only; implementation remains locked
+  until human written-spec review and a separate approved `writing-plans` TDD
+  plan.
+
 ### Complete AgentDeck P0 Product Reset
 
 - Froze seven durable P0 documents for human exit review:

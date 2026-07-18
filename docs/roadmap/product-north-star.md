@@ -1,27 +1,28 @@
 # AgentDeck Product North Star
 
-Updated: 2026-07-17
+Updated: 2026-07-18
 
-## Active architecture-reset route
+## Active product-kernel rewrite route
 
-New development follows the approved, strictly ordered architecture-reset
-program:
+New development follows the approved side-by-side product-kernel rewrite:
 
-1. P0 Product Reset
-2. P1 Durable Mission Kernel
-3. P2 Conversation Product
-4. P3 official Codex/Claude adapters
-5. P4 reliable multi-Agent closure
-6. P5 learning/V1 release
+1. R0 rewrite boundary
+2. R1 pure Kernel and one-writer SQLite
+3. R2 continuous ProductSession and first-run shell
+4. R3 Codex/Claude/API Leader and exact Mission Preview
+5. R4 ACP-only four-stage Worker execution
+6. R5 tmux real Agent observation
+7. R6 diagnostics and recovery closure
+8. R7 real four-Agent website-reproduction Golden Demo
+9. R8 bare `agentdeck` cutover
 
-The authoritative program and current execution plan are
-[AgentDeck V1 architecture-reset program](../superpowers/plans/2026-07-17-agentdeck-v1-architecture-reset-program.md)
-and [AgentDeck P0 Product Reset](../superpowers/plans/2026-07-17-agentdeck-p0-product-reset.md).
-P0 is the sole current scope; later phases remain locked until their preceding
-phase exits and receives review. Prior M2 and M2c work remains preserved as
-historical capability and validation evidence. Old M2c status is not a release
-veto or live retry authority, and it cannot authorize rerunning any consumed
-preflight or live node.
+The authoritative approved design is
+[AgentDeck Product Kernel Rewrite](../superpowers/specs/2026-07-18-agentdeck-product-kernel-rewrite-design.md).
+The old implementation and incomplete P1 branch remain preserved as historical
+capability, test, and adapter evidence, but the rewrite does not inherit their
+module boundaries or phase order. Old M2c status is not a release veto or live
+retry authority. Implementation remains locked until the written spec is
+reviewed and a separate `writing-plans` TDD plan is approved.
 
 ## Historical Phase 3 M2 delivery evidence
 
@@ -36,7 +37,12 @@ A2A, notifications, and transcript persistence remain future work.
 
 ## Product promise
 
-AgentDeck is a local-first multi-agent workbench. A user should be able to enter a project, describe one goal in ordinary language, review one frozen Mission, confirm it once, and leave while a governed team of heterogeneous agents continues the work. The user can return later, understand exactly what happened, inspect or take over any Worker, approve newly introduced risk, and resume without losing provenance.
+AgentDeck is a local-first multi-agent workbench. A user should be able to enter
+a project, select a real Leader and permission profile, describe one goal in
+ordinary language, review one frozen Mission, confirm it once, and watch a
+governed team of heterogeneous agents execute it through ACP. The foreground
+MVP preserves state on exit and resumes deterministically on re-entry;
+background execution after terminal close is a post-MVP enhancement.
 
 The product north star is:
 
@@ -65,7 +71,6 @@ The ordinary user should be able to say:
 批准执行。
 现在进展怎么样？
 打开实时工作区。
-把这次经验整理成 skill 建议。
 ```
 
 Deterministic commands such as `agentdeck mission status`, `agentdeck approval`, `agentdeck trace`, and `agentdeck leader chat --message ...` remain available for automation, GUI/TUI clients, audit, debugging, and exact recovery. Natural language must compose these authoritative primitives rather than create a second execution system.
@@ -88,7 +93,7 @@ AgentDeck keeps a stricter boundary: learning may automatically propose, preview
 - Portable agent integrations across clients and providers.
 - A path for AgentDeck to act both as an ACP client and, later, as an ACP agent that exposes an entire governed Mission team.
 
-ACP is the preferred standard transport for compatible agents. It does not
+ACP is the required automatic orchestration transport for the MVP. It does not
 own Mission identity, task state, permission authority, handoff validity,
 scheduling, governance, or audit. Those facts remain authoritative in
 AgentDeck's own communication ledger and orchestration kernel.
@@ -141,40 +146,55 @@ Human / CLI / TUI / Browser Workspace / Desktop / future ACP client
                               |
                   Protocol-Native Runtime Kernel
                               |
-                     Transport Router
-          /                   |                    \
-      ACP native       CLI / PTY adapter       tmux fallback
-          \                   |                    /
-          Codex / Claude / Gemini / OpenCode / future agents
+                     ACP Client Layer
+                              |
+                Codex ACP / Claude ACP / future agents
+
+        tmux = real ACP event observation and human takeover
 ```
 
 1. **Project first, globally navigable.** Project state is isolated; the global Frontdesk stores only user-level preferences and a project index.
-2. **One project daemon is authoritative.** Interactive clients may disconnect. Confirmed Missions continue in the background.
+2. **One foreground writer for the MVP.** One project-local SQLite database is
+   authoritative. Exit preserves state and re-entry recovers it. A daemon and
+   background continuation are post-MVP work.
 3. **One confirmation covers one frozen scope.** Ordinary steps do not repeatedly interrupt the user. New permission, plan drift, risk escalation, or runtime failure pauses the Mission.
 4. **Sessions, not panes, identify Workers.** A stable `session_id` survives transport and UI changes. A `pane_id` is an optional observation binding.
 5. **AgentDeck owns communication truth.** Mission, task, attempt, permission,
    reply, handoff, and acceptance facts belong to one AgentDeck ledger. No
    transport adapter may create a parallel authority system.
-6. **ACP is the preferred transport.** ACP adapters bridge compatible CLIs
-   during migration. CLI/PTY and tmux remain governed fallbacks, observation
-   surfaces, and takeover paths for agents without ACP support.
+6. **ACP is the automatic transport.** All automatic task, progress,
+   permission, result, review, revision, and acceptance communication uses ACP.
+   CLI/PTY is manual-only compatibility and takeover; tmux is observation.
 7. **All facts enter one ledger.** Prompts, updates, tools, permissions, replies, artifacts, and failures are append-only evidence projected through ProjectView.
 8. **Context is not authority.** Prompts, skills, memory, role packs, and ACP metadata cannot expand permissions.
 9. **Headless core, replaceable clients.** CLI, TUI, browser, desktop, remote, and IDE clients consume the same contracts and event stream. The GUI renders authority; it does not infer it from terminal pixels.
-10. **No big-bang rewrite.** Internal V2 refactoring is allowed; user projects, history, and commands receive previewed, backed-up, reversible migration.
+10. **Clean core, reversible cutover.** The new Kernel is a side-by-side rewrite
+    with strict Ports. Existing behavior is reused only through admitted
+    adapters. User projects, history, and commands receive previewed, backed-up,
+    reversible migration after the Golden Gate.
 11. **Evidence before product claims.** Every phase ends with contracts, failure tests, crash recovery, and a real multi-agent Golden Demo.
 
 ## LLM setup
 
 `agentdeck` must always start. Deterministic status, audit, approval, and recovery commands do not require an LLM.
 
-On first use AgentDeck detects available ACP agents, logged-in CLIs, API providers, and local models. It recommends but never silently selects a Frontdesk model. The user may choose Codex, Claude, another provider, or skip setup. Open-ended natural-language requests explain that an LLM is required when none is configured.
+On first use AgentDeck detects available ACP agents, logged-in CLIs, API
+providers, and local models. It never silently selects unavailable DeepSeek or
+another provider. The user may choose Codex CLI, Claude CLI, an
+OpenAI-compatible API Leader, or postpone setup. Open-ended natural-language
+requests remain durably pending when no Leader is ready.
 
-Frontdesk and Planner are separately configurable. A lightweight Frontdesk can route ordinary intent, while a stronger Planner handles difficult decomposition and acceptance criteria.
+The MVP uses one explicitly selected Leader for open-ended planning and a
+deterministic local router for slash commands and setup intents. A separately
+configurable lightweight Frontdesk and stronger Planner remain a post-MVP
+optimization; they cannot complicate the first product path.
 
-## Background execution
+## Foreground MVP and future background execution
 
-After explicit Mission confirmation, the project daemon continues when the user closes the terminal. It may advance only within the frozen scope and policy snapshot. It pauses on:
+The MVP runs the confirmed Mission in the foreground. `/exit` safely
+interrupts an active Attempt, preserves state, and allows deterministic
+re-entry. It may advance only within the frozen scope and permission snapshot.
+It pauses on:
 
 - a new permission class;
 - destructive, publishing, credential, external-send, or out-of-scope activity;
@@ -182,28 +202,30 @@ After explicit Mission confirmation, the project daemon continues when the user 
 - budget or policy limits;
 - Worker loss, protocol inconsistency, or unhandled failure.
 
-When the user returns, AgentDeck summarizes completed turns, current work, failures, pending permissions, and the exact next decision.
+When the user returns, AgentDeck summarizes completed turns, current work,
+failures, pending permissions, and the exact next decision. After the MVP
+passes, a separate design may add a ProjectDaemon that continues after the
+terminal closes without changing the Mission authority.
 
 ## Delivery sequence
 
-1. **P0 Product Reset:** freeze the V1 product contract, inventory current
-   capabilities, design SQLite and legacy-state migration, classify historical
-   tests and evidence, and record a deterministic baseline. This phase is
-   documentation, inventory, migration design, and baseline evidence only.
-2. **P1 Durable Mission Kernel:** converge one authoritative project daemon and
-   Mission/Task/Attempt/Permission/Handoff/Evidence model after P0 exits and is
-   reviewed.
-3. **P2 Conversation Product:** make the natural-language project conversation
-   compose the durable kernel without creating a second authority system.
-4. **P3 official Codex/Claude adapters:** integrate governed official adapters
-   over the P1/P2 authority model, with ACP preferred and explicit fallbacks.
-5. **P4 reliable multi-Agent closure:** prove bounded heterogeneous-agent
-   execution, permission, recovery, handoff, and acceptance end to end.
-6. **P5 learning/V1 release:** complete safe skill and memory learning,
-   compatibility, release evidence, and the V1 product gate.
+1. **R0-R1 foundation:** isolate the rewrite, enforce architecture boundaries,
+   and implement the pure Kernel plus one-writer SQLite using Fake Ports.
+2. **R2-R3 product conversation:** deliver first-run discovery, Leader/model/
+   permission choice, continuous conversation, and exact Mission Preview.
+3. **R4 ACP execution:** deliver Codex implementation, Claude review, Codex
+   revision, and Claude acceptance through ACP only.
+4. **R5-R6 transparency and recovery:** render real Agent ACP streams in tmux
+   and close human-readable diagnostics, interruption, and recovery.
+5. **R7 Golden Product Gate:** reproduce the frozen `https://www.iae.cas.cn/`
+   home page with four real Worker Instances and human acceptance.
+6. **R8 cutover:** switch bare `agentdeck`, retain structured debug commands,
+   and migrate old state only through explicit preview and confirmation.
+7. **Post-MVP:** background execution, memory, skills, Hermes-inspired governed
+   self-improvement, Hive-inspired GUI, broader agents, A2A, and remote clients.
 
-Historical M1, M2, M2c, and M3 labels below and elsewhere remain useful
-capability evidence, but they do not reorder or bypass this P0-P5 sequence.
+Historical P0/P1, M1, M2, M2c, and M3 labels remain useful capability and test
+evidence, but they do not reorder or bypass this R0-R8 sequence.
 
 ## Non-goals for the current product line
 
@@ -217,14 +239,17 @@ capability evidence, but they do not reorder or bypass this P0-P5 sequence.
 - Depending on one model provider.
 - Treating tmux output as authoritative ACP state.
 - Shipping remote execution or a marketplace before local governance and migration are proven.
+- Adding memory, skill learning, self-evolution, or a Hive-style GUI before the
+  ACP-native MVP and Golden Product Gate pass.
 
 ## Product success test
 
-From a fresh project, a user can run `agentdeck`, select or skip a detected
-model, describe a multi-agent objective, review one Mission, confirm once,
-close the terminal, and later return to a complete or safely paused result.
-Codex and Claude communicate through AgentDeck-governed structured sessions;
-ACP is preferred and CLI/PTY or tmux remains an explicit fallback. Every step
-is auditable, no new authority is inferred, and the same state is visible
-through natural language, CLI contracts, and an optional live browser
-workspace where the user can watch, inspect, take over, and return control.
+From a fresh project, a user can run `agentdeck`, select Codex, Claude, or an
+API Leader, choose one of three Codex-style permission profiles, describe a
+development objective, review one Mission, and confirm once. Four independent
+Worker Instances then complete Codex implementation, Claude review, Codex
+revision, and Claude acceptance through ACP. tmux displays every Agent's real
+decoded ACP work stream. SQLite preserves the full lineage, `/exit` is safe,
+and re-entry restores the result. The release proof is a local-only four-Agent
+reproduction of the frozen `https://www.iae.cas.cn/` home page plus human
+product acceptance.

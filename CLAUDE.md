@@ -4,7 +4,21 @@
 
 ## 项目定位
 
-AgentDeck 是一个 local-first 多智能体终端工作台。目标是用任意可通过 API 调用的 LLM 做 Leader Agent，调度多个 Worker Agent，在 tmux 可见终端里执行任务，并通过消息账本、审批、状态存储和 ProjectView 保持可审计、可恢复。DeepSeek 可以作为首个默认 provider，但不是架构绑定点。
+AgentDeck 是一个 local-first 多智能体终端工作台。目标是用 Codex/Claude
+CLI Agent 或任意可通过 OpenAI-compatible API 调用的 LLM 做 Leader Agent，
+调度多个 Worker Agent，在 tmux 可见终端里执行任务，并通过消息账本、审批、
+状态存储和 ProjectView 保持可审计、可恢复。DeepSeek 是可选 API preset，
+不是静默默认值或架构绑定点。
+
+2026-07-18 起，当前开发权威改为
+`docs/superpowers/specs/2026-07-18-agentdeck-product-kernel-rewrite-design.md`：
+新内核在独立分支中与旧实现并存，按 Kernel/Application/Ports/Adapters/
+Product 边界完全重写；MVP 的自动 Codex/Claude 编排必须通过 ACP，tmux
+只展示各 Agent 的真实 ACP 工作流并支持显式接管；一个前台写入者使用
+`.agentdeck/agentdeck.db`，退出后可恢复但暂不承诺后台继续。旧 P1/M2/M2c
+保留为测试、组件和历史证据，不得继续作为当前实现顺序或 release veto。
+在书面 spec 与后续 `writing-plans` 计划分别获得批准前，不得开始实现。
+Memory、skill、Hermes 式自我进化和 Hive 式 GUI 均为 MVP 之后的增强。
 
 2026-07-11 自然语言 Mission Phase 0 已通过全新项目真实验收：两条用户消息驱动 Codex/Claude 完成 8 步冻结顺序，证据见 `docs/validation/2026-07-11-natural-language-mission-acceptance.md`。首次目录 trust 仍是 human setup，不得由 Worker 任务输入或静默 Enter 绕过。
 

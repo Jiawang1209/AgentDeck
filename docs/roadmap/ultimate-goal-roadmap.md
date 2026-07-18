@@ -2,12 +2,13 @@
 
 > **New product north star:** [product-north-star.md](product-north-star.md) defines the approved protocol-native product direction. This document remains the historical capability roadmap and implementation trace; when the two differ, the product north star governs new product decisions.
 
-> **Active development route:** New development follows the strictly ordered
-> [AgentDeck V1 architecture-reset program](../superpowers/plans/2026-07-17-agentdeck-v1-architecture-reset-program.md),
-> beginning with the current
-> [P0 Product Reset](../superpowers/plans/2026-07-17-agentdeck-p0-product-reset.md).
-> M1, M2, M2c, and M3 are preserved historical capability labels, not current
-> scheduling gates; they cannot reorder or bypass the P0-P5 program.
+> **Active development route:** New development follows the approved
+> [AgentDeck Product Kernel Rewrite](../superpowers/specs/2026-07-18-agentdeck-product-kernel-rewrite-design.md).
+> The clean Kernel, continuous ProductSession, ACP-only Codex/Claude execution,
+> tmux real-Agent observation, and four-Agent Golden Product Gate are the MVP.
+> P0/P1, M1, M2, M2c, and M3 are preserved historical capability labels and
+> evidence, not current scheduling gates. Memory, skills, Hermes-inspired
+> governed self-improvement, and a Hive-style GUI begin only after MVP cutover.
 
 > 目的：防止 AgentDeck 在连续开发中偏离终极目标。每一轮新功能都应该能映射到本文中的某个目标能力。
 
@@ -29,8 +30,10 @@ product acceptance 通过，证据记录于
 四阶段 M2c 实机验收在两个 fresh 项目中均由真实 Codex Leader durable
 `leader_schema` 终止，Mission 与 Worker effect 为零，因此完整 M2c 仍为 BLOCKED。
 
-完整 transcript 恢复、A2A、remote daemon、global roaming、Workspace Client、
-通知、自动 install/auth 与原生同会话 TUI attach 仍是后续独立里程碑。
+以上 M1/M2 状态是历史证据。当前重写不以旧 daemon 或 M2c live harness
+作为父架构或发布 veto。完整 transcript 恢复、A2A、remote daemon、global
+roaming、Workspace Client、通知、自动 install/auth 与原生同会话 TUI attach
+仍是后续独立里程碑。
 
 ## 1. 终极目标
 
@@ -47,9 +50,19 @@ Human Operator
   -> recoverable project work history
 ```
 
-用户应该能用自然语言启动一个任务，由 Leader Agent 理解目标、按需加载可审计 skill、拆解计划、指派角色、调度多个 Agent、观察结果、要求验证，并在关键动作前让人类审批。
+用户应该能用自然语言启动一个任务，由 Leader Agent 理解目标、拆解计划、
+指派角色、通过 ACP 调度多个 Agent、在 tmux 中观察真实工作流、要求验证，
+并在关键动作前按三档权限策略审批。MVP 通过后才把可审计 skill、memory
+和学习建议接回同一权威内核。
 
-Skill 与 Memory 是北极星的一等学习能力：AgentDeck 要像 WispTerm/Hermes 那样把可复用工作流沉淀为 skill，把长期项目事实和用户偏好沉淀为 memory；但所有 skill 都必须显式加载、记录 source/path/hash/content snapshot，并在每次 Leader 规划时把 compact skill provenance 固化到 plan 记录和 ProjectView。Skill 也是未来生态接口：内置 skill 用来沉淀稳定高频工作流，外源 skill 可以进入项目，但必须先经过只读 preview、hash/provenance 展示、显式 import、显式 load 和审计，不能静默安装或自动启用。Skill suggestion 在 MVP 阶段必须先进入 pending queue，经 `draft-preview` 或自然语言 `skill_create_preview` 审阅后只能由人类显式运行 `skills create --confirm` 写入项目 skill；Memory 同样必须先进入 pending suggestion queue，经 `apply-preview` 或自然语言 `memory_apply_preview` 审阅后只能由人类显式运行 `memory apply --confirm` 写入长期记忆。已应用 memory 只通过 ProjectView `memory`、workbench `memory_context_card` 和自然语言 `memory_context` 暴露 compact 摘要，不暴露全文，不自动注入 prompt，避免变成不可追溯的隐藏提示词或权限后门。
+Skill 与 Memory 是北极星的一等**后续学习能力**：AgentDeck 要像
+WispTerm/Hermes 那样把可复用工作流沉淀为 skill，把长期项目事实和用户偏好
+沉淀为 memory；但它们不属于当前产品内核 MVP。MVP 切换后，所有 skill
+仍必须显式加载、记录 source/path/hash/content snapshot，并在 Leader 规划时
+把 compact provenance 固化到 Mission 和 ProjectView。Skill suggestion 与
+Memory suggestion 仍必须先进入 pending queue，经 preview 后只能由人类显式
+确认写入；任何自我进化只能提出可审查变更，不能静默安装、自动启用、扩大
+权限或形成第二套执行权威。
 
 ## 2. 分层角色北极星与图片差距计划
 
