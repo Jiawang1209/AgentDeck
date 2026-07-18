@@ -8,9 +8,11 @@
 
 - Added a pure, deterministic `DomainEvent` primitive for the P1 durable
   Mission kernel with mutually exclusive `client_command`, `adapter_event`,
-  and `internal_trigger` provenance shapes. Each constructor rejects unknown
-  or cross-trigger fields with stable sanitized errors, and validates explicit
-  revisions, adapter integrity hashes, identifiers, and caller-supplied time.
+  and `internal_trigger` frozen provenance types. `DomainEvent` can only be
+  created through those three trigger-specific constructors; each rejects
+  unknown or cross-trigger fields with stable sanitized errors and validates
+  explicit revisions, adapter integrity hashes, identifiers, and
+  caller-supplied time.
 - Restricted event payloads and provenance to bounded canonical JSON, deeply
   detached and froze constructor inputs, and exposed only fresh mutable copies
   plus byte-stable canonical UTF-8 serialization. This slice has no store,

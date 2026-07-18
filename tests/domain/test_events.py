@@ -5,7 +5,14 @@ from dataclasses import FrozenInstanceError
 
 import pytest
 
-from agentdeck.domain.events import MAX_EVENT_BYTES, MAX_JSON_DEPTH, DomainEvent
+from agentdeck.domain.events import (
+    MAX_EVENT_BYTES,
+    MAX_JSON_DEPTH,
+    AdapterEventProvenance,
+    ClientCommandProvenance,
+    DomainEvent,
+    InternalTriggerProvenance,
+)
 
 
 HASH = "sha256:" + ("a" * 64)
@@ -94,6 +101,23 @@ def test_builds_internal_trigger_event_with_closed_provenance() -> None:
         "source_revision": 3,
         "source_snapshot_id": "snapshot_1",
     }
+
+
+def test_events_hold_trigger_specific_frozen_provenance_types() -> None:
+    client = client_event().provenance
+    adapter = adapter_event().provenance
+    internal = internal_event().provenance
+
+    assert isinstance(client, ClientCommandProvenance)
+    assert isinstance(adapter, AdapterEventProvenance)
+    assert isinstance(internal, InternalTriggerProvenance)
+
+    with pytest.raises(FrozenInstanceError):
+        client.command_id = "changed"  # type: ignore[misc,union-attr]
+    with pytest.raises(FrozenInstanceError):
+        adapter.adapter_event_id = "changed"  # type: ignore[misc,union-attr]
+    with pytest.raises(FrozenInstanceError):
+        internal.internal_trigger_id = "changed"  # type: ignore[misc,union-attr]
 
 
 @pytest.mark.parametrize(
@@ -204,7 +228,7 @@ def test_constructor_inputs_are_deeply_detached_and_frozen() -> None:
     with pytest.raises(TypeError):
         event.payload["new"] = True  # type: ignore[index]
     with pytest.raises(TypeError):
-        event.provenance["actor"]["scopes"][0] = "changed"  # type: ignore[index]
+        event.provenance.actor["scopes"][0] = "changed"  # type: ignore[index]
 
 
 def test_to_dict_returns_a_fresh_mutable_deep_copy() -> None:
@@ -241,6 +265,24 @@ def test_domain_event_dataclass_fields_cannot_be_reassigned() -> None:
 
     with pytest.raises(FrozenInstanceError):
         event.kind = "changed"  # type: ignore[misc]
+
+
+def test_domain_event_rejects_direct_construction() -> None:
+    with pytest.raises(
+        TypeError, match="^domain event construction requires a trigger constructor$"
+    ):
+        DomainEvent(
+            event_id="evt_direct_1",
+            kind="mission_requested",
+            trigger_kind="client_command",
+            provenance={
+                "command_id": "cmd_1",
+                "expected_revision": 0,
+                "actor": {"actor_id": "human_1"},
+            },
+            payload={"title": "must fail"},
+            created_at="2026-07-18T00:00:00Z",
+        )
 
 
 @pytest.mark.parametrize(
