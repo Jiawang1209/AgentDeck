@@ -86,6 +86,34 @@ def test_one_lease_cannot_expose_two_writer_store_connections(
             assert reopened.project_id == "prj_1"
 
 
+def test_lease_cannot_close_or_release_flock_while_store_is_active(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "project"
+    root.mkdir()
+    lease = ProjectWriterLease.acquire(root)
+    store = SQLiteMissionStore.create(root, lease=lease, project_id="prj_1")
+    try:
+        with pytest.raises(
+            WriterLeaseError,
+            match="^writer lease owns an active store$",
+        ) as raised:
+            lease.close()
+        assert raised.value.__cause__ is None
+        assert lease.active is True
+        with pytest.raises(
+            WriterLeaseError,
+            match="^another project writer is active$",
+        ):
+            ProjectWriterLease.acquire(root)
+    finally:
+        store.close()
+        lease.close()
+
+    with ProjectWriterLease.acquire(root) as replacement:
+        assert replacement.active is True
+
+
 def test_replaced_project_root_invalidates_lease(tmp_path: Path) -> None:
     root = tmp_path / "project"
     root.mkdir()

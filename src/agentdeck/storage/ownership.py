@@ -201,13 +201,23 @@ class ProjectWriterLease:
             raise WriterLeaseError(_INVALID_LEASE)
         self._store_claim = None
 
+    def validate_store_claim(
+        self,
+        root: str | os.PathLike[str],
+        claim: object,
+    ) -> None:
+        self.validate_for(root)
+        if claim is not self._store_claim:
+            raise WriterLeaseError(_INVALID_LEASE)
+
     def close(self) -> None:
         if not self._active:
             return
+        if self._store_claim is not None:
+            raise WriterLeaseError("writer lease owns an active store")
         fd = self._fd
         self._fd = -1
         self._active = False
-        self._store_claim = None
         try:
             fcntl.flock(fd, fcntl.LOCK_UN)
         finally:

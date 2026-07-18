@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import sqlite3
+from functools import lru_cache
 
 
 SCHEMA_VERSION = 1
@@ -85,7 +88,25 @@ CREATE TABLE events (
     command_id TEXT REFERENCES commands(command_id) ON DELETE RESTRICT,
     adapter_event_id TEXT UNIQUE,
     internal_trigger_id TEXT UNIQUE,
-    created_at TEXT NOT NULL
+    created_at TEXT NOT NULL,
+    CHECK (
+        (
+            trigger_kind = 'client_command'
+            AND command_id IS NOT NULL
+            AND adapter_event_id IS NULL
+            AND internal_trigger_id IS NULL
+        ) OR (
+            trigger_kind = 'adapter_event'
+            AND command_id IS NULL
+            AND adapter_event_id IS NOT NULL
+            AND internal_trigger_id IS NULL
+        ) OR (
+            trigger_kind = 'internal_trigger'
+            AND command_id IS NULL
+            AND adapter_event_id IS NULL
+            AND internal_trigger_id IS NOT NULL
+        )
+    )
 );
 
 CREATE TABLE missions (
@@ -274,3 +295,86 @@ def apply_schema_v1(
         ") VALUES (?, 0, ?, 0, ?)",
         (project_id, authority_state, ""),
     )
+
+
+def _quoted_identifier(name: str) -> str:
+    return '"' + name.replace('"', '""') + '"'
+
+
+def _pragma_rows(
+    connection: sqlite3.Connection,
+    pragma: str,
+    name: str,
+) -> list[list[object]]:
+    quoted = _quoted_identifier(name)
+    return [list(row) for row in connection.execute(f"PRAGMA {pragma}({quoted})")]
+
+
+def schema_fingerprint(connection: sqlite3.Connection) -> str:
+    """Hash the executable schema shape rather than database self-reporting."""
+
+    objects = [
+        {
+            "type": row[0],
+            "name": row[1],
+            "table_name": row[2],
+            "sql": row[3],
+        }
+        for row in connection.execute(
+            "SELECT type, name, tbl_name, sql FROM sqlite_master "
+            "WHERE type IN ('table', 'index') "
+            "AND name NOT LIKE 'sqlite_%' AND sql IS NOT NULL "
+            "ORDER BY type, name"
+        )
+    ]
+    table_names = sorted(
+        item["name"] for item in objects if item["type"] == "table"
+    )
+    tables: list[dict[str, object]] = []
+    for table_name in table_names:
+        index_list = _pragma_rows(connection, "index_list", table_name)
+        index_details = [
+            {
+                "name": row[1],
+                "columns": _pragma_rows(connection, "index_xinfo", row[1]),
+            }
+            for row in index_list
+        ]
+        index_details.sort(key=lambda item: str(item["name"]))
+        tables.append(
+            {
+                "name": table_name,
+                "columns": _pragma_rows(connection, "table_xinfo", table_name),
+                "foreign_keys": _pragma_rows(
+                    connection,
+                    "foreign_key_list",
+                    table_name,
+                ),
+                "indexes": index_list,
+                "index_details": index_details,
+            }
+        )
+    canonical = json.dumps(
+        {"objects": objects, "tables": tables},
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return "sha256:" + hashlib.sha256(canonical).hexdigest()
+
+
+@lru_cache(maxsize=1)
+def expected_schema_fingerprint() -> str:
+    """Build the trusted v1 reference independently from the on-disk store."""
+
+    connection = sqlite3.connect(":memory:")
+    try:
+        connection.execute("PRAGMA foreign_keys=ON")
+        apply_schema_v1(
+            connection,
+            project_id="reference-project",
+            authority_state="sqlite_active",
+        )
+        return schema_fingerprint(connection)
+    finally:
+        connection.close()

@@ -14,6 +14,7 @@ from agentdeck.storage import (
     SQLiteMissionStore,
     SQLiteStoreError,
 )
+from agentdeck.storage.migrations import apply_schema_v1
 
 
 def _mode(path: Path) -> int:
@@ -43,6 +44,42 @@ def _make_database(root: Path, statements: tuple[str, ...]) -> Path:
         connection.close()
     os.chmod(path, 0o600)
     return path
+
+
+def _make_valid_database(root: Path, *, project_id: str = "prj_1") -> Path:
+    root.mkdir()
+    with ProjectWriterLease.acquire(root) as lease:
+        with SQLiteMissionStore.create(root, lease=lease, project_id=project_id):
+            pass
+    return root / ".agentdeck" / "state.db"
+
+
+def _rewrite_schema_sql(
+    database: Path,
+    *,
+    object_type: str,
+    name: str,
+    old: str,
+    new: str,
+) -> None:
+    connection = sqlite3.connect(database)
+    try:
+        sql = connection.execute(
+            "SELECT sql FROM sqlite_master WHERE type = ? AND name = ?",
+            (object_type, name),
+        ).fetchone()[0]
+        assert old in sql
+        connection.execute("PRAGMA writable_schema=ON")
+        connection.execute(
+            "UPDATE sqlite_master SET sql = ? WHERE type = ? AND name = ?",
+            (sql.replace(old, new, 1), object_type, name),
+        )
+        schema_version = connection.execute("PRAGMA schema_version").fetchone()[0]
+        connection.execute(f"PRAGMA schema_version={schema_version + 1}")
+        connection.execute("PRAGMA writable_schema=OFF")
+        connection.commit()
+    finally:
+        connection.close()
 
 
 def test_create_installs_schema_v1_with_closed_authority_and_pragmas(
@@ -294,3 +331,234 @@ def test_valid_store_reopens_only_with_matching_active_lease(tmp_path: Path) -> 
         with SQLiteMissionStore.open(root, lease=lease) as reopened:
             assert reopened.project_id == "prj_1"
             assert reopened.schema_version == 1
+
+
+def test_database_replacement_before_reader_open_fails_closed_and_recovers(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "project"
+    other_root = tmp_path / "other"
+    root.mkdir()
+    other_database = _make_valid_database(other_root, project_id="prj_other")
+
+    with ProjectWriterLease.acquire(root) as lease:
+        with SQLiteMissionStore.create(root, lease=lease, project_id="prj_1") as store:
+            database = root / ".agentdeck" / "state.db"
+            original = root / ".agentdeck" / "state.db.original"
+            database.rename(original)
+            other_database.replace(database)
+            try:
+                with pytest.raises(
+                    SQLiteStoreError,
+                    match="^SQLite authority identity invalid$",
+                ) as raised:
+                    store.open_reader()
+                assert raised.value.__cause__ is None
+            finally:
+                database.unlink()
+                original.rename(database)
+
+            with store.open_reader() as reader:
+                assert reader.execute(
+                    "SELECT project_id FROM projects"
+                ).fetchone() == ("prj_1",)
+
+
+def test_database_replacement_during_reader_open_fails_closed_and_recovers(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from agentdeck.storage import sqlite_store
+
+    root = tmp_path / "project"
+    other_root = tmp_path / "other"
+    root.mkdir()
+    other_database = _make_valid_database(other_root, project_id="prj_other")
+
+    with ProjectWriterLease.acquire(root) as lease:
+        with SQLiteMissionStore.create(root, lease=lease, project_id="prj_1") as store:
+            database = root / ".agentdeck" / "state.db"
+            original = root / ".agentdeck" / "state.db.original"
+            real_connect = sqlite_store.sqlite3.connect
+            replaced = False
+
+            def replacing_connect(*args: object, **kwargs: object) -> sqlite3.Connection:
+                nonlocal replaced
+                reader = real_connect(*args, **kwargs)
+                if kwargs.get("factory") is not None and not replaced:
+                    database.rename(original)
+                    other_database.replace(database)
+                    replaced = True
+                return reader
+
+            monkeypatch.setattr(sqlite_store.sqlite3, "connect", replacing_connect)
+            try:
+                with pytest.raises(
+                    SQLiteStoreError,
+                    match="^SQLite authority identity invalid$",
+                ):
+                    store.open_reader()
+            finally:
+                monkeypatch.setattr(sqlite_store.sqlite3, "connect", real_connect)
+                database.unlink()
+                original.rename(database)
+
+            with store.open_reader() as reader:
+                assert reader.execute(
+                    "SELECT project_id FROM projects"
+                ).fetchone() == ("prj_1",)
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    ["wrong_column", "missing_foreign_key", "missing_index", "missing_check"],
+)
+def test_schema_fingerprint_rejects_structural_drift_without_mutating_bytes(
+    tmp_path: Path,
+    mutation: str,
+) -> None:
+    root = tmp_path / mutation
+    database = _make_valid_database(root)
+    if mutation == "wrong_column":
+        _rewrite_schema_sql(
+            database,
+            object_type="table",
+            name="projects",
+            old="configuration_identity TEXT",
+            new="configuration_identity BLOB",
+        )
+    elif mutation == "missing_foreign_key":
+        _rewrite_schema_sql(
+            database,
+            object_type="table",
+            name="sessions",
+            old=(
+                "attempt_id TEXT NOT NULL REFERENCES attempts(attempt_id) "
+                "ON DELETE RESTRICT"
+            ),
+            new="attempt_id TEXT NOT NULL",
+        )
+    elif mutation == "missing_index":
+        connection = sqlite3.connect(database)
+        try:
+            connection.execute("DROP INDEX events_project_cursor_idx")
+            connection.commit()
+        finally:
+            connection.close()
+    else:
+        _rewrite_schema_sql(
+            database,
+            object_type="table",
+            name="projects",
+            old=(
+                "authority_generation INTEGER NOT NULL DEFAULT 0 "
+                "CHECK (authority_generation >= 0)"
+            ),
+            new="authority_generation INTEGER NOT NULL DEFAULT 0",
+        )
+
+    with ProjectWriterLease.acquire(root) as lease:
+        before = _snapshot_state_files(root)
+        with pytest.raises(SQLiteStoreError, match="^SQLite schema invalid$"):
+            SQLiteMissionStore.open(root, lease=lease)
+        assert _snapshot_state_files(root) == before
+
+
+def _event_connection() -> sqlite3.Connection:
+    connection = sqlite3.connect(":memory:")
+    connection.execute("PRAGMA foreign_keys=ON")
+    apply_schema_v1(
+        connection,
+        project_id="prj_1",
+        authority_state="sqlite_active",
+    )
+    connection.execute(
+        "INSERT INTO commands("
+        "command_id, project_id, input_hash, expected_revision, status, "
+        "actor_json, created_at"
+        ") VALUES ('cmd_1', 'prj_1', 'sha256:x', 0, 'accepted', '{}', '')"
+    )
+    return connection
+
+
+def _insert_event(
+    connection: sqlite3.Connection,
+    *,
+    event_id: str,
+    trigger_kind: str,
+    command_id: str | None = None,
+    adapter_event_id: str | None = None,
+    internal_trigger_id: str | None = None,
+) -> None:
+    connection.execute(
+        "INSERT INTO events("
+        "event_id, project_id, project_revision, trigger_kind, kind, "
+        "provenance_json, payload_json, command_id, adapter_event_id, "
+        "internal_trigger_id, created_at"
+        ") VALUES (?, 'prj_1', 0, ?, 'observed', '{}', '{}', ?, ?, ?, '')",
+        (
+            event_id,
+            trigger_kind,
+            command_id,
+            adapter_event_id,
+            internal_trigger_id,
+        ),
+    )
+
+
+def test_event_schema_accepts_each_closed_trigger_provenance() -> None:
+    connection = _event_connection()
+    try:
+        _insert_event(
+            connection,
+            event_id="evt_client",
+            trigger_kind="client_command",
+            command_id="cmd_1",
+        )
+        _insert_event(
+            connection,
+            event_id="evt_adapter",
+            trigger_kind="adapter_event",
+            adapter_event_id="ae_1",
+        )
+        _insert_event(
+            connection,
+            event_id="evt_internal",
+            trigger_kind="internal_trigger",
+            internal_trigger_id="it_1",
+        )
+        assert connection.execute("SELECT count(*) FROM events").fetchone() == (3,)
+    finally:
+        connection.close()
+
+
+@pytest.mark.parametrize(
+    ("trigger_kind", "command_id", "adapter_event_id", "internal_trigger_id"),
+    [
+        ("client_command", None, None, None),
+        ("client_command", "cmd_1", "ae_1", None),
+        ("adapter_event", None, None, None),
+        ("adapter_event", "cmd_1", "ae_1", None),
+        ("internal_trigger", None, None, None),
+        ("internal_trigger", None, "ae_1", "it_1"),
+    ],
+)
+def test_event_schema_rejects_missing_or_mixed_trigger_provenance(
+    trigger_kind: str,
+    command_id: str | None,
+    adapter_event_id: str | None,
+    internal_trigger_id: str | None,
+) -> None:
+    connection = _event_connection()
+    try:
+        with pytest.raises(sqlite3.IntegrityError):
+            _insert_event(
+                connection,
+                event_id="evt_invalid",
+                trigger_kind=trigger_kind,
+                command_id=command_id,
+                adapter_event_id=adapter_event_id,
+                internal_trigger_id=internal_trigger_id,
+            )
+    finally:
+        connection.close()

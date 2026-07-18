@@ -16,6 +16,8 @@ from .migrations import (
     SCHEMA_TABLES,
     SCHEMA_VERSION,
     apply_schema_v1,
+    expected_schema_fingerprint,
+    schema_fingerprint,
 )
 from .ownership import ProjectWriterLease, WriterLeaseError
 
@@ -29,6 +31,7 @@ _INVALID_SCHEMA = "SQLite schema invalid"
 _UNSUPPORTED_SCHEMA = "unsupported SQLite schema"
 _INVALID_AUTHORITY = "SQLite authority state invalid"
 _INVALID_PROJECT = "SQLite project identity invalid"
+_INVALID_AUTHORITY_IDENTITY = "SQLite authority identity invalid"
 _STORE_TOKEN = object()
 
 
@@ -81,12 +84,29 @@ def _ensure_regular_owner_file(path: Path) -> os.stat_result:
     return file_stat
 
 
-def _validate_existing_paths(path: Path) -> None:
-    _ensure_regular_owner_file(path)
+def _file_identity(file_stat: os.stat_result) -> tuple[int, int]:
+    return file_stat.st_dev, file_stat.st_ino
+
+
+def _validate_existing_paths(path: Path) -> tuple[int, int]:
+    identity = _file_identity(_ensure_regular_owner_file(path))
     for suffix in ("-wal", "-shm"):
         sidecar = Path(f"{path}{suffix}")
         if sidecar.exists() or sidecar.is_symlink():
             _ensure_regular_owner_file(sidecar)
+    return identity
+
+
+def _validate_authority_paths(
+    path: Path,
+    expected: tuple[int, int],
+) -> None:
+    try:
+        actual = _validate_existing_paths(path)
+    except SQLiteStoreError:
+        raise SQLiteStoreError(_INVALID_AUTHORITY_IDENTITY) from None
+    if actual != expected:
+        raise SQLiteStoreError(_INVALID_AUTHORITY_IDENTITY)
 
 
 def _chmod_database_family(path: Path) -> None:
@@ -121,10 +141,10 @@ def _read_uri(path: Path) -> str:
     return f"file:{quote(str(path), safe='/')}?mode=ro"
 
 
-def _read_only_preflight(path: Path) -> tuple[str, str]:
+def _read_only_preflight(path: Path) -> tuple[str, str, tuple[int, int]]:
     """Validate bytes without opening a writer or creating SQLite sidecars."""
 
-    _validate_existing_paths(path)
+    database_identity = _validate_existing_paths(path)
     try:
         connection = sqlite3.connect(
             _immutable_read_uri(path),
@@ -135,6 +155,7 @@ def _read_only_preflight(path: Path) -> tuple[str, str]:
     except sqlite3.Error as exc:
         raise SQLiteStoreError(_INVALID_SCHEMA) from None
     try:
+        _validate_authority_paths(path, database_identity)
         try:
             versions = [
                 row[0]
@@ -182,12 +203,15 @@ def _read_only_preflight(path: Path) -> tuple[str, str]:
         }
         if tables != set(SCHEMA_TABLES):
             raise SQLiteStoreError(_INVALID_SCHEMA)
+        if schema_fingerprint(connection) != expected_schema_fingerprint():
+            raise SQLiteStoreError(_INVALID_SCHEMA)
         quick_check = connection.execute("PRAGMA quick_check").fetchone()
         if quick_check != ("ok",):
             raise SQLiteStoreError(_INVALID_SCHEMA)
         if connection.execute("PRAGMA foreign_key_check").fetchone() is not None:
             raise SQLiteStoreError(_INVALID_SCHEMA)
-        return project_id, authority_state
+        _validate_authority_paths(path, database_identity)
+        return project_id, authority_state, database_identity
     except SQLiteStoreError:
         raise
     except sqlite3.Error as exc:
@@ -209,6 +233,7 @@ class SQLiteMissionStore:
         "_closed",
         "_lease_claim",
         "_token",
+        "_database_identity",
     )
 
     def __init__(
@@ -222,6 +247,7 @@ class SQLiteMissionStore:
         authority_state: str,
         lease_claim: object,
         token: object,
+        database_identity: tuple[int, int],
     ) -> None:
         if token is not _STORE_TOKEN:
             raise WriterLeaseError("active matching writer lease required")
@@ -234,6 +260,7 @@ class SQLiteMissionStore:
         self._closed = False
         self._lease_claim = lease_claim
         self._token = token
+        self._database_identity = database_identity
 
     @classmethod
     def create(
@@ -337,9 +364,11 @@ class SQLiteMissionStore:
     ) -> Self:
         cls._require_lease(lease, root)
         path = _database_path(root)
-        project_id, authority_state = _read_only_preflight(path)
+        project_id, authority_state, database_identity = _read_only_preflight(path)
+        _validate_authority_paths(path, database_identity)
         try:
             connection = sqlite3.connect(path, isolation_level=None, timeout=0)
+            _validate_authority_paths(path, database_identity)
             connection.execute("PRAGMA foreign_keys=ON")
             if connection.execute("PRAGMA foreign_keys").fetchone() != (1,):
                 raise SQLiteStoreError(_INVALID_SCHEMA)
@@ -348,7 +377,7 @@ class SQLiteMissionStore:
             connection.execute("PRAGMA synchronous=FULL")
             if connection.execute("PRAGMA synchronous").fetchone() != (2,):
                 raise SQLiteStoreError(_INVALID_SCHEMA)
-            _chmod_database_family(path)
+            _validate_authority_paths(path, database_identity)
         except BaseException:
             try:
                 connection.close()
@@ -364,6 +393,7 @@ class SQLiteMissionStore:
             authority_state=authority_state,
             lease_claim=lease_claim,
             token=_STORE_TOKEN,
+            database_identity=database_identity,
         )
 
     @property
@@ -378,9 +408,14 @@ class SQLiteMissionStore:
     def authority_state(self) -> str:
         return self._authority_state
 
-    def open_reader(self) -> sqlite3.Connection:
+    def _validate_authority(self) -> None:
         if self._closed:
             raise SQLiteStoreError("SQLite store is closed")
+        self._lease.validate_store_claim(self._root, self._lease_claim)
+        _validate_authority_paths(self._path, self._database_identity)
+
+    def open_reader(self) -> sqlite3.Connection:
+        self._validate_authority()
         reader = sqlite3.connect(
             _read_uri(self._path),
             uri=True,
@@ -389,12 +424,13 @@ class SQLiteMissionStore:
             factory=_ReadOnlyConnection,
         )
         try:
+            self._validate_authority()
             reader.execute("PRAGMA foreign_keys=ON")
             reader.execute("PRAGMA synchronous=FULL")
             reader.execute("PRAGMA query_only=ON")
             if reader.execute("PRAGMA query_only").fetchone() != (1,):
                 raise SQLiteStoreError(_INVALID_SCHEMA)
-            _chmod_database_family(self._path)
+            self._validate_authority()
             return reader
         except BaseException:
             reader.close()
@@ -403,15 +439,16 @@ class SQLiteMissionStore:
     def close(self) -> None:
         if self._closed:
             return
-        self._closed = True
         try:
-            try:
-                self._connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
-            finally:
-                self._connection.close()
-                _chmod_database_family(self._path)
+            self._validate_authority()
+            self._connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            self._validate_authority()
         finally:
-            self._lease.release_store(self._lease_claim)
+            self._closed = True
+            try:
+                self._connection.close()
+            finally:
+                self._lease.release_store(self._lease_claim)
 
     def __enter__(self) -> Self:
         if self._closed:

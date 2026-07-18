@@ -28,6 +28,25 @@
   the lease-owned writer connection remains private. This slice neither
   mutates legacy JSON/JSONL nor contacts providers, runtimes, tmux, adapters,
   or the network, and it does not claim SQLite cutover or P1 completion.
+- Sealed the post-review writer-authority edge cases: an active store claim now
+  prevents lease close without changing the lease or releasing its flock; the
+  store binds the exact database device/inode and revalidates the root, state
+  directory, lock, claim, database ownership/mode, and database identity before
+  reader creation, after reader connection, and at the reusable future
+  mutation boundary. Database replacement therefore fails with one redacted
+  diagnostic and cannot redirect a reader to another project.
+- Replaced table-name-only schema inspection with a trusted code-built schema
+  fingerprint over canonical table/index SQL, columns, primary-key shape,
+  foreign keys, CHECK-bearing definitions, and index details. Disk metadata
+  cannot self-assert that fingerprint; wrong columns, removed foreign keys,
+  removed indexes, and removed CHECK constraints all fail during immutable
+  read-only preflight without changing database-family bytes. Schema version
+  remains v1 because the P1 store has not shipped or entered migration.
+- Added a database CHECK that makes event trigger provenance mutually
+  exclusive and complete: client commands require only `command_id`, adapter
+  events require only `adapter_event_id`, and internal triggers require only
+  `internal_trigger_id`. Missing and mixed identities now fail below the
+  application layer as well as in the pure domain model.
 
 ### Freeze the Mission authorization domain
 
