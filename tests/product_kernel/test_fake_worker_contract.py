@@ -7,7 +7,7 @@ from types import MappingProxyType
 
 import pytest
 
-from agentdeck.ports.worker import WorkerEvent, WorkerResult
+from agentdeck.ports.worker import WorkerEvent, WorkerResult, validate_worker_reason
 from product_kernel.fakes import FakeWorker
 from product_kernel.worker_contract import assert_worker_contract, task_request
 
@@ -151,15 +151,21 @@ def test_fake_worker_cancel_and_permission_response_keep_exact_lineage() -> None
             "openaiApiKey", "openai-api-key", "apiKeyValue", "rawFramePayload",
             "clientSecret", "openaiApiTokenValue", "authToken", "accessTokenValue", "session_token",
             "privateKeyMaterial", "refreshToken", "idToken", "bearerToken",
-            "credential_source", "authorization",
+            "credential_source", "authorization", "cookie", "sessionCookie",
+            "set_cookie", "set-cookie", "sshKey", "ssh_key", "ssh-key",
         )
     ] + [
         ({"message": value}, "payload contains sensitive content")
         for value in (
             "openaiApiKey=RAW-SPEC-MARKER", "Authorization: RAW-SPEC-MARKER",
+            "Cookie: session=RAW-SPEC-MARKER",
+            "Set-Cookie: session=RAW-SPEC-MARKER",
             'Bearer RAW-SPEC-MARKER', '-----BEGIN PRIVATE KEY-----',
             '{"access_token":"RAW-SPEC-MARKER"}',
         )
+    ] + [
+        ({"headers": {key: "RAW-SPEC-MARKER"}}, "payload contains sensitive content")
+        for key in ("Cookie", "Set-Cookie", "ssh_key")
     ] + [
         (_HostileMapping(), "payload must use built-in JSON containers"),
         ({"count": -(2**63) - 1}, "payload integer is outside SQLite range"),
@@ -184,8 +190,58 @@ def test_worker_payload_accepts_sqlite_integer_edges_and_bool() -> None:
 
 
 @pytest.mark.parametrize(
+    "secret",
+    [
+        "sk-proj-" + "A" * 32,
+        "sk-ant-" + "B" * 32,
+        "ghp_" + "C" * 36,
+        "github_pat_" + "D" * 32,
+        "AKIA" + "E" * 16,
+        "AIza" + "F" * 35,
+        "ssh-ed25519 " + "A" * 32,
+        "-----BEGIN OPENSSH PRIVATE KEY-----\nPRIVATE-MATERIAL",
+        "Cookie: session=COOKIE-MATERIAL",
+        "Set-Cookie: session=COOKIE-MATERIAL",
+        "ssh_key=SSH-KEY-MATERIAL",
+    ],
+)
+def test_worker_payload_and_reason_reject_bare_credentials_without_echo(
+    secret: str,
+) -> None:
+    for target in ("event", "result"):
+        with pytest.raises(ValueError) as raised:
+            _payload_target(target, {"message": secret})
+        assert str(raised.value) == "payload contains sensitive content"
+        assert secret not in str(raised.value)
+
+    with pytest.raises(ValueError) as raised:
+        validate_worker_reason(f"blocked output: {secret}")
+    assert str(raised.value) == "reason contains sensitive content"
+    assert secret not in str(raised.value)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Document Cookie and Set-Cookie header handling.",
+        "The sk-proj- prefix identifies a token family.",
+        "Read credentials from the approved store.",
+        "SSH keys must never be logged.",
+    ],
+)
+def test_worker_payload_and_reason_allow_safe_credential_discussion(text: str) -> None:
+    for target in ("event", "result"):
+        assert _payload_target(target, {"message": text}).payload["message"] == text
+    assert validate_worker_reason(text) == text
+
+
+@pytest.mark.parametrize(
     "key",
-    ["authorization_latency_ms", "api_token_count", "access_token_count", "raw_frame_count"],
+    [
+        "authorization_latency_ms", "api_token_count", "access_token_count",
+        "raw_frame_count", "cookie_count", "set_cookie_total", "ssh_key_bytes",
+        "ssh_key_latency_ms",
+    ],
 )
 def test_sensitive_metric_keys_require_exact_numeric_or_bool(key) -> None:
     for target in ("event", "result"):
@@ -193,6 +249,13 @@ def test_sensitive_metric_keys_require_exact_numeric_or_bool(key) -> None:
             assert _payload_target(target, {key: value}).payload[key] == value
         with pytest.raises(ValueError, match="payload contains sensitive content"):
             _payload_target(target, {key: "RAW-METRIC-MARKER"})
+
+
+@pytest.mark.parametrize("key", ["cookie_status", "set_cookie_code", "ssh_key_length"])
+def test_sensitive_numeric_keys_without_metric_suffix_are_rejected(key: str) -> None:
+    for target in ("event", "result"):
+        with pytest.raises(ValueError, match="payload contains sensitive content"):
+            _payload_target(target, {key: 1})
 
 
 def test_frozen_payload_can_be_safely_resnapshotted() -> None:

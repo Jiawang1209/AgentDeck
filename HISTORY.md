@@ -25,6 +25,25 @@
 - TDD RED reproduced five replay failures and six accepted bare-credential
   cases. The focused session suite then passed all `64` tests.
 
+### Harden Wave A Worker credential redaction
+
+- Closed the shared Task 20 `WorkerEvent` / `WorkerResult` payload boundary for
+  cookie, set-cookie, and SSH-key field families across camel, snake, kebab,
+  and nested header spellings while preserving the existing exact numeric or
+  boolean observability suffix exceptions.
+- Extended the same content-free value classifier used by payloads and Worker
+  permission/cancellation reasons to reject Cookie and Set-Cookie headers, SSH
+  public/private-key material, and bounded common OpenAI, Anthropic, GitHub,
+  AWS, and Google token signatures. Fixed diagnostics never echo the rejected
+  value; ordinary credential discussion and numeric `token_count` remain safe.
+- Kept the change inside the existing Worker redaction helpers and tests. It
+  does not add Task 21 per-event schemas, files, Worker operations, transport,
+  persistence, provider, ACP, tmux, or legacy dependencies.
+- Final test-first RED produced `29 failed, 52 passed`. The first minimal
+  implementation left two nested reason-assignment cases failing; replacing
+  value-character consumption with a zero-width lookahead closed those cases.
+  Focused GREEN then passed `81` tests.
+
 ### Correct Wave A implementation inventories
 
 - Corrected the approved rewrite plan's Task 12 file inventory to name the

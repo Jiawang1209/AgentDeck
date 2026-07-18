@@ -22,14 +22,30 @@ _SENSITIVE_WORDS = frozenset(
 _SENSITIVE_KEY_FAMILIES = (
     "apikey", "apitoken", "authtoken", "accesstoken", "sessiontoken",
     "refreshtoken", "idtoken", "bearertoken", "rawframe", "privatekey",
+    "cookie", "sshkey",
 )
 _CAMEL_BOUNDARY = re.compile(
     r"(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])"
 )
 _ASSIGNMENT = re.compile(
-    r'''(?<![A-Za-z0-9])(["']?)([A-Za-z][A-Za-z0-9_.-]{0,127})\1[ \t]*[:=][ \t]*\S'''
+    r'''(?<![A-Za-z0-9])(["']?)([A-Za-z][A-Za-z0-9_.-]{0,127})\1[ \t]*[:=][ \t]*(?=\S)'''
 )
 _BEARER = re.compile(r"(?<![A-Za-z0-9])bearer[ \t]+\S", re.IGNORECASE)
+_NAKED_CREDENTIAL = re.compile(
+    r"(?<![A-Za-z0-9_-])(?:"
+    r"sk-(?:proj|ant)-[A-Za-z0-9_-]{16,}"
+    r"|ghp_[A-Za-z0-9]{36,}"
+    r"|github_pat_[A-Za-z0-9_]{20,}"
+    r"|AKIA[A-Z0-9]{16}"
+    r"|AIza[A-Za-z0-9_-]{35}"
+    r")(?![A-Za-z0-9_-])"
+)
+_SSH_KEY_MATERIAL = re.compile(
+    r"(?<![A-Za-z0-9])(?:ssh-(?:rsa|dss|ed25519)|"
+    r"ecdsa-sha2-[A-Za-z0-9._+-]+)[ \t]+"
+    r"[A-Za-z0-9+/]{16,}={0,3}(?![A-Za-z0-9+/=])",
+    re.IGNORECASE,
+)
 _MAX_TEXT_BYTES = 64 * 1024
 _MAX_PAYLOAD_ITEMS = 256
 _MAX_PAYLOAD_DEPTH = 8
@@ -77,6 +93,8 @@ def _contains_sensitive_value(value: str) -> bool:
     return (
         any(_is_sensitive_key(match.group(2)) for match in _ASSIGNMENT.finditer(value))
         or _BEARER.search(value) is not None
+        or _NAKED_CREDENTIAL.search(value) is not None
+        or _SSH_KEY_MATERIAL.search(value) is not None
         or ("-----BEGIN " in value.upper() and "PRIVATE KEY-----" in value.upper())
     )
 
