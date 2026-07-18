@@ -32,10 +32,15 @@
   tests with 3 explicit opt-in skips in 227.70s pytest time / 228.68s wall
   time. The skips were the real ACP node, separately authorized M2c strict
   preflight, and real M2c acceptance node.
-- Confirmed the full P0 range `f3968720..118d0075` changed nothing under
-  `src/agentdeck`, `tests`, or `.agentdeck`. P0 ran no real provider, ACP,
-  tmux, preflight, or live Mission and performed no merge or push. Focused
-  daemon coverage used repository fake Leader, ACP, and tmux paths.
+- Confirmed the pre-freeze P0 range `f3968720..118d0075` changed nothing under
+  `src/agentdeck`, `tests`, or `.agentdeck`. Task 9 freeze commit `3d564ddc` is
+  docs-only, and the continuation-alignment follow-up is likewise limited by
+  exact diff to this HISTORY entry and the current handoff. Task 10 must run a
+  fresh `f3968720..HEAD -- src/agentdeck tests .agentdeck` zero-change audit
+  rather than rely on a not-yet-known final SHA.
+- P0 ran no real provider, ACP, tmux, preflight, or live Mission and performed
+  no merge or push. Focused daemon coverage used repository fake Leader, ACP,
+  and tmux paths.
 - Closed the P0 documentation execution and froze its evidence without claiming
   human approval, V1 readiness, or P1 authorization. Human P0 exit review is
   the next gate. Only after explicit approval may a separate P1 Durable Mission

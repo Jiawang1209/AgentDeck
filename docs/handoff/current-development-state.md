@@ -42,12 +42,18 @@ seven durable P0 documents are:
   time / 34.66s wall time, and default full `4461 passed, 3 skipped` in
   227.70s pytest time / 228.68s wall time.
 
-The full-cycle scope audit from `f3968720` through `118d0075` shows zero
-changes under `src/agentdeck`, `tests`, or `.agentdeck`. P0 did not run a real
-provider, ACP adapter, tmux session, preflight, or live Mission, and it did not
-merge or push. The deterministic daemon tests used only repository fakes.
-These facts prove the P0 documentation baseline only; they do not claim
-V1, real-adapter, Golden, migration-runtime, or release readiness.
+The pre-freeze scope audit from `f3968720` through `118d0075` shows zero changes
+under `src/agentdeck`, `tests`, or `.agentdeck`. Task 9 then froze the P0 exit
+documents in docs-only commit `3d564ddc`. The continuation-alignment follow-up
+is also docs-only by exact diff. Task 10 must freshly run
+`git diff --name-only f3968720..HEAD -- src/agentdeck tests .agentdeck` and
+require zero output; no not-yet-known final P0 SHA is embedded here.
+
+P0 did not run a real provider, ACP adapter, tmux session, preflight, or live
+Mission, and it did not merge or push. The deterministic daemon tests used
+only repository fakes. These facts prove the P0 documentation baseline only;
+they do not claim V1, real-adapter, Golden, migration-runtime, or release
+readiness.
 
 ## Next gate
 
@@ -902,24 +908,24 @@ Then inspect current state with:
 ```bash
 git status --short
 git log --oneline -5
-conda run -n agentdeck pytest -q
+git diff --name-only f3968720..HEAD -- src/agentdeck tests .agentdeck
 ```
 
 ## Current Phase
 
 The approved [AgentDeck V1 architecture-reset program](../superpowers/plans/2026-07-17-agentdeck-v1-architecture-reset-program.md)
-is the current development route and must run in strict P0-P5 order. P0 Task 1
-authoritative routing is complete. P0 Task 2, the V1 product requirements
-document, is the next planned task and may begin only after the Task 1 review
-closes; its exact steps are in the
-[P0 Product Reset plan](../superpowers/plans/2026-07-17-agentdeck-p0-product-reset.md).
+is the current development route and must run in strict P0-P5 order. P0 Tasks
+1–9 are frozen. The current action is Task 10: a read-only human P0 exit
+review of the seven durable documents, deterministic baseline, scope evidence,
+and repository status. Task 10 authorizes no document or product-source change,
+provider call, ACP/tmux session, daemon, preflight, live Mission, merge, or
+push.
 
-P0 remains limited to documentation, current-capability inventory, migration
-design, and deterministic baseline evidence. P1 product code, provider calls,
-ACP/tmux sessions, daemons, preflights, live Missions, merge, and push remain
-locked or out of scope. Old M2c evidence is historical only: it is not a
-release veto, a current scheduling gate, or authority to retry any preflight or
-live node.
+P1 remains locked. Only after explicit human approval of the P0 exit gate may
+a separate P1 Durable Mission Kernel task-level TDD plan be created with
+`writing-plans`; that approval does not itself authorize P1 implementation.
+Old M2c evidence is historical only: it is not a release veto, a current
+scheduling gate, or authority to retry any preflight or live node.
 
 Earlier implementation and validation facts remain available in
 [`HISTORY.md`](../../HISTORY.md),
@@ -945,11 +951,12 @@ Claude can still continue the same work by treating this repository as the sourc
 Suggested prompt for Claude Code CLI:
 
 ```text
-Please continue AgentDeck development from this repository.
+Please perform the read-only AgentDeck P0 exit review from this repository. Do not continue implementation.
 Read CLAUDE.md, AGENT.md, the top of HISTORY.md, docs/roadmap/product-north-star.md, docs/roadmap/ultimate-goal-roadmap.md, docs/handoff/current-development-state.md, docs/superpowers/plans/2026-07-17-agentdeck-v1-architecture-reset-program.md, and docs/superpowers/plans/2026-07-17-agentdeck-p0-product-reset.md first.
 Use conda activate agentdeck or conda run -n agentdeck for commands.
-Every development iteration must update HISTORY.md, run verification, and commit locally.
-Follow the approved P0 Product Reset plan in order. P0 Task 1 authoritative routing is complete; begin P0 Task 2, the V1 PRD, only after the Task 1 review is closed, and do not skip ahead to later P0 tasks or P1. P0 is documentation, inventory, migration design, and deterministic baseline work only. Preserve historical M2c evidence, but do not treat it as a release veto, current gate, or retry authority. Do not modify product source or tests, call a provider, start ACP/tmux sessions or daemons, run preflight/live Missions, merge, or push. Do not auto-install or change authentication/global settings. Use the agentdeck conda environment, update HISTORY.md with each development iteration, run the plan's verification, and make the required local commit only.
+P0 Tasks 1-9 are frozen. Execute only Task 10's read-only repository-state and evidence review, including the final f3968720..HEAD source/test/runtime scope audit. Report whether the human P0 exit gate can be approved, but do not mark it approved yourself.
+Do not modify documents, product source, tests, or runtime state. Do not call a provider, start ACP/tmux sessions or daemons, run preflight/live Missions, merge, push, install tools, or change authentication/global settings.
+P1 task-level planning may begin only after explicit human P0 exit approval and must use writing-plans. P1 implementation remains locked until separately authorized.
 ```
 
 ## Historical development log — not active
