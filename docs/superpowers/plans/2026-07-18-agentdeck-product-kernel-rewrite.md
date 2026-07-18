@@ -1487,7 +1487,7 @@ and oversize diagnostic codes.
 ```bash
 conda run -n agentdeck pytest tests/product_kernel/test_leader_contract.py tests/product_kernel/test_leader_service.py tests/product_kernel/test_kernel_mission.py -q
 git add src/agentdeck/ports/leader.py src/agentdeck/ports/leader_schema.py src/agentdeck/application/leader_service.py tests/product_kernel HISTORY.md
-git commit -m "feat: validate untrusted leader proposals"
+git commit -m "feat: add deterministic product presenters"
 ```
 
 ### Task 17: Add the OpenAI-compatible API Leader adapter
@@ -1727,7 +1727,7 @@ writes Store directly.
 ```bash
 conda run -n agentdeck pytest tests/product_kernel/test_fake_worker_contract.py tests/product_kernel/test_architecture.py -q
 git add src/agentdeck/ports/worker.py tests/product_kernel HISTORY.md
-git commit -m "feat: define acp worker event contract"
+git commit -m "feat: add openai compatible leader adapter"
 ```
 
 ### Task 21: Implement ACP Worker event mapping and adversarial Fake ACP coverage

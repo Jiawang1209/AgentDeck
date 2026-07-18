@@ -4,6 +4,14 @@
 
 ## 2026-07-19
 
+### Correct Wave B commit boundaries
+
+- Corrected two copied commit-message labels in the rewrite plan before Wave
+  B execution: Task 13 now names deterministic product presenters and Task 17
+  names the OpenAI-compatible Leader adapter. File scope, behavior, task order,
+  and design authority are unchanged; the correction keeps local history
+  auditable by the task that actually produced each commit.
+
 ### Split oversized Task 8 execution coverage
 
 - Split the evolved Task 8 execution-lineage tests into cohesive Attempt /
