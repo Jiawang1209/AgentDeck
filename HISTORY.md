@@ -4,6 +4,40 @@
 
 ## 2026-07-18
 
+### Add the durable Mission application service
+
+- Added a frozen, deep-detached `MissionProposal` that binds an exact
+  `MissionVersion` and `AuthorizationEnvelope` while retaining compact,
+  canonical, size-bounded Leader provenance in a separate value. Leader
+  provider, model, and turn identity remain proposal provenance only: they do
+  not enter the authorization digest and cannot grant or alter Mission scope,
+  operations, routes, budget, or acceptance authority.
+- Added pure proposal, confirmation, and cancellation decisions over the
+  detached `ProjectMutationSnapshot`. Proposal atomically creates the Mission
+  and immutable version without materializing Tasks, enforces the V1 single
+  concurrently mutating Mission rule, and persists an exact canonical
+  Mission/authorization specification plus its digest. Confirmation reparses
+  that stored specification through the closed domain constructors, rejects
+  unknown, missing, non-canonical, malformed, stale, or digest-mismatched
+  input without a write, and creates the frozen Task rows only in the exact
+  human-confirmed revision. Cancellation is an absorbing Mission transition
+  that retains version and Task history.
+- Added a narrow daemon-owned `MissionService` boundary. It accepts only the
+  exact `mission.propose`, `mission.confirm`, and `mission.cancel` command
+  kinds with payloads that match the supplied DTO, and delegates one decision
+  to the existing command-idempotent SQLite transaction. Every transition
+  emits a deterministic client-command event carrying the command's exact
+  actor, expected revision, and caller-provided timestamp; exact retries replay
+  the persisted outcome, while changed, stale, duplicate-transition, and
+  terminal inputs fail closed with redacted diagnostics.
+- Added integration coverage for proposal/Leader-provenance separation, exact
+  digest confirmation, post-confirmation Task materialization, stale revision,
+  the one-active-Mission invariant, exact duplicate replay, corrupted stored
+  specification rejection, cancellation retention, immutable DTO isolation,
+  and closed canonical provenance bounds. This slice remains local and
+  deterministic: it does not call a provider, ACP adapter, tmux, runtime, or
+  network and does not activate the SQLite cutover.
+
 ### Make durable Mission mutations atomic and command-idempotent
 
 - Added an immutable, caller-timestamped `CommandEnvelope` whose command kind,
