@@ -4,6 +4,79 @@
 
 ## 2026-07-19
 
+### Retain product goals across first-run setup
+
+- Completed R2 Task 12 with a `SessionService` that creates or loads one
+  Store-backed `ProductSession`, retains an open natural-language goal while
+  setup is incomplete, and resumes that exact goal after validated Leader,
+  model, and permission selection without asking the user to repeat it.
+- Session creation, each accepted human turn, and successful setup commit
+  current state plus an audit event through one idempotent Store command.
+  Every accepted human turn also writes the existing `conversation_turns`
+  authority table in that transaction with a distinct durable turn ID and the
+  next per-session ordinal. Default calls create independent turns even when
+  their text is identical; callers may supply a stable command ID so retries
+  return the first outcome without duplicating the turn, event, or state write.
+  The existing product-session row durably owns the pending goal and selected
+  permission profile.
+- Session creation binds a canonical caller project-root digest into the
+  immutable creation command result. Loading the same session verifies that
+  digest instead of copying the SQLite Adapter's project identity algorithm;
+  a mismatched caller root fails with a fixed `SessionServiceError`. Successful
+  setup persists Leader, model, permission, goal, mode, and session lineage in
+  its command result. Re-entry restores those exact facts only after strict
+  shape, ProductSession state, permission, goal, mode, and lineage checks, with
+  no schema column, rediscovery fallback, or silent provider selection.
+- Stored command results are bound back to the expected ProductSession before
+  they can be returned. Self-review RED reproduced a project-wide command ID
+  being reused across two sessions (`1 failed` because the second session
+  received the first result); the lineage guard made the same regression pass
+  without mutating the second session.
+- The accept path now rejects bounded credential assignments, bearer tokens,
+  and private-key markers before opening a transaction, using content-free
+  diagnostics and zero writes. Explicit command IDs are exact bounded UTF-8
+  strings, and Leader availability accepts only bounded snapshots of plain
+  dictionaries or read-only mapping proxies; hostile mapping subclasses,
+  forged lengths, and oversized snapshots fail before session mutation.
+- Replayed accept results have an exact, lineage-bound result shape and must
+  agree with a generically loaded durable conversation turn on session, actor,
+  sanitized content, ordinal, and canonical UTC occurrence time. A completed
+  command without its turn, or with ordinal/time drift, fails closed. Generic
+  SQLite aggregate loading therefore exposes the complete conversation-turn
+  authority fields used by this verification.
+- Caller roots are resolved strictly before session identity is constructed,
+  so real-directory aliases re-enter the same session while missing or invalid
+  roots fail deterministically. Injected aware clocks are normalized to the
+  Kernel's canonical UTC representation before they enter command results,
+  turns, or events.
+- Leader choices come from an injected immutable snapshot of already
+  discovered and validated Leader/model pairs. Missing CLI Leaders, unavailable
+  API credentials, unknown models, and invalid permission profiles fail closed
+  with specific setup diagnostics; none silently selects a fallback or mutates
+  ProductSession authority. Application code imports only Kernel and Ports and
+  does not inspect legacy setup, state, ConversationSession, or daemon code.
+- TDD RED first failed during collection because
+  `agentdeck.application.session_service` did not exist. The initial GREEN
+  passed `11` focused tests; after the lineage regression, the focused suite
+  contained `12` tests. Spec-review RED then produced four expected failures:
+  lost configure facts after re-entry, accepted root drift, zero independent
+  identical-text turns, and zero retry turn rows. Strict-result review added
+  one further expected failure for a configure result whose goal conflicted
+  with the durable session. Quality-review RED produced `15 failed, 1 passed`
+  across sensitive-goal, replay, hostile-snapshot, command-ID, UTC, root-alias,
+  and generic-turn-load cases; dedicated ordinal-drift and canonical-time-drift
+  RED checks each then failed once before their guards were completed. A second
+  quality review reproduced `10 failed, 24 passed`: query/bracket/space/camel
+  credential assignments bypassed the original classifier, hostile timezone
+  code escaped the fixed clock diagnostic, and a NUL project root escaped as a
+  raw `ValueError`. Canonical sensitive-key family matching now covers those
+  assignment spellings without rejecting ordinary language or `token_count`;
+  clock conversion and strict root resolution now keep fixed, content-free
+  error boundaries. Final focused service/SQLite/schema/architecture
+  verification passed `123` tests.
+  Complete verification passed `662` Product Kernel tests, the approved legacy
+  substitute (`213 passed`), and compileall over `src` and `tests`.
+
 ### Discover product backends without side effects
 
 - Completed R2 Task 11 with an immutable configuration resolver whose exact

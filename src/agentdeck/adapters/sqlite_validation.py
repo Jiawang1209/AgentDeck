@@ -11,6 +11,7 @@ import json
 from math import isfinite
 import os
 from pathlib import Path
+import sqlite3
 from typing import Final
 
 from agentdeck.adapters.sqlite_schema import (
@@ -327,6 +328,34 @@ def _session_record(
         raise ValueError("session updated_at precedes created_at")
     return (
         session_id, project_id, state, permission, pending_goal, created_at, updated_at,
+    )
+
+
+def _save_conversation_turn(
+    connection: sqlite3.Connection, snapshot: Mapping[str, object], now: str
+) -> None:
+    _, facts = _canonical(snapshot)
+    allowed = {
+        "turn_id", "session_id", "actor_role", "sanitized_content", "occurred_at",
+    }
+    if set(facts) != allowed:
+        raise StoreSerializationError("conversation turn fields are invalid")
+    turn_id = _bounded_text(facts["turn_id"], "turn_id", 255)
+    session_id = _bounded_text(facts["session_id"], "session_id", 255)
+    actor_role = _bounded_text(facts["actor_role"], "actor_role", 64)
+    if actor_role not in {"human", "leader", "system"}:
+        raise StoreSerializationError("actor_role is unsupported")
+    content = _bounded_text(
+        facts["sanitized_content"], "sanitized_content", _MAX_STRING_BYTES
+    )
+    occurred_at = _stored_timestamp(facts.get("occurred_at", now), "turn occurred_at")
+    ordinal = connection.execute(
+        "SELECT COALESCE(MAX(ordinal), 0) + 1 FROM conversation_turns WHERE session_id=?",
+        (session_id,),
+    ).fetchone()[0]
+    connection.execute(
+        "INSERT INTO conversation_turns VALUES (?, ?, ?, ?, ?, ?)",
+        (turn_id, session_id, ordinal, actor_role, content, occurred_at),
     )
 
 

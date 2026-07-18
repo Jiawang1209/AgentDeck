@@ -44,6 +44,7 @@ from agentdeck.adapters.sqlite_validation import (
     _event_record,
     _release_writer_lock,
     _require_state_identity,
+    _save_conversation_turn,
     _session_record,
     _state_identity,
     _timestamp,
@@ -152,6 +153,11 @@ class _SQLiteCommandTransaction:
             if snapshot.get("attempt_id", aggregate_id) != aggregate_id:
                 raise ValueError("aggregate identity does not match attempt_id")
             self.save_attempt({"attempt_id": aggregate_id, **snapshot})
+            return
+        if aggregate_type == "conversation_turns":
+            if snapshot.get("turn_id", aggregate_id) != aggregate_id:
+                raise ValueError("aggregate identity does not match turn_id")
+            _save_conversation_turn(self._require_mutable(), snapshot, _timestamp(self._store._clock))
             return
         raise ValueError("unsupported aggregate type")
 
@@ -378,6 +384,9 @@ class SQLiteStore:
                 "attempt_id", "task_id", "agent_instance_id", "ordinal", "state", "reason",
                 "result_summary", "retryable", "acp_session_id", "effect_observed",
                 "created_at", "updated_at",
+            )),
+            "conversation_turns": ("turn_id", (
+                "turn_id", "session_id", "ordinal", "actor_role", "sanitized_content", "occurred_at",
             )),
         }
         if aggregate_type not in specs:
