@@ -6,6 +6,7 @@ import asyncio
 import hmac
 import json
 import os
+import sqlite3
 from collections.abc import Mapping
 from pathlib import Path
 from typing import cast
@@ -67,6 +68,10 @@ class MissionRuntimeError(RuntimeError):
 
 
 class _InvalidRequest(Exception):
+    pass
+
+
+class _StartupInterrupted(Exception):
     pass
 
 
@@ -167,6 +172,7 @@ class DaemonMissionRuntime:
         "_store",
         "_mission_service",
         "_state",
+        "_startup_task",
     )
 
     def __init__(
@@ -183,10 +189,56 @@ class DaemonMissionRuntime:
         self._store: SQLiteMissionStore | None = None
         self._mission_service: MissionService | None = None
         self._state = "new"
+        self._startup_task: asyncio.Task[object] | None = None
+
+    async def _cleanup_resources(
+        self,
+        *,
+        store: SQLiteMissionStore | None,
+        lease: ProjectWriterLease | None,
+    ) -> BaseException | None:
+        """Close every authority layer independently and return the first failure."""
+        failure: BaseException | None = None
+
+        def remember(exc: BaseException) -> None:
+            nonlocal failure
+            if failure is None:
+                failure = exc
+
+        try:
+            try:
+                await self._daemon_service.close()
+            except BaseException as exc:
+                remember(exc)
+        finally:
+            try:
+                try:
+                    if store is not None:
+                        store.close()
+                except BaseException as exc:
+                    remember(exc)
+            finally:
+                try:
+                    if lease is not None:
+                        lease.close()
+                except BaseException as exc:
+                    remember(exc)
+                finally:
+                    if self._store is store:
+                        self._store = None
+                        self._mission_service = None
+                    if self._lease is lease:
+                        self._lease = None
+        return failure
 
     async def start(self) -> None:
         if self._state != "new" or self._daemon_service.started:
             raise MissionRuntimeError("daemon Mission runtime cannot start")
+        startup_task = asyncio.current_task()
+        if startup_task is None:
+            raise MissionRuntimeError("daemon Mission runtime cannot start")
+        self._state = "starting"
+        self._startup_task = startup_task
         lease: ProjectWriterLease | None = None
         store: SQLiteMissionStore | None = None
         try:
@@ -194,25 +246,30 @@ class DaemonMissionRuntime:
             store = SQLiteMissionStore.open(self._root, lease=lease)
             service = MissionService(store)
             await self._daemon_service.start()
+            if self._state != "starting":
+                raise _StartupInterrupted
         except asyncio.CancelledError:
-            if store is not None:
-                store.close()
-            if lease is not None:
-                lease.close()
+            await self._cleanup_resources(store=store, lease=lease)
             self._state = "closed"
             raise
         except WriterLeaseError:
-            if store is not None:
-                store.close()
-            if lease is not None:
-                lease.close()
+            await self._cleanup_resources(store=store, lease=lease)
+            self._state = "closed"
             raise MissionRuntimeError("daemon Mission writer is unavailable") from None
-        except (SQLiteStoreError, MutationValidationError, ServiceError):
-            if store is not None:
-                store.close()
-            if lease is not None:
-                lease.close()
+        except _StartupInterrupted:
+            await self._cleanup_resources(store=store, lease=lease)
+            self._state = "closed"
+            raise MissionRuntimeError("daemon Mission runtime startup interrupted") from None
+        except Exception:
+            await self._cleanup_resources(store=store, lease=lease)
+            self._state = "closed"
             raise MissionRuntimeError("daemon Mission runtime startup failed") from None
+        finally:
+            self._startup_task = None
+        if self._state != "starting":
+            await self._cleanup_resources(store=store, lease=lease)
+            self._state = "closed"
+            raise MissionRuntimeError("daemon Mission runtime startup interrupted")
         self._lease = lease
         self._store = store
         self._mission_service = service
@@ -221,27 +278,21 @@ class DaemonMissionRuntime:
     async def close(self) -> None:
         if self._state == "closed":
             return
+        startup_task = self._startup_task
         self._state = "closing"
-        failure: BaseException | None = None
-        if self._daemon_service.started:
+        if startup_task is not None and startup_task is not asyncio.current_task():
+            startup_task.cancel()
             try:
-                await self._daemon_service.close()
-            except BaseException as exc:
-                failure = exc
-        try:
-            if self._store is not None:
-                self._store.close()
-        except BaseException as exc:
-            failure = failure or exc
-        try:
-            if self._lease is not None:
-                self._lease.close()
-        except BaseException as exc:
-            failure = failure or exc
-        self._store = None
-        self._lease = None
-        self._mission_service = None
+                await startup_task
+            except (asyncio.CancelledError, MissionRuntimeError):
+                pass
+        failure = await self._cleanup_resources(
+            store=self._store,
+            lease=self._lease,
+        )
         self._state = "closed"
+        if isinstance(failure, asyncio.CancelledError):
+            raise failure
         if failure is not None:
             raise MissionRuntimeError("daemon Mission runtime shutdown failed") from None
 
@@ -264,9 +315,23 @@ class DaemonMissionRuntime:
         try:
             closed = _validate_request_size(params, method=method)
             if method == "mission.status":
-                return self._mission_status(store, closed)
+                try:
+                    return self._mission_status(store, closed)
+                except MissionRuntimeError:
+                    raise
+                except (SQLiteStoreError, sqlite3.Error, RuntimeError):
+                    raise MissionRuntimeError(
+                        "Mission observation is unavailable"
+                    ) from None
             if method == "events.after":
-                return self._events_after(store, closed)
+                try:
+                    return self._events_after(store, closed)
+                except MissionRuntimeError:
+                    raise
+                except (SQLiteStoreError, sqlite3.Error, RuntimeError):
+                    raise MissionRuntimeError(
+                        "Mission observation is unavailable"
+                    ) from None
             if method == "mission.propose":
                 command, proposal, expected_state = self._parse_propose(closed)
                 revalidate = lambda: self._state == "started" and self._revalidate_propose(

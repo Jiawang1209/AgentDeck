@@ -4,6 +4,26 @@
 
 ## 2026-07-18
 
+### Close daemon Mission lifecycle races
+
+- Made Mission runtime startup enter an explicit `starting` state before it
+  acquires writer authority and bound that state to the exact startup task.
+  Concurrent close now cancels and joins startup, and a late startup
+  continuation can no longer republish the store, writer lease, or mutation
+  capability after close has returned.
+- Unified daemon service, SQLite store, and writer lease cleanup behind one
+  exception-safe helper. Each layer is attempted independently even when an
+  earlier close reports failure; runtime state always becomes closed, and an
+  original startup cancellation remains `CancelledError` rather than being
+  replaced by private cleanup detail.
+- Fixed both query-only observations to preserve already-sanitized runtime
+  errors while converting SQLite, store, and internal reader failures into one
+  bounded `Mission observation is unavailable` error. SQL text, paths, and raw
+  reader messages cannot cross the RPC boundary.
+- Added deterministic race and fault-injection coverage for close during
+  blocked startup, cancellation with a failing store close, writer lease
+  reacquisition, and sanitized `mission.status` / `events.after` failures.
+
 ### Route durable Mission writes through the sole ProjectDaemon
 
 - Added `DaemonMissionRuntime` as the narrow composition seam that exclusively

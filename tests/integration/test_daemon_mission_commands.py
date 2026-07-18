@@ -19,6 +19,7 @@ from agentdeck.domain.authorization import AuthorizationEnvelope, ExternalEffect
 from agentdeck.domain.mission import MissionVersion, TaskSpec
 from agentdeck.storage.ownership import ProjectWriterLease
 from agentdeck.storage.sqlite_store import SQLiteMissionStore
+from agentdeck.storage.sqlite_store import SQLiteStoreError
 
 
 class _Server:
@@ -245,6 +246,93 @@ def test_cancelled_runtime_start_releases_the_sole_writer_lease(tmp_path: Path) 
         with pytest.raises(asyncio.CancelledError):
             await start
 
+        replacement = runtime_module.DaemonMissionRuntime(
+            root, daemon_service=_daemon_service()
+        )
+        await replacement.start()
+        await replacement.close()
+
+    asyncio.run(case())
+
+
+def test_close_during_start_cannot_resurrect_runtime_or_writer(
+    tmp_path: Path,
+) -> None:
+    class _BlockingServer:
+        def __init__(self) -> None:
+            self.entered = asyncio.Event()
+            self.release = asyncio.Event()
+
+        async def start(self) -> None:
+            self.entered.set()
+            await self.release.wait()
+
+        async def close(self) -> None:
+            return None
+
+    async def case() -> None:
+        runtime_module = importlib.import_module("agentdeck.daemon.mission_runtime")
+        root = _prepared_root(tmp_path)
+        blocking = _BlockingServer()
+        interrupted = runtime_module.DaemonMissionRuntime(
+            root, daemon_service=_daemon_service(blocking)
+        )
+        start = asyncio.create_task(interrupted.start())
+        await blocking.entered.wait()
+
+        await interrupted.close()
+        blocking.release.set()
+        with pytest.raises((asyncio.CancelledError, runtime_module.MissionRuntimeError)):
+            await start
+        with pytest.raises(runtime_module.MissionRuntimeError, match="not started"):
+            await interrupted.handle_rpc(
+                "mission.status", {"mission_id": "mis_1"}
+            )
+
+        replacement = runtime_module.DaemonMissionRuntime(
+            root, daemon_service=_daemon_service()
+        )
+        await replacement.start()
+        await replacement.close()
+
+    asyncio.run(case())
+
+
+def test_cleanup_releases_lease_even_when_store_close_reports_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class _BlockingServer:
+        def __init__(self) -> None:
+            self.entered = asyncio.Event()
+
+        async def start(self) -> None:
+            self.entered.set()
+            await asyncio.Future()
+
+        async def close(self) -> None:
+            return None
+
+    async def case() -> None:
+        runtime_module = importlib.import_module("agentdeck.daemon.mission_runtime")
+        root = _prepared_root(tmp_path)
+        blocking = _BlockingServer()
+        runtime = runtime_module.DaemonMissionRuntime(
+            root, daemon_service=_daemon_service(blocking)
+        )
+        start = asyncio.create_task(runtime.start())
+        await blocking.entered.wait()
+        original_close = SQLiteMissionStore.close
+
+        def close_then_fail(store: SQLiteMissionStore) -> None:
+            original_close(store)
+            raise RuntimeError(f"private cleanup detail: {tmp_path}")
+
+        monkeypatch.setattr(SQLiteMissionStore, "close", close_then_fail)
+        start.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await start
+
+        monkeypatch.setattr(SQLiteMissionStore, "close", original_close)
         replacement = runtime_module.DaemonMissionRuntime(
             root, daemon_service=_daemon_service()
         )
@@ -519,6 +607,52 @@ def test_domain_and_storage_failures_cross_rpc_as_sanitized_errors(
                 await duplicate
             assert "mission version conflict" not in str(failure.value)
             assert str(tmp_path) not in str(failure.value)
+        finally:
+            await runtime.close()
+
+    asyncio.run(case())
+
+
+@pytest.mark.parametrize(
+    ("method", "params"),
+    (
+        ("mission.status", {"mission_id": "mis_1"}),
+        ("events.after", {"cursor": 0, "limit": 10}),
+    ),
+)
+@pytest.mark.parametrize(
+    "failure_type",
+    (
+        sqlite3.OperationalError,
+        SQLiteStoreError,
+        RuntimeError,
+    ),
+)
+def test_read_observation_failures_are_fixed_and_sanitized(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    method: str,
+    params: dict[str, object],
+    failure_type: type[Exception],
+) -> None:
+    async def case() -> None:
+        runtime_module = importlib.import_module("agentdeck.daemon.mission_runtime")
+        runtime = runtime_module.DaemonMissionRuntime(
+            _prepared_root(tmp_path), daemon_service=_daemon_service()
+        )
+        await runtime.start()
+        try:
+            def fail_reader(_store: SQLiteMissionStore) -> object:
+                raise failure_type("private SQL SELECT /secret/project")
+
+            monkeypatch.setattr(SQLiteMissionStore, "open_reader", fail_reader)
+            with pytest.raises(
+                runtime_module.MissionRuntimeError,
+                match="^Mission observation is unavailable$",
+            ) as observed:
+                await runtime.handle_rpc(method, params)
+            assert "/secret/project" not in str(observed.value)
+            assert "SELECT" not in str(observed.value)
         finally:
             await runtime.close()
 
