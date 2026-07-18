@@ -4,6 +4,22 @@
 
 ## 2026-07-19
 
+### Close ACP Worker outcome races
+
+- Marked an effectful ACP tool start as potentially project-affecting before
+  its completion update, so a disconnect during edit/delete/move/execute/fetch
+  now fails as non-retryable `worker_outcome_unknown`; read/search/think starts
+  remain known pre-effect disconnects and are the only retryable failure path.
+- Bound cancellation intent before awaiting the remote cancel operation. A
+  concurrently resolving prompt can no longer replace an accepted cancellation
+  with completion, while remote cancel failure produces one authoritative,
+  non-retryable `acp_cancel_failed` terminal with unknown outcome.
+- Decoupled Diagnostic retryability from outcome knowledge. Initialization,
+  session, protocol, duplicate, sequence, oversize, redaction, invalid-result,
+  cancel-failure, and outcome-unknown categories now remain non-retryable.
+  Review RED produced `13 failed, 7 passed`; focused GREEN passed all `20`
+  adversarial failure tests before the broader Task 21 regression gate.
+
 ### Map ACP Workers into stable events
 
 - Completed R4 Task 21 with an ACP-only Worker Adapter that maps official ACP

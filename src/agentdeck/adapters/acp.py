@@ -73,7 +73,8 @@ class _Run:
     raw_total_bytes: int = 0
     raw_sequence: int = 0
     raw_event_ids: set[str] = field(default_factory=set)
-    effect_observed: bool = False
+    effect_may_have_occurred: bool = False
+    cancellation_requested: bool = False
     stream_started: bool = False
     terminal: bool = False
 
@@ -183,17 +184,15 @@ class ACPWorker:
         if run.terminal:
             raise ValueError("ACP Worker task is not cancellable")
         reason = validate_worker_reason(reason)
+        run.cancellation_requested = True
         try:
             await self._agent.cancel(run.raw_session_id)
         except Exception:
-            raise self._error("acp_cancel_failed", True, run.request) from None
-        task = run.prompt_task
-        if task is not None and not task.done():
-            task.cancel()
-            try:
-                await task
-            except asyncio.CancelledError:
-                pass
+            error = self._error("acp_cancel_failed", False, run.request)
+            await self._cancel_prompt(run)
+            self._fail(error)
+            raise error from None
+        await self._cancel_prompt(run)
         self._finish("cancelled", {"reason": reason})
 
     async def collect_result(self, handle: WorkerHandle) -> WorkerResult:
@@ -223,16 +222,18 @@ class ACPWorker:
                 )
                 self._emit("message", payload)
             elif type(update) is ToolCallStart:
+                if update.kind in _EFFECTFUL_TOOL_KINDS:
+                    run.effect_may_have_occurred = True
                 self._emit("tool_started", _tool_payload(update))
             elif type(update) is ToolCallProgress:
                 if update.status == "completed":
                     if update.kind in _EFFECTFUL_TOOL_KINDS:
-                        run.effect_observed = True
+                        run.effect_may_have_occurred = True
                     self._emit("tool_completed", _tool_payload(update))
                 else:
                     self._emit("progress", _tool_payload(update))
                 if update.locations:
-                    run.effect_observed = True
+                    run.effect_may_have_occurred = True
                     self._emit("artifact_changed", {"artifact_count": len(update.locations)})
             else:
                 self._emit("progress", {"update_type": type(update).__name__})
@@ -285,6 +286,8 @@ class ACPWorker:
                 run.raw_session_id,
                 [TextContentBlock(type="text", text=run.request.instruction)],
             )
+            if run.cancellation_requested:
+                return
             if type(response) is not PromptResponse:
                 raise self._error("acp_protocol_mismatch", True, run.request)
             if response.stop_reason == "end_turn":
@@ -296,14 +299,30 @@ class ACPWorker:
         except asyncio.CancelledError:
             raise
         except ACPWorkerError as error:
-            self._fail(error)
-        except Exception:
+            if not run.cancellation_requested:
+                self._fail(error)
+        except Exception as error:
+            if run.cancellation_requested:
+                return
             code = (
                 "worker_outcome_unknown"
-                if run.effect_observed
+                if run.effect_may_have_occurred
                 else "acp_disconnected_before_effect"
             )
-            self._fail(self._error(code, not run.effect_observed, run.request))
+            known = not run.effect_may_have_occurred
+            self._fail(self._error(
+                code, known, run.request,
+                retryable=known and _is_recoverable_disconnect(error),
+            ))
+
+    async def _cancel_prompt(self, run: _Run) -> None:
+        task = run.prompt_task
+        if task is not None and not task.done():
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
 
     def _inspect_raw_update(self, run: _Run, update: object) -> None:
         serializer = getattr(update, "model_dump_json", None)
@@ -403,7 +422,8 @@ class ACPWorker:
         return self._run
 
     def _error(
-        self, code: str, outcome_known: bool, request: TaskRequest,
+        self, code: str, outcome_known: bool, request: TaskRequest, *,
+        retryable: bool = False,
     ) -> ACPWorkerError:
         return ACPWorkerError(Diagnostic.create(
             code=code, stage="worker_transport", severity=Severity.ERROR,
@@ -412,7 +432,7 @@ class ACPWorker:
             impact="The current Worker Attempt cannot advance.",
             protection="AgentDeck retained the last known safe outcome and redacted raw protocol data.",
             recovery_actions=("Inspect the typed diagnostic and retry only when its outcome is known.",),
-            retryable=outcome_known, outcome_known=outcome_known,
+            retryable=retryable, outcome_known=outcome_known,
             occurred_at=self._now(), task_id=request.task_id,
             attempt_id=request.attempt_id,
         ))
@@ -433,6 +453,10 @@ def _permission_id(value: object) -> str:
     except (UnicodeEncodeError, ValueError):
         raise ValueError("permission_request_id must be typed and bounded") from None
     return value
+
+
+def _is_recoverable_disconnect(error: Exception) -> bool:
+    return isinstance(error, (ConnectionError, EOFError, TimeoutError))
 
 
 def _tool_payload(update: ToolCallStart | ToolCallProgress) -> dict[str, object]:

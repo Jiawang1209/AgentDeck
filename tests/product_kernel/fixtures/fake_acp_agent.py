@@ -26,6 +26,7 @@ class FakeACPAgent:
         self.scenario = scenario
         self.client: Any = None
         self.cancelled = False
+        self.cancel_gate = asyncio.Event()
         self.permission_outcomes: list[str] = []
 
     def on_connect(self, client: object) -> None:
@@ -35,6 +36,8 @@ class FakeACPAgent:
         self, protocol_version: int, client_capabilities: object = None,
         client_info: object = None, **kwargs: Any,
     ) -> InitializeResponse:
+        if self.scenario == "initialization_failure":
+            raise ConnectionError("RAW-INITIALIZATION-BODY")
         resolved = PROTOCOL_VERSION + 1 if self.scenario == "protocol_mismatch" else PROTOCOL_VERSION
         return InitializeResponse(
             protocol_version=resolved,
@@ -45,11 +48,16 @@ class FakeACPAgent:
         self, cwd: str, additional_directories: object = None,
         mcp_servers: object = None, **kwargs: Any,
     ) -> NewSessionResponse:
+        if self.scenario == "session_failure":
+            raise ConnectionError("RAW-SESSION-BODY")
         return NewSessionResponse(session_id="raw-acp-session")
 
     async def prompt(
         self, session_id: str, prompt: object, **kwargs: Any,
     ) -> PromptResponse:
+        if self.scenario in {"cancel_race", "cancel_failure"}:
+            await self.cancel_gate.wait()
+            return PromptResponse(stop_reason="end_turn")
         if self.scenario == "disconnect_before_work":
             raise ConnectionError("RAW-DISCONNECT-BODY")
         if self.scenario == "oversize":
@@ -72,13 +80,24 @@ class FakeACPAgent:
             )
             return PromptResponse(stop_reason="end_turn")
 
+        tool_kind = {
+            "disconnect_during_read": "read",
+            "disconnect_during_search": "search",
+            "disconnect_during_think": "think",
+        }.get(self.scenario, "edit")
         await self.client.session_update(
             session_id,
             ToolCallStart(
                 session_update="tool_call", tool_call_id="call_1",
-                title="Edit project", kind="edit", status="in_progress",
+                title="Edit project" if tool_kind == "edit" else "Inspect project",
+                kind=tool_kind, status="in_progress",
             ),
         )
+        if self.scenario in {
+            "disconnect_during_effect", "disconnect_during_read",
+            "disconnect_during_search", "disconnect_during_think",
+        }:
+            raise ConnectionError("RAW-DISCONNECT-BODY")
         permission_count = 2 if self.scenario == "two_permissions" else 1
         for index in range(1, permission_count + 1):
             raw_input = (
@@ -124,6 +143,12 @@ class FakeACPAgent:
 
     async def cancel(self, session_id: str, **kwargs: Any) -> None:
         self.cancelled = True
+        if self.scenario in {"cancel_race", "cancel_failure"}:
+            self.cancel_gate.set()
+            await asyncio.sleep(0)
+            await asyncio.sleep(0)
+        if self.scenario == "cancel_failure":
+            raise ConnectionError("RAW-CANCEL-BODY")
 
     async def _message(
         self, session_id: str, text: str, *, sequence: int | None = None,
