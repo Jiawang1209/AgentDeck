@@ -33,6 +33,21 @@
   package change is an administrative pre-smoke action outside smoke evidence;
   the smoke consumes configured state read-only apart from effects owned by its
   disposable project.
+- Required Golden B to observe governed sequential permission handling,
+  cursor-based disconnect/reconnect, durable ProjectDaemon restart recovery,
+  takeover and return-control on the same Attempt/session authority, peer-review
+  rejection and bounded revision, and final accepted completion in one journey,
+  without fixed stage or permission counts.
+- Made rerun authority consume durable `retry_safety` and `side_effect_state`:
+  safe idempotent cases may rerun within bounds, reconciliation must complete
+  and recompute safety, and unsafe or unresolved external effects cannot be
+  bypassed through an original-Attempt replay or a fresh project.
+- Bound P5 evidence to a machine-checkable release-candidate identity covering
+  commit/build hash, SQLite and migration identity, contract versions, adapter
+  and transport versions, exact agent/model identities, and a sanitized
+  configuration/capability digest; release-relevant drift invalidates affected
+  evidence and requires a safety-authorized rerun. This is a documentation
+  requirement, not a claim that release evidence has passed.
 
 ### Replace the M2c mega-gate with layered verification
 

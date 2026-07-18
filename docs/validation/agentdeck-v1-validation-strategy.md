@@ -143,8 +143,10 @@ PATH; or changes package state. Any separately human-authorized setup is a
 distinct pre-smoke administrative action outside the smoke and outside its
 evidence. After setup, the smoke only consumes configured state read-only,
 except for the isolated disposable-project effects that the smoke explicitly
-owns and cleans up. After a diagnosed root cause is fixed, a new isolated smoke
-may be run safely; there is no historical single-use authorization ceremony.
+owns and cleans up. A diagnosed root cause must be fixed before rerun
+eligibility is reconsidered, but that correction alone never authorizes a
+rerun. Every rerun must satisfy the durable retry and replay authority below;
+there is no historical single-use authorization ceremony and no silent replay.
 
 A smoke PASS proves only the selected adapter route can perform that narrow
 interaction. It does not prove orchestration, recovery, peer review, Mission
@@ -190,13 +192,22 @@ also proves background continuation, client close and reconnect, finite
 sequential permission lineage, AgentDeck-owned Handoffs, tests, independent
 review, Evidence, and a readable final accepted result.
 
-The independent review must reject an inadequate implementation and drive a
-bounded revision before re-review. The journey must also encounter a real
-governance or recovery checkpoint, such as permission refusal requiring new
-authority or replanning, human takeover followed by explicit return of control,
-client disconnect/reconnect, or daemon restart recovery. The selected fixture
-must exercise permission governance and recovery/takeover behavior without
-asserting a fixed number of permission requests or internal stages.
+Golden B must exercise every one of the following observations in the same
+evidence-backed journey:
+
+- governed, finite, sequential permission handling with correlated lineage,
+  without asserting a fixed number of permission requests;
+- client disconnect followed by reconnect from the durable activity cursor;
+- ProjectDaemon restart and recovery from durable authority facts;
+- human takeover followed by explicit return-control on the same Attempt and
+  session authority, without creating a replacement authority implicitly;
+- independent peer-review rejection of an inadequate implementation followed
+  by bounded revision and re-review; and
+- verification-owned, evidence-backed completion and acceptance after those
+  intermediate observations are resolved.
+
+The fixture must not encode a fixed number of internal stages, retries,
+permissions, or model sentences.
 
 Each intermediate pause must be resolved by explicit authority, reconciliation,
 or bounded replanning before execution continues. Golden B passes only after
@@ -246,9 +257,33 @@ diagnostic contains only:
 
 It must not contain prompts, secrets, filesystem paths, terminal contents, raw
 CLI output, or raw model output. A failure routes to its owning validation
-layer. After the root cause is fixed, the relevant isolated smoke or Golden may
-be rerun. This is ordinary evidence production, not a revival of the M2c
-ceremony.
+layer.
+
+### Retry and replay authority
+
+Root-cause correction alone never authorizes a rerun. The durable diagnostic's
+`retry_safety` and `side_effect_state` fields are consumed as authority inputs,
+not displayed as advisory text:
+
+- The same authority may rerun within its declared budget only when
+  `retry_safety=safe` and `side_effect_state=none`, or when the effect is fully
+  `known` and carries durable idempotency or consume-once proof.
+- `retry_safety=requires_reconciliation` requires an explicit durable
+  reconciliation record. The system must then recompute effect state and retry
+  safety before any rerun; the reconciliation action does not imply that the
+  result will be safe.
+- `retry_safety=unsafe` or a known non-idempotent effect must not rerun the
+  original Attempt. Continuation requires an explicit new or corrective
+  MissionVersion, or an isolated disposable project when appropriate, plus
+  fresh authority. A new project cannot bypass an unresolved external-effect
+  ambiguity: durable reconciliation must happen first.
+- Each smoke or Golden rerun receives a new bounded run identity and preserves
+  all prior evidence. No retry overwrites, erases, or silently replays the
+  previous run.
+
+After these rules authorize a rerun, the relevant owning-layer smoke or Golden
+may produce new evidence. This is ordinary evidence production, not a revival
+of the M2c ceremony or an unbounded replay loop.
 
 ## Release gate
 
@@ -275,6 +310,27 @@ Release evidence accumulates by product phase:
   installation and confirmed migration/rollback evidence pass, and governed
   Skill, Memory, and learning suggestions preserve preview and explicit
   confirmation safety.
+
+### Release-candidate evidence identity
+
+P5 treats evidence as current only when a machine-checkable release manifest
+binds every applicable conformance, smoke, and Golden result to:
+
+- the exact release commit and build-artifact hash;
+- the SQLite schema version plus migration version and migration digest;
+- the complete AgentDeck contract-version set;
+- each adapter implementation and version plus its transport identity;
+- the exact Leader and Worker agent identities, roles, and model identities;
+  and
+- a sanitized configuration and capability digest.
+
+The manifest contains no secret and no raw configuration. Verification compares
+the manifest identities to the release candidate rather than relying on dates,
+labels, or a human assertion that evidence is recent. Any release-relevant
+input change invalidates the affected evidence and requires the impacted
+conformance, smoke, or Golden gate to run again under the retry and replay
+authority rules. Prior evidence remains preserved but cannot satisfy the
+changed release candidate.
 
 M2c is historical evidence, not a release veto and not retry authority. Its old
 mega-harness may be archived only after every retained invariant has a named
