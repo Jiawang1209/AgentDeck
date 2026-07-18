@@ -226,6 +226,7 @@ def test_fake_two_worker_chain_requires_verification_and_durable_handoff(store) 
         transport="fake",
         route_position=0,
         budget_units=5,
+        operation_id="op_build",
     )
     service.start_attempt(
         _internal("evt_start_1", "attempt.start", "int_start_1", 3, build_start.to_dict()),
@@ -333,6 +334,7 @@ def test_fake_two_worker_chain_requires_verification_and_durable_handoff(store) 
         transport="fake",
         route_position=1,
         budget_units=5,
+        operation_id="op_review",
     )
     service.start_attempt(
         _internal("evt_start_2", "attempt.start", "int_start_2", 12, review_start.to_dict()),
@@ -456,6 +458,27 @@ def test_adapter_integrity_is_canonical_and_binds_every_field(store) -> None:
         assert adapter_event_integrity_hash(**{**fields, key: changed}) != first
 
 
+def test_start_attempt_requires_bounded_operation_identity() -> None:
+    request = StartAttemptRequest(
+        mission_id="mis_1",
+        mission_version=1,
+        task_id="build",
+        attempt_id="att_1",
+        session_id="ses_1",
+        agent_id="codex",
+        model_id="fake",
+        transport="fake",
+        route_position=0,
+        budget_units=4,
+        operation_id="op_build",
+    )
+    assert request.to_dict()["operation_id"] == "op_build"
+    with pytest.raises(ValueError):
+        StartAttemptRequest(
+            "mis_1", 1, "build", "att_2", "ses_2", "codex", "fake", "fake", 0, 4, ""
+        )
+
+
 @pytest.mark.parametrize(
     ("max_parallel", "first_keys", "second_keys", "failure"),
     [
@@ -484,10 +507,12 @@ def test_start_attempt_enforces_mission_capacity_and_concurrency_keys(
         _internal("evt_release", "tasks.release", "int_release", 2, {"mission_id": "mis_1"})
     )
     first = StartAttemptRequest(
-        "mis_1", 1, "build", "att_build", "ses_build", "codex", "fake", "fake", 0, 4
+        "mis_1", 1, "build", "att_build", "ses_build", "codex", "fake", "fake", 0, 4,
+        "op_build",
     )
     second = StartAttemptRequest(
-        "mis_1", 1, "review", "att_review", "ses_review", "claude", "fake", "fake", 1, 4
+        "mis_1", 1, "review", "att_review", "ses_review", "claude", "fake", "fake", 1, 4,
+        "op_review",
     )
     service.start_attempt(
         _internal("evt_start_build", "attempt.start", "int_start_build", 3, first.to_dict()),
@@ -518,12 +543,19 @@ def test_safe_no_effect_failure_creates_distinct_retry_and_exhaustion_stops(stor
         _internal("evt_release", "tasks.release", "int_release", 2, {"mission_id": "mis_1"})
     )
     first_request = StartAttemptRequest(
-        "mis_1", 1, "build", "att_1", "ses_1", "codex", "fake", "fake", 0, 4
+        "mis_1", 1, "build", "att_1", "ses_1", "codex", "fake", "fake", 0, 4,
+        "op_build",
     )
     service.start_attempt(
         _internal("evt_start", "attempt.start", "int_start", 3, first_request.to_dict()),
         first_request,
     )
+    with store.open_reader() as reader:
+        assert json.loads(
+            reader.execute(
+                "SELECT budget_json FROM attempts WHERE attempt_id = 'att_1'"
+            ).fetchone()[0]
+        ) == {"budget_units": 4, "operation_id": "op_build"}
     service.record_evidence(
         _adapter(
             "evt_proof_1", "evidence", "adp_proof_1",
@@ -533,10 +565,24 @@ def test_safe_no_effect_failure_creates_distinct_retry_and_exhaustion_stops(stor
                 "kind": "effect_proof",
                 "criterion": "effect status",
                 "fact": "proven_no_effect",
+                "operation_id": "op_build",
                 "reason": "adapter receipt proves no write",
             },
         )
     )
+    with store.open_reader() as reader:
+        assert json.loads(
+            reader.execute(
+                "SELECT summary_json FROM evidence WHERE evidence_id = 'evd_proof_1'"
+            ).fetchone()[0]
+        ) == {
+            "criterion": "effect status",
+            "fact": "proven_no_effect",
+            "operation_id": "op_build",
+            "reason": "adapter receipt proves no write",
+            "source_sequence": 1,
+            "source_session_id": "ses_1",
+        }
     service.record_worker_event(
         _adapter(
             "evt_failed_1", "failed", "adp_failed_1",
@@ -544,6 +590,7 @@ def test_safe_no_effect_failure_creates_distinct_retry_and_exhaustion_stops(stor
             payload={
                 "reason": "transport ended",
                 "effect_status": "proven_no_effect",
+                "operation_id": "op_build",
                 "proof_evidence_id": "evd_proof_1",
             },
         )
@@ -554,7 +601,8 @@ def test_safe_no_effect_failure_creates_distinct_retry_and_exhaustion_stops(stor
     assert attempts == [("att_1", "build", 1, "failed")]
 
     oversized = StartAttemptRequest(
-        "mis_1", 1, "build", "att_2_bad", "ses_2_bad", "codex", "fake", "fake", 0, 7
+        "mis_1", 1, "build", "att_2_bad", "ses_2_bad", "codex", "fake", "fake", 0, 7,
+        "op_build",
     )
     with pytest.raises(ValueError, match="^attempt budget exhausted$"):
         service.start_attempt(
@@ -563,7 +611,8 @@ def test_safe_no_effect_failure_creates_distinct_retry_and_exhaustion_stops(stor
         )
 
     second_request = StartAttemptRequest(
-        "mis_1", 1, "build", "att_2", "ses_2", "codex", "fake", "fake", 0, 4
+        "mis_1", 1, "build", "att_2", "ses_2", "codex", "fake", "fake", 0, 4,
+        "op_build",
     )
     service.start_attempt(
         _internal("evt_retry", "attempt.start", "int_retry", 6, second_request.to_dict()),
@@ -578,6 +627,7 @@ def test_safe_no_effect_failure_creates_distinct_retry_and_exhaustion_stops(stor
                 "kind": "effect_proof",
                 "criterion": "effect status",
                 "fact": "proven_no_effect",
+                "operation_id": "op_build",
                 "reason": "second adapter receipt proves no write",
             },
         )
@@ -589,6 +639,7 @@ def test_safe_no_effect_failure_creates_distinct_retry_and_exhaustion_stops(stor
             payload={
                 "reason": "second transport end",
                 "effect_status": "proven_no_effect",
+                "operation_id": "op_build",
                 "proof_evidence_id": "evd_proof_2",
             },
         )
@@ -609,7 +660,8 @@ def test_prior_permission_pause_absorbs_later_no_effect_failure(store) -> None:
         _internal("evt_release", "tasks.release", "int_release", 2, {"mission_id": "mis_1"})
     )
     request = StartAttemptRequest(
-        "mis_1", 1, "build", "att_1", "ses_1", "codex", "fake", "fake", 0, 4
+        "mis_1", 1, "build", "att_1", "ses_1", "codex", "fake", "fake", 0, 4,
+        "op_build",
     )
     service.start_attempt(
         _internal("evt_start", "attempt.start", "int_start", 3, request.to_dict()), request
@@ -630,6 +682,7 @@ def test_prior_permission_pause_absorbs_later_no_effect_failure(store) -> None:
                 "kind": "effect_proof",
                 "criterion": "effect status",
                 "fact": "proven_no_effect",
+                "operation_id": "op_build",
                 "reason": "adapter receipt proves no write",
             },
         )
@@ -641,6 +694,7 @@ def test_prior_permission_pause_absorbs_later_no_effect_failure(store) -> None:
             payload={
                 "reason": "transport ended",
                 "effect_status": "proven_no_effect",
+                "operation_id": "op_build",
                 "proof_evidence_id": "evd_proof",
             },
         )
@@ -650,7 +704,8 @@ def test_prior_permission_pause_absorbs_later_no_effect_failure(store) -> None:
     assert tasks["build"] == "paused"
     assert attempts == [("att_1", "build", 1, "paused")]
     retry = StartAttemptRequest(
-        "mis_1", 1, "build", "att_2", "ses_2", "codex", "fake", "fake", 0, 4
+        "mis_1", 1, "build", "att_2", "ses_2", "codex", "fake", "fake", 0, 4,
+        "op_build",
     )
     with pytest.raises(ValueError, match="^mission lineage invalid$"):
         service.start_attempt(
@@ -663,10 +718,15 @@ def test_prior_permission_pause_absorbs_later_no_effect_failure(store) -> None:
 @pytest.mark.parametrize(
     "payload",
     [
-        {"reason": "bare assertion", "effect_status": "proven_no_effect"},
+        {
+            "reason": "bare assertion",
+            "effect_status": "proven_no_effect",
+            "operation_id": "op_build",
+        },
         {
             "reason": "missing receipt",
             "effect_status": "proven_no_effect",
+            "operation_id": "op_build",
             "proof_evidence_id": "evd_missing",
         },
     ],
@@ -678,7 +738,8 @@ def test_no_effect_failure_requires_existing_closed_proof(store, payload) -> Non
         _internal("evt_release", "tasks.release", "int_release", 2, {"mission_id": "mis_1"})
     )
     request = StartAttemptRequest(
-        "mis_1", 1, "build", "att_1", "ses_1", "codex", "fake", "fake", 0, 4
+        "mis_1", 1, "build", "att_1", "ses_1", "codex", "fake", "fake", 0, 4,
+        "op_build",
     )
     service.start_attempt(
         _internal("evt_start", "attempt.start", "int_start", 3, request.to_dict()), request
@@ -705,7 +766,8 @@ def test_no_effect_proof_from_other_attempt_is_rejected_without_write(store) -> 
         _internal("evt_release", "tasks.release", "int_release", 2, {"mission_id": "mis_1"})
     )
     first = StartAttemptRequest(
-        "mis_1", 1, "build", "att_1", "ses_1", "codex", "fake", "fake", 0, 4
+        "mis_1", 1, "build", "att_1", "ses_1", "codex", "fake", "fake", 0, 4,
+        "op_build",
     )
     service.start_attempt(
         _internal("evt_start", "attempt.start", "int_start", 3, first.to_dict()), first
@@ -719,6 +781,7 @@ def test_no_effect_proof_from_other_attempt_is_rejected_without_write(store) -> 
                 "kind": "effect_proof",
                 "criterion": "effect status",
                 "fact": "proven_no_effect",
+                "operation_id": "op_build",
                 "reason": "adapter receipt proves no write",
             },
         )
@@ -730,12 +793,14 @@ def test_no_effect_proof_from_other_attempt_is_rejected_without_write(store) -> 
             payload={
                 "reason": "first transport ended",
                 "effect_status": "proven_no_effect",
+                "operation_id": "op_build",
                 "proof_evidence_id": "evd_proof",
             },
         )
     )
     second = StartAttemptRequest(
-        "mis_1", 1, "build", "att_2", "ses_2", "codex", "fake", "fake", 0, 4
+        "mis_1", 1, "build", "att_2", "ses_2", "codex", "fake", "fake", 0, 4,
+        "op_build",
     )
     service.start_attempt(
         _internal("evt_retry", "attempt.start", "int_retry", 6, second.to_dict()), second
@@ -748,6 +813,7 @@ def test_no_effect_proof_from_other_attempt_is_rejected_without_write(store) -> 
                 payload={
                     "reason": "second transport ended",
                     "effect_status": "proven_no_effect",
+                    "operation_id": "op_build",
                     "proof_evidence_id": "evd_proof",
                 },
             )
@@ -766,7 +832,8 @@ def test_tampered_no_effect_proof_is_rejected_without_write(store) -> None:
         _internal("evt_release", "tasks.release", "int_release", 2, {"mission_id": "mis_1"})
     )
     request = StartAttemptRequest(
-        "mis_1", 1, "build", "att_1", "ses_1", "codex", "fake", "fake", 0, 4
+        "mis_1", 1, "build", "att_1", "ses_1", "codex", "fake", "fake", 0, 4,
+        "op_build",
     )
     service.start_attempt(
         _internal("evt_start", "attempt.start", "int_start", 3, request.to_dict()), request
@@ -780,6 +847,7 @@ def test_tampered_no_effect_proof_is_rejected_without_write(store) -> None:
                 "kind": "effect_proof",
                 "criterion": "effect status",
                 "fact": "proven_no_effect",
+                "operation_id": "op_build",
                 "reason": "adapter receipt proves no write",
             },
         )
@@ -807,6 +875,7 @@ def test_tampered_no_effect_proof_is_rejected_without_write(store) -> None:
                 payload={
                     "reason": "transport ended",
                     "effect_status": "proven_no_effect",
+                    "operation_id": "op_build",
                     "proof_evidence_id": "evd_proof",
                 },
             )
@@ -818,6 +887,213 @@ def test_tampered_no_effect_proof_is_rejected_without_write(store) -> None:
         ).fetchone() == ("running", 1)
 
 
+def test_no_effect_proof_cannot_be_reused_after_intervening_progress(store) -> None:
+    service = MissionService(store)
+    _confirmed(service)
+    service.release_ready_tasks(
+        _internal("evt_release", "tasks.release", "int_release", 2, {"mission_id": "mis_1"})
+    )
+    request = StartAttemptRequest(
+        "mis_1", 1, "build", "att_1", "ses_1", "codex", "fake", "fake", 0, 4,
+        "op_build",
+    )
+    service.start_attempt(
+        _internal("evt_start", "attempt.start", "int_start", 3, request.to_dict()), request
+    )
+    service.record_evidence(
+        _adapter(
+            "evt_proof", "evidence", "adp_proof",
+            task_id="build", attempt_id="att_1", session_id="ses_1", sequence=1,
+            payload={
+                "evidence_id": "evd_proof",
+                "kind": "effect_proof",
+                "criterion": "effect status",
+                "fact": "proven_no_effect",
+                "operation_id": "op_build",
+                "reason": "adapter receipt proves no write",
+            },
+        )
+    )
+    service.record_worker_event(
+        _adapter(
+            "evt_progress", "progress", "adp_progress",
+            task_id="build", attempt_id="att_1", session_id="ses_1", sequence=2,
+            payload={},
+        )
+    )
+    with pytest.raises(ValueError, match="^effect proof invalid$"):
+        service.record_worker_event(
+            _adapter(
+                "evt_failed", "failed", "adp_failed",
+                task_id="build", attempt_id="att_1", session_id="ses_1", sequence=3,
+                payload={
+                    "reason": "transport ended",
+                    "effect_status": "proven_no_effect",
+                    "operation_id": "op_build",
+                    "proof_evidence_id": "evd_proof",
+                },
+            )
+        )
+    with store.open_reader() as reader:
+        assert reader.execute("SELECT revision FROM projects").fetchone() == (6,)
+        assert reader.execute(
+            "SELECT status, last_sequence FROM sessions WHERE session_id = 'ses_1'"
+        ).fetchone() == ("running", 2)
+
+
+@pytest.mark.parametrize(
+    ("proof_operation", "failure_operation", "tamper_session"),
+    [
+        ("op_other", "op_build", False),
+        ("op_build", "op_other", False),
+        ("op_build", "op_build", True),
+    ],
+)
+def test_no_effect_proof_must_match_attempt_operation_and_source_session(
+    store, proof_operation, failure_operation, tamper_session
+) -> None:
+    service = MissionService(store)
+    _confirmed(service)
+    service.release_ready_tasks(
+        _internal("evt_release", "tasks.release", "int_release", 2, {"mission_id": "mis_1"})
+    )
+    request = StartAttemptRequest(
+        "mis_1", 1, "build", "att_1", "ses_1", "codex", "fake", "fake", 0, 4,
+        "op_build",
+    )
+    service.start_attempt(
+        _internal("evt_start", "attempt.start", "int_start", 3, request.to_dict()), request
+    )
+    service.record_evidence(
+        _adapter(
+            "evt_proof", "evidence", "adp_proof",
+            task_id="build", attempt_id="att_1", session_id="ses_1", sequence=1,
+            payload={
+                "evidence_id": "evd_proof",
+                "kind": "effect_proof",
+                "criterion": "effect status",
+                "fact": "proven_no_effect",
+                "operation_id": proof_operation,
+                "reason": "adapter receipt proves no write",
+            },
+        )
+    )
+    if tamper_session:
+        with store.open_reader() as reader:
+            summary = json.loads(
+                reader.execute(
+                    "SELECT summary_json FROM evidence WHERE evidence_id = 'evd_proof'"
+                ).fetchone()[0]
+            )
+        summary["source_session_id"] = "ses_other"
+        store._connection.execute(  # noqa: SLF001 - deterministic corruption injection
+            "UPDATE evidence SET summary_json = ? WHERE evidence_id = 'evd_proof'",
+            (json.dumps(summary, sort_keys=True, separators=(",", ":")),),
+        )
+        store._connection.commit()  # noqa: SLF001
+    with pytest.raises(ValueError, match="^effect proof invalid$"):
+        service.record_worker_event(
+            _adapter(
+                "evt_failed", "failed", "adp_failed",
+                task_id="build", attempt_id="att_1", session_id="ses_1", sequence=2,
+                payload={
+                    "reason": "transport ended",
+                    "effect_status": "proven_no_effect",
+                    "operation_id": failure_operation,
+                    "proof_evidence_id": "evd_proof",
+                },
+            )
+        )
+    with store.open_reader() as reader:
+        assert reader.execute("SELECT revision FROM projects").fetchone() == (5,)
+        assert reader.execute(
+            "SELECT status, last_sequence FROM sessions WHERE session_id = 'ses_1'"
+        ).fetchone() == ("running", 1)
+
+
+def test_reconciliation_is_bounded_compact_and_counts_all_blocker_facts(store) -> None:
+    service = MissionService(store)
+    _confirmed(service)
+    service.release_ready_tasks(
+        _internal("evt_release", "tasks.release", "int_release", 2, {"mission_id": "mis_1"})
+    )
+    request = StartAttemptRequest(
+        "mis_1", 1, "build", "att_1", "ses_1", "codex", "fake", "fake", 0, 4,
+        "op_build",
+    )
+    service.start_attempt(
+        _internal("evt_start", "attempt.start", "int_start", 3, request.to_dict()), request
+    )
+    kinds = ("permission_conflict", "session_takeover", "ambiguous_effect")
+    for sequence in range(1, 121):
+        kind = kinds[(sequence - 1) % len(kinds)]
+        service.record_worker_event(
+            _adapter(
+                f"evt_blocker_{sequence}", kind, f"adp_blocker_{sequence}",
+                task_id="build", attempt_id="att_1", session_id="ses_1",
+                sequence=sequence,
+                payload={"reason": f"private reason {sequence}"},
+            )
+        )
+    service.record_worker_event(
+        _adapter(
+            "evt_progress_after_blockers", "progress", "adp_progress_after_blockers",
+            task_id="build", attempt_id="att_1", session_id="ses_1", sequence=121,
+            payload={},
+        )
+    )
+    with store.open_reader() as reader:
+        raw = reader.execute(
+            "SELECT reconciliation_json FROM sessions WHERE session_id = 'ses_1'"
+        ).fetchone()[0]
+        last_sequence = reader.execute(
+            "SELECT last_sequence FROM sessions WHERE session_id = 'ses_1'"
+        ).fetchone()[0]
+    reconciliation = json.loads(raw)
+    assert len(raw.encode("utf-8")) < 8 * 1024
+    assert "reason" not in raw
+    assert reconciliation["fact_count"] == 120
+    assert reconciliation["latest_sequence"] == 121
+    assert last_sequence == 121
+    assert len(reconciliation["active_blockers"]) == 3
+    assert reconciliation["active_blockers"] == sorted(
+        reconciliation["active_blockers"], key=lambda item: (item["scope"], item["kind"])
+    )
+
+
+def test_legacy_or_tampered_reconciliation_is_rejected_without_write(store) -> None:
+    service = MissionService(store)
+    _confirmed(service)
+    service.release_ready_tasks(
+        _internal("evt_release", "tasks.release", "int_release", 2, {"mission_id": "mis_1"})
+    )
+    request = StartAttemptRequest(
+        "mis_1", 1, "build", "att_1", "ses_1", "codex", "fake", "fake", 0, 4,
+        "op_build",
+    )
+    service.start_attempt(
+        _internal("evt_start", "attempt.start", "int_start", 3, request.to_dict()), request
+    )
+    store._connection.execute(  # noqa: SLF001 - deterministic corruption injection
+        "UPDATE sessions SET reconciliation_json = ? WHERE session_id = 'ses_1'",
+        ('{"facts":[{"kind":"permission_conflict","reason":"leak","scope":"mission"}]}',),
+    )
+    store._connection.commit()  # noqa: SLF001
+    with pytest.raises(ValueError, match="^stored reconciliation invalid$"):
+        service.record_worker_event(
+            _adapter(
+                "evt_progress", "progress", "adp_progress",
+                task_id="build", attempt_id="att_1", session_id="ses_1", sequence=1,
+                payload={},
+            )
+        )
+    with store.open_reader() as reader:
+        assert reader.execute("SELECT revision FROM projects").fetchone() == (4,)
+        assert reader.execute(
+            "SELECT last_sequence FROM sessions WHERE session_id = 'ses_1'"
+        ).fetchone() == (0,)
+
+
 def test_takeover_scope_conflict_and_terminal_failure_are_persisted_in_order(store) -> None:
     service = MissionService(store)
     _confirmed(service)
@@ -825,7 +1101,8 @@ def test_takeover_scope_conflict_and_terminal_failure_are_persisted_in_order(sto
         _internal("evt_release", "tasks.release", "int_release", 2, {"mission_id": "mis_1"})
     )
     request = StartAttemptRequest(
-        "mis_1", 1, "build", "att_1", "ses_1", "codex", "fake", "fake", 0, 4
+        "mis_1", 1, "build", "att_1", "ses_1", "codex", "fake", "fake", 0, 4,
+        "op_build",
     )
     service.start_attempt(
         _internal("evt_start", "attempt.start", "int_start", 3, request.to_dict()), request
@@ -865,7 +1142,11 @@ def test_takeover_scope_conflict_and_terminal_failure_are_persisted_in_order(sto
         _adapter(
             "evt_failed", "failed", "adp_failed",
             task_id="build", attempt_id="att_1", session_id="ses_1", sequence=3,
-            payload={"reason": "known partial write", "effect_status": "known_effect"},
+            payload={
+                "reason": "known partial write",
+                "effect_status": "known_effect",
+                "operation_id": "op_build",
+            },
         )
     )
     mission, tasks, attempts = _read_statuses(store)
@@ -885,7 +1166,8 @@ def test_tampered_adapter_integrity_is_rejected_before_any_write(store) -> None:
         _internal("evt_release", "tasks.release", "int_release", 2, {"mission_id": "mis_1"})
     )
     request = StartAttemptRequest(
-        "mis_1", 1, "build", "att_1", "ses_1", "codex", "fake", "fake", 0, 4
+        "mis_1", 1, "build", "att_1", "ses_1", "codex", "fake", "fake", 0, 4,
+        "op_build",
     )
     service.start_attempt(
         _internal("evt_start", "attempt.start", "int_start", 3, request.to_dict()), request
@@ -923,7 +1205,8 @@ def test_sequence_gap_and_changed_duplicate_fail_without_revision_or_double_cred
         _internal("evt_release", "tasks.release", "int_release", 2, {"mission_id": "mis_1"})
     )
     request = StartAttemptRequest(
-        "mis_1", 1, "build", "att_1", "ses_1", "codex", "fake", "fake", 0, 5
+        "mis_1", 1, "build", "att_1", "ses_1", "codex", "fake", "fake", 0, 5,
+        "op_build",
     )
     service.start_attempt(
         _internal("evt_start", "attempt.start", "int_start", 3, request.to_dict()), request
@@ -966,7 +1249,8 @@ def test_failed_verification_synchronizes_task_attempt_and_session(store) -> Non
         _internal("evt_release", "tasks.release", "int_release", 2, {"mission_id": "mis_1"})
     )
     request = StartAttemptRequest(
-        "mis_1", 1, "build", "att_1", "ses_1", "codex", "fake", "fake", 0, 4
+        "mis_1", 1, "build", "att_1", "ses_1", "codex", "fake", "fake", 0, 4,
+        "op_build",
     )
     service.start_attempt(
         _internal("evt_start", "attempt.start", "int_start", 3, request.to_dict()), request
@@ -1015,7 +1299,8 @@ def test_verification_requires_exactly_one_latest_attempt_session(store, session
         _internal("evt_release", "tasks.release", "int_release", 2, {"mission_id": "mis_1"})
     )
     request = StartAttemptRequest(
-        "mis_1", 1, "build", "att_1", "ses_1", "codex", "fake", "fake", 0, 4
+        "mis_1", 1, "build", "att_1", "ses_1", "codex", "fake", "fake", 0, 4,
+        "op_build",
     )
     service.start_attempt(
         _internal("evt_start", "attempt.start", "int_start", 3, request.to_dict()), request
@@ -1071,7 +1356,8 @@ def test_missing_evidence_is_unavailable_and_ambiguous_effect_pauses_mission(sto
         _internal("evt_release", "tasks.release", "int_release", 2, {"mission_id": "mis_1"})
     )
     request = StartAttemptRequest(
-        "mis_1", 1, "build", "att_1", "ses_1", "codex", "fake", "fake", 0, 5
+        "mis_1", 1, "build", "att_1", "ses_1", "codex", "fake", "fake", 0, 5,
+        "op_build",
     )
     service.start_attempt(
         _internal("evt_start", "attempt.start", "int_start", 3, request.to_dict()), request
@@ -1116,7 +1402,9 @@ def test_missing_evidence_is_unavailable_and_ambiguous_effect_pauses_mission(sto
         reconciliation = json.loads(
             reader.execute("SELECT reconciliation_json FROM sessions").fetchone()[0]
         )
-    assert [item["kind"] for item in reconciliation["facts"]] == [
-        "permission_conflict",
+    assert [item["kind"] for item in reconciliation["active_blockers"]] == [
         "ambiguous_effect",
+        "permission_conflict",
     ]
+    assert reconciliation["fact_count"] == 2
+    assert reconciliation["latest_sequence"] == 3

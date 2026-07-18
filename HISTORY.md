@@ -4,6 +4,34 @@
 
 ## 2026-07-18
 
+### Bind Worker recovery proof to fresh operation lineage
+
+- Added a required bounded `operation_id` to every Attempt start and bound it
+  with the reserved budget in one closed canonical Attempt record. Safe
+  no-effect failures now carry that same operation identity and cite a durable
+  proof Evidence id; mismatched or malformed operation input fails before any
+  retry state is released.
+- Extended `effect_proof` Evidence with its operation id and AgentDeck-derived
+  source session/sequence. Recovery accepts only same-Task, same-Attempt,
+  same-session, same-operation proof whose source sequence is immediately
+  before the failure event. A later progress/effect observation therefore
+  makes an older proof stale; missing, cross-session, cross-operation,
+  non-adjacent, or tampered proof writes nothing. Fresh adjacent proof retains
+  all existing retry, budget, pause, takeover, and terminal precedence gates.
+- Replaced append-only reconciliation copies inside mutable session state with
+  a closed compact projection: stable unique active blockers carry only
+  scope/kind/latest sequence, while bounded counters retain total fact count
+  and latest processed Worker sequence. Raw reasons and full fact history live
+  only in the append-only event ledger. Every read revalidates exact shape,
+  canonical bytes, signed bounds, blocker vocabulary/scope, stable order, and
+  a fail-safe blocker limit.
+- Added deterministic tests for fresh proof success, proof reuse after
+  intervening progress, operation/session mismatch, compact source lineage,
+  legacy/tampered reconciliation rejection, and more than one hundred repeated
+  permission/takeover/ambiguous events. The projection remains below 8 KiB,
+  counts every fact, advances session sequence, stays blocker-bounded, and
+  preserves prior pause absorption without retaining private reasons.
+
 ### Close Worker scheduling, proof, and session-state gates
 
 - Added transaction-snapshot scheduling gates before every Attempt start.

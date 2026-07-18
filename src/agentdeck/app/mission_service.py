@@ -58,7 +58,16 @@ _MAX_SIGNED_64 = (2**63) - 1
 _MAX_PROVENANCE_BYTES = 8 * 1024
 _MAX_SPECIFICATION_BYTES = 64 * 1024
 _MAX_JSON_DEPTH = 16
+_MAX_RECONCILIATION_BLOCKERS = 16
 _TERMINAL_MISSION_STATES = frozenset({"completed", "failed", "cancelled"})
+_RECONCILIATION_BLOCKER_SCOPES = {
+    "terminal_failed": "task",
+    "terminal_cancelled": "task",
+    "ambiguous_effect": "mission",
+    "permission_conflict": "mission",
+    "task_local_pause": "task",
+    "session_takeover": "session",
+}
 _DIGEST_PATTERN = re.compile(r"sha256:[0-9a-f]{64}\Z")
 _SPECIFICATION_FIELDS = frozenset(
     {"mission_version", "authorization_envelope", "authorization_digest"}
@@ -134,6 +143,7 @@ class StartAttemptRequest:
     transport: str
     route_position: int
     budget_units: int
+    operation_id: str
 
     def __post_init__(self) -> None:
         if not (
@@ -146,6 +156,7 @@ class StartAttemptRequest:
                     self.session_id,
                     self.agent_id,
                     self.transport,
+                    self.operation_id,
                 )
             )
             and _valid_positive_version(self.mission_version)
@@ -171,6 +182,7 @@ class StartAttemptRequest:
             "transport": self.transport,
             "route_position": self.route_position,
             "budget_units": self.budget_units,
+            "operation_id": self.operation_id,
         }
 
 
@@ -1138,23 +1150,34 @@ def _release_ready_decision(
     )
 
 
-def _attempt_budget(row: Mapping[str, _FrozenJson]) -> int:
+def _attempt_budget_record(
+    row: Mapping[str, _FrozenJson],
+) -> tuple[int, str]:
     value = _row_value(row, "budget_json")
     try:
         parsed = json.loads(cast(str, value))
         if (
             not isinstance(value, str)
             or not isinstance(parsed, dict)
-            or set(parsed) != {"budget_units"}
+            or set(parsed) != {"budget_units", "operation_id"}
             or not isinstance(parsed["budget_units"], int)
             or isinstance(parsed["budget_units"], bool)
             or parsed["budget_units"] < 1
+            or not _valid_identifier(parsed["operation_id"])
             or _canonical_json(parsed, maximum=_MAX_PROVENANCE_BYTES) != value
         ):
             raise _InvalidMissionValue
-        return cast(int, parsed["budget_units"])
+        return cast(int, parsed["budget_units"]), cast(str, parsed["operation_id"])
     except (json.JSONDecodeError, TypeError, ValueError, _InvalidMissionValue):
         raise ValueError("stored attempt budget invalid") from None
+
+
+def _attempt_budget(row: Mapping[str, _FrozenJson]) -> int:
+    return _attempt_budget_record(row)[0]
+
+
+def _attempt_operation(row: Mapping[str, _FrozenJson]) -> str:
+    return _attempt_budget_record(row)[1]
 
 
 def _start_attempt_decision(
@@ -1276,7 +1299,11 @@ def _start_attempt_decision(
                 "status": decision.attempt_state,
                 "route_position": request.route_position,
                 "budget_json": _canonical_json(
-                    {"budget_units": request.budget_units}, maximum=_MAX_PROVENANCE_BYTES
+                    {
+                        "budget_units": request.budget_units,
+                        "operation_id": request.operation_id,
+                    },
+                    maximum=_MAX_PROVENANCE_BYTES,
                 ),
                 "started_revision": next_revision,
                 "terminal_revision": None,
@@ -1431,9 +1458,9 @@ def _runtime_facts(event: DomainEvent) -> tuple[RuntimeFact, ...]:
     if event.kind == "failed":
         effect_status = payload.get("effect_status")
         expected_fields = (
-            {"reason", "effect_status", "proof_evidence_id"}
+            {"reason", "effect_status", "operation_id", "proof_evidence_id"}
             if effect_status == "proven_no_effect"
-            else {"reason", "effect_status"}
+            else {"reason", "effect_status", "operation_id"}
         )
         if set(payload) != expected_fields:
             raise MutationValidationError("worker event payload invalid")
@@ -1447,6 +1474,8 @@ def _runtime_facts(event: DomainEvent) -> tuple[RuntimeFact, ...]:
         if effect_status == "proven_no_effect" and not _valid_identifier(
             payload.get("proof_evidence_id")
         ):
+            raise MutationValidationError("worker event payload invalid")
+        if not _valid_identifier(payload.get("operation_id")):
             raise MutationValidationError("worker event payload invalid")
         fact_kind = {
             "proven_no_effect": "proven_no_effect",
@@ -1483,8 +1512,16 @@ def _validate_effect_proof(
     snapshot: ProjectMutationSnapshot,
     context: _AdapterContext,
     proof_evidence_id: object,
+    operation_id: object,
+    failure_sequence: object,
 ) -> None:
-    if not _valid_identifier(proof_evidence_id):
+    if (
+        not _valid_identifier(proof_evidence_id)
+        or not _valid_identifier(operation_id)
+        or not isinstance(failure_sequence, int)
+        or isinstance(failure_sequence, bool)
+        or _attempt_operation(context.attempt) != operation_id
+    ):
         raise ValueError("effect proof invalid")
     matches = tuple(
         row
@@ -1506,8 +1543,19 @@ def _validate_effect_proof(
         if (
             not isinstance(value, str)
             or not isinstance(parsed, dict)
-            or set(parsed) != {"criterion", "fact", "reason"}
+            or set(parsed)
+            != {
+                "criterion",
+                "fact",
+                "reason",
+                "operation_id",
+                "source_session_id",
+                "source_sequence",
+            }
             or parsed["fact"] != "proven_no_effect"
+            or parsed["operation_id"] != operation_id
+            or parsed["source_session_id"] != context.lineage["session_id"]
+            or parsed["source_sequence"] != failure_sequence - 1
             or _canonical_json(parsed, maximum=_MAX_PROVENANCE_BYTES) != value
         ):
             raise _InvalidMissionValue
@@ -1520,30 +1568,58 @@ def _validate_effect_proof(
         raise ValueError("effect proof invalid") from None
 
 
-def _stored_reconciliation_facts(
+def _stored_reconciliation(
     session: Mapping[str, _FrozenJson],
-) -> list[dict[str, object]]:
+) -> tuple[list[dict[str, object]], int, int]:
     reconciliation = _row_value(session, "reconciliation_json")
     if reconciliation is None:
-        return []
+        return [], 0, 0
     try:
         stored = json.loads(cast(str, reconciliation))
         if (
             not isinstance(reconciliation, str)
             or not isinstance(stored, dict)
-            or set(stored) != {"facts"}
-            or not isinstance(stored["facts"], list)
+            or set(stored) != {"active_blockers", "fact_count", "latest_sequence"}
+            or not isinstance(stored["active_blockers"], list)
+            or len(stored["active_blockers"]) > _MAX_RECONCILIATION_BLOCKERS
+            or not isinstance(stored["fact_count"], int)
+            or isinstance(stored["fact_count"], bool)
+            or not 0 <= stored["fact_count"] <= _MAX_SIGNED_64
+            or not isinstance(stored["latest_sequence"], int)
+            or isinstance(stored["latest_sequence"], bool)
+            or not 0 <= stored["latest_sequence"] <= _MAX_SIGNED_64
             or any(
                 not isinstance(item, dict)
-                or set(item) != {"scope", "kind", "reason"}
-                or not all(isinstance(value, str) for value in item.values())
-                for item in stored["facts"]
+                or set(item) != {"scope", "kind", "sequence"}
+                or item.get("kind") not in _RECONCILIATION_BLOCKER_SCOPES
+                or item.get("scope")
+                != _RECONCILIATION_BLOCKER_SCOPES.get(cast(str, item.get("kind")))
+                or not isinstance(item.get("sequence"), int)
+                or isinstance(item.get("sequence"), bool)
+                or not 1 <= cast(int, item.get("sequence")) <= stored["latest_sequence"]
+                for item in stored["active_blockers"]
             )
+            or stored["active_blockers"]
+            != sorted(
+                stored["active_blockers"],
+                key=lambda item: (item["scope"], item["kind"]),
+            )
+            or len(
+                {
+                    (item["scope"], item["kind"])
+                    for item in stored["active_blockers"]
+                }
+            )
+            != len(stored["active_blockers"])
             or _canonical_json(stored, maximum=_MAX_PROVENANCE_BYTES)
             != reconciliation
         ):
             raise _InvalidMissionValue
-        return cast(list[dict[str, object]], stored["facts"])
+        return (
+            cast(list[dict[str, object]], stored["active_blockers"]),
+            cast(int, stored["fact_count"]),
+            cast(int, stored["latest_sequence"]),
+        )
     except (json.JSONDecodeError, TypeError, ValueError, _InvalidMissionValue):
         raise ValueError("stored reconciliation invalid") from None
 
@@ -1562,24 +1638,13 @@ def _recovery_context(
         for row in _rows(snapshot, "attempts")
         if _row_value(row, "task_id") in task_ids
     )
-    sessions = tuple(
-        row
-        for row in _rows(snapshot, "sessions")
-        if any(
-            _row_value(attempt, "attempt_id") == _row_value(row, "attempt_id")
-            for attempt in attempts
-        )
-    )
     task_attempts = tuple(
         row
         for row in attempts
         if _row_value(row, "task_id") == context.task.task_id
     )
     recovery_count = sum(
-        1
-        for session in sessions
-        for fact in _stored_reconciliation_facts(session)
-        if fact["kind"] == "proven_no_effect"
+        1 for attempt in attempts if _row_value(attempt, "status") == "failed"
     )
     envelope = context.confirmed.authorization_envelope
     return RecoveryContext(
@@ -1639,15 +1704,15 @@ def _worker_event_decision(
                 "observation_only": True,
             },
         )
-    stored_fact_values = _stored_reconciliation_facts(session)
+    stored_blockers, fact_count, _latest_sequence = _stored_reconciliation(session)
     try:
         facts = tuple(
             RuntimeFact(
                 cast(str, item["scope"]),
                 cast(str, item["kind"]),
-                cast(str, item["reason"]),
+                f"persisted blocker: {item['kind']}",
             )
-            for item in stored_fact_values
+            for item in stored_blockers
         ) + new_facts
     except (KeyError, TypeError, ValueError):
         raise ValueError("stored reconciliation invalid") from None
@@ -1661,7 +1726,13 @@ def _worker_event_decision(
             snapshot,
             context,
             _event_payload(event).get("proof_evidence_id"),
+            _event_payload(event).get("operation_id"),
+            lineage["sequence"],
         )
+    elif event.kind == "failed" and _attempt_operation(attempt) != _event_payload(
+        event
+    ).get("operation_id"):
+        raise ValueError("attempt operation invalid")
     decision = decide_record_worker_event(
         current_task_state,
         current_attempt_state,
@@ -1677,20 +1748,39 @@ def _worker_event_decision(
     next_revision = snapshot.revision + 1
     sequence = cast(int, lineage["sequence"])
     changes: list[EntityChange] = []
-    reconciliation = _row_value(session, "reconciliation_json")
-    stored_facts: list[object] = list(stored_fact_values)
-    stored_facts.extend(
-        {"scope": fact.scope, "kind": fact.kind, "reason": fact.reason}
-        for fact in new_facts
+    if fact_count > _MAX_SIGNED_64 - len(new_facts):
+        raise ValueError("stored reconciliation invalid")
+    blockers_by_key = {
+        (cast(str, item["scope"]), cast(str, item["kind"])): dict(item)
+        for item in stored_blockers
+    }
+    for fact in new_facts:
+        expected_scope = _RECONCILIATION_BLOCKER_SCOPES.get(fact.kind)
+        if expected_scope is not None:
+            if fact.scope != expected_scope:
+                raise ValueError("worker event payload invalid")
+            blockers_by_key[(fact.scope, fact.kind)] = {
+                "scope": fact.scope,
+                "kind": fact.kind,
+                "sequence": sequence,
+            }
+    active_blockers = sorted(
+        blockers_by_key.values(), key=lambda item: (item["scope"], item["kind"])
     )
+    if len(active_blockers) > _MAX_RECONCILIATION_BLOCKERS:
+        raise ValueError("stored reconciliation invalid")
     session_values: dict[str, object] = {
         "status": decision.attempt_state,
         "last_sequence": sequence,
+        "reconciliation_json": _canonical_json(
+            {
+                "active_blockers": active_blockers,
+                "fact_count": fact_count + len(new_facts),
+                "latest_sequence": sequence,
+            },
+            maximum=_MAX_PROVENANCE_BYTES,
+        ),
     }
-    if new_facts or reconciliation is not None:
-        session_values["reconciliation_json"] = _canonical_json(
-            {"facts": stored_facts}, maximum=_MAX_PROVENANCE_BYTES
-        )
     changes.append(
         EntityChange.update(
             "sessions", session_values, where={"session_id": lineage["session_id"]}
@@ -1749,10 +1839,13 @@ def _record_evidence_decision(
     task = context.task
     attempt = context.attempt
     payload = _event_payload(event)
-    if set(payload) != {"evidence_id", "kind", "criterion", "fact", "reason"}:
+    kind = payload.get("kind")
+    expected_fields = {"evidence_id", "kind", "criterion", "fact", "reason"}
+    if kind == "effect_proof":
+        expected_fields.add("operation_id")
+    if set(payload) != expected_fields:
         raise MutationValidationError("evidence payload invalid")
     evidence_id = payload["evidence_id"]
-    kind = payload["kind"]
     if not _valid_identifier(evidence_id) or not _valid_identifier(kind):
         raise MutationValidationError("evidence payload invalid")
     if (
@@ -1762,6 +1855,8 @@ def _record_evidence_decision(
         kind != "effect_proof"
         and payload.get("fact") not in {"check_passed", "check_failed"}
     ):
+        raise MutationValidationError("evidence payload invalid")
+    if kind == "effect_proof" and not _valid_identifier(payload.get("operation_id")):
         raise MutationValidationError("evidence payload invalid")
     evidence = decide_record_evidence(
         cast(str, payload["criterion"]),
@@ -1801,6 +1896,19 @@ def _record_evidence_decision(
         raise ValueError("evidence identity conflict")
     next_revision = snapshot.revision + 1
     integrity_hash = lineage["integrity_hash"]
+    summary: dict[str, object] = {
+        "criterion": evidence.criterion,
+        "fact": evidence.fact,
+        "reason": evidence.reason,
+    }
+    if kind == "effect_proof":
+        summary.update(
+            {
+                "operation_id": payload["operation_id"],
+                "source_session_id": lineage["session_id"],
+                "source_sequence": lineage["sequence"],
+            }
+        )
     return MutationDecision(
         changes=(
             EntityChange.update(
@@ -1817,11 +1925,7 @@ def _record_evidence_decision(
                     "kind": kind,
                     "integrity_hash": integrity_hash,
                     "summary_json": _canonical_json(
-                        {
-                            "criterion": evidence.criterion,
-                            "fact": evidence.fact,
-                            "reason": evidence.reason,
-                        },
+                        summary,
                         maximum=_MAX_PROVENANCE_BYTES,
                     ),
                     "created_revision": next_revision,
