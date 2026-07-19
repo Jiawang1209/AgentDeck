@@ -3613,9 +3613,12 @@ git commit -m "feat: coordinate the four stage coding mission"
 - Create: src/agentdeck/kernel/execution_semantics.py
 - Modify: src/agentdeck/application/execution_service.py
 - Create: src/agentdeck/application/execution_records.py
+- Modify: src/agentdeck/adapters/sqlite.py
+- Modify: src/agentdeck/adapters/sqlite_execution.py
 - Create: tests/product_kernel/test_review_revision_semantics.py
 - Create: tests/product_kernel/test_execution_budgets.py
 - Modify: tests/product_kernel/test_execution_coordinator.py
+- Modify: tests/product_kernel/test_sqlite_execution.py
 - Modify: HISTORY.md
 
 `execution.py` and `execution_service.py` enter Task 24 at the 500-line gate.
@@ -3632,6 +3635,18 @@ references and flattened review output to Task 24's exact closed payloads. It
 must derive review/revision/acceptance references from the real preceding
 handoff/Evidence lineage produced during the run; production must not retain a
 compatibility path for invented fixture evidence.
+
+**Post-review durable readback closure (2026-07-19):** terminal command replay
+may authorize downstream work only from exact Attempt, ordered Evidence, and
+Handoff snapshots reloaded from the Store. The real SQLite adapter must
+therefore expose the same closed execution-aggregate readback contract as the
+in-memory test Store: no persistence metadata, normalized booleans, exact
+canonical snapshot fields, and support for `attempts`, `evidence`, and
+`handoffs`. Missing, malformed, partial, reordered, extra, or mismatched stored
+facts stop before the next Worker. This is a read-side completion of Task 23's
+existing execution tables, not a relaxation of Task 24 validation. The helper
+belongs in `sqlite_execution.py`, with thin `sqlite.py` delegation and a real
+SQLite integration RED/GREEN test so MemoryStore cannot mask adapter drift.
 
 **Forbidden legacy imports:** M2c semantic validators and live harness.
 
@@ -3694,9 +3709,12 @@ git add src/agentdeck/kernel/execution.py \
   src/agentdeck/kernel/execution_semantics.py \
   src/agentdeck/application/execution_service.py \
   src/agentdeck/application/execution_records.py \
+  src/agentdeck/adapters/sqlite.py \
+  src/agentdeck/adapters/sqlite_execution.py \
   tests/product_kernel/test_review_revision_semantics.py \
   tests/product_kernel/test_execution_budgets.py \
-  tests/product_kernel/test_execution_coordinator.py HISTORY.md
+  tests/product_kernel/test_execution_coordinator.py \
+  tests/product_kernel/test_sqlite_execution.py HISTORY.md
 git commit -m "feat: enforce evidence backed execution semantics"
 ```
 
