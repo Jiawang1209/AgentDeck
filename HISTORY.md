@@ -4,6 +4,27 @@
 
 ## 2026-07-19
 
+### Add the foreground ProductSession shell
+
+- Added a deterministic foreground Product Shell over the existing
+  `SessionService`, slash-command parser, and human presenters. Open-ended goals
+  are durably retained during setup, staged Leader/model/permission selections
+  are applied only through the Application service, and the retained goal
+  resumes without being re-entered after setup confirmation.
+- Added fixed human handling for all fourteen declared slash controls. Setup,
+  status, help, diagnostics, unavailable Mission controls, malformed commands,
+  and safe exit never use raw JSON, object repr, a provider, tmux, or a legacy
+  shell/router path.
+- Replaced the hidden Product development placeholder with an injectable
+  composition root for config, passive discovery, the project-local
+  `SQLiteStore`, clock, renderer, and foreground I/O. Tests use deterministic
+  factories and no real terminal, provider, ACP, or tmux process.
+- TDD RED first failed collection because `agentdeck.product.shell` was absent;
+  a help-discovery RED then failed one of five transcript tests until all
+  declared controls were listed. Focused GREEN passed all five shell tests and
+  the adjacent Product, Session, config, discovery, and architecture gate
+  passed all `123` cases.
+
 ### Correct the sequential approval production seams
 
 - Reconciled Task 22 with the frozen repo truth before implementation. The
