@@ -29,6 +29,7 @@ from agentdeck.adapters.sqlite_schema import (
     _state_directory,
 )
 from agentdeck.adapters.sqlite_session import (
+    list_active_exit_attempts,
     load_session_aggregate,
     save_session,
     select_latest_nonterminal_session,
@@ -190,6 +191,9 @@ class _SQLiteCommandTransaction:
                  effect_observed=excluded.effect_observed, updated_at=excluded.updated_at""",
             record,
         )
+
+    def list_active_exit_attempts(self):
+        return list_active_exit_attempts(self._store._require_writer())
 
     def recover_attempt(
         self, attempt_id: str, state: AttemptState, reason: str | None,
@@ -401,6 +405,9 @@ class SQLiteStore:
             row["attempt_id"], row["task_id"], row["acp_session_id"],
             bool(row["effect_observed"]), _attempt_fingerprint(row),
         ) for row in validated)
+
+    def list_active_exit_attempts(self):
+        return list_active_exit_attempts(self._read_connection())
 
     def count(self, table: str) -> int:
         if table not in _REQUIRED_TABLES:

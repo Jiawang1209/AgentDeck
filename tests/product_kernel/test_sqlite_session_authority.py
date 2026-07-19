@@ -7,6 +7,8 @@ import pytest
 
 from agentdeck.adapters.sqlite import SQLiteStore
 from agentdeck.adapters.sqlite_schema import StoreCommandStateError
+from agentdeck.kernel.execution import AttemptState
+from agentdeck.kernel.session import ExitAttemptSnapshot
 
 from .fakes import FrozenClock
 
@@ -15,11 +17,21 @@ NOW = datetime(2026, 7, 19, 8, 9, 10, tzinfo=timezone.utc)
 EARLIER = "2026-07-19T07:00:00+00:00"
 LATEST = "2026-07-19T08:00:00+00:00"
 PAIR = ("codex-cli", "native-default")
+PENDING_ATTEMPT = ExitAttemptSnapshot(
+    attempt_id="att_1",
+    task_id="tsk_1",
+    agent_instance_id="agt_1",
+    ordinal=1,
+    state=AttemptState.RUNNING,
+    acp_session_id="acp_1",
+    effect_observed=False,
+    durable_fingerprint="a" * 64,
+)
 PENDING = (
-    "exit_1",
+    "xrt_" + "1" * 32,
     "att_1",
-    '{"attempt_id":"att_1"}',
-    "a" * 64,
+    PENDING_ATTEMPT.canonical_bytes().decode("utf-8"),
+    PENDING_ATTEMPT.content_hash,
     "2026-07-19T08:01:00+00:00",
 )
 

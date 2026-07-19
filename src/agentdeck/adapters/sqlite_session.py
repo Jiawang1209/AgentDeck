@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from datetime import datetime
+import json
 from pathlib import Path
 import sqlite3
 
@@ -12,11 +13,16 @@ from agentdeck.adapters.sqlite_schema import (
     StoreSerializationError,
 )
 from agentdeck.adapters.sqlite_validation import (
+    _ATTEMPT_COLUMNS,
     _MAX_STRING_BYTES,
+    _attempt_fingerprint,
+    _attempt_from_row,
     _bounded_text,
     _canonical,
     _stored_timestamp,
 )
+from agentdeck.kernel.execution import AttemptState
+from agentdeck.kernel.session import ExitAttemptSnapshot, ExitRequest
 from agentdeck.ports.store import CommandResult, SessionSelection, _session_identity
 
 
@@ -129,16 +135,34 @@ def _pending_values(
         exit_id, attempt_id, canonical_facts, fingerprint, requested_at = values
         _bounded_text(exit_id, "pending_exit_id", 255)
         _bounded_text(attempt_id, "pending_exit_attempt_id", 255)
-        _bounded_text(
-            canonical_facts, "canonical_pending_exit_attempt_facts", _MAX_STRING_BYTES
-        )
-        if (
-            type(fingerprint) is not str
-            or len(fingerprint) != 64
-            or any(character not in "0123456789abcdef" for character in fingerprint)
-        ):
-            raise StoreSerializationError("pending_exit_attempt_hash is invalid")
-        _stored_timestamp(requested_at, "pending exit requested_at")
+        _bounded_text(canonical_facts, "canonical_pending_exit_attempt_facts", 4_096)
+        try:
+            parsed = json.loads(canonical_facts)
+            if type(parsed) is not dict:
+                raise ValueError
+            expected = {
+                "attempt_id", "task_id", "agent_instance_id", "ordinal", "state",
+                "acp_session_id", "effect_observed", "durable_fingerprint",
+            }
+            if set(parsed) != expected or type(parsed["state"]) is not str:
+                raise ValueError
+            snapshot = ExitAttemptSnapshot(
+                attempt_id=parsed["attempt_id"], task_id=parsed["task_id"],
+                agent_instance_id=parsed["agent_instance_id"],
+                ordinal=parsed["ordinal"], state=AttemptState(parsed["state"]),
+                acp_session_id=parsed["acp_session_id"],
+                effect_observed=parsed["effect_observed"],
+                durable_fingerprint=parsed["durable_fingerprint"],
+            )
+            request = ExitRequest(exit_id, snapshot, fingerprint, requested_at)
+            if (
+                attempt_id != snapshot.attempt_id
+                or canonical_facts != snapshot.canonical_bytes().decode("utf-8")
+                or requested_at != request.requested_at
+            ):
+                raise ValueError
+        except (TypeError, ValueError, UnicodeError) as error:
+            raise StoreSerializationError("pending exit facts are invalid") from error
     return values
 
 
@@ -196,6 +220,29 @@ def select_latest_nonterminal_session(
         return SessionSelection(None, count)
     values = _session_values(row)
     return SessionSelection(values["session_id"], count)
+
+
+def list_active_exit_attempts(
+    connection: sqlite3.Connection,
+) -> tuple[ExitAttemptSnapshot, ...]:
+    active = tuple(state.value for state in (
+        AttemptState.RUNNING,
+        AttemptState.AWAITING_APPROVAL,
+        AttemptState.HUMAN_CONTROLLED,
+    ))
+    rows = connection.execute(
+        f"""SELECT {','.join(_ATTEMPT_COLUMNS)} FROM attempts
+            WHERE state IN ({','.join('?' for _ in active)}) ORDER BY attempt_id""",
+        active,
+    ).fetchall()
+    validated = (_attempt_from_row(row)[1] for row in rows)
+    return tuple(ExitAttemptSnapshot(
+        attempt_id=row["attempt_id"], task_id=row["task_id"],
+        agent_instance_id=row["agent_instance_id"], ordinal=row["ordinal"],
+        state=AttemptState(row["state"]), acp_session_id=row["acp_session_id"],
+        effect_observed=bool(row["effect_observed"]),
+        durable_fingerprint=_attempt_fingerprint(row),
+    ) for row in validated)
 
 
 def save_session(

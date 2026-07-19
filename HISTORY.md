@@ -4,6 +4,40 @@
 
 ## 2026-07-19
 
+### Persist exact ProductSession exit requests
+
+- Added frozen exit Attempt snapshots and request values with the exact bounded
+  eight-field canonical JSON authority, active-state-only validation, SQLite
+  signed ordinal limits, typed random request identities, normalized Product
+  timestamps, and constant-time SHA-256 lineage comparison.
+- Added Store and transaction active-exit queries over the strict existing
+  Attempt row validator. SQLite now returns all and only running,
+  awaiting-approval, and human-controlled Attempts in stable identity order,
+  includes their durable row fingerprints, and validates the complete five
+  field ProductSession pending-exit group on both save and load. Omitted facts
+  preserve authority, an explicit all-null group clears it, and partial or
+  malformed snapshots fail with command rollback.
+- Added the synchronous Task 15A ExitService boundary. No active Attempt exits
+  immediately; ambiguous activity is zero-write; one active Attempt creates,
+  replays, or atomically supersedes one exact durable request. Decisions re-read
+  session and Attempt authority, stale/wrong/missing/malformed decisions keep
+  the request without writes, exact decline consumes only the request, and
+  exact confirm remains fail-closed with `exit_cancellation_unavailable` until
+  Task 15B binds real Worker cancellation. EOF reporting is read-only and all
+  exit diagnostics use fixed content-free presentation facts.
+- Hardened decision replay after independent review: each valid caller hash is
+  compared exactly once through the service-level constant-time boundary;
+  completed decline commands replay before pending-request preflight and reject
+  conflicting or malformed durable results without writes; and a new decline
+  audit event records one fresh normalized decision time while stable replay
+  neither resamples the clock nor changes chronology.
+- TDD first failed on the missing Kernel values, Store operation and
+  ExitService module, then reproduced permissive pending-exit validation and a
+  noncanonical timestamp bound. Final review gates pass 73 focused exit tests,
+  221 scoped regression/architecture checks, and 1,275 Product Kernel tests;
+  three unrelated discovery subprocess cases remain host-blocked on executable
+  startup, while `compileall` passes.
+
 ### Restore latest ProductSession authority and durable Leader identity
 
 - Replaced project-root-derived session IDs in Product Shell composition with
