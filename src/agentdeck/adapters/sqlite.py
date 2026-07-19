@@ -7,7 +7,9 @@ import os
 from pathlib import Path
 import sqlite3
 from agentdeck.adapters.sqlite_approval import _save_approval
-from agentdeck.adapters.sqlite_execution import _save_execution_aggregate
+from agentdeck.adapters.sqlite_execution import (
+    _save_execution_aggregate, load_execution_aggregate,
+)
 from agentdeck.adapters.sqlite_mission import MISSION_AGGREGATE_TYPES, load_mission_aggregate, save_mission_aggregate
 from agentdeck.adapters.sqlite_migrations import migrate_schema, _validate_before_durability, _validate_existing_schema
 from agentdeck.adapters.sqlite_schema import (
@@ -368,12 +370,9 @@ class SQLiteStore:
             return load_mission_aggregate(connection, aggregate_type, aggregate_id)
         if aggregate_type == "product_sessions":
             return load_session_aggregate(connection, aggregate_id)
+        if aggregate_type in {"attempts", "evidence", "handoffs"}:
+            return load_execution_aggregate(connection, aggregate_type, aggregate_id)
         specs = {
-            "attempts": ("attempt_id", (
-                "attempt_id", "task_id", "agent_instance_id", "ordinal", "state", "reason",
-                "result_summary", "retryable", "acp_session_id", "effect_observed",
-                "created_at", "updated_at",
-            )),
             "conversation_turns": ("turn_id", (
                 "turn_id", "session_id", "ordinal", "actor_role", "sanitized_content", "occurred_at",
             )),

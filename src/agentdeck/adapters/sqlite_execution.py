@@ -19,6 +19,21 @@ _HANDOFF_FIELDS = frozenset({
     "handoff_id", "source_attempt_id", "target_task_id", "result_summary",
     "canonical_handoff_facts", "content_hash",
 })
+_EXECUTION_READ_SPECS = {
+    "attempts": ("attempt_id", "att_", (
+        "attempt_id", "task_id", "agent_instance_id", "ordinal", "state",
+        "reason", "result_summary", "retryable", "acp_session_id",
+        "effect_observed",
+    ), ("retryable", "effect_observed")),
+    "evidence": ("evidence_id", "ev_", (
+        "evidence_id", "task_id", "attempt_id", "kind",
+        "canonical_evidence_facts",
+    ), ()),
+    "handoffs": ("handoff_id", "hnd_", (
+        "handoff_id", "source_attempt_id", "target_task_id", "result_summary",
+        "canonical_handoff_facts", "content_hash",
+    ), ()),
+}
 
 
 def _typed(value: object, field: str, prefix: str) -> str:
@@ -26,6 +41,28 @@ def _typed(value: object, field: str, prefix: str) -> str:
     if not text.startswith(prefix) or not text[len(prefix):] or any(c.isspace() for c in text):
         raise StoreSerializationError(f"{field} must be a typed identity")
     return text
+
+
+def load_execution_aggregate(
+    connection: sqlite3.Connection, aggregate_type: str, aggregate_id: str,
+) -> dict[str, object] | None:
+    try:
+        identity, prefix, columns, boolean_fields = _EXECUTION_READ_SPECS[
+            aggregate_type
+        ]
+    except (KeyError, TypeError) as error:
+        raise ValueError("unsupported execution aggregate type") from error
+    checked_id = _typed(aggregate_id, identity, prefix)
+    row = connection.execute(
+        f"SELECT {','.join(columns)} FROM {aggregate_type} WHERE {identity}=?",
+        (checked_id,),
+    ).fetchone()
+    if row is None:
+        return None
+    snapshot = dict(zip(columns, row, strict=True))
+    for field in boolean_fields:
+        snapshot[field] = bool(snapshot[field])
+    return snapshot
 
 
 def _save_evidence(
@@ -185,4 +222,4 @@ def _require_direct_dependency(
         raise ValueError("handoff target is not the frozen direct dependency") from error
 
 
-__all__ = ["_save_execution_aggregate"]
+__all__ = ["_save_execution_aggregate", "load_execution_aggregate"]

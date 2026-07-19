@@ -33,6 +33,20 @@
   loaded Attempt/Evidence/Handoff values become downstream authority. Missing,
   partial, reordered, extra, drifted or legacy bundles stop content-free before
   the next Worker; a complete durable replay remains idempotent.
+- Closed the real SQLite read side for those terminal bundles. A dedicated
+  read-only execution aggregate loader now returns only the exact canonical
+  Attempt, Evidence and Handoff snapshot fields, strips persistence timestamps,
+  and normalizes SQLite boolean integers before the unchanged bundle validator
+  sees them. Both fresh command completion and true command replay therefore
+  derive authority from the same Store snapshots; conversation-turn and other
+  aggregate load paths remain unchanged.
+- Closed stopped-attempt replay authority before retry. The
+  `execution_attempt_stopped` result now carries the exact Mission/version,
+  Task, Attempt, terminal state/reason/retryability and ACP session identity;
+  both fresh and replayed commands must reload and exactly validate the
+  canonical Attempt snapshot from the Store. Missing, legacy, drifted or
+  cross-lineage command results and snapshots stop content-free before Attempt
+  2, while an exact durable replay permits only the existing bounded retry.
 - Made every accepted finding actionable in the authoritative Revision Task and
   actual Worker instruction through a closed immutable projection of scope,
   severity, summary, criterion and finding-to-Evidence lineage. Rejected findings
@@ -45,10 +59,15 @@
   revision handoff; the revision authority RED showed exact resolved IDs could
   still cite rejected, missing, reordered or extra review Evidence. The terminal
   replay RED then produced 10 failures while its exact durable-bundle control
-  passed; GREEN passes all 11 replay cases. Focused GREEN covers 103 Task24/Task23
-  tests; expanded execution, Kernel, ACP, SQLite and Leader coverage passes 759,
-  architecture/firewall passes 50, the full Product Kernel passes 1,393, and the
-  approved legacy substitute passes 4,461 with 3 skipped.
+  passed; GREEN passes all 11 replay cases. The real SQLite RED added four
+  failures: Attempt leaked timestamps while Evidence/Handoff were unsupported,
+  preventing both fresh and replay validation. Stopped-attempt replay then
+  proved 22 MemoryStore/SQLite corrupt-command-or-snapshot cases incorrectly
+  started Attempt 2 while two exact replay controls remained bounded; GREEN
+  passes all 24 cases. Focused GREEN covers 135
+  Task24/Task23/SQLite tests; expanded execution, Kernel, ACP, SQLite and Leader
+  coverage passes 787, architecture/firewall passes 50, the full Product Kernel
+  passes 1,421, and the approved legacy substitute passes 4,461 with 3 skipped.
 
 ### Enforce evidence-backed execution semantics
 

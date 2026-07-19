@@ -28,6 +28,10 @@ _TERMINAL_RESULT_FIELDS = {
     "mission_id", "mission_version", "task_id", "attempt_id",
     "evidence_ids", "handoff_id",
 }
+_STOPPED_RESULT_FIELDS = {
+    "mission_id", "mission_version", "task_id", "attempt_id", "state",
+    "reason", "retryable", "acp_session_id",
+}
 def attempt_snapshot(
     attempt: Attempt, task: TaskDefinition, acp_session_id: str | None = None,
 ) -> dict[str, object]:
@@ -43,6 +47,46 @@ def attempt_snapshot(
         "acp_session_id": acp_session_id,
         "effect_observed": False,
     }
+def stopped_command_result(
+    confirmed: ConfirmedMissionVersion, task: TaskDefinition, attempt: Attempt,
+    acp_session_id: str | None,
+) -> dict[str, object]:
+    return {
+        "mission_id": confirmed.mission_id, "mission_version": confirmed.version,
+        "task_id": task.task_id, "attempt_id": attempt.attempt_id,
+        "state": attempt.state.value, "reason": attempt.reason,
+        "retryable": attempt.retryable, "acp_session_id": acp_session_id,
+    }
+def stopped_attempt_reference(result: object) -> str:
+    if type(result) is not dict or set(result) != _STOPPED_RESULT_FIELDS:
+        raise ValueError("stopped execution attempt is invalid")
+    identity = result["attempt_id"]
+    if type(identity) is not str or not identity.startswith("att_"):
+        raise ValueError("stopped execution attempt is invalid")
+    return identity
+def validated_stopped_attempt(
+    result: object, confirmed: ConfirmedMissionVersion, task: TaskDefinition,
+    expected_attempt: Attempt, expected_acp_session_id: str | None,
+    attempt_facts: object,
+) -> Attempt:
+    expected_result = stopped_command_result(
+        confirmed, task, expected_attempt, expected_acp_session_id
+    )
+    expected_facts = attempt_snapshot(
+        expected_attempt, task, expected_acp_session_id
+    )
+    if type(result) is not dict or type(attempt_facts) is not dict or (
+        json.dumps(result, sort_keys=True) != json.dumps(expected_result, sort_keys=True)
+        or json.dumps(attempt_facts, sort_keys=True)
+        != json.dumps(expected_facts, sort_keys=True)
+    ):
+        raise ValueError("stopped execution attempt is invalid")
+    return Attempt(
+        attempt_facts["attempt_id"], attempt_facts["task_id"],
+        attempt_facts["ordinal"], AttemptState(attempt_facts["state"]),
+        attempt_facts["reason"], attempt_facts["result_summary"],
+        attempt_facts["retryable"],
+    )
 def evidence_snapshot(evidence: Evidence, attempt: Attempt) -> dict[str, object]:
     return {
         "evidence_id": evidence.evidence_id, "task_id": attempt.task_id,
@@ -58,8 +102,6 @@ def handoff_snapshot(handoff: Handoff) -> dict[str, object]:
         "canonical_handoff_facts": handoff.canonical_content,
         "content_hash": handoff.content_hash,
     }
-
-
 def terminal_command_result(
     confirmed: ConfirmedMissionVersion, task: TaskDefinition, attempt: Attempt,
     evidence: tuple[Evidence, ...], handoff: Handoff | None,
@@ -70,8 +112,6 @@ def terminal_command_result(
         "evidence_ids": [item.evidence_id for item in evidence],
         "handoff_id": None if handoff is None else handoff.handoff_id,
     }
-
-
 def terminal_references(result: object) -> tuple[str, tuple[str, ...], str | None]:
     if type(result) is not dict or set(result) != _TERMINAL_RESULT_FIELDS:
         raise ValueError("terminal execution bundle is invalid")
@@ -84,15 +124,11 @@ def terminal_references(result: object) -> tuple[str, tuple[str, ...], str | Non
             or (handoff_id is not None and type(handoff_id) is not str)):
         raise ValueError("terminal execution bundle is invalid")
     return attempt_id, tuple(evidence_ids), handoff_id
-
-
 @dataclass(frozen=True)
 class CommittedTerminalBundle:
     attempt: Attempt
     evidence: tuple[Evidence, ...]
     handoff: Handoff | None
-
-
 def validated_terminal_bundle(
     result: object, confirmed: ConfirmedMissionVersion, task: TaskDefinition,
     expected_attempt: Attempt, expected_evidence: tuple[Evidence, ...],
@@ -135,19 +171,13 @@ def validated_terminal_bundle(
             known_issues=facts["known_issues"],
         )
     return CommittedTerminalBundle(loaded_attempt, loaded_evidence, loaded_handoff)
-
-
 def handle_matches_request(handle: object, request: TaskRequest) -> bool:
     return type(handle) is WorkerHandle and (
         handle.agent_id, handle.task_id, handle.attempt_id, handle.transport
     ) == (request.agent_id, request.task_id, request.attempt_id, "acp")
-
-
 def _derived_id(prefix: str, *parts: str) -> str:
     canonical = json.dumps(parts, ensure_ascii=False, separators=(",", ":"))
     return prefix + sha256(canonical.encode("utf-8")).hexdigest()[:24]
-
-
 def stage_id(
     prefix: str,
     confirmed: ConfirmedMissionVersion,
@@ -157,8 +187,6 @@ def stage_id(
     return _derived_id(
         prefix, confirmed.mission_id, str(confirmed.version), task.task_id, *parts
     )
-
-
 def command_id(
     phase: str,
     confirmed: ConfirmedMissionVersion,
@@ -166,13 +194,10 @@ def command_id(
     ordinal: int,
 ) -> str:
     return stage_id("cmd_", confirmed, task, phase, str(ordinal))
-
-
 @dataclass(frozen=True)
 class AuthoritativeRevisionFinding:
     finding: ReviewFinding
     review_evidence: Evidence
-
     def __post_init__(self) -> None:
         if type(self.finding) is not ReviewFinding:
             raise TypeError("authoritative finding requires a ReviewFinding")
@@ -183,7 +208,6 @@ class AuthoritativeRevisionFinding:
             != self.finding.canonical_projection()
         ):
             raise ResultError("authoritative finding evidence does not match")
-
     def canonical_payload(self) -> dict[str, object]:
         finding = self.finding
         return {
@@ -195,8 +219,6 @@ class AuthoritativeRevisionFinding:
                 "reference_evidence_ids": list(finding.evidence_ids),
             },
         }
-
-
 @dataclass(frozen=True)
 class AuthoritativeRevisionTask:
     task_id: str
@@ -204,7 +226,6 @@ class AuthoritativeRevisionTask:
     confirmed_scope: str
     accepted_finding_ids: tuple[str, ...]
     accepted_findings: tuple[AuthoritativeRevisionFinding, ...] = ()
-
     def __post_init__(self) -> None:
         findings = tuple(self.accepted_findings)
         if any(type(item) is not AuthoritativeRevisionFinding for item in findings):
@@ -215,7 +236,6 @@ class AuthoritativeRevisionTask:
             raise ResultError("accepted finding content must exactly match its IDs")
         object.__setattr__(self, "accepted_finding_ids", tuple(self.accepted_finding_ids))
         object.__setattr__(self, "accepted_findings", findings)
-
     @classmethod
     def from_review(
         cls, task_id: str, confirmed_scope: str, findings: tuple[ReviewFinding, ...],
@@ -233,7 +253,6 @@ class AuthoritativeRevisionTask:
             task_id, "agentdeck", confirmed_scope,
             tuple(finding.finding_id for finding in findings), accepted,
         )
-
     def canonical_payload(self) -> dict[str, object]:
         return {
             "task_id": self.task_id, "created_by": self.created_by,
@@ -243,14 +262,11 @@ class AuthoritativeRevisionTask:
                 finding.canonical_payload() for finding in self.accepted_findings
             ],
         }
-
     @property
     def review_evidence_ids(self) -> tuple[str, ...]:
         return tuple(
             item.review_evidence.evidence_id for item in self.accepted_findings
         )
-
-
 def task_instruction(
     draft: MissionDraft,
     confirmed: ConfirmedMissionVersion,
@@ -283,52 +299,37 @@ def task_instruction(
     return json.dumps(
         payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False
     )
-
-
 def payload_value(result: WorkerResult, field: str) -> object:
     if field not in result.payload:
         raise ValueError(f"worker result missing {field}")
     return result.payload[field]
-
-
 def payload_text(result: WorkerResult, field: str) -> str:
     value = payload_value(result, field)
     if type(value) is not str or not value.strip():
         raise ValueError(f"worker result {field} must be text")
     return value
-
-
 def _plain(value: object) -> object:
     if type(value) is MappingProxyType:
         return {key: _plain(child) for key, child in value.items()}
     if type(value) is tuple:
         return [_plain(child) for child in value]
     return value
-
-
 def _plain_payload(result: WorkerResult) -> dict[str, object]:
     return {key: _plain(value) for key, value in result.payload.items()}
-
-
 @dataclass(frozen=True)
 class CommittedEvidence:
     evidence: Evidence
     mission_id: str
     task_id: str
     attempt_id: str
-
-
 class EvidenceLineageError(ValueError):
     """Raised without worker content when evidence authority does not resolve."""
-
-
 @dataclass(frozen=True)
 class EvidenceAuthority:
     committed: tuple[CommittedEvidence, ...]
     mission_id: str
     source_task_id: str
     attempts: tuple[Attempt, ...]
-
     def validate(self, reference_ids: tuple[str, ...]) -> None:
         validate_evidence_lineage(
             reference_ids, self.committed, mission_id=self.mission_id,
@@ -338,8 +339,6 @@ class EvidenceAuthority:
                 if item.task_id == self.source_task_id and item.state.value == "completed"
             ),
         )
-
-
 @dataclass(frozen=True)
 class ValidatedStageResult:
     summary: str
@@ -348,12 +347,8 @@ class ValidatedStageResult:
     reference_ids: tuple[str, ...]
     review_findings: tuple[ReviewFinding, ...] = ()
     accepted: bool = True
-
-
 def review_result(result: WorkerResult) -> ReviewResult:
     return ReviewResult.from_mapping(_plain_payload(result))
-
-
 def validated_stage_result(
     identity: str, task: TaskDefinition, result: WorkerResult, draft: MissionDraft,
     *, accepted_finding_ids: tuple[str, ...],
@@ -424,8 +419,6 @@ def validated_stage_result(
         payload_text(result, "summary"), (evidence,), (), references,
         accepted=acceptance.accepted,
     )
-
-
 def validate_evidence_lineage(
     reference_ids: tuple[str, ...], committed: tuple[CommittedEvidence, ...],
     *, mission_id: str, source_task_id: str, source_attempt_ids: tuple[str, ...],
@@ -439,8 +432,6 @@ def validate_evidence_lineage(
         for reference in reference_ids
     ):
         raise EvidenceLineageError("evidence lineage is invalid")
-
-
 def exception_condition(
     error: BaseException, *, task_id: str, attempt_id: str,
 ) -> str | None:
@@ -474,8 +465,6 @@ def exception_condition(
         "scope_insufficiency": "scope_insufficiency",
     }
     return aliases.get(diagnostic.code)
-
-
 def worker_failure_condition(result: WorkerResult) -> str | None:
     value = result.payload.get("stop_reason")
     aliases = {
@@ -486,15 +475,14 @@ def worker_failure_condition(result: WorkerResult) -> str | None:
         "unexplained_project_drift": "project_drift",
     }
     return aliases.get(value) if type(value) is str else None
-
-
 __all__ = [
     "AuthoritativeRevisionFinding", "AuthoritativeRevisionTask",
     "CommittedEvidence", "CommittedTerminalBundle", "EvidenceAuthority",
     "EvidenceLineageError", "ValidatedStageResult", "attempt_snapshot", "command_id",
     "evidence_snapshot", "exception_condition", "handle_matches_request",
     "handoff_snapshot", "payload_text", "review_result",
-    "stage_id", "task_instruction", "terminal_command_result",
-    "terminal_references", "validate_evidence_lineage", "validated_terminal_bundle",
+    "stage_id", "stopped_attempt_reference", "stopped_command_result",
+    "task_instruction", "terminal_command_result", "terminal_references",
+    "validate_evidence_lineage", "validated_stopped_attempt", "validated_terminal_bundle",
     "validated_stage_result", "worker_failure_condition",
 ]

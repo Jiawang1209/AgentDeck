@@ -1,13 +1,22 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timezone
 import json
+from types import SimpleNamespace
 
 import pytest
 
 from agentdeck.adapters.sqlite import SQLiteStore
+from agentdeck.application.execution_records import (
+    attempt_snapshot, command_id, evidence_snapshot, handoff_snapshot,
+    terminal_command_result,
+    validated_terminal_bundle,
+)
 from agentdeck.kernel.execution import Attempt, Evidence, EvidenceKind, Handoff
 from product_kernel.fakes import FrozenClock
+from product_kernel.test_execution_budgets import SafeWorkerFailure
+from product_kernel.test_execution_coordinator import Harness
 
 
 NOW = datetime(2026, 7, 19, 3, 0, tzinfo=timezone.utc)
@@ -99,6 +108,216 @@ def test_terminal_attempt_evidence_and_handoff_commit_atomically(tmp_path) -> No
         assert row == ("completed", "implementation complete")
     finally:
         store.close()
+
+
+def _persisted_bundle(store):
+    started = Attempt.pending("att_impl_1", "tsk_implementation", 1).start()
+    store.execute_once("cmd_started", "execution_attempt_started",
+        lambda transaction: transaction.save_aggregate(
+            "attempts", started.attempt_id, _attempt_snapshot(started)
+        ) or {"attempt_id": started.attempt_id})
+    terminal = started.complete("implementation complete")
+    evidence = Evidence.create("ev_implementation_1", EvidenceKind.ARTIFACT_HASH,
+        {"artifact_reference": "workspace patch", "content_hash": "b" * 64})
+    handoff = Handoff.create("hnd_implementation_1", terminal.attempt_id,
+        "tsk_review", "implementation complete", (evidence.evidence_id,),
+        artifact_references=("workspace patch",))
+    confirmed = SimpleNamespace(mission_id="msn_1", version=1)
+    task = SimpleNamespace(task_id=terminal.task_id,
+                           agent_instance_id="agt_implementation")
+    result = terminal_command_result(confirmed, task, terminal, (evidence,), handoff)
+    committed = store.execute_once("cmd_terminal", "execution_stage_committed",
+        lambda transaction: _commit_execution(
+            transaction, terminal, evidence, handoff, result))
+    return terminal, evidence, handoff, confirmed, task, result, committed
+
+
+@pytest.mark.parametrize("aggregate", ["attempts", "evidence", "handoffs"])
+def test_execution_aggregate_readback_is_the_exact_canonical_snapshot(
+    tmp_path, aggregate,
+) -> None:
+    store = SQLiteStore.open(tmp_path, clock=FrozenClock(NOW))
+    try:
+        _seed_lineage(store)
+        terminal, evidence, handoff, *_ = _persisted_bundle(store)
+        expected = {
+            "attempts": _attempt_snapshot(terminal),
+            "evidence": evidence_snapshot(evidence, terminal),
+            "handoffs": handoff_snapshot(handoff),
+        }[aggregate]
+        identity = {"attempts": terminal.attempt_id,
+                    "evidence": evidence.evidence_id,
+                    "handoffs": handoff.handoff_id}[aggregate]
+
+        assert store.load_aggregate(aggregate, identity) == expected
+    finally:
+        store.close()
+
+
+def test_fresh_and_replayed_terminal_bundle_validate_from_sqlite_snapshots(
+    tmp_path,
+) -> None:
+    store = SQLiteStore.open(tmp_path, clock=FrozenClock(NOW))
+    try:
+        _seed_lineage(store)
+        terminal, evidence, handoff, confirmed, task, expected, fresh = (
+            _persisted_bundle(store)
+        )
+        replay = store.execute_once(
+            "cmd_terminal", "execution_stage_committed",
+            lambda transaction: (_ for _ in ()).throw(
+                AssertionError("terminal replay invoked callback")),
+        )
+        snapshots = (
+            store.load_aggregate("attempts", terminal.attempt_id),
+            (store.load_aggregate("evidence", evidence.evidence_id),),
+            store.load_aggregate("handoffs", handoff.handoff_id),
+        )
+
+        assert fresh == replay == expected
+        for result in (fresh, replay):
+            loaded = validated_terminal_bundle(
+                result, confirmed, task, terminal, (evidence,), handoff, "acp_1",
+                *snapshots,
+            )
+            assert loaded.attempt == terminal
+            assert loaded.evidence == (evidence,)
+            assert loaded.handoff == handoff
+    finally:
+        store.close()
+
+
+def _stopped_result(harness, request, terminal):
+    return {
+        "mission_id": harness.confirmed.mission_id,
+        "mission_version": harness.confirmed.version,
+        "task_id": request.task_id, "attempt_id": request.attempt_id,
+        "state": terminal.state.value, "reason": terminal.reason,
+        "retryable": terminal.retryable, "acp_session_id": None,
+    }
+
+
+def _corrupt_stopped(kind, command, snapshot):
+    if kind == "missing_result_field":
+        command.pop("mission_version")
+    elif kind == "legacy_result":
+        command.clear(); command.update(attempt_id="att_old", state="failed")
+    elif kind.startswith("wrong_"):
+        field = kind.removeprefix("wrong_")
+        command[field] = {
+            "mission_id": "msn_hostile", "task_id": "tsk_hostile",
+            "attempt_id": "att_hostile", "state": "running",
+            "reason": "hostile-marker", "retryable": False,
+            "acp_session_id": "acp_hostile",
+        }[field]
+    elif kind == "mismatched_snapshot":
+        snapshot.update(state="running", reason=None, retryable=False)
+
+
+class StoppedReplayWorker:
+    def __init__(self, harness, task_name):
+        self.harness, self.task_name = harness, task_name
+
+    async def start_task(self, request):
+        self.harness.started_tasks.append(self.task_name)
+        if not self.harness.replay_seeded:
+            self.harness.replay_seeded = True
+            task = next(item for item in self.harness.draft.tasks
+                        if item.task_id == request.task_id)
+            terminal = Attempt.pending(
+                request.attempt_id, request.task_id, 1
+            ).start().fail("worker_schema_invalid", retryable=True)
+            command = _stopped_result(self.harness, request, terminal)
+            snapshot = attempt_snapshot(terminal, task)
+            _corrupt_stopped(self.harness.stop_corruption, command, snapshot)
+            key = (command_id("stop", self.harness.confirmed, task, 1),
+                   "execution_attempt_stopped")
+            store = self.harness.store
+            if hasattr(store, "commands"):
+                store.commands[key] = command
+                if self.harness.stop_corruption == "missing_snapshot":
+                    store.aggregates.pop(("attempts", request.attempt_id), None)
+                else:
+                    store.aggregates[("attempts", request.attempt_id)] = snapshot
+            else:
+                store.execute_once(key[0], key[1], lambda transaction: (
+                    transaction.save_aggregate(
+                        "attempts", request.attempt_id, snapshot
+                    ) or command
+                ))
+                if self.harness.stop_corruption == "missing_snapshot":
+                    store._require_writer().execute(
+                        "DELETE FROM attempts WHERE attempt_id=?", (request.attempt_id,)
+                    )
+                elif self.harness.stop_corruption == "mismatched_snapshot":
+                    store._require_writer().execute(
+                        "UPDATE attempts SET state='running',reason=NULL,retryable=0 "
+                        "WHERE attempt_id=?", (request.attempt_id,)
+                    )
+            raise SafeWorkerFailure(
+                "worker_schema_invalid", outcome_known=True, retryable=True,
+                task_id=request.task_id, attempt_id=request.attempt_id,
+            )
+        raise SafeWorkerFailure(
+            "worker_outcome_unknown", outcome_known=False, retryable=False,
+            task_id=request.task_id, attempt_id=request.attempt_id,
+        )
+@pytest.mark.parametrize("backend", ["memory", "sqlite"])
+@pytest.mark.parametrize("corruption", [
+    "missing_result_field", "legacy_result", "wrong_mission_id",
+    "wrong_task_id", "wrong_attempt_id", "wrong_state", "wrong_reason",
+    "wrong_retryable", "wrong_acp_session_id", "missing_snapshot",
+    "mismatched_snapshot",
+])
+def test_stopped_attempt_replay_requires_exact_command_and_snapshot(
+    tmp_path, backend, corruption,
+) -> None:
+    store = None if backend == "memory" else SQLiteStore.open(
+        tmp_path, clock=FrozenClock(NOW)
+    )
+    try:
+        if store is not None:
+            _seed_lineage(store)
+        harness = Harness() if store is None else Harness(store=store)
+        harness.replay_seeded = False
+        harness.stop_corruption = corruption
+        harness.service._worker_factory = lambda task: StoppedReplayWorker(
+            harness, task.name
+        )
+
+        result = asyncio.run(harness.run())
+        assert result.diagnostic.code == "terminal_attempt_persistence_failed"
+        assert harness.started_tasks == ["implementation"]
+        assert "hostile-marker" not in result.diagnostic.cause
+    finally:
+        if store is not None:
+            store.close()
+
+
+@pytest.mark.parametrize("backend", ["memory", "sqlite"])
+def test_exact_stopped_attempt_replay_allows_only_bounded_attempt_two(
+    tmp_path, backend,
+) -> None:
+    store = None if backend == "memory" else SQLiteStore.open(
+        tmp_path, clock=FrozenClock(NOW)
+    )
+    try:
+        if store is not None:
+            _seed_lineage(store)
+        harness = Harness() if store is None else Harness(store=store)
+        harness.replay_seeded = False
+        harness.stop_corruption = "exact"
+        harness.service._worker_factory = lambda task: StoppedReplayWorker(
+            harness, task.name
+        )
+
+        result = asyncio.run(harness.run())
+        assert harness.started_tasks == ["implementation", "implementation"]
+        assert len(result.attempts) == 2
+        assert result.diagnostic.code == "outcome_unknown"
+    finally:
+        if store is not None:
+            store.close()
 
 
 def test_handoff_lineage_drift_rolls_back_terminal_bundle(tmp_path) -> None:
@@ -255,7 +474,7 @@ def test_attempt_agent_must_belong_to_the_mission_product_session(tmp_path) -> N
         store.close()
 
 
-def _commit_execution(transaction, attempt, evidence, handoff):
+def _commit_execution(transaction, attempt, evidence, handoff, result=None):
     transaction.save_aggregate("attempts", attempt.attempt_id, _attempt_snapshot(attempt))
     transaction.save_aggregate(
         "evidence", evidence.evidence_id,
@@ -276,4 +495,5 @@ def _commit_execution(transaction, attempt, evidence, handoff):
             "content_hash": handoff.content_hash,
         },
     )
-    return {"attempt_id": attempt.attempt_id, "handoff_id": handoff.handoff_id}
+    return result or {"attempt_id": attempt.attempt_id,
+                      "handoff_id": handoff.handoff_id}

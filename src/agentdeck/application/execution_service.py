@@ -15,11 +15,14 @@ from agentdeck.application.execution_records import (
     handle_matches_request as _handle_matches_request,
     handoff_snapshot as _handoff_snapshot,
     stage_id as _stage_id,
+    stopped_attempt_reference as _stopped_attempt_reference,
+    stopped_command_result as _stopped_command_result,
     task_instruction as _task_instruction,
     terminal_command_result as _terminal_command_result,
     terminal_references as _terminal_references,
     validated_terminal_bundle as _validated_terminal_bundle,
     validated_stage_result as _validated_stage_result,
+    validated_stopped_attempt as _validated_stopped_attempt,
     worker_failure_condition as _worker_failure_condition,
 )
 from agentdeck.kernel.diagnostics import Diagnostic, Severity
@@ -344,9 +347,7 @@ class ExecutionService:
         )
         terminal = attempt.fail(reason, retryable=True)
         try:
-            self._persist_terminal_attempt(
-                terminal, task, confirmed, acp_session_id
-            )
+            terminal = self._persist_terminal_attempt(terminal, task, confirmed, acp_session_id)
         except Exception:
             return False
         attempts[-1] = terminal
@@ -448,9 +449,7 @@ class ExecutionService:
         terminal, code, cause, *, acp_session_id=None,
     ) -> ExecutionResult:
         try:
-            self._persist_terminal_attempt(
-                terminal, task, confirmed, acp_session_id
-            )
+            terminal = self._persist_terminal_attempt(terminal, task, confirmed, acp_session_id)
         except Exception:
             return ExecutionResult(
                 tuple(attempts), tuple(evidence), tuple(handoffs), revision_task,
@@ -467,17 +466,18 @@ class ExecutionService:
     def _persist_terminal_attempt(
         self, attempt: Attempt, task: TaskDefinition,
         confirmed: ConfirmedMissionVersion, acp_session_id: str | None,
-    ) -> None:
+    ) -> Attempt:
+        expected = _stopped_command_result(confirmed, task, attempt, acp_session_id)
         def commit(transaction):
-            transaction.save_aggregate(
-                "attempts", attempt.attempt_id,
-                _attempt_snapshot(attempt, task, acp_session_id),
-            )
-            return {"attempt_id": attempt.attempt_id, "state": attempt.state.value}
-        self._store.execute_once(
-            _command_id("stop", confirmed, task, attempt.ordinal),
-            "execution_attempt_stopped", commit,
-        )
+            transaction.save_aggregate("attempts", attempt.attempt_id,
+                _attempt_snapshot(attempt, task, acp_session_id))
+            return expected
+        result = self._store.execute_once(_command_id(
+            "stop", confirmed, task, attempt.ordinal),
+            "execution_attempt_stopped", commit)
+        identity = _stopped_attempt_reference(result)
+        facts = self._store.load_aggregate("attempts", identity)
+        return _validated_stopped_attempt(result, confirmed, task, attempt, acp_session_id, facts)
     def _diagnostic(self, code, confirmed, task, attempt, cause) -> Diagnostic:
         outcome_known = attempt.state.value in {
             "completed", "failed", "cancelled", "interrupted",
