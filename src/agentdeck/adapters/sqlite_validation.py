@@ -447,10 +447,19 @@ def _attempt_record(
     if old_attempt is not None:
         immutable = {
             "task_id": attempt.task_id, "agent_instance_id": agent,
-            "ordinal": attempt.ordinal, "acp_session_id": acp, "created_at": created_at,
+            "ordinal": attempt.ordinal, "created_at": created_at,
         }
         if any(immutable[key] != old[key] for key in immutable):
             raise ValueError("attempt immutable lineage cannot drift")
+        old_acp = old["acp_session_id"]
+        if old_acp is None and acp is not None:
+            if (
+                old_attempt.state is not AttemptState.RUNNING
+                or attempt.state is not AttemptState.RUNNING
+            ):
+                raise ValueError("ACP session may bind only while Attempt is running")
+        elif old_acp != acp:
+            raise ValueError("immutable ACP session lineage cannot be removed or drifted")
         if bool(old["effect_observed"]) and not effect_observed:
             raise ValueError("effect_observed is monotonic")
         if datetime.fromisoformat(updated_at) < datetime.fromisoformat(old["updated_at"]):

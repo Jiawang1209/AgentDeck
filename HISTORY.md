@@ -115,6 +115,20 @@
   and cross-session Agent lineage. The coordinator and rollback tests pass
   together with the adjacent ACP permission bridge and SQLite transaction
   suites.
+- Hardened Task request lineage before any durable running state or Worker I/O.
+  The complete bounded instruction, request identity, and effective permission
+  scope are now constructed first; the effective effects are the intersection
+  of caller authority and the frozen Task effects. Invalid construction returns
+  a typed diagnostic without persisting an orphan Attempt or contacting ACP.
+- Bound each validated real ACP Worker session exactly once to its running
+  Attempt. SQLite permits only `null` to one non-empty ACP session while the
+  Attempt remains running, then rejects clearing or drift. This transport
+  session remains explicitly distinct from the ProductSession identity.
+- Derived Attempt, Evidence, Handoff, and execution command IDs from the exact
+  confirmed Mission, Task, and ordinal. Replaying the same Mission performs no
+  Worker I/O, while a different Mission cannot be mistaken for that replay.
+  Global SQLite Task-ID uniqueness and cross-Mission Task composition remain an
+  explicit Task 19/15A prerequisite; Task 23 does not alter the Mission kernel.
 
 ### Close the next Product Kernel production persistence seams
 

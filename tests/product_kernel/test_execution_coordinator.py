@@ -9,13 +9,11 @@ import pytest
 from agentdeck.application.approval_service import ApprovalService
 from agentdeck.application.execution_service import ExecutionService
 from agentdeck.kernel.mission import MissionDraft
-from agentdeck.kernel.permissions import PermissionProfile, PermissionScope
+from agentdeck.kernel.permissions import Effect, PermissionProfile, PermissionScope
 from agentdeck.ports.worker import TaskRequest, WorkerEvent, WorkerHandle, WorkerResult
 from product_kernel.fakes import FrozenClock
 
-
 NOW = datetime(2026, 7, 19, 3, 0, tzinfo=timezone.utc)
-
 
 class Transaction:
     def __init__(self, store: "MemoryStore") -> None:
@@ -28,6 +26,13 @@ class Transaction:
             raise RuntimeError("simulated handoff persistence failure")
         if (kind, identity) == self._store.fail_on_aggregate:
             raise RuntimeError("simulated aggregate persistence failure")
+        existing_evidence = sum(key[0] == "evidence" for key in self._store.aggregates)
+        pending_evidence = sum(item[0] == "evidence" for item in self._pending)
+        if (
+            kind == "evidence"
+            and self._store.fail_on_evidence_number == existing_evidence + pending_evidence + 1
+        ):
+            raise RuntimeError("simulated evidence persistence failure")
         self._pending.append((kind, identity, dict(snapshot)))
 
     def append_event(self, event) -> None:
@@ -37,13 +42,13 @@ class Transaction:
         for kind, identity, snapshot in self._pending:
             self._store.aggregates[(kind, identity)] = snapshot
 
-
 class MemoryStore:
     def __init__(self) -> None:
         self.aggregates: dict[tuple[str, str], dict[str, object]] = {}
         self.commands: dict[tuple[str, str], dict[str, object]] = {}
         self.fail_on_handoff_commit = False
         self.fail_on_aggregate: tuple[str, str] | None = None
+        self.fail_on_evidence_number: int | None = None
 
     def execute_once(self, command_id, command_kind, callback):
         key = (command_id, command_kind)
@@ -61,7 +66,6 @@ class MemoryStore:
                 return dict(result)
         return None
 
-
 class RecordingApprovalService(ApprovalService):
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
@@ -70,7 +74,6 @@ class RecordingApprovalService(ApprovalService):
     async def bridge_attempt(self, worker, handle, context):
         self.scopes.append(context.permission_scope)
         return await super().bridge_attempt(worker, handle, context)
-
 
 class ScriptedWorker:
     def __init__(self, harness: "Harness", task_name: str) -> None:
@@ -114,10 +117,9 @@ class ScriptedWorker:
             payload=self._harness.results[self._task_name],
         )
 
-
 class Harness:
-    def __init__(self) -> None:
-        self.store = MemoryStore()
+    def __init__(self, *, store=None, objective="build the approved feature") -> None:
+        self.store = MemoryStore() if store is None else store
         self.started_tasks: list[str] = []
         self.requests: list[TaskRequest] = []
         self.results = {
@@ -146,7 +148,7 @@ class Harness:
             },
         }
         self.draft = MissionDraft.coding_default(
-            "drf_1", "build the approved feature", "/project", "codex-cli",
+            "drf_1", objective, "/project", "codex-cli",
             "gpt-test", PermissionProfile.APPROVE_FOR_ME,
         )
         preview = self.draft.preview(1)
@@ -169,7 +171,6 @@ class Harness:
             ),
         )
 
-
 def test_coordinator_runs_only_the_frozen_four_stage_graph() -> None:
     harness = Harness()
     result = asyncio.run(harness.run())
@@ -178,10 +179,9 @@ def test_coordinator_runs_only_the_frozen_four_stage_graph() -> None:
         "implementation", "review", "revision", "acceptance"
     ]
     assert [item.source_attempt_id for item in result.handoffs] == [
-        "att_impl_1", "att_review_1", "att_revision_1"
+        attempt.attempt_id for attempt in result.attempts[:3]
     ]
     assert result.diagnostic is None
-
 
 def test_worker_cannot_directly_dispatch_peer() -> None:
     harness = Harness()
@@ -192,16 +192,19 @@ def test_worker_cannot_directly_dispatch_peer() -> None:
     assert "next_agent_command" not in result.revision_task.canonical_payload()
     assert result.revision_task.created_by == "agentdeck"
 
-
 def test_each_attempt_permission_scope_is_narrowed_to_the_frozen_task() -> None:
     harness = Harness()
 
-    asyncio.run(harness.run())
+    asyncio.run(harness.service.run_confirmed_mission(
+        session_id="ses_1", confirmed=harness.confirmed, draft=harness.draft,
+        permission_scope=PermissionScope(
+            PermissionProfile.APPROVE_FOR_ME, frozenset({Effect.READ})
+        ),
+    ))
 
     assert [scope.effects for scope in harness.approvals.scopes] == [
-        task.allowed_effects for task in harness.draft.tasks
+        frozenset({Effect.READ}) for _ in harness.draft.tasks
     ]
-
 
 def test_dependency_without_committed_handoff_never_starts() -> None:
     harness = Harness()
@@ -212,7 +215,6 @@ def test_dependency_without_committed_handoff_never_starts() -> None:
     assert result.diagnostic is not None
     assert result.diagnostic.code == "stage_bundle_persistence_failed"
     assert harness.started_tasks == ["implementation"]
-
 
 def test_confirmed_permission_profile_cannot_be_replaced_by_caller() -> None:
     harness = Harness()
@@ -232,7 +234,6 @@ def test_confirmed_permission_profile_cannot_be_replaced_by_caller() -> None:
         ))
 
     assert harness.started_tasks == []
-
 
 class DeniedButCompletedWorker(ScriptedWorker):
     async def _events(self):
@@ -262,7 +263,6 @@ class DeniedButCompletedWorker(ScriptedWorker):
     async def cancel_task(self, handle, *, reason) -> None:
         return None
 
-
 def test_denied_permission_stops_even_if_worker_claims_completed() -> None:
     harness = Harness()
     harness.service._worker_factory = lambda task: DeniedButCompletedWorker(
@@ -279,8 +279,8 @@ def test_denied_permission_stops_even_if_worker_claims_completed() -> None:
     )
     assert harness.started_tasks == ["implementation"]
     assert result.handoffs == ()
-    assert harness.store.aggregates[("attempts", "att_impl_1")]["state"] == "outcome_unknown"
-
+    attempt_id = result.attempts[0].attempt_id
+    assert harness.store.aggregates[("attempts", attempt_id)]["state"] == "outcome_unknown"
 
 class DriftHandleWorker(ScriptedWorker):
     async def start_task(self, request: TaskRequest) -> WorkerHandle:
@@ -305,7 +305,6 @@ class DriftHandleWorker(ScriptedWorker):
             payload=self._harness.results[self._task_name],
         )
 
-
 def test_worker_handle_must_match_exact_request_lineage() -> None:
     harness = Harness()
     harness.service._worker_factory = lambda task: DriftHandleWorker(harness, task.name)
@@ -315,8 +314,8 @@ def test_worker_handle_must_match_exact_request_lineage() -> None:
     assert result.diagnostic.code == "worker_handle_lineage_invalid"
     assert result.diagnostic.outcome_known is False
     assert harness.started_tasks == ["implementation"]
-    assert harness.store.aggregates[("attempts", "att_impl_1")]["state"] == "outcome_unknown"
-
+    attempt_id = result.attempts[0].attempt_id
+    assert harness.store.aggregates[("attempts", attempt_id)]["state"] == "outcome_unknown"
 
 class IndependentACPSessionWorker(ScriptedWorker):
     async def start_task(self, request: TaskRequest) -> WorkerHandle:
@@ -345,7 +344,6 @@ class IndependentACPSessionWorker(ScriptedWorker):
             payload=self._harness.results[self._task_name],
         )
 
-
 def test_acp_session_identity_remains_distinct_from_product_session() -> None:
     harness = Harness()
     harness.service._worker_factory = lambda task: IndependentACPSessionWorker(
@@ -358,7 +356,10 @@ def test_acp_session_identity_remains_distinct_from_product_session() -> None:
     assert harness.started_tasks == [
         "implementation", "review", "revision", "acceptance"
     ]
-
+    for attempt, request in zip(result.attempts, harness.requests, strict=True):
+        assert harness.store.aggregates[("attempts", attempt.attempt_id)][
+            "acp_session_id"
+        ] == f"ses_acp_{json.loads(request.instruction)['task']['name']}"
 
 def test_downstream_requests_receive_canonical_handoff_and_revision_authority() -> None:
     harness = Harness()
@@ -367,6 +368,7 @@ def test_downstream_requests_receive_canonical_handoff_and_revision_authority() 
 
     review = json.loads(harness.requests[1].instruction)
     revision = json.loads(harness.requests[2].instruction)
+    assert review["attempt"]["attempt_id"] == harness.requests[1].attempt_id
     assert review["incoming_handoff"] == {
         "canonical_content": result.handoffs[0].canonical_content,
         "content_hash": result.handoffs[0].content_hash,
@@ -377,7 +379,6 @@ def test_downstream_requests_receive_canonical_handoff_and_revision_authority() 
     }
     assert revision["authoritative_revision_task"] == result.revision_task.canonical_payload()
     assert "next_agent_command" not in revision["authoritative_revision_task"]
-
 
 class FailedWorker(ScriptedWorker):
     async def _events(self):
@@ -396,7 +397,6 @@ class FailedWorker(ScriptedWorker):
             payload={"summary": "failed"},
         )
 
-
 def test_worker_failure_is_durable_before_return() -> None:
     harness = Harness()
     harness.service._worker_factory = lambda task: FailedWorker(harness, task.name)
@@ -405,8 +405,8 @@ def test_worker_failure_is_durable_before_return() -> None:
 
     assert result.diagnostic.code == "worker_stage_failed"
     assert result.attempts[0].state.value == "failed"
-    assert harness.store.aggregates[("attempts", "att_impl_1")]["state"] == "failed"
-
+    attempt_id = result.attempts[0].attempt_id
+    assert harness.store.aggregates[("attempts", attempt_id)]["state"] == "failed"
 
 def test_invalid_result_schema_is_durable_and_stops_downstream() -> None:
     harness = Harness()
@@ -417,8 +417,8 @@ def test_invalid_result_schema_is_durable_and_stops_downstream() -> None:
     assert result.diagnostic.code == "worker_result_invalid"
     assert result.diagnostic.outcome_known is False
     assert harness.started_tasks == ["implementation"]
-    assert harness.store.aggregates[("attempts", "att_impl_1")]["state"] == "outcome_unknown"
-
+    attempt_id = result.attempts[0].attempt_id
+    assert harness.store.aggregates[("attempts", attempt_id)]["state"] == "outcome_unknown"
 
 def test_replaying_confirmed_mission_never_repeats_worker_io() -> None:
     harness = Harness()
@@ -431,7 +431,23 @@ def test_replaying_confirmed_mission_never_repeats_worker_io() -> None:
     assert harness.started_tasks == [
         "implementation", "review", "revision", "acceptance"
     ]
+    other = Harness(store=harness.store, objective="build another approved feature")
+    other_result = asyncio.run(other.run())
+    assert other_result.diagnostic is None
+    assert {item.attempt_id for item in first.attempts}.isdisjoint(
+        item.attempt_id for item in other_result.attempts
+    )
 
+def test_invalid_complete_task_request_never_persists_running_attempt() -> None:
+    harness = Harness(objective="x" * 70_000)
+
+    result = asyncio.run(harness.run())
+
+    assert result.diagnostic.code == "task_request_invalid"
+    assert result.diagnostic.outcome_known is True
+    assert result.attempts == ()
+    assert not any(kind == "attempts" for kind, _ in harness.store.aggregates)
+    assert harness.started_tasks == []
 
 def test_worker_start_failure_is_durable_and_stops_before_worker_io() -> None:
     harness = Harness()
@@ -444,14 +460,13 @@ def test_worker_start_failure_is_durable_and_stops_before_worker_io() -> None:
 
     assert result.diagnostic.code == "worker_start_failed"
     assert harness.started_tasks == []
-    assert harness.store.aggregates[("attempts", "att_impl_1")]["state"] == "failed"
-
+    attempt_id = result.attempts[0].attempt_id
+    assert harness.store.aggregates[("attempts", attempt_id)]["state"] == "failed"
 
 class BridgeFailureWorker(ScriptedWorker):
     async def _events(self):
         raise RuntimeError("raw bridge failure")
         yield
-
 
 def test_worker_bridge_failure_is_durable_and_stops_downstream() -> None:
     harness = Harness()
@@ -462,12 +477,12 @@ def test_worker_bridge_failure_is_durable_and_stops_downstream() -> None:
     assert result.diagnostic.code == "worker_bridge_failed"
     assert result.diagnostic.outcome_known is False
     assert harness.started_tasks == ["implementation"]
-    assert harness.store.aggregates[("attempts", "att_impl_1")]["state"] == "outcome_unknown"
-
+    attempt_id = result.attempts[0].attempt_id
+    assert harness.store.aggregates[("attempts", attempt_id)]["state"] == "outcome_unknown"
 
 def test_acceptance_bundle_failure_has_precise_non_handoff_diagnostic() -> None:
     harness = Harness()
-    harness.store.fail_on_aggregate = ("evidence", "ev_acceptance_1")
+    harness.store.fail_on_evidence_number = 4
 
     result = asyncio.run(harness.run())
 
@@ -475,4 +490,5 @@ def test_acceptance_bundle_failure_has_precise_non_handoff_diagnostic() -> None:
     assert harness.started_tasks == [
         "implementation", "review", "revision", "acceptance"
     ]
-    assert harness.store.aggregates[("attempts", "att_acceptance_1")]["state"] == "running"
+    attempt_id = result.attempts[-1].attempt_id
+    assert harness.store.aggregates[("attempts", attempt_id)]["state"] == "running"
