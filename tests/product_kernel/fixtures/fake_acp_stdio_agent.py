@@ -14,6 +14,7 @@ from acp import PROTOCOL_VERSION, run_agent
 from acp.helpers import (
     embedded_text_resource,
     resource_block,
+    start_tool_call,
     update_agent_message,
     update_agent_message_text,
 )
@@ -60,6 +61,7 @@ class FakeACPStdioAgent:
         self._mode = mode
         self._connection: object | None = None
         self._sessions = 0
+        self._cancelled = asyncio.Event()
 
     def on_connect(self, connection: object) -> None:
         self._connection = connection
@@ -111,7 +113,7 @@ class FakeACPStdioAgent:
         connection = self._connection
         if connection is None:
             raise RuntimeError("missing connection")
-        if self._mode == "permission":
+        if self._mode in {"permission", "permission_hang", "cancel_failure"}:
             response = await connection.request_permission(
                 session_id,
                 ToolCallUpdate(tool_call_id="tool-1", kind="read", status="pending"),
@@ -131,7 +133,19 @@ class FakeACPStdioAgent:
                     mode="json", by_alias=True, exclude_none=True
                 ),
             )
+            if self._mode != "permission":
+                await self._cancelled.wait()
+                return PromptResponse(stop_reason="cancelled")
             return PromptResponse(stop_reason="end_turn")
+        if self._mode == "tool_hang":
+            await connection.session_update(
+                session_id,
+                start_tool_call(
+                    "tool-1", "unexpected read", kind="read", status="pending"
+                ),
+            )
+            await self._cancelled.wait()
+            return PromptResponse(stop_reason="cancelled")
         proposal = self._proposal_path.read_text(encoding="utf-8")
         await connection.session_update(
             session_id, update_agent_message_text(f"{DECOY_MARKER}: {proposal}")
@@ -152,6 +166,9 @@ class FakeACPStdioAgent:
 
     async def cancel(self, session_id: str, **_kwargs: Any) -> None:
         self._record("session/cancel", session_id=session_id)
+        if self._mode == "cancel_failure":
+            raise RuntimeError("secret-cancel-failure")
+        self._cancelled.set()
 
     def _record(self, call: str, **fields: object) -> None:
         payload = {"call": call, "pid": os.getpid(), **fields}
@@ -172,6 +189,9 @@ def _arguments() -> argparse.Namespace:
             "oversize",
             "invalid_resource",
             "permission",
+            "permission_hang",
+            "tool_hang",
+            "cancel_failure",
         ),
         default="success",
     )

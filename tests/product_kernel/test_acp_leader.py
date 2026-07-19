@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from dataclasses import replace
 from functools import wraps
 import json
@@ -15,7 +16,7 @@ from agentdeck.ports.leader import (
     ProjectContext,
     ResolvedLeaderModel,
 )
-from agentdeck.ports.transport import TransportFailure
+from agentdeck.ports.transport import TransportFailure, TransportFailureCode
 
 from .fixtures.fake_acp_stdio_agent import (
     DECOY_MARKER,
@@ -201,3 +202,58 @@ def test_constructor_rejects_fallback_or_unbounded_configuration(tmp_path: Path)
         ACPLeader(command, backend_id="", model="native-default", version="1.2.3")
     with pytest.raises(ValueError, match="response bound"):
         _leader(command, max_bytes=0)
+
+
+def test_synchronous_transport_factory_failure_is_typed_and_content_free(
+    tmp_path: Path,
+) -> None:
+    command, _log = _fixture_files(tmp_path)
+    marker = "secret-transport-factory-failure"
+
+    def broken_factory(*_args, **_kwargs):
+        raise RuntimeError(marker)
+
+    with pytest.raises(TransportFailure, match="initialization_failed") as caught:
+        _leader(command, transport_factory=broken_factory).propose_mission(
+            _request(tmp_path)
+        )
+    assert marker not in _chain(caught.value)
+    assert caught.value.__cause__ is None and caught.value.__context__ is None
+
+
+@_sync_test
+async def test_sync_bridge_join_is_bounded_inside_running_loop(tmp_path: Path) -> None:
+    command, _log = _fixture_files(tmp_path)
+
+    class SlowTransport:
+        async def __aenter__(self):
+            await asyncio.sleep(0.3)
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+    def factory(*_args, **_kwargs):
+        return SlowTransport()
+
+    with pytest.raises(TransportFailure, match="timeout") as caught:
+        _leader(
+            command, timeout_seconds=0.03, transport_factory=factory
+        ).propose_mission(_request(tmp_path))
+    assert caught.value.transport_code is TransportFailureCode.TIMEOUT
+    assert caught.value.__cause__ is None and caught.value.__context__ is None
+
+
+@pytest.mark.parametrize("mode", ["permission_hang", "tool_hang"])
+def test_planning_side_effect_is_cancelled_before_waiting_for_prompt(
+    tmp_path: Path, mode: str,
+) -> None:
+    command, log = _fixture_files(tmp_path, mode)
+    with pytest.raises(TransportFailure, match="unexpected_side_effect") as caught:
+        _leader(command, timeout_seconds=0.5).propose_mission(_request(tmp_path))
+    names = [item["call"] for item in _calls(log)]
+    assert "session/cancel" in names
+    assert names.index("session/cancel") > names.index("session/prompt")
+    if mode == "permission_hang":
+        assert names.index("session/cancel") > names.index("permission/result")
+    assert caught.value.__cause__ is None and caught.value.__context__ is None

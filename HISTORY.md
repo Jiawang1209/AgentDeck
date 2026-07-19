@@ -4,6 +4,24 @@
 
 ## 2026-07-19
 
+### Bound ACP Leader transport lifecycles
+
+- Replaced per-operation timeout resets with one monotonic transport deadline
+  shared by client-manager entry, initialization, session load/create, prompt,
+  notification draining, cancellation and manager close. The synchronous
+  Leader bridge now also has a bounded join and maps expiration to one
+  content-free `timeout` failure.
+- A fresh transport can load a persisted ACP session without first creating an
+  in-memory session. Synchronous injected client/transport factory failures are
+  normalized, and cancellation clears pending permission waiters on both the
+  success and failure paths.
+- Tool or permission activity during planning now triggers immediate remote
+  cancellation inside the remaining budget and never waits for the prompt to
+  finish before rejecting the proposal. Review RED reproduced all ten primary
+  attack paths, and a closure RED caught synchronous cancel failure cleanup;
+  focused GREEN passed all `29` transport and Leader cases with no real network,
+  authentication or installation.
+
 ### Add ACP-backed CLI Leaders
 
 - Added a pure Transport Port plus a lazy, injectable ACP stdio transport over

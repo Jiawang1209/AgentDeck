@@ -5,12 +5,16 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from enum import StrEnum
+from math import isfinite
+from time import monotonic
 from typing import Protocol
 
 from agentdeck.ports.leader import LeaderFailure, LeaderFailureCode
 
 
 _MAX_TEXT_BYTES = 1024 * 1024
+_MAX_TRANSPORT_BYTES = 8 * 1024 * 1024
+_MAX_TRANSPORT_TIMEOUT = 120.0
 
 
 class TransportFailureCode(StrEnum):
@@ -51,6 +55,16 @@ class TransportFailure(LeaderFailure):
         RuntimeError.__init__(self, f"ACP transport failed: {checked.value}")
 
 
+class TransportDeadline:
+    """One monotonic budget shared by all operations in a transport lifecycle."""
+
+    def __init__(self, timeout_seconds: float) -> None:
+        self._expires_at = monotonic() + timeout_seconds
+
+    def remaining(self) -> float:
+        return max(0.0, self._expires_at - monotonic())
+
+
 class TransportUpdateKind(StrEnum):
     MESSAGE = "message"
     ARTIFACT = "artifact"
@@ -71,6 +85,50 @@ def _text(value: object, field: str, *, maximum: int = _MAX_TEXT_BYTES) -> str:
     if failed or not value.strip() or len(encoded) > maximum:
         raise ValueError(f"{field} must be nonempty bounded UTF-8") from None
     return value
+
+
+def transport_argv(value: object) -> tuple[str, ...]:
+    if type(value) not in {tuple, list} or not value:
+        raise ValueError("ACP command must be a nonempty argv sequence")
+    copied = tuple(value)
+    invalid = any(
+        type(item) is not str or not item or "\x00" in item for item in copied
+    )
+    try:
+        oversized = any(
+            len(item.encode("utf-8", "strict")) > 16 * 1024 for item in copied
+        ) if not invalid else False
+    except UnicodeEncodeError:
+        oversized = True
+    if invalid or oversized:
+        raise ValueError("ACP command must be a bounded argv sequence") from None
+    return copied
+
+
+def transport_project_root(value: object) -> str:
+    if type(value) is not str or not value.strip():
+        raise ValueError("ACP project root must be a nonempty string")
+    try:
+        if len(value.encode("utf-8", "strict")) > 16 * 1024 or "\x00" in value:
+            raise ValueError
+    except (UnicodeEncodeError, ValueError):
+        raise ValueError("ACP project root must be bounded UTF-8") from None
+    return value
+
+
+def transport_byte_bound(value: object) -> int:
+    if type(value) is not int or not 1024 <= value <= _MAX_TRANSPORT_BYTES:
+        raise ValueError("ACP max_bytes must be a positive response bound")
+    return value
+
+
+def transport_timeout(value: object) -> float:
+    if type(value) not in {int, float}:
+        raise ValueError("ACP timeout must be positive")
+    checked = float(value)
+    if not isfinite(checked) or not 0 < checked <= _MAX_TRANSPORT_TIMEOUT:
+        raise ValueError("ACP timeout must be positive")
+    return checked
 
 
 @dataclass(frozen=True)
@@ -222,8 +280,9 @@ class TransportPort(Protocol):
 
 __all__ = [
     "TransportArtifact", "TransportCapabilities", "TransportFailure",
-    "TransportFailureCode", "TransportPermissionDecision",
+    "TransportDeadline", "TransportFailureCode", "TransportPermissionDecision",
     "TransportPermissionRequest", "TransportPort", "TransportPromptPart",
     "TransportPromptResult", "TransportSession", "TransportUpdate",
-    "TransportUpdateKind",
+    "TransportUpdateKind", "transport_argv", "transport_byte_bound",
+    "transport_project_root", "transport_timeout",
 ]

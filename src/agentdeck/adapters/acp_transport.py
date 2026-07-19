@@ -6,7 +6,6 @@ import asyncio
 from collections.abc import AsyncIterator, Callable, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass
-from math import isfinite
 from typing import Any, Final
 
 from acp import PROTOCOL_VERSION, spawn_agent_process
@@ -20,16 +19,15 @@ from acp.schema import (
 )
 
 from agentdeck.ports.transport import (
-    TransportArtifact, TransportCapabilities, TransportFailure,
+    TransportArtifact, TransportCapabilities, TransportDeadline, TransportFailure,
     TransportFailureCode, TransportPermissionDecision,
     TransportPermissionRequest, TransportPromptPart, TransportPromptResult,
     TransportSession, TransportUpdate, TransportUpdateKind,
+    transport_argv, transport_byte_bound, transport_project_root, transport_timeout,
 )
 
 _DEFAULT_MAX_BYTES: Final = 1024 * 1024
-_MAX_MAX_BYTES: Final = 8 * 1024 * 1024
 _DEFAULT_TIMEOUT_SECONDS: Final = 30.0
-_MAX_TIMEOUT_SECONDS: Final = 120.0
 _MAX_TOTAL_MULTIPLIER: Final = 8
 _SENTINEL: Final = object()
 ClientFactory = Callable[
@@ -42,46 +40,6 @@ class _PendingPermission:
     request_id: str
     options: tuple[PermissionOption, ...]
     future: asyncio.Future[RequestPermissionResponse]
-
-def _argv(value: object) -> tuple[str, ...]:
-    if type(value) not in {tuple, list} or not value:
-        raise ValueError("ACP command must be a nonempty argv sequence")
-    copied = tuple(value)
-    invalid = any(
-        type(item) is not str or not item or "\x00" in item for item in copied
-    )
-    try:
-        oversized = any(
-            len(item.encode("utf-8", "strict")) > 16 * 1024 for item in copied
-        ) if not invalid else False
-    except UnicodeEncodeError:
-        oversized = True
-    if invalid or oversized:
-        raise ValueError("ACP command must be a bounded argv sequence") from None
-    return copied
-
-def _project_root(value: object) -> str:
-    if type(value) is not str or not value.strip():
-        raise ValueError("ACP project root must be a nonempty string")
-    try:
-        if len(value.encode("utf-8", "strict")) > 16 * 1024 or "\x00" in value:
-            raise ValueError
-    except (UnicodeEncodeError, ValueError):
-        raise ValueError("ACP project root must be bounded UTF-8") from None
-    return value
-
-def _bound(value: object) -> int:
-    if type(value) is not int or not 1024 <= value <= _MAX_MAX_BYTES:
-        raise ValueError("ACP max_bytes must be a positive response bound")
-    return value
-
-def _timeout(value: object) -> float:
-    if type(value) not in {int, float}:
-        raise ValueError("ACP timeout must be positive")
-    checked = float(value)
-    if not isfinite(checked) or not 0 < checked <= _MAX_TIMEOUT_SECONDS:
-        raise ValueError("ACP timeout must be positive")
-    return checked
 
 @asynccontextmanager
 async def _spawn_client(
@@ -156,11 +114,12 @@ class ACPStdioTransport:
     ) -> None:
         if not callable(client_factory):
             raise TypeError("client_factory must be callable")
-        self.command = _argv(command)
-        self.project_root = _project_root(project_root)
-        self.max_bytes = _bound(max_bytes)
-        self.timeout_seconds = _timeout(timeout_seconds)
+        self.command = transport_argv(command)
+        self.project_root = transport_project_root(project_root)
+        self.max_bytes = transport_byte_bound(max_bytes)
+        self.timeout_seconds = transport_timeout(timeout_seconds)
         self._client_factory = client_factory
+        self._deadline: TransportDeadline | None = None
         self._manager: AbstractAsyncContextManager[object] | None = None
         self._connection: object | None = None
         self._callback = _ACPClient(self)
@@ -183,6 +142,7 @@ class ACPStdioTransport:
         if self._entered or self._closed:
             raise ValueError("ACP transport lifecycle is invalid")
         self._entered = True
+        self._deadline = TransportDeadline(self.timeout_seconds)
         return self
     async def __aexit__(self, exc_type, _exc, _tb) -> None:
         try:
@@ -230,7 +190,10 @@ class ACPStdioTransport:
             raise TransportFailure(TransportFailureCode.PROTOCOL_MISMATCH) from None
         return self._session
     async def resume_session(self, session: TransportSession) -> TransportSession:
-        self._require_session(session)
+        if type(session) is not TransportSession:
+            raise ValueError("ACP transport session is invalid")
+        if self._session is not None and session != self._session:
+            raise ValueError("ACP transport session is invalid")
         capabilities = self._require_initialized()
         if not capabilities.resume_session:
             raise TransportFailure(TransportFailureCode.CAPABILITY_MISSING)
@@ -243,8 +206,17 @@ class ACPStdioTransport:
         else:
             call = connection.resume_session(session.session_id, cwd=self.project_root)
             expected = ResumeSessionResponse
-        response = await self._invoke(call, TransportFailureCode.SESSION_FAILED)
+        fresh = self._session is None
+        self._session = session
+        try:
+            response = await self._invoke(call, TransportFailureCode.SESSION_FAILED)
+        except BaseException:
+            if fresh:
+                self._session = None
+            raise
         if type(response) is not expected:
+            if fresh:
+                self._session = None
             raise TransportFailure(TransportFailureCode.PROTOCOL_MISMATCH)
         return session
     async def prompt(
@@ -310,52 +282,70 @@ class ACPStdioTransport:
     async def cancel(self, session: TransportSession) -> None:
         self._require_session(session)
         connection = self._require_connection()
-        await self._invoke(
-            connection.cancel(session.session_id),
-            TransportFailureCode.CANCELLATION_FAILED,
-        )
+        self._clear_pending()
+        failed = False
+        try:
+            call = connection.cancel(session.session_id)
+        except Exception:
+            failed = True
+            call = None
+        if failed or call is None:
+            raise TransportFailure(TransportFailureCode.CANCELLATION_FAILED)
+        await self._invoke(call, TransportFailureCode.CANCELLATION_FAILED)
     async def close(self) -> None:
         if self._closed:
             return
         self._closed = True
-        pending = self._pending
-        self._pending = None
-        if pending is not None and not pending.future.done():
-            pending.future.cancel()
+        self._clear_pending()
         manager = self._manager
         self._manager = None
         self._connection = None
         if manager is None:
             return
-        failure = False
-        try:
-            await manager.__aexit__(None, None, None)
-        except Exception:
-            failure = True
-        if failure:
-            raise TransportFailure(TransportFailureCode.DISCONNECTED) from None
+        await self._invoke(
+            manager.__aexit__(None, None, None),
+            TransportFailureCode.DISCONNECTED,
+        )
     async def _connect(self) -> object:
         if not self._entered or self._closed:
             raise ValueError("ACP transport must be entered before use")
         if self._connection is None:
-            manager = self._client_factory(
-                self._callback, self.command, self.project_root,
-                self.max_bytes, self.timeout_seconds,
-            )
-            self._manager = manager
-            failure = False
+            factory_failed = False
             try:
-                self._connection = await manager.__aenter__()
+                manager = self._client_factory(
+                    self._callback, self.command, self.project_root,
+                    self.max_bytes, self._budget(),
+                )
+                entering = manager.__aenter__()
             except Exception:
-                failure = True
-            if failure or self._connection is None:
+                factory_failed = True
+                manager = None
+                entering = None
+            if factory_failed or manager is None or entering is None:
+                raise TransportFailure(TransportFailureCode.INITIALIZATION_FAILED)
+            self._manager = manager
+            self._connection = await self._invoke(
+                entering, TransportFailureCode.INITIALIZATION_FAILED)
+            if self._connection is None:
                 raise TransportFailure(TransportFailureCode.INITIALIZATION_FAILED) from None
         return self._connection
     async def _invoke(self, awaitable, code: TransportFailureCode) -> object:
         failure: TransportFailureCode | None = None
         result = None
+        task = asyncio.ensure_future(awaitable)
         try:
-            result = await asyncio.wait_for(awaitable, timeout=self.timeout_seconds)
+            done, _pending = await asyncio.wait((task,), timeout=self._budget())
+            if not done:
+                task.cancel()
+                task.add_done_callback(
+                    lambda item: None if item.cancelled() else item.exception())
+                raise asyncio.TimeoutError
+            result = task.result()
+        except asyncio.CancelledError:
+            task.cancel()
+            task.add_done_callback(
+                lambda item: None if item.cancelled() else item.exception())
+            raise
         except asyncio.TimeoutError:
             failure = TransportFailureCode.TIMEOUT
         except Exception:
@@ -477,9 +467,18 @@ class ACPStdioTransport:
             self._updates_handled.set()
     async def _wait_for_updates(self) -> None:
         while self._handled_update_count < self._observed_update_count:
-            await asyncio.wait_for(
-                self._updates_handled.wait(), timeout=self.timeout_seconds
+            await self._invoke(
+                self._updates_handled.wait(), TransportFailureCode.TIMEOUT
             )
+    def _budget(self) -> float:
+        if self._deadline is None:
+            raise ValueError("ACP transport must be entered before use")
+        return self._deadline.remaining()
+    def _clear_pending(self) -> None:
+        pending = self._pending
+        self._pending = None
+        if pending is not None and not pending.future.done():
+            pending.future.cancel()
     def _raise_stored_failure(self) -> None:
         if self._failure is not None:
             raise TransportFailure(self._failure) from None

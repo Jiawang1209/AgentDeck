@@ -125,15 +125,22 @@ class ACPLeader:
         )
         if actual != expected:
             raise ValueError("request does not match the frozen resolved Leader identity")
-        return _run_sync(lambda: self._propose(request))
+        return _run_sync(lambda: self._propose(request), self.timeout_seconds)
 
     async def _propose(self, request: LeaderRequest) -> LeaderProposal:
-        transport = self._transport_factory(
-            self.command,
-            project_root=request.project_context.project_root,
-            max_bytes=self.max_bytes,
-            timeout_seconds=self.timeout_seconds,
-        )
+        factory_failed = False
+        try:
+            transport = self._transport_factory(
+                self.command,
+                project_root=request.project_context.project_root,
+                max_bytes=self.max_bytes,
+                timeout_seconds=self.timeout_seconds,
+            )
+        except Exception:
+            factory_failed = True
+            transport = None
+        if factory_failed or transport is None:
+            raise TransportFailure(TransportFailureCode.INITIALIZATION_FAILED)
         request_part = self._request_part(request)
         artifacts: list[str] = []
         unexpected_side_effect = False
@@ -160,23 +167,27 @@ class ACPLeader:
                         artifacts.append(artifact.text)
                 elif update.kind is TransportUpdateKind.PERMISSION:
                     permission = update.permission
-                    if permission is None:
-                        unexpected_side_effect = True
-                        continue
-                    await transport.respond_permission(
-                        session,
-                        TransportPermissionDecision(
-                            request_id=permission.request_id,
-                            allowed=False,
-                            reason="Leader planning cannot perform tools",
-                        ),
-                    )
+                    if permission is not None:
+                        await transport.respond_permission(
+                            session,
+                            TransportPermissionDecision(
+                                request_id=permission.request_id,
+                                allowed=False,
+                                reason="Leader planning cannot perform tools",
+                            ),
+                        )
                     unexpected_side_effect = True
+                    await transport.cancel(session)
+                    prompt_task.cancel()
+                    break
                 elif update.kind is TransportUpdateKind.TOOL:
                     unexpected_side_effect = True
-            response = await prompt_task
+                    await transport.cancel(session)
+                    prompt_task.cancel()
+                    break
             if unexpected_side_effect:
                 raise TransportFailure(TransportFailureCode.UNEXPECTED_SIDE_EFFECT)
+            response = await prompt_task
             if response.stop_reason == "cancelled":
                 raise LeaderFailure(LeaderFailureCode.CANCELLATION)
             if response.stop_reason != "end_turn":
@@ -241,26 +252,39 @@ def _decode_proposal(raw: str, request: LeaderRequest) -> LeaderProposal:
     raise LeaderFailure(code) from None
 
 
-def _run_sync(factory: Callable[[], object]) -> _T:
+async def _run_bounded(factory: Callable[[], object], timeout: float) -> object:
+    timed_out = False
+    try:
+        return await asyncio.wait_for(factory(), timeout=timeout)  # type: ignore[arg-type]
+    except asyncio.TimeoutError:
+        timed_out = True
+    if timed_out:
+        raise TransportFailure(TransportFailureCode.TIMEOUT)
+    raise TransportFailure(TransportFailureCode.DISCONNECTED)
+
+
+def _run_sync(factory: Callable[[], object], timeout: float) -> _T:
     running = True
     try:
         asyncio.get_running_loop()
     except RuntimeError:
         running = False
     if not running:
-        return asyncio.run(factory())  # type: ignore[arg-type,return-value]
+        return asyncio.run(_run_bounded(factory, timeout))  # type: ignore[return-value]
     result: list[object] = []
     failures: list[BaseException] = []
 
     def target() -> None:
         try:
-            result.append(asyncio.run(factory()))  # type: ignore[arg-type]
+            result.append(asyncio.run(_run_bounded(factory, timeout)))
         except BaseException as error:
             failures.append(error)
 
     thread = threading.Thread(target=target, daemon=True)
     thread.start()
-    thread.join()
+    thread.join(timeout)
+    if thread.is_alive():
+        raise TransportFailure(TransportFailureCode.TIMEOUT)
     if failures:
         raise failures[0] from None
     if len(result) != 1:
