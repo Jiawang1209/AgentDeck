@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+from collections.abc import Callable
 from hashlib import sha256
 import json
 
@@ -76,6 +77,8 @@ class MissionService:
         session_id: str,
         leader_service: LeaderService,
         request_template: LeaderRequest,
+        session_authority: object,
+        preview_validator: Callable[[MissionPreviewView], object],
     ) -> None:
         for dependency, methods, label in (
             (store, ("execute_once", "load_aggregate", "lookup_command"), "store"),
@@ -88,13 +91,23 @@ class MissionService:
             raise ValueError("session_id must be a typed identity")
         if type(request_template) is not LeaderRequest:
             raise TypeError("request_template must be a LeaderRequest")
+        if any(
+            not callable(getattr(session_authority, method, None))
+            for method in ("current", "resume")
+        ):
+            raise TypeError("session_authority must expose current and resume")
+        if not callable(preview_validator):
+            raise TypeError("preview_validator must be callable")
         self._store = store
         self._clock = clock
         self._session_id = session_id
         self._leader = leader_service
         self._request = request_template
+        self._session_authority = session_authority
+        self._preview_validator = preview_validator
         self._current: MissionPreviewView | None = None
         self._current_state: str | None = None
+        self._authority_view()
         self._restore_current()
 
     def current_preview(self) -> MissionPreviewView | None:
@@ -173,15 +186,26 @@ class MissionService:
                 "version": confirmed.version,
             }
 
-        result = self._store.execute_once(command_id, "confirm_mission", persist)
+        try:
+            result = self._store.execute_once(command_id, "confirm_mission", persist)
+        except ValueError:
+            self._restore_current()
+            return self._drift_diagnostic()
         mission = _confirmed_from_result(result, confirmed)
-        self._current_state = "confirmed"
+        self._current = None
+        self._current_state = None
         return MissionResult("mission_confirmed", mission=mission)
 
     def _persist_preview(
         self, draft: MissionDraft, preview: MissionPreview, session: ProductSession
     ) -> MissionResult:
         candidate = MissionPreviewView(draft, preview)
+        try:
+            validation_result = self._preview_validator(candidate)
+            if validation_result is not None:
+                raise ValueError
+        except Exception:
+            return self._unsafe_preview_diagnostic()
         mission_id = f"msn_{preview.content_hash[:24]}"
         input_digest = sha256(preview.canonical_content.encode("utf-8")).hexdigest()[:16]
         command_id = f"mission:preview:{self._session_id}:{preview.version}:{input_digest}"
@@ -228,6 +252,8 @@ class MissionService:
         return replace(self._request, user_goal=_goal(goal), schema_repair=None)
 
     def _restore_current(self) -> None:
+        self._current = None
+        self._current_state = None
         stored = self._store.load_aggregate("current_mission_preview", self._session_id)
         if stored is None:
             return
@@ -239,15 +265,19 @@ class MissionService:
             payload = json.loads(preview.canonical_content)
             payload.pop("version")
             draft = LeaderProposal.from_mapping(payload, request=self._request).mission
+            view = MissionPreviewView(draft, preview)
+            if self._preview_validator(view) is not None:
+                raise ValueError
             state = stored["state"]
-            if state not in {"awaiting_confirmation", "confirmed"}:
+            if state != "awaiting_confirmation":
                 raise ValueError
         except Exception:
             raise MissionServiceError("stored Mission Preview is malformed") from None
-        self._current = MissionPreviewView(draft, preview)
+        self._current = view
         self._current_state = state
 
     def _session(self, expected: SessionState) -> ProductSession:
+        authority = self._authority_view()
         stored = self._store.load_aggregate("product_sessions", self._session_id)
         try:
             if (
@@ -255,6 +285,7 @@ class MissionService:
                 or stored["state"] != expected.value
                 or stored.get("permission_profile")
                 != self._request.permission_ceiling.value
+                or authority.state is not expected
             ):
                 raise ValueError
             pending = stored.get("pending_goal")
@@ -266,6 +297,27 @@ class MissionService:
             )
         except Exception:
             raise MissionServiceError("ProductSession Mission state is inconsistent") from None
+
+    def _authority_view(self):
+        try:
+            self._session_authority.resume()
+            view = self._session_authority.current()
+            resolved = self._request.resolved_model
+            exact = (
+                view.session_id == self._session_id
+                and view.project_root == self._request.project_context.project_root
+                and view.leader_backend == resolved.backend_id
+                and view.model == resolved.model_id
+                and view.permission == self._request.permission_ceiling.value
+            )
+        except Exception:
+            exact = False
+            view = None
+        if not exact:
+            raise MissionServiceError(
+                "Mission request does not match ProductSession setup authority"
+            ) from None
+        return view
 
     def _leader_diagnostic(self, code: str) -> MissionResult:
         return MissionResult("diagnostic", diagnostic=Diagnostic.create(
@@ -288,6 +340,18 @@ class MissionService:
             impact="The Mission was not confirmed or started.",
             protection="Only the exact current Preview can create execution authority.",
             recovery_actions=("Review and confirm the current Preview ID and hash.",),
+            retryable=True, outcome_known=True, occurred_at=self._now(),
+        ))
+
+    def _unsafe_preview_diagnostic(self) -> MissionResult:
+        return MissionResult("diagnostic", diagnostic=Diagnostic.create(
+            code="mission_preview_unsafe", stage="mission_preview",
+            severity=Severity.ERROR, actor="agentdeck",
+            summary="The proposed Mission cannot be shown safely.",
+            cause="A human Preview field violated the bounded presentation contract.",
+            impact="No Mission Preview or execution authority was persisted.",
+            protection="AgentDeck validates the complete human Preview before writing it.",
+            recovery_actions=("Revise the goal to use bounded human-readable facts.",),
             retryable=True, outcome_known=True, occurred_at=self._now(),
         ))
 

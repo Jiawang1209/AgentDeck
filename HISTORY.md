@@ -59,7 +59,14 @@
 - TDD first failed collection because `MissionService` did not exist. The
   initial RED/GREEN gate passed `10` new cases; a separate RED then reproduced
   permission loss during Preview persistence before the session snapshot fix.
-  The combined Product flow gate passes `70` cases, the Leader/architecture gate
+  Independent review REDs then reproduced stale cross-Service confirmation,
+  setup-authority injection drift, a confirmable running-session projection,
+  stale Shell status, and cumulative rendered-Preview oversize. Confirmation
+  now rechecks the session's latest Preview in the same SQLite transaction;
+  Mission requests must match the live Session authority for project, Leader,
+  model, and permission; running re-entry has no confirmable Preview; and the
+  complete human rendering is bounded and validated before any Mission write.
+  The combined Product flow gate passes `78` cases, the Leader/architecture gate
   passes `165`, and the SQLite/Product persistence gate passes `243`.
 
 ### Close the next Product Kernel production persistence seams

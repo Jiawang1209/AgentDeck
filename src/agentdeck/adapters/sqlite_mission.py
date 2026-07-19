@@ -104,6 +104,19 @@ def _save_preview(
 
 
 def _confirm(connection: sqlite3.Connection, facts: dict[str, object]) -> None:
+    latest = connection.execute(
+        """SELECT m.mission_id,v.preview_id,v.content_hash,v.version
+             FROM missions m JOIN mission_versions v ON v.mission_id=m.mission_id
+              AND v.version=m.current_version
+            WHERE m.session_id=? AND m.state='awaiting_confirmation'
+            ORDER BY v.version DESC LIMIT 1""",
+        (facts["session_id"],),
+    ).fetchone()
+    if latest != (
+        facts["mission_id"], facts["preview_id"], facts["content_hash"],
+        facts["version"],
+    ):
+        raise ValueError("confirmed Mission is not the current session Preview")
     row = connection.execute(
         """SELECT m.session_id,m.state,m.current_version,v.preview_id,v.content_hash,
                   v.canonical_mission_facts,v.confirmed_at
@@ -150,7 +163,9 @@ def load_mission_aggregate(
     if aggregate_type == "mission_previews":
         where, parameters = "v.preview_id=?", (aggregate_id,)
     elif aggregate_type == "current_mission_preview":
-        where, parameters = "m.session_id=?", (aggregate_id,)
+        where, parameters = (
+            "m.session_id=? AND m.state='awaiting_confirmation'", (aggregate_id,)
+        )
     elif aggregate_type == "confirmed_missions":
         where, parameters = "m.mission_id=? AND m.state='confirmed'", (aggregate_id,)
     else:

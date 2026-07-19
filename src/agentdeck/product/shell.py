@@ -345,4 +345,14 @@ def _preview_presentation(value: MissionPreviewView) -> MissionPreviewPresentati
     )
 
 
-__all__ = ["ProductShell"]
+def validate_mission_preview(value: MissionPreviewView) -> None:
+    """Require the complete Preview to pass the same human renderer pre-write."""
+
+    if type(value) is not MissionPreviewView:
+        raise TypeError("Preview validator requires MissionPreviewView")
+    text = render(_preview_presentation(value))
+    if len(text.encode("utf-8", "strict")) > 65_536:
+        raise ValueError("rendered Mission Preview exceeds its human display bound")
+
+
+__all__ = ["ProductShell", "validate_mission_preview"]

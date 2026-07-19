@@ -10,7 +10,7 @@ from agentdeck.application.leader_service import LeaderService
 from agentdeck.application.mission_service import MissionService
 from agentdeck.application.session_service import SessionService
 from agentdeck.product.bootstrap import build_product_shell
-from agentdeck.product.shell import ProductShell
+from agentdeck.product.shell import ProductShell, validate_mission_preview
 
 from .fakes import FrozenClock
 from .test_leader_contract import request, valid_proposal
@@ -39,6 +39,11 @@ def _mission_service(root: Path, store: SQLiteStore) -> MissionService:
     return MissionService(
         store=store, clock=FrozenClock(NOW), session_id="ses_product",
         leader_service=LeaderService(EchoLeader(root)), request_template=template,
+        session_authority=SessionService(
+            store=store, clock=FrozenClock(NOW), session_id="ses_product",
+            project_root=str(root), available_leaders=AVAILABLE,
+        ),
+        preview_validator=validate_mission_preview,
     )
 
 

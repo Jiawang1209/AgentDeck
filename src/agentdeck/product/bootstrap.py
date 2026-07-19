@@ -10,7 +10,7 @@ from agentdeck.adapters.sqlite import SQLiteStore
 from agentdeck.adapters.system_clock import SystemClock
 from agentdeck.application.session_service import SessionService
 from agentdeck.product.renderer import render
-from agentdeck.product.shell import ProductShell
+from agentdeck.product.shell import ProductShell, validate_mission_preview
 
 
 def build_product_shell(
@@ -51,6 +51,7 @@ def build_product_shell(
             mission_service = mission_service_factory(
                 store=store, clock=clock, session_service=service,
                 available_leaders=available_leaders, project_root=project_root,
+                preview_validator=validate_mission_preview,
             )
         return shell_factory(
             session_service=service,
