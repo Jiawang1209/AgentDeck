@@ -2180,11 +2180,19 @@ git commit -m "feat: restore latest product session authority"
 - Create: `tests/product_kernel/test_kernel_session_exit.py`
 - Create: `tests/product_kernel/test_sqlite_exit_authority.py`
 - Create: `tests/product_kernel/test_exit_service.py`
+- Modify: `tests/product_kernel/test_sqlite_session_authority.py`
 - Modify: `HISTORY.md`
 
 The SQLite/Service tests share only these local deterministic helpers; seed
 the required ProjectSession/Mission/Task/Agent/Attempt foreign-key lineage with
 named-column INSERTs as in `test_sqlite_execution.py`, updated for schema v2:
+
+The pre-15A.3 pending-exit preservation fixture in
+`test_sqlite_session_authority.py` must also be upgraded from its placeholder
+ID/partial canonical JSON/arbitrary hash to one exact valid
+`ExitAttemptSnapshot` canonical payload and matching hash. This is a test-data
+migration only; production validation must not retain a compatibility path for
+the malformed fixture.
 
 ```python
 EXIT_COLUMNS = (
@@ -2434,7 +2442,8 @@ def test_task15a_exact_confirm_is_fail_closed_without_worker_cancel(service, sto
 conda run -n agentdeck env PYTHONPATH="$PWD/src" pytest \
   tests/product_kernel/test_kernel_session_exit.py \
   tests/product_kernel/test_sqlite_exit_authority.py \
-  tests/product_kernel/test_exit_service.py -q
+  tests/product_kernel/test_exit_service.py \
+  tests/product_kernel/test_sqlite_session_authority.py -q
 ```
 
 Diagnostics expose only allowlisted stage/code/identity facts. They never
@@ -2448,7 +2457,8 @@ git add src/agentdeck/kernel/session.py src/agentdeck/ports/store.py \
   src/agentdeck/application/exit_service.py \
   tests/product_kernel/test_kernel_session_exit.py \
   tests/product_kernel/test_sqlite_exit_authority.py \
-  tests/product_kernel/test_exit_service.py HISTORY.md
+  tests/product_kernel/test_exit_service.py \
+  tests/product_kernel/test_sqlite_session_authority.py HISTORY.md
 git commit -m "feat: persist exact product exit requests"
 ```
 
