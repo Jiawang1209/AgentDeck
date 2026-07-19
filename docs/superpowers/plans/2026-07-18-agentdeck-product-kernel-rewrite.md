@@ -2672,6 +2672,21 @@ dispatch a fresh code-quality reviewer, fix and re-review. Rerun the complete
 focused gates above after the last fix. Do not mark R2 complete and do not begin
 15B.
 
+Cross-slice Task 15A review fixes are authorized to modify
+`src/agentdeck/ports/store.py`, `src/agentdeck/adapters/sqlite.py`,
+`src/agentdeck/adapters/sqlite_session.py`,
+`src/agentdeck/application/exit_service.py`,
+`src/agentdeck/product/bootstrap.py`, the three Task 15A exit/re-entry test
+modules, and `HISTORY.md`; a cohesive read-only projection may be extracted to
+`src/agentdeck/application/exit_records.py` when required by the 500-line gate.
+The active-Attempt Store query must take the bound ProductSession identity and
+join Attempt -> Task -> Mission so another session's work can never become the
+current session's exit authority. Bootstrap restoration must use a read-only
+Application projection: exact pending authority is displayed, drift is
+diagnosed while preserving the old request, and only an explicit `/exit` may
+supersede it. `ExitService` keeps exactly its four public operations; bootstrap
+must not call side-effecting `request_exit()` before user input.
+
 #### Task 15B: Bind real ACP cancellation and mandatory recovery
 
 **Scheduling gate:** execute this subsection only after Task 24, Task 25, and
