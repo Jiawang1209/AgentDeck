@@ -3610,10 +3610,21 @@ git commit -m "feat: coordinate the four stage coding mission"
 
 **Files:**
 - Modify: src/agentdeck/kernel/execution.py
+- Create: src/agentdeck/kernel/execution_semantics.py
 - Modify: src/agentdeck/application/execution_service.py
+- Create: src/agentdeck/application/execution_records.py
 - Create: tests/product_kernel/test_review_revision_semantics.py
 - Create: tests/product_kernel/test_execution_budgets.py
 - Modify: HISTORY.md
+
+`execution.py` and `execution_service.py` enter Task 24 at the 500-line gate.
+`execution_semantics.py` therefore owns the pure closed ReviewResult,
+RevisionMaterialization/rejection, acceptance validation, and RetryPolicy
+values. `execution_records.py` owns the coordinator's pure no-I/O identity,
+snapshot, instruction/result parsing, typed-evidence, and safe failure
+classification helpers. The existing modules keep their Kernel values and
+sequencing responsibilities; this is a responsibility extraction, not an
+authorization to change Task 23 behavior.
 
 **Forbidden legacy imports:** M2c semantic validators and live harness.
 
@@ -3672,7 +3683,12 @@ retry.
 
 ```bash
 conda run -n agentdeck pytest tests/product_kernel/test_review_revision_semantics.py tests/product_kernel/test_execution_budgets.py tests/product_kernel/test_execution_coordinator.py -q
-git add src/agentdeck/kernel/execution.py src/agentdeck/application/execution_service.py tests/product_kernel HISTORY.md
+git add src/agentdeck/kernel/execution.py \
+  src/agentdeck/kernel/execution_semantics.py \
+  src/agentdeck/application/execution_service.py \
+  src/agentdeck/application/execution_records.py \
+  tests/product_kernel/test_review_revision_semantics.py \
+  tests/product_kernel/test_execution_budgets.py HISTORY.md
 git commit -m "feat: enforce evidence backed execution semantics"
 ```
 
