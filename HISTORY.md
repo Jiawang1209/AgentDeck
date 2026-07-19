@@ -78,6 +78,27 @@
   Leader/architecture gate passes `165`, and the SQLite/Product persistence
   gate passes `244`.
 
+### Coordinate the confirmed four-stage coding Mission
+
+- Added an Application-layer Execution Service that accepts only the exact
+  confirmed four-Task Mission graph, persists each running Attempt before ACP
+  Worker I/O, starts only the dependency whose prior Handoff committed, and
+  runs implementation, review, revision, then acceptance in frozen order. Each
+  Attempt narrows the confirmed Mission permission scope to that frozen Task's
+  declared effects before any ACP permission request is evaluated.
+- Treated Worker review proposals as bounded data. AgentDeck alone creates the
+  authoritative Revision Task, and Worker-provided peer-dispatch fields never
+  enter its canonical payload or scheduling authority.
+- Added command-atomic SQLite persistence for a terminal Attempt, one typed
+  Evidence record, and its Handoff. The Adapter verifies immutable Task,
+  Attempt, Mission-version, Agent, and Evidence lineage; a failed Handoff write
+  rolls the whole terminal bundle back and prevents the dependent Task from
+  starting. Retry and deeper semantic review policy remain reserved for Task
+  24.
+- TDD RED first failed because the Execution Service and SQLite execution
+  helper were absent. The new coordinator and rollback tests pass together
+  with the adjacent ACP permission bridge and SQLite transaction suites.
+
 ### Close the next Product Kernel production persistence seams
 
 - Reconciled Tasks 19 and 23 with the frozen SQLite and Product Shell truth

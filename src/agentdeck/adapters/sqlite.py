@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import sqlite3
 from agentdeck.adapters.sqlite_approval import _save_approval
+from agentdeck.adapters.sqlite_execution import _save_execution_aggregate
 from agentdeck.adapters.sqlite_mission import MISSION_AGGREGATE_TYPES, load_mission_aggregate, save_mission_aggregate
 from agentdeck.adapters.sqlite_schema import (
     FileIdentity,
@@ -154,6 +155,8 @@ class _SQLiteCommandTransaction:
         if aggregate_type in MISSION_AGGREGATE_TYPES:
             save_mission_aggregate(self._require_mutable(), aggregate_type, aggregate_id, snapshot, _timestamp(self._store._clock))
             return
+        if aggregate_type in {"evidence", "handoffs"}:
+            return _save_execution_aggregate(self._require_mutable(), aggregate_type, aggregate_id, snapshot, _timestamp(self._store._clock))
         raise ValueError("unsupported aggregate type")
 
     def save_session(self, snapshot: Mapping[str, object]) -> None:

@@ -1,0 +1,298 @@
+"""Deterministic four-stage ACP execution coordinator."""
+
+from __future__ import annotations
+
+from collections.abc import Callable
+from dataclasses import dataclass
+from types import MappingProxyType
+
+from agentdeck.application.approval_service import ApprovalContext, ApprovalService
+from agentdeck.kernel.diagnostics import Diagnostic, Severity
+from agentdeck.kernel.execution import (
+    AcceptanceResult, Attempt, Evidence, EvidenceKind, FindingSeverity, Handoff,
+    ReviewFinding,
+)
+from agentdeck.kernel.mission import ConfirmedMissionVersion, MissionDraft, TaskDefinition
+from agentdeck.kernel.permissions import PermissionScope
+from agentdeck.ports.clock import Clock
+from agentdeck.ports.store import Store
+from agentdeck.ports.worker import TaskRequest, Worker, WorkerResult
+
+
+_ATTEMPT_IDS = {
+    "implementation": "att_impl_1", "review": "att_review_1",
+    "revision": "att_revision_1", "acceptance": "att_acceptance_1",
+}
+_EVIDENCE_IDS = {
+    "implementation": "ev_implementation_1", "review": "ev_review_1",
+    "revision": "ev_revision_1", "acceptance": "ev_acceptance_1",
+}
+
+
+@dataclass(frozen=True)
+class AuthoritativeRevisionTask:
+    task_id: str
+    created_by: str
+    confirmed_scope: str
+    accepted_finding_ids: tuple[str, ...]
+
+    def canonical_payload(self) -> dict[str, object]:
+        return {
+            "task_id": self.task_id, "created_by": self.created_by,
+            "confirmed_scope": self.confirmed_scope,
+            "accepted_finding_ids": list(self.accepted_finding_ids),
+        }
+
+
+@dataclass(frozen=True)
+class ExecutionResult:
+    attempts: tuple[Attempt, ...]
+    evidence: tuple[Evidence, ...]
+    handoffs: tuple[Handoff, ...]
+    revision_task: AuthoritativeRevisionTask
+    diagnostic: Diagnostic | None = None
+
+
+class ExecutionService:
+    def __init__(
+        self, *, store: Store, clock: Clock, approval_service: ApprovalService,
+        worker_factory: Callable[[TaskDefinition], Worker],
+    ) -> None:
+        self._store = store
+        self._clock = clock
+        self._approval_service = approval_service
+        self._worker_factory = worker_factory
+
+    async def run_confirmed_mission(
+        self, *, session_id: str, confirmed: ConfirmedMissionVersion,
+        draft: MissionDraft, permission_scope: PermissionScope,
+    ) -> ExecutionResult:
+        self._validate_authority(session_id, confirmed, draft, permission_scope)
+        attempts: list[Attempt] = []
+        evidence: list[Evidence] = []
+        handoffs: list[Handoff] = []
+        revision_task = AuthoritativeRevisionTask(
+            "tsk_revision", "agentdeck", draft.scope, ()
+        )
+        for index, task in enumerate(draft.tasks):
+            if task.dependencies and (
+                not handoffs or handoffs[-1].target_task_id != task.task_id
+            ):
+                raise RuntimeError("task dependency has no committed handoff")
+            attempt = Attempt.pending(_ATTEMPT_IDS[task.name], task.task_id, 1).start()
+            self._persist_started(attempt, task)
+            attempts.append(attempt)
+            worker = self._worker_factory(task)
+            handle = await worker.start_task(TaskRequest(
+                task.agent_instance_id, task.task_id, attempt.attempt_id, task.name
+            ))
+            bridge = await self._approval_service.bridge_attempt(
+                worker, handle,
+                ApprovalContext(
+                    confirmed.mission_id, confirmed.version,
+                    permission_scope.narrow(task.allowed_effects),
+                    confirmed.content_hash,
+                ),
+            )
+            worker_result = bridge.worker_result
+            if worker_result.status != "completed":
+                return self._worker_failure(
+                    confirmed, attempts, evidence, handoffs, revision_task,
+                    attempt, worker_result,
+                )
+            terminal = attempt.complete(_payload_text(worker_result, "summary"))
+            typed_evidence, artifacts = _typed_evidence(task, worker_result, draft)
+            if task.name == "review":
+                finding = _review_finding(worker_result)
+                revision_task = AuthoritativeRevisionTask(
+                    draft.tasks[2].task_id, "agentdeck", draft.scope,
+                    (finding.finding_id,),
+                )
+            handoff = None
+            if index < len(draft.tasks) - 1:
+                handoff = Handoff.create(
+                    f"hnd_{task.name}_1", terminal.attempt_id,
+                    draft.tasks[index + 1].task_id, terminal.result_summary,
+                    (typed_evidence.evidence_id,), artifact_references=artifacts,
+                )
+            try:
+                self._persist_terminal(terminal, task, typed_evidence, handoff)
+            except Exception:
+                return ExecutionResult(
+                    tuple(attempts), tuple(evidence), tuple(handoffs), revision_task,
+                    self._diagnostic(
+                        "handoff_persistence_failed", confirmed, task, terminal,
+                        "terminal execution bundle did not commit",
+                    ),
+                )
+            attempts[-1] = terminal
+            evidence.append(typed_evidence)
+            if handoff is not None:
+                handoffs.append(handoff)
+        return ExecutionResult(
+            tuple(attempts), tuple(evidence), tuple(handoffs), revision_task
+        )
+
+    def _validate_authority(
+        self, session_id: str, confirmed: ConfirmedMissionVersion,
+        draft: MissionDraft, permission_scope: PermissionScope,
+    ) -> None:
+        if type(session_id) is not str or not session_id.startswith("ses_"):
+            raise ValueError("session_id must be a typed identity")
+        if type(confirmed) is not ConfirmedMissionVersion or type(draft) is not MissionDraft:
+            raise TypeError("execution requires a confirmed Mission and its draft")
+        if type(permission_scope) is not PermissionScope:
+            raise TypeError("permission_scope must be a PermissionScope")
+        preview = draft.preview(confirmed.version)
+        if preview.content_hash != confirmed.content_hash or (
+            preview.canonical_content != confirmed.canonical_content
+        ):
+            raise ValueError("execution draft does not match confirmed Mission")
+
+    def _persist_started(self, attempt: Attempt, task: TaskDefinition) -> None:
+        def commit(transaction):
+            transaction.save_aggregate(
+                "attempts", attempt.attempt_id, _attempt_snapshot(attempt, task)
+            )
+            return {"attempt_id": attempt.attempt_id, "state": attempt.state.value}
+
+        self._store.execute_once(
+            f"cmd_start_{attempt.attempt_id}", "execution_attempt_started", commit
+        )
+
+    def _persist_terminal(
+        self, attempt: Attempt, task: TaskDefinition, evidence: Evidence,
+        handoff: Handoff | None,
+    ) -> None:
+        def commit(transaction):
+            transaction.save_aggregate(
+                "attempts", attempt.attempt_id, _attempt_snapshot(attempt, task)
+            )
+            transaction.save_aggregate(
+                "evidence", evidence.evidence_id,
+                {
+                    "evidence_id": evidence.evidence_id, "task_id": attempt.task_id,
+                    "attempt_id": attempt.attempt_id, "kind": evidence.kind.value,
+                    "canonical_evidence_facts": evidence.canonical_content,
+                },
+            )
+            if handoff is not None:
+                transaction.save_aggregate(
+                    "handoffs", handoff.handoff_id,
+                    {
+                        "handoff_id": handoff.handoff_id,
+                        "source_attempt_id": handoff.source_attempt_id,
+                        "target_task_id": handoff.target_task_id,
+                        "result_summary": handoff.result_summary,
+                        "canonical_handoff_facts": handoff.canonical_content,
+                        "content_hash": handoff.content_hash,
+                    },
+                )
+            return {
+                "attempt_id": attempt.attempt_id, "state": attempt.state.value,
+                "evidence_id": evidence.evidence_id,
+                "handoff_id": None if handoff is None else handoff.handoff_id,
+            }
+
+        self._store.execute_once(
+            f"cmd_terminal_{attempt.attempt_id}", "execution_stage_committed", commit
+        )
+
+    def _worker_failure(
+        self, confirmed, attempts, evidence, handoffs, revision_task,
+        attempt, result,
+    ) -> ExecutionResult:
+        terminal = (
+            attempt.cancel("worker_cancelled")
+            if result.status == "cancelled" else attempt.fail("worker_failed")
+        )
+        return ExecutionResult(
+            tuple((*attempts[:-1], terminal)), tuple(evidence), tuple(handoffs),
+            revision_task,
+            self._diagnostic(
+                "worker_stage_failed", confirmed, None, terminal,
+                "ACP Worker returned a non-completed terminal result",
+            ),
+        )
+
+    def _diagnostic(self, code, confirmed, task, attempt, cause) -> Diagnostic:
+        return Diagnostic.create(
+            code=code, stage="execution", severity=Severity.ERROR,
+            actor="agentdeck", summary="automatic execution stopped", cause=cause,
+            impact="the dependent Task was not started",
+            protection="durable dependency and handoff authority remained closed",
+            recovery_actions=("inspect the durable Attempt and retry explicitly",),
+            retryable=False, outcome_known=True,
+            occurred_at=self._clock.now().isoformat(), mission_id=confirmed.mission_id,
+            task_id=None if task is None else task.task_id,
+            attempt_id=attempt.attempt_id,
+        )
+
+
+def _attempt_snapshot(attempt: Attempt, task: TaskDefinition) -> dict[str, object]:
+    return {
+        "attempt_id": attempt.attempt_id, "task_id": attempt.task_id,
+        "agent_instance_id": task.agent_instance_id, "ordinal": attempt.ordinal,
+        "state": attempt.state.value, "reason": attempt.reason,
+        "result_summary": attempt.result_summary, "retryable": attempt.retryable,
+        "acp_session_id": None, "effect_observed": False,
+    }
+
+
+def _payload_value(result: WorkerResult, field: str) -> object:
+    if field not in result.payload:
+        raise ValueError(f"worker result missing {field}")
+    return result.payload[field]
+
+
+def _payload_text(result: WorkerResult, field: str) -> str:
+    value = _payload_value(result, field)
+    if type(value) is not str or not value.strip():
+        raise ValueError(f"worker result {field} must be text")
+    return value
+
+
+def _review_finding(result: WorkerResult) -> ReviewFinding:
+    evidence_ids = _payload_value(result, "evidence_ids")
+    if type(evidence_ids) is not tuple:
+        raise ValueError("review evidence_ids must be a sequence")
+    return ReviewFinding(
+        _payload_text(result, "finding_id"), _payload_text(result, "scope"),
+        FindingSeverity(_payload_text(result, "severity")),
+        _payload_text(result, "summary"), _payload_text(result, "criterion"),
+        evidence_ids,
+    )
+
+
+def _typed_evidence(
+    task: TaskDefinition, result: WorkerResult, draft: MissionDraft
+) -> tuple[Evidence, tuple[str, ...]]:
+    identity = _EVIDENCE_IDS[task.name]
+    if task.name == "implementation":
+        artifact = _payload_text(result, "artifact_reference")
+        return Evidence.create(identity, EvidenceKind.ARTIFACT_HASH, {
+            "artifact_reference": artifact,
+            "content_hash": _payload_text(result, "content_hash"),
+        }), (artifact,)
+    if task.name == "review":
+        finding = _review_finding(result)
+        return Evidence.create(
+            identity, EvidenceKind.REVIEW_FINDING, finding.canonical_projection()
+        ), ()
+    if task.name == "revision":
+        return Evidence.create(identity, EvidenceKind.DIFF_IDENTITY, {
+            "base": _payload_text(result, "base"),
+            "head": _payload_text(result, "head"),
+            "diff_hash": _payload_text(result, "diff_hash"),
+        }), ()
+    mapping = _payload_value(result, "evidence_by_criterion")
+    if not isinstance(mapping, MappingProxyType):
+        raise ValueError("acceptance evidence mapping must be an object")
+    acceptance = AcceptanceResult.create(
+        draft.acceptance_criteria, dict(mapping),
+        accepted=_payload_value(result, "accepted"),
+        failure_reason=_payload_value(result, "failure_reason"),
+    )
+    return Evidence.acceptance(
+        identity, result=acceptance, source_kind=EvidenceKind.ACCEPTANCE_RESULT
+    ), ()
