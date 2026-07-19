@@ -4,6 +4,16 @@
 
 ## 2026-07-19
 
+### Fail closed on ambiguous ACP tool starts
+
+- Restricted proven pre-effect tool starts to the explicit ACP read/search/think
+  kinds. `other`, absent kinds, and any future unrecognized kind now mark the
+  Attempt as potentially affected immediately, so a following disconnect is
+  non-retryable `worker_outcome_unknown` rather than a safe retry signal.
+- Matrix RED produced `2 failed, 20 passed` for `other` and absent kinds;
+  focused GREEN passed all `22` adversarial failure cases while preserving the
+  read/search/think behavior.
+
 ### Close ACP Worker outcome races
 
 - Marked an effectful ACP tool start as potentially project-affecting before

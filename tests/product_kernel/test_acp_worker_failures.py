@@ -46,6 +46,8 @@ async def run_failure(scenario: str) -> ACPWorkerError:
     ("disconnect_during_read", "acp_disconnected_before_effect", True, True),
     ("disconnect_during_search", "acp_disconnected_before_effect", True, True),
     ("disconnect_during_think", "acp_disconnected_before_effect", True, True),
+    ("disconnect_during_other", "worker_outcome_unknown", False, False),
+    ("disconnect_during_none", "worker_outcome_unknown", False, False),
     ("disconnect_after_effect", "worker_outcome_unknown", False, False),
     ("duplicate_event", "acp_duplicate_event", True, False),
     ("out_of_order", "acp_sequence_violation", True, False),

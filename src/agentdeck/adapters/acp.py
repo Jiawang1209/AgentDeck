@@ -38,9 +38,7 @@ from agentdeck.ports.worker import (
 
 _MAX_ACP_UPDATE_BYTES: Final = 64 * 1024
 _MAX_ACP_TOTAL_BYTES: Final = 1024 * 1024
-_EFFECTFUL_TOOL_KINDS: Final = frozenset(
-    {"edit", "delete", "move", "execute", "fetch"}
-)
+_PROVEN_READ_ONLY_TOOL_KINDS: Final = frozenset({"read", "search", "think"})
 
 
 class ACPWorkerError(RuntimeError):
@@ -222,12 +220,12 @@ class ACPWorker:
                 )
                 self._emit("message", payload)
             elif type(update) is ToolCallStart:
-                if update.kind in _EFFECTFUL_TOOL_KINDS:
+                if update.kind not in _PROVEN_READ_ONLY_TOOL_KINDS:
                     run.effect_may_have_occurred = True
                 self._emit("tool_started", _tool_payload(update))
             elif type(update) is ToolCallProgress:
                 if update.status == "completed":
-                    if update.kind in _EFFECTFUL_TOOL_KINDS:
+                    if update.kind not in _PROVEN_READ_ONLY_TOOL_KINDS:
                         run.effect_may_have_occurred = True
                     self._emit("tool_completed", _tool_payload(update))
                 else:

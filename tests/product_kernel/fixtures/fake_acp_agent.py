@@ -84,6 +84,8 @@ class FakeACPAgent:
             "disconnect_during_read": "read",
             "disconnect_during_search": "search",
             "disconnect_during_think": "think",
+            "disconnect_during_other": "other",
+            "disconnect_during_none": None,
         }.get(self.scenario, "edit")
         await self.client.session_update(
             session_id,
@@ -96,6 +98,7 @@ class FakeACPAgent:
         if self.scenario in {
             "disconnect_during_effect", "disconnect_during_read",
             "disconnect_during_search", "disconnect_during_think",
+            "disconnect_during_other", "disconnect_during_none",
         }:
             raise ConnectionError("RAW-DISCONNECT-BODY")
         permission_count = 2 if self.scenario == "two_permissions" else 1
