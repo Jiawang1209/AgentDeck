@@ -2474,6 +2474,7 @@ git commit -m "feat: persist exact product exit requests"
 - Create: `tests/product_kernel/test_product_exit_renderer.py`
 - Create: `tests/product_kernel/test_product_reentry.py`
 - Modify: `tests/product_kernel/test_product_shell.py`
+- Modify: `tests/product_kernel/test_product_preview_flow.py`
 - Modify: `HISTORY.md`
 
 `test_product_reentry.py` owns a real SQLite-backed `shell_harness` fixture.
@@ -2488,6 +2489,12 @@ returns strings. `configure_and_preview()` calls the real SessionService and
 MissionService test factory, while `configuration`, `preview_id`, and
 `pending_exit` are read-only Store/Application projections after reopen. Do not
 fake ExitService or Worker cancellation in this file.
+
+Existing direct `ProductShell` constructions in
+`test_product_preview_flow.py` must be migrated to inject the same real
+Task 15A `ExitService` dependency. Production `ProductShell` remains strict:
+it must not construct an implicit fallback ExitService merely to preserve an
+old test constructor.
 
 - [ ] **Step 1: Write exact slash grammar RED tests**
 
@@ -2652,7 +2659,8 @@ git add src/agentdeck/product/slash_commands.py \
   tests/product_kernel/test_slash_commands.py \
   tests/product_kernel/test_product_exit_renderer.py \
   tests/product_kernel/test_product_reentry.py \
-  tests/product_kernel/test_product_shell.py HISTORY.md
+  tests/product_kernel/test_product_shell.py \
+  tests/product_kernel/test_product_preview_flow.py HISTORY.md
 git commit -m "feat: bind fail closed product exit controls"
 ```
 
