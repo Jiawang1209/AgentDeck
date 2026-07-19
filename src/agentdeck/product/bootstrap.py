@@ -23,6 +23,7 @@ def build_product_shell(
     config_factory: Callable[..., object] = ConfigResolver,
     store_factory: Callable[..., object] = SQLiteStore.open,
     shell_factory: Callable[..., ProductShell] = ProductShell,
+    mission_service_factory: Callable[..., object] | None = None,
 ) -> ProductShell:
     """Compose the foreground Product Shell through injectable factories."""
 
@@ -45,8 +46,15 @@ def build_product_shell(
             project_root=project_root,
             available_leaders=available_leaders,
         )
+        mission_service = None
+        if mission_service_factory is not None:
+            mission_service = mission_service_factory(
+                store=store, clock=clock, session_service=service,
+                available_leaders=available_leaders, project_root=project_root,
+            )
         return shell_factory(
             session_service=service,
+            mission_service=mission_service,
             available_leaders=available_leaders,
             read_line=read_line,
             write_line=write_line,

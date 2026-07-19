@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import sqlite3
 from agentdeck.adapters.sqlite_approval import _save_approval
+from agentdeck.adapters.sqlite_mission import MISSION_AGGREGATE_TYPES, load_mission_aggregate, save_mission_aggregate
 from agentdeck.adapters.sqlite_schema import (
     FileIdentity,
     _REQUIRED_TABLES,
@@ -69,18 +70,12 @@ def _validate_text_reference(value: object, label: str, maximum: int) -> None:
         raise ValueError(f"{label} must be strict UTF-8") from error
     if len(encoded) > maximum:
         raise ValueError(f"{label} is too large")
-
-
 def _validate_command_reference(command_id: object, command_kind: object | None) -> None:
     _validate_text_reference(command_id, "command_id", STORE_COMMAND_ID_MAX_BYTES)
     if command_kind is not None:
         _validate_text_reference(command_kind, "command_kind", STORE_COMMAND_KIND_MAX_BYTES)
-
-
 def _migrate(connection: sqlite3.Connection, root: Path) -> None:
     _migrate_schema(connection, root, _migration_statements())
-
-
 def _open_inspection_connection(
     path: Path, expected: FileIdentity, root: Path
 ) -> sqlite3.Connection:
@@ -96,8 +91,6 @@ def _open_inspection_connection(
     except BaseException:
         connection.close()
         raise
-
-
 class _SQLiteCommandTransaction:
     def __init__(self, store: "SQLiteStore", command_id: str, command_kind: str) -> None:
         self._store = store
@@ -157,6 +150,9 @@ class _SQLiteCommandTransaction:
             if snapshot.get("approval_id", aggregate_id) != aggregate_id:
                 raise ValueError("aggregate identity does not match approval_id")
             _save_approval(self._require_mutable(), snapshot, _timestamp(self._store._clock))
+            return
+        if aggregate_type in MISSION_AGGREGATE_TYPES:
+            save_mission_aggregate(self._require_mutable(), aggregate_type, aggregate_id, snapshot, _timestamp(self._store._clock))
             return
         raise ValueError("unsupported aggregate type")
 
@@ -374,6 +370,8 @@ class SQLiteStore:
     ) -> CommandResult | None:
         _validate_text_reference(aggregate_type, "aggregate_type", 128)
         _validate_text_reference(aggregate_id, "aggregate_id", 255)
+        if aggregate_type in MISSION_AGGREGATE_TYPES:
+            return load_mission_aggregate(connection, aggregate_type, aggregate_id)
         specs = {
             "product_sessions": ("session_id", (
                 "session_id", "project_id", "state", "permission_profile", "pending_goal",

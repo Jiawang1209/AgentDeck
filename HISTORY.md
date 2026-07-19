@@ -32,6 +32,36 @@
   while the R2 exit gate remains explicitly open until both corrected slices
   and their integration tests pass.
 
+### Connect natural-language goals to exact Mission confirmation
+
+- Added a Store-backed Mission Service that accepts only the strict validated
+  Leader proposal boundary, creates a new canonical Preview for every semantic
+  revision, restores the current Preview from SQLite, and confirms only the
+  exact current Preview ID and content hash. Leader timeout, transport, schema,
+  semantic, cancellation, nonzero, authentication, and oversize failures remain
+  content-free typed diagnostics; no fallback Leader or execution authority is
+  created on failure.
+- Added canonical command-bound SQLite persistence for Mission Previews and
+  confirmed versions. Every Preview retains immutable canonical content and a
+  prospective Mission identity; confirmation freezes provenance and only then
+  materializes the four Task rows. Mission/session writes and audit events are
+  atomic, old Preview confirmation is rejected as drift, and the configured
+  permission lineage survives drafting, Preview, and confirmation transitions.
+- Connected the foreground Product Shell to injected Mission authority. A
+  configured natural-language goal renders a plain-language Preview containing
+  objective, scope, exact Leader/adapter/model/version, four Agent roles,
+  dependencies, ACP routes, permissions, project boundary, acceptance criteria,
+  all bounded budgets, non-goals, risks, Preview version, ID, and hash. Natural
+  revision creates a new Preview; exact confirmation renders a human result.
+  The composition root accepts only an injected Mission factory in this slice
+  and never constructs or calls a real provider; Task 26 retains real ACP
+  readiness binding authority.
+- TDD first failed collection because `MissionService` did not exist. The
+  initial RED/GREEN gate passed `10` new cases; a separate RED then reproduced
+  permission loss during Preview persistence before the session snapshot fix.
+  The combined Product flow gate passes `70` cases, the Leader/architecture gate
+  passes `165`, and the SQLite/Product persistence gate passes `243`.
+
 ### Close the next Product Kernel production persistence seams
 
 - Reconciled Tasks 19 and 23 with the frozen SQLite and Product Shell truth

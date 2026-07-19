@@ -123,11 +123,14 @@ class MissionPreviewPresentation:
     preview_id: str
     version: int
     content_hash: str
+    leader_adapter: str = "acp"
+    leader_version: str = "unreported"
+    additional_budgets: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         for field in (
             "objective", "scope", "leader_backend", "leader_model", "permission",
-            "project_boundary",
+            "project_boundary", "leader_adapter", "leader_version",
         ):
             _human_text(getattr(self, field), field)
         for field in (
@@ -137,6 +140,10 @@ class MissionPreviewPresentation:
             object.__setattr__(
                 self, field, _human_items(getattr(self, field), field, nonempty=True)
             )
+        object.__setattr__(
+            self, "additional_budgets",
+            _human_items(self.additional_budgets, "additional_budgets"),
+        )
         if self.permission not in _PERMISSIONS:
             raise ValueError("permission is unsupported")
         _bounded_integer(self.retry_budget, "retry_budget")

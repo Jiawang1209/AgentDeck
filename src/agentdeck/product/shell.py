@@ -6,9 +6,16 @@ from collections.abc import Callable, Mapping
 from typing import Final
 
 from agentdeck.application.session_service import SessionService, SessionServiceError
+from agentdeck.application.mission_service import (
+    MissionPreviewView,
+    MissionResult,
+    MissionService,
+    MissionServiceError,
+)
 from agentdeck.product.presenter import (
     DiagnosisPresentation,
     ExitPresentation,
+    MissionPreviewPresentation,
     SetupPresentation,
     StatusPresentation,
 )
@@ -47,6 +54,7 @@ class ProductShell:
         read_line: Callable[[str], str],
         write_line: Callable[[str], object],
         close: Callable[[], object],
+        mission_service: MissionService | None = None,
         default_permission: str = _DEFAULT_PERMISSION,
         render_text: Callable[[object], str] = render,
     ) -> None:
@@ -70,6 +78,12 @@ class ProductShell:
         if default_permission not in _PERMISSIONS:
             raise ValueError("default_permission is unsupported")
         self._service = session_service
+        if mission_service is not None and any(
+            not callable(getattr(mission_service, method, None))
+            for method in ("propose", "revise", "confirm", "current_preview")
+        ):
+            raise TypeError("mission_service does not satisfy the Product Shell")
+        self._mission = mission_service
         self._read_line = read_line
         self._write_line = write_line
         self._close = close
@@ -110,6 +124,26 @@ class ProductShell:
         if text.lstrip().startswith("/"):
             self._emit("Command not recognized. Use /help.")
             return False
+        confirmation = _confirmation(text)
+        if confirmation is not None:
+            if self._mission is None:
+                self._emit("No Mission Preview is available for confirmation.")
+            else:
+                self._show_mission_result(self._mission.confirm(*confirmation))
+            return False
+        if self._mission is not None and self._service.current().state is not None:
+            state = self._service.resume().mode
+            if state in {"ready", "goal_ready", "awaiting_confirmation"}:
+                try:
+                    operation = (
+                        self._mission.revise
+                        if self._mission.current_preview() is not None
+                        else self._mission.propose
+                    )
+                    self._show_mission_result(operation(text))
+                except (MissionServiceError, TypeError, ValueError):
+                    self._emit("The Mission request could not be applied safely.")
+                return False
         try:
             result = self._service.accept_text(text)
         except (SessionServiceError, TypeError, ValueError):
@@ -183,6 +217,11 @@ class ProductShell:
             self._emit("AgentDeck setup is ready.")
         else:
             self._show_resumed_goal(resumed.goal)
+            if self._mission is not None:
+                try:
+                    self._show_mission_result(self._mission.propose(resumed.goal))
+                except (MissionServiceError, TypeError, ValueError):
+                    self._emit("The retained goal could not become a Mission safely.")
 
     def _show_resumed_goal(self, goal: str) -> None:
         try:
@@ -197,7 +236,10 @@ class ProductShell:
         self._emit(f"Goal ready: {goal}")
 
     def _show_initial_state(self) -> None:
-        if self._service.current().state.value == "setup":
+        preview = None if self._mission is None else self._mission.current_preview()
+        if preview is not None:
+            self._emit(self._render(_preview_presentation(preview)))
+        elif self._service.current().state.value == "setup":
             self._show_setup()
         else:
             self._show_status()
@@ -222,6 +264,20 @@ class ProductShell:
             raise TypeError("Product Shell output must be text")
         self._write_line(text)
 
+    def _show_mission_result(self, result: MissionResult) -> None:
+        self._service.resume()
+        if result.preview is not None:
+            self._emit(self._render(_preview_presentation(result.preview)))
+        elif result.mission is not None:
+            self._emit(
+                f"Mission confirmed: {result.mission.mission_id} "
+                f"v{result.mission.version}."
+            )
+        elif result.diagnostic is not None:
+            self._emit(self._render(DiagnosisPresentation(result.diagnostic)))
+        else:
+            self._emit("The Mission request could not be applied safely.")
+
     def _close_once(self) -> None:
         if not self._closed:
             self._closed = True
@@ -245,6 +301,48 @@ def _copy_available_leaders(
             raise ValueError("available_leaders is invalid")
         copied[leader] = tuple(models)
     return dict(sorted(copied.items()))
+
+
+def _confirmation(text: str) -> tuple[str, str] | None:
+    if type(text) is not str:
+        return None
+    parts = text.strip().split()
+    if len(parts) == 3 and parts[0].casefold() == "confirm":
+        return parts[1], parts[2]
+    return None
+
+
+def _preview_presentation(value: MissionPreviewView) -> MissionPreviewPresentation:
+    draft, preview = value.draft, value.preview
+    budgets = dict(draft.budgets)
+    return MissionPreviewPresentation(
+        objective=draft.objective, scope=draft.scope,
+        leader_backend=draft.leader_backend, leader_model=draft.leader_model,
+        workers=tuple(
+            f"{task.agent_instance_id}: {task.role.value} via {task.backend}"
+            for task in draft.tasks
+        ),
+        tasks=tuple(task.name for task in draft.tasks),
+        task_dependencies=tuple(
+            f"{task.name}: {', '.join(task.dependencies) if task.dependencies else 'none'}"
+            for task in draft.tasks
+        ),
+        acp_routes=tuple(task.acp_route for task in draft.tasks),
+        permission=draft.permission_profile.value.replace("_", "-"),
+        project_boundary=draft.project_root,
+        acceptance_criteria=draft.acceptance_criteria,
+        retry_budget=budgets["max_attempts"],
+        revision_budget=budgets["max_revision_cycles"],
+        non_goals=draft.non_goals, risks=draft.risks,
+        preview_id=preview.preview_id, version=preview.version,
+        content_hash=preview.content_hash,
+        leader_adapter=draft.leader_adapter, leader_version=draft.leader_version,
+        additional_budgets=(
+            f"Leader schema repairs: {budgets['max_leader_schema_repairs']}",
+            f"ACP reconnects: {budgets['max_acp_reconnects']}",
+            f"Final acceptance attempts: {budgets['max_final_acceptance_attempts']}",
+        ),
+    )
 
 
 __all__ = ["ProductShell"]

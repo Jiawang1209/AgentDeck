@@ -30,6 +30,7 @@ _PRESENTATION_FIELDS: Final = {
             "tasks", "task_dependencies", "acp_routes", "permission", "project_boundary",
             "acceptance_criteria", "retry_budget", "revision_budget", "non_goals",
             "risks", "preview_id", "version", "content_hash",
+            "leader_adapter", "leader_version", "additional_budgets",
         ),
     ),
     "running": (
@@ -55,8 +56,16 @@ _SEQUENCE_FIELDS: Final = frozenset(
         "leaders", "agents", "workers", "tasks", "task_dependencies", "acp_routes",
         "acceptance_criteria", "non_goals", "risks", "active_attempts",
         "completed", "incomplete", "evidence",
+        "additional_budgets",
     }
 )
+_OPTIONAL_FIELDS: Final = {
+    "mission_preview": {
+        "leader_adapter": "acp",
+        "leader_version": "unreported",
+        "additional_budgets": (),
+    }
+}
 
 
 def render(value: object) -> str:
@@ -93,11 +102,13 @@ def _coerce_presentation(value: object) -> object:
     if type(mode) is not str or mode not in _PRESENTATION_FIELDS:
         raise RenderError("unsupported presentation")
     constructor, fields = _PRESENTATION_FIELDS[mode]
-    if set(snapshot) != {"mode", *fields}:
+    defaults = _OPTIONAL_FIELDS.get(mode, {})
+    required = {"mode", *fields} - set(defaults)
+    if not required <= set(snapshot) or not set(snapshot) <= {"mode", *fields}:
         raise RenderError("unsupported presentation")
     facts: dict[str, object] = {}
     for field in fields:
-        fact = snapshot[field]
+        fact = snapshot[field] if field in snapshot else defaults[field]
         if field in _SEQUENCE_FIELDS and type(fact) in {list, tuple}:
             fact = tuple(fact)
         facts[field] = fact
@@ -151,6 +162,7 @@ def _render_mission_preview(value: MissionPreviewPresentation) -> str:
             f"Objective: {value.objective}",
             f"Scope: {value.scope}",
             f"Leader: {value.leader_backend} / {value.leader_model}",
+            f"Leader transport: {value.leader_adapter} ({value.leader_version})",
             _section("Workers", value.workers),
             _section("Tasks", value.tasks),
             _section("Task dependencies", value.task_dependencies),
@@ -159,6 +171,7 @@ def _render_mission_preview(value: MissionPreviewPresentation) -> str:
             f"Project boundary: {value.project_boundary}",
             _section("Acceptance criteria", value.acceptance_criteria),
             f"Budgets: {value.retry_budget} retries; {value.revision_budget} revisions",
+            _section("Additional budgets", value.additional_budgets),
             _section("Non-goals", value.non_goals),
             _section("Risks", value.risks),
             f"Content hash: {value.content_hash}",
