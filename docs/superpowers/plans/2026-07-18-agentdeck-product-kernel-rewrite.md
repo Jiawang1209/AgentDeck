@@ -3615,6 +3615,7 @@ git commit -m "feat: coordinate the four stage coding mission"
 - Create: src/agentdeck/application/execution_records.py
 - Create: tests/product_kernel/test_review_revision_semantics.py
 - Create: tests/product_kernel/test_execution_budgets.py
+- Modify: tests/product_kernel/test_execution_coordinator.py
 - Modify: HISTORY.md
 
 `execution.py` and `execution_service.py` enter Task 24 at the 500-line gate.
@@ -3625,6 +3626,12 @@ snapshot, instruction/result parsing, typed-evidence, and safe failure
 classification helpers. The existing modules keep their Kernel values and
 sequencing responsibilities; this is a responsibility extraction, not an
 authorization to change Task 23 behavior.
+
+The shared Task 23 coordinator fixture must migrate from placeholder `ev_*`
+references and flattened review output to Task 24's exact closed payloads. It
+must derive review/revision/acceptance references from the real preceding
+handoff/Evidence lineage produced during the run; production must not retain a
+compatibility path for invented fixture evidence.
 
 **Forbidden legacy imports:** M2c semantic validators and live harness.
 
@@ -3688,7 +3695,8 @@ git add src/agentdeck/kernel/execution.py \
   src/agentdeck/application/execution_service.py \
   src/agentdeck/application/execution_records.py \
   tests/product_kernel/test_review_revision_semantics.py \
-  tests/product_kernel/test_execution_budgets.py HISTORY.md
+  tests/product_kernel/test_execution_budgets.py \
+  tests/product_kernel/test_execution_coordinator.py HISTORY.md
 git commit -m "feat: enforce evidence backed execution semantics"
 ```
 
