@@ -29,9 +29,9 @@
   readiness/composition tests without a real provider, adapter process,
   authentication mutation, install, tmux, or global-configuration change.
 - Fresh final verification covers all 57 Product Kernel modules in four
-  non-overlapping process-safe partitions (`344 + 53 + 657 + 510 = 1564`
+  non-overlapping process-safe partitions (`346 + 53 + 657 + 510 = 1566`
   passed), the complete legacy suite (`4461` passed, `3` explicit opt-in
-  skips), architecture plus focused readiness (`80` passed), compileall, line
+  skips), architecture plus focused readiness (`82` passed), compileall, line
   limits, and diff checks.
 - Spec-review closure hardened every injected executable path to strict bounded
   UTF-8 with an absolute exact basename and no NUL, control, DEL, or oversize
@@ -52,8 +52,9 @@
   composition root no longer requires a test factory, each Worker owns a fresh
   connection/process identity, singleton factories fail before constructing a
   second Worker, callbacks remain Worker-owned, and initialize/session/prompt/
-  cancel/error paths close their SDK process context. Readiness and Worker
-  construction still start zero processes.
+  cancel/error paths close their SDK process context. Closing before start is
+  terminal, and a synchronous spawn-factory failure is closed and cannot be
+  retried. Readiness and Worker construction still start zero processes.
 - Leader transports now merge only bounded explicit overrides into a copied
   process environment and pass it to the official SDK spawn. Composition
   requires a strict UTF-8, control-free, resolve-normalized absolute project
@@ -61,9 +62,11 @@
   readiness lookalikes, relative roots, PATH drift, unsupported Claude adapter
   versions, and hostile environment data all fail closed.
 - The expanded TDD RED produced 14 focused contract failures plus the expected
-  missing production Worker module collection error. Focused GREEN passes 81
+  missing production Worker module collection error. The final lifecycle RED
+  added two deterministic close-before-start and synchronous-spawn failures.
+  Focused GREEN passes 83
   readiness, transport, and real fake-stdio Worker-connection cases; R4 passes
-  428 Product Kernel ACP/execution/approval cases and the related legacy surface
+  430 Product Kernel ACP/execution/approval cases and the related legacy surface
   passes 222 cases with one explicit opt-in skip.
 
 ### Bridge Codex app-server through official ACP

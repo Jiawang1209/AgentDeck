@@ -185,3 +185,56 @@ def test_connection_rejects_relative_command_root_or_hostile_environment(
             ("/adapter",), project_root=str(tmp_path),
             environment={"BAD\nKEY": "value"},
         )
+
+
+@_sync_test
+async def test_close_before_start_is_terminal_and_never_spawns(
+    tmp_path: Path,
+) -> None:
+    starts: list[object] = []
+
+    def forbidden_spawn(*args, **kwargs):
+        starts.append((args, kwargs))
+        raise AssertionError("spawn must remain unreachable")
+
+    owner = ACPWorkerConnection(
+        ("/verified/adapter",), project_root=str(tmp_path),
+        spawn_factory=forbidden_spawn,
+    )
+    ACPWorker(
+        agent=owner, project_root=str(tmp_path), clock=FrozenClock(NOW),
+        project_boundary_enforced=True,
+    )
+    await owner.aclose()
+
+    assert owner.closed is True
+    with pytest.raises(ValueError, match="lifecycle"):
+        await owner.initialize(PROTOCOL_VERSION)
+    assert starts == []
+
+
+@_sync_test
+async def test_synchronous_spawn_failure_is_terminal_and_never_retried(
+    tmp_path: Path,
+) -> None:
+    starts: list[object] = []
+
+    def broken_spawn(*args, **kwargs):
+        starts.append((args, kwargs))
+        raise RuntimeError("private synchronous spawn failure")
+
+    owner = ACPWorkerConnection(
+        ("/verified/adapter",), project_root=str(tmp_path),
+        spawn_factory=broken_spawn,
+    )
+    ACPWorker(
+        agent=owner, project_root=str(tmp_path), clock=FrozenClock(NOW),
+        project_boundary_enforced=True,
+    )
+    with pytest.raises(RuntimeError, match="synchronous spawn failure"):
+        await owner.initialize(PROTOCOL_VERSION)
+
+    assert owner.closed is True
+    with pytest.raises(ValueError, match="lifecycle"):
+        await owner.initialize(PROTOCOL_VERSION)
+    assert len(starts) == 1

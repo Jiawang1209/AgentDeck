@@ -128,14 +128,12 @@ class ACPWorkerConnection:
 
     async def aclose(self) -> None:
         async with self._close_lock:
+            self._closed = True
             manager = self._manager
             self._manager = None
             self._connection = None
             if manager is None:
-                if self._started:
-                    self._closed = True
                 return
-            self._closed = True
             await manager.__aexit__(None, None, None)
 
     async def _connect(self) -> object:
@@ -145,19 +143,19 @@ class ACPWorkerConnection:
             raise ValueError("ACP Worker connection is not bound")
         self._started = True
         client = _WorkerClient(self)
-        manager = self._spawn_factory(
-            client, self.command[0], *self.command[1:],
-            env=dict(self.environment), cwd=self.project_root,
-            transport_kwargs={
-                "limit": self.max_bytes,
-                "stderr": asyncio.subprocess.DEVNULL,
-                "shutdown_timeout": min(self.timeout_seconds, 2.0),
-            },
-            receive_timeout=self.timeout_seconds,
-        )
-        self._manager = manager
         entered_manager = False
         try:
+            manager = self._spawn_factory(
+                client, self.command[0], *self.command[1:],
+                env=dict(self.environment), cwd=self.project_root,
+                transport_kwargs={
+                    "limit": self.max_bytes,
+                    "stderr": asyncio.subprocess.DEVNULL,
+                    "shutdown_timeout": min(self.timeout_seconds, 2.0),
+                },
+                receive_timeout=self.timeout_seconds,
+            )
+            self._manager = manager
             entered = await manager.__aenter__()
             entered_manager = True
             if type(entered) is not tuple or len(entered) != 2:
