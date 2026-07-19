@@ -235,6 +235,7 @@ src/agentdeck/
   adapters/
     discovery.py
     sqlite.py
+    sqlite_approval.py   # canonical approval row persistence
     acp.py              # ACP Worker mapping and outcome authority
     acp_transport.py    # official SDK and bounded stdio lifecycle
     acp_leader.py       # structured Leader proposal projection
@@ -591,6 +592,12 @@ collect_result
 Adapters map ACP updates into stable Worker Events such as started, progress,
 tool started/completed, permission requested, artifact changed, message,
 completed, failed, and cancelled.
+
+A stable `permission_requested` event carries the exact request identity plus a
+conservative normalized effect and bounded risk classification derived by the
+ACP Worker adapter. Raw tool input, protocol frames, credentials, and model
+prose never become approval authority. An unclassifiable effect fails closed;
+the Approval Service must not infer permission from prompt text.
 
 The automatic MVP does not fall back to CLI/PTY prompt injection. If required
 ACP is unavailable, the Mission does not start. Native CLI and tmux remain

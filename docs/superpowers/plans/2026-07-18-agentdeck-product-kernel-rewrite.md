@@ -1819,9 +1819,23 @@ git commit -m "feat: map acp workers into stable events"
 **Files:**
 - Create: src/agentdeck/ports/approval.py
 - Create: src/agentdeck/application/approval_service.py
+- Modify: src/agentdeck/adapters/acp.py
+- Create: src/agentdeck/adapters/sqlite_approval.py
+- Modify: src/agentdeck/adapters/sqlite.py
 - Create: tests/product_kernel/test_approval_service.py
 - Create: tests/product_kernel/test_acp_permission_bridge.py
+- Create: tests/product_kernel/test_sqlite_approval.py
+- Modify: tests/product_kernel/test_acp_worker_contract.py
 - Modify: HISTORY.md
+
+**Repo-truth prerequisite closure:** the Task 11 schema contains `approvals`,
+but the current SQLite Adapter cannot persist an approval aggregate; and the
+Task 21 Worker event preserves request identity but not the stable normalized
+effect/risk facts required by sections 8.7 and 9. Task 22 closes only these two
+missing production seams. `adapters/acp.py` remains the sole Worker mapping and
+outcome authority; `sqlite_approval.py` is an Adapter helper reached only from
+the command-bound SQLite transaction. No Kernel/Application dependency on an
+Adapter is admitted.
 
 **Forbidden legacy imports:** legacy approval actions/cards and implicit CLI
 approval flags in Application or Kernel.
@@ -1864,15 +1878,23 @@ conda run -n agentdeck pytest tests/product_kernel/test_approval_service.py test
 
 Expected: no bridge. ApprovalService evaluates each ACP permission request
 against Attempt effective scope, persists request and decision with full
-lineage, invokes human or independent Approval Port when required, then replies
-to that exact ACP request. An Attempt may produce a finite sequence; the next
-Task cannot start until terminal result validation and Handoff commit.
+lineage, invokes human or independent Approval Port when required, durably
+records the decision, then replies to that exact ACP request. Request and
+decision are separate stable command transactions so no database transaction
+is held across reviewer or Worker I/O. An Attempt may produce a finite
+sequence; the next Task cannot start until terminal result validation and
+Handoff commit. The ACP Worker maps the permission's tool kind into a bounded
+normalized effect/risk fact without persisting raw tool input. Unknown effects
+fail closed. SQLite writes the canonical request/decision into the existing
+`approvals` table and the audit event in the same command transaction.
 
 - [ ] **Step 3: Verify and commit**
 
 ```bash
-conda run -n agentdeck pytest tests/product_kernel/test_approval_service.py tests/product_kernel/test_acp_permission_bridge.py tests/product_kernel/test_kernel_permissions.py -q
-git add src/agentdeck/ports/approval.py src/agentdeck/application/approval_service.py tests/product_kernel HISTORY.md
+conda run -n agentdeck pytest tests/product_kernel/test_approval_service.py tests/product_kernel/test_acp_permission_bridge.py tests/product_kernel/test_sqlite_approval.py tests/product_kernel/test_acp_worker_contract.py tests/product_kernel/test_kernel_permissions.py tests/product_kernel/test_architecture.py -q
+python -m compileall src tests -q
+git diff --check
+git add src/agentdeck/ports/approval.py src/agentdeck/application/approval_service.py src/agentdeck/adapters/acp.py src/agentdeck/adapters/sqlite_approval.py src/agentdeck/adapters/sqlite.py tests/product_kernel/test_approval_service.py tests/product_kernel/test_acp_permission_bridge.py tests/product_kernel/test_sqlite_approval.py tests/product_kernel/test_acp_worker_contract.py HISTORY.md
 git commit -m "feat: bridge sequential acp permissions"
 ```
 

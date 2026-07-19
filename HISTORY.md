@@ -4,6 +4,18 @@
 
 ## 2026-07-19
 
+### Correct the sequential approval production seams
+
+- Reconciled Task 22 with the frozen repo truth before implementation. The
+  SQLite schema already contains `approvals`, but the Adapter lacks a
+  command-bound write path; the ACP Worker event also lacks the normalized
+  effect/risk facts needed for an auditable permission decision.
+- Extended the formal Task 22 inventory to close only those seams through a
+  dedicated SQLite approval helper and the existing ACP Worker authority.
+  Request and decision remain separate durable commands around external I/O;
+  raw ACP tool input never becomes permission authority, unknown effects fail
+  closed, and Application retains its Kernel/Ports-only dependency direction.
+
 ### Correct the ACP Leader physical module boundary
 
 - Reconciled Task 18 with the Task 21 repo truth before the next implementation
