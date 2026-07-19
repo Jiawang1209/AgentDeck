@@ -4,6 +4,23 @@
 
 ## 2026-07-19
 
+### Close ACP Leader cancellation-adversary gaps
+
+- Replaced the synchronous bridge's `asyncio.run` / `wait_for` shutdown path
+  with a dedicated event-loop driver. An async transport coroutine that catches
+  `CancelledError` can no longer hold the caller or a bridge thread open after
+  the configured timeout; pending tasks are cancelled without waiting for
+  adversarial cancellation convergence and the private loop is closed.
+- Routed initialize, new/load/resume session, prompt, cancel and manager
+  enter/close calls through one content-free invocation boundary. Exceptions
+  raised before an awaitable is returned, non-awaitable results and task
+  construction failures now map to their stable typed transport code without
+  retaining hostile content.
+- Review RED reproduced two unbounded bridge paths plus seven synchronous-call
+  leaks or type escapes; focused GREEN passed all `39` Task 18 transport and
+  Leader cases. The contract intentionally excludes synchronous infinite loops,
+  which Python threads cannot safely terminate.
+
 ### Bound ACP Leader transport lifecycles
 
 - Replaced per-operation timeout resets with one monotonic transport deadline

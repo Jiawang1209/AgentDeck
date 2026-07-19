@@ -5,18 +5,28 @@ from dataclasses import replace
 from functools import wraps
 import json
 from pathlib import Path
+import threading
 import traceback
 
 import pytest
+from acp import PROTOCOL_VERSION
+from acp.schema import (
+    AgentCapabilities, InitializeResponse, LoadSessionResponse,
+    NewSessionResponse, PromptCapabilities, PromptResponse,
+    ResumeSessionResponse, SessionCapabilities, SessionResumeCapabilities,
+)
 
 from agentdeck.adapters.acp_leader import ACPLeader
+from agentdeck.adapters.acp_transport import ACPStdioTransport
 from agentdeck.ports.leader import (
     LeaderFailure,
     LeaderFailureCode,
     ProjectContext,
     ResolvedLeaderModel,
 )
-from agentdeck.ports.transport import TransportFailure, TransportFailureCode
+from agentdeck.ports.transport import (
+    TransportFailure, TransportFailureCode, TransportPromptPart, TransportSession,
+)
 
 from .fixtures.fake_acp_stdio_agent import (
     DECOY_MARKER,
@@ -256,4 +266,147 @@ def test_planning_side_effect_is_cancelled_before_waiting_for_prompt(
     assert names.index("session/cancel") > names.index("session/prompt")
     if mode == "permission_hang":
         assert names.index("session/cancel") > names.index("permission/result")
+    assert caught.value.__cause__ is None and caught.value.__context__ is None
+
+
+class _CancellationSwallowingTransport:
+    async def __aenter__(self):
+        while True:
+            try:
+                await asyncio.sleep(10)
+            except asyncio.CancelledError:
+                continue
+
+    async def __aexit__(self, *_args):
+        return None
+
+
+def _swallowing_leader(command: tuple[str, ...]) -> ACPLeader:
+    return _leader(
+        command, timeout_seconds=0.03,
+        transport_factory=lambda *_args, **_kwargs: _CancellationSwallowingTransport(),
+    )
+
+
+def test_sync_bridge_without_running_loop_does_not_wait_for_cancel_swallowing_task(
+    tmp_path: Path,
+) -> None:
+    command, _log = _fixture_files(tmp_path)
+    failures: list[BaseException] = []
+
+    def invoke() -> None:
+        try:
+            _swallowing_leader(command).propose_mission(_request(tmp_path))
+        except BaseException as error:
+            failures.append(error)
+
+    probe = threading.Thread(target=invoke, daemon=True)
+    probe.start()
+    probe.join(0.2)
+    assert not probe.is_alive()
+    assert len(failures) == 1 and type(failures[0]) is TransportFailure
+    assert failures[0].transport_code is TransportFailureCode.TIMEOUT
+    assert failures[0].__cause__ is None and failures[0].__context__ is None
+
+
+@_sync_test
+async def test_sync_bridge_inside_running_loop_leaves_no_worker_thread(
+    tmp_path: Path,
+) -> None:
+    command, _log = _fixture_files(tmp_path)
+    before = {thread.ident for thread in threading.enumerate()}
+    with pytest.raises(TransportFailure, match="timeout"):
+        _swallowing_leader(command).propose_mission(_request(tmp_path))
+    await asyncio.sleep(0.02)
+    leaked = [
+        thread for thread in threading.enumerate()
+        if thread.ident not in before and thread.is_alive()
+    ]
+    assert leaked == []
+
+
+@pytest.mark.parametrize(("operation", "code"), [
+    ("initialize", "initialization_failed"), ("nonawaitable", "initialization_failed"),
+    ("new", "session_failed"), ("load", "session_failed"),
+    ("resume", "session_failed"), ("prompt", "prompt_failed"),
+    ("cancel", "cancellation_failed"), ("close", "disconnected"),
+])
+@_sync_test
+async def test_sync_connection_call_failures_are_typed_and_content_free(
+    tmp_path: Path, operation: str, code: str,
+) -> None:
+    marker = f"secret-sync-{operation}-failure"
+
+    async def ready(value):
+        return value
+
+    class Connection:
+        def initialize(self, _version: int):
+            if operation == "initialize":
+                raise RuntimeError(marker)
+            if operation == "nonawaitable":
+                return object()
+            return ready(InitializeResponse(
+                protocol_version=PROTOCOL_VERSION,
+                agent_capabilities=AgentCapabilities(
+                    load_session=operation != "resume",
+                    prompt_capabilities=PromptCapabilities(embedded_context=True),
+                    session_capabilities=SessionCapabilities(
+                        resume=SessionResumeCapabilities()),
+                ),
+            ))
+
+        def new_session(self, **_kwargs):
+            if operation == "new":
+                raise RuntimeError(marker)
+            return ready(NewSessionResponse(session_id="sync-session"))
+
+        def load_session(self, **_kwargs):
+            if operation == "load":
+                raise RuntimeError(marker)
+            return ready(LoadSessionResponse())
+
+        def resume_session(self, *_args, **_kwargs):
+            if operation == "resume":
+                raise RuntimeError(marker)
+            return ready(ResumeSessionResponse())
+
+        def prompt(self, *_args):
+            if operation == "prompt":
+                raise RuntimeError(marker)
+            return ready(PromptResponse(stop_reason="end_turn"))
+
+        def cancel(self, *_args):
+            if operation == "cancel":
+                raise RuntimeError(marker)
+            return ready(None)
+
+    class Manager:
+        def __aenter__(self):
+            return ready(Connection())
+
+        def __aexit__(self, *_args):
+            if operation == "close":
+                raise RuntimeError(marker)
+            return ready(None)
+
+    transport = ACPStdioTransport(
+        ("unused",), project_root=str(tmp_path),
+        client_factory=lambda *_args: Manager(),
+    )
+    with pytest.raises(TransportFailure, match=code) as caught:
+        async with transport:
+            await transport.initialize()
+            if operation == "new":
+                await transport.new_session()
+            elif operation in {"load", "resume"}:
+                await transport.resume_session(TransportSession("persisted"))
+            elif operation in {"prompt", "cancel"}:
+                session = await transport.new_session()
+                if operation == "prompt":
+                    await transport.prompt(
+                        session, (TransportPromptPart.text("sync prompt"),))
+                else:
+                    await transport.cancel(session)
+    assert marker not in _chain(caught.value)
     assert caught.value.__cause__ is None and caught.value.__context__ is None

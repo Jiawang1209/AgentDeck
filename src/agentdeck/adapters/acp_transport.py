@@ -154,10 +154,8 @@ class ACPStdioTransport:
         if self._capabilities is not None:
             raise ValueError("ACP transport is already initialized")
         connection = await self._connect()
-        response = await self._invoke(
-            connection.initialize(PROTOCOL_VERSION),
-            TransportFailureCode.INITIALIZATION_FAILED,
-        )
+        response = await self._call(connection, "initialize",
+            TransportFailureCode.INITIALIZATION_FAILED, PROTOCOL_VERSION)
         if type(response) is not InitializeResponse or response.protocol_version != PROTOCOL_VERSION:
             raise TransportFailure(TransportFailureCode.PROTOCOL_MISMATCH)
         advertised = response.agent_capabilities
@@ -178,10 +176,8 @@ class ACPStdioTransport:
         if self._session is not None:
             raise ValueError("ACP transport already owns a session")
         connection = self._require_connection()
-        response = await self._invoke(
-            connection.new_session(cwd=self.project_root),
-            TransportFailureCode.SESSION_FAILED,
-        )
+        response = await self._call(connection, "new_session",
+            TransportFailureCode.SESSION_FAILED, cwd=self.project_root)
         if type(response) is not NewSessionResponse:
             raise TransportFailure(TransportFailureCode.PROTOCOL_MISMATCH)
         try:
@@ -199,17 +195,20 @@ class ACPStdioTransport:
             raise TransportFailure(TransportFailureCode.CAPABILITY_MISSING)
         connection = self._require_connection()
         if capabilities.load_session:
-            call = connection.load_session(
-                cwd=self.project_root, session_id=session.session_id
-            )
+            method = "load_session"
+            arguments = ()
+            keywords = {"cwd": self.project_root, "session_id": session.session_id}
             expected = LoadSessionResponse
         else:
-            call = connection.resume_session(session.session_id, cwd=self.project_root)
+            method = "resume_session"
+            arguments = (session.session_id,)
+            keywords = {"cwd": self.project_root}
             expected = ResumeSessionResponse
         fresh = self._session is None
         self._session = session
         try:
-            response = await self._invoke(call, TransportFailureCode.SESSION_FAILED)
+            response = await self._call(connection, method,
+                TransportFailureCode.SESSION_FAILED, *arguments, **keywords)
         except BaseException:
             if fresh:
                 self._session = None
@@ -238,10 +237,8 @@ class ACPStdioTransport:
                 )))
         connection = self._require_connection()
         try:
-            response = await self._invoke(
-                connection.prompt(session.session_id, blocks),
-                TransportFailureCode.PROMPT_FAILED,
-            )
+            response = await self._call(connection, "prompt",
+                TransportFailureCode.PROMPT_FAILED, session.session_id, blocks)
             await self._wait_for_updates()
         finally:
             self._updates.put_nowait(_SENTINEL)
@@ -283,15 +280,8 @@ class ACPStdioTransport:
         self._require_session(session)
         connection = self._require_connection()
         self._clear_pending()
-        failed = False
-        try:
-            call = connection.cancel(session.session_id)
-        except Exception:
-            failed = True
-            call = None
-        if failed or call is None:
-            raise TransportFailure(TransportFailureCode.CANCELLATION_FAILED)
-        await self._invoke(call, TransportFailureCode.CANCELLATION_FAILED)
+        await self._call(connection, "cancel",
+            TransportFailureCode.CANCELLATION_FAILED, session.session_id)
     async def close(self) -> None:
         if self._closed:
             return
@@ -302,10 +292,8 @@ class ACPStdioTransport:
         self._connection = None
         if manager is None:
             return
-        await self._invoke(
-            manager.__aexit__(None, None, None),
-            TransportFailureCode.DISCONNECTED,
-        )
+        await self._call(manager, "__aexit__",
+            TransportFailureCode.DISCONNECTED, None, None, None)
     async def _connect(self) -> object:
         if not self._entered or self._closed:
             raise ValueError("ACP transport must be entered before use")
@@ -316,35 +304,38 @@ class ACPStdioTransport:
                     self._callback, self.command, self.project_root,
                     self.max_bytes, self._budget(),
                 )
-                entering = manager.__aenter__()
             except Exception:
                 factory_failed = True
                 manager = None
-                entering = None
-            if factory_failed or manager is None or entering is None:
+            if factory_failed or manager is None:
                 raise TransportFailure(TransportFailureCode.INITIALIZATION_FAILED)
             self._manager = manager
-            self._connection = await self._invoke(
-                entering, TransportFailureCode.INITIALIZATION_FAILED)
+            self._connection = await self._call(
+                manager, "__aenter__", TransportFailureCode.INITIALIZATION_FAILED)
             if self._connection is None:
                 raise TransportFailure(TransportFailureCode.INITIALIZATION_FAILED) from None
         return self._connection
     async def _invoke(self, awaitable, code: TransportFailureCode) -> object:
         failure: TransportFailureCode | None = None
         result = None
-        task = asyncio.ensure_future(awaitable)
+        task_failed = False
+        try:
+            task = asyncio.ensure_future(awaitable)
+        except Exception:
+            task_failed = True
+            task = None
+        if task_failed or task is None:
+            raise TransportFailure(code)
         try:
             done, _pending = await asyncio.wait((task,), timeout=self._budget())
             if not done:
                 task.cancel()
-                task.add_done_callback(
-                    lambda item: None if item.cancelled() else item.exception())
+                task.add_done_callback(lambda item: None if item.cancelled() else item.exception())
                 raise asyncio.TimeoutError
             result = task.result()
         except asyncio.CancelledError:
             task.cancel()
-            task.add_done_callback(
-                lambda item: None if item.cancelled() else item.exception())
+            task.add_done_callback(lambda item: None if item.cancelled() else item.exception())
             raise
         except asyncio.TimeoutError:
             failure = TransportFailureCode.TIMEOUT
@@ -355,6 +346,18 @@ class ACPStdioTransport:
         if failure is not None:
             raise TransportFailure(failure) from None
         return result
+    async def _call(self, target: object, method: str, code: TransportFailureCode,
+        *args: object, **kwargs: object,
+    ) -> object:
+        failed = False
+        try:
+            awaitable = getattr(target, method)(*args, **kwargs)
+        except Exception:
+            failed = True
+            awaitable = None
+        if failed:
+            raise TransportFailure(code)
+        return await self._invoke(awaitable, code)
     def _accept_update(self, session_id: str, update: object) -> None:
         session = self._session
         if session is None or session.session_id != session_id:

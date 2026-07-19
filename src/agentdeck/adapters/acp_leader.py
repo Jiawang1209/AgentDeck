@@ -36,6 +36,7 @@ _REQUEST_MIME: Final = "application/vnd.agentdeck.request+json"
 _MAX_REQUEST_BYTES: Final = 1024 * 1024
 _MAX_RESPONSE_BYTES: Final = 8 * 1024 * 1024
 _MAX_IDENTITY_BYTES: Final = 4096
+_BRIDGE_THREAD_GRACE_SECONDS: Final = 0.1
 _T = TypeVar("_T")
 TransportFactory = Callable[..., TransportPort]
 
@@ -252,15 +253,22 @@ def _decode_proposal(raw: str, request: LeaderRequest) -> LeaderProposal:
     raise LeaderFailure(code) from None
 
 
-async def _run_bounded(factory: Callable[[], object], timeout: float) -> object:
-    timed_out = False
+def _drive_loop(factory: Callable[[], object], timeout: float) -> object:
+    loop = asyncio.new_event_loop()
+    task: asyncio.Task[object] | None = None
     try:
-        return await asyncio.wait_for(factory(), timeout=timeout)  # type: ignore[arg-type]
-    except asyncio.TimeoutError:
-        timed_out = True
-    if timed_out:
-        raise TransportFailure(TransportFailureCode.TIMEOUT)
-    raise TransportFailure(TransportFailureCode.DISCONNECTED)
+        task = loop.create_task(factory())  # type: ignore[arg-type]
+        done, _pending = loop.run_until_complete(
+            asyncio.wait((task,), timeout=timeout)
+        )
+        if not done:
+            raise TransportFailure(TransportFailureCode.TIMEOUT)
+        return task.result()
+    finally:
+        for pending in asyncio.all_tasks(loop):
+            pending.cancel()
+            pending._log_destroy_pending = False
+        loop.close()
 
 
 def _run_sync(factory: Callable[[], object], timeout: float) -> _T:
@@ -270,19 +278,21 @@ def _run_sync(factory: Callable[[], object], timeout: float) -> _T:
     except RuntimeError:
         running = False
     if not running:
-        return asyncio.run(_run_bounded(factory, timeout))  # type: ignore[return-value]
+        return _drive_loop(factory, timeout)  # type: ignore[return-value]
     result: list[object] = []
     failures: list[BaseException] = []
 
     def target() -> None:
         try:
-            result.append(asyncio.run(_run_bounded(factory, timeout)))
+            result.append(_drive_loop(factory, timeout))
         except BaseException as error:
             failures.append(error)
 
-    thread = threading.Thread(target=target, daemon=True)
+    thread = threading.Thread(
+        target=target, name="agentdeck-acp-leader-bridge", daemon=True
+    )
     thread.start()
-    thread.join(timeout)
+    thread.join(timeout + _BRIDGE_THREAD_GRACE_SECONDS)
     if thread.is_alive():
         raise TransportFailure(TransportFailureCode.TIMEOUT)
     if failures:
