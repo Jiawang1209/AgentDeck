@@ -8,6 +8,7 @@ from agentdeck.adapters.config import ConfigResolver
 from agentdeck.adapters.discovery import ReadinessState, ToolDiscovery, discover_tools
 from agentdeck.adapters.sqlite import SQLiteStore
 from agentdeck.adapters.system_clock import SystemClock
+from agentdeck.application.exit_service import ExitResult, ExitService
 from agentdeck.application.session_service import SessionService
 from agentdeck.product.renderer import render
 from agentdeck.product.shell import ProductShell, validate_mission_preview
@@ -15,6 +16,10 @@ from agentdeck.product.shell import ProductShell, validate_mission_preview
 
 def _new_session_id() -> str:
     return f"ses_{uuid4().hex}"
+
+
+def _new_exit_request_id() -> str:
+    return f"xrt_{uuid4().hex}"
 
 
 def build_product_shell(
@@ -29,6 +34,7 @@ def build_product_shell(
     shell_factory: Callable[..., ProductShell] = ProductShell,
     mission_service_factory: Callable[..., object] | None = None,
     session_id_factory: Callable[[], str] = _new_session_id,
+    exit_request_id_factory: Callable[[], str] = _new_exit_request_id,
 ) -> ProductShell:
     """Compose the foreground Product Shell through injectable factories."""
 
@@ -51,6 +57,13 @@ def build_product_shell(
             available_leaders=available_leaders,
             session_id_factory=session_id_factory,
         )
+        exit_service = ExitService(
+            store=store,
+            clock=clock,
+            session_id=service.current().session_id,
+            request_id_factory=exit_request_id_factory,
+        )
+        restored_exit = _restored_exit(store, service, exit_service)
         mission_service = None
         if mission_service_factory is not None:
             mission_service = mission_service_factory(
@@ -60,6 +73,8 @@ def build_product_shell(
             )
         return shell_factory(
             session_service=service,
+            exit_service=exit_service,
+            restored_exit=restored_exit,
             mission_service=mission_service,
             available_leaders=available_leaders,
             read_line=read_line,
@@ -71,6 +86,19 @@ def build_product_shell(
     except BaseException:
         store.close()
         raise
+
+
+def _restored_exit(
+    store: SQLiteStore,
+    service: SessionService,
+    exit_service: ExitService,
+) -> ExitResult | None:
+    snapshot = store.load_aggregate(
+        "product_sessions", service.current().session_id
+    )
+    if snapshot is None or snapshot.get("pending_exit_id") is None:
+        return None
+    return exit_service.request_exit()
 
 
 def _available_leaders(

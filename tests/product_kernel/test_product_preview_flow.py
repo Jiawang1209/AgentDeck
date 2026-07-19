@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from agentdeck.adapters.sqlite import SQLiteStore
+from agentdeck.application.exit_service import ExitService
 from agentdeck.application.leader_service import LeaderService
 from agentdeck.application.mission_service import MissionService
 from agentdeck.application.session_service import SessionService
@@ -47,6 +48,15 @@ def _mission_service(root: Path, store: SQLiteStore) -> MissionService:
     )
 
 
+def _exit_service(store: SQLiteStore) -> ExitService:
+    return ExitService(
+        store=store,
+        clock=FrozenClock(NOW),
+        session_id="ses_product",
+        request_id_factory=iter(("xrt_" + "1" * 32,)).__next__,
+    )
+
+
 def test_configured_shell_renders_human_preview_and_exact_confirmation(
     tmp_path: Path,
 ) -> None:
@@ -64,7 +74,8 @@ def test_configured_shell_renders_human_preview_and_exact_confirmation(
         f"confirm {preview.preview_id} {preview.content_hash}", "/status", "/exit",
     ))
     shell = ProductShell(
-        session_service=session, mission_service=mission,
+        session_service=session, exit_service=_exit_service(store),
+        mission_service=mission,
         available_leaders=AVAILABLE, read_line=lambda _: next(lines),
         write_line=output.append, close=store.close,
     )
@@ -86,7 +97,8 @@ def test_open_goal_without_leader_is_retained_not_discarded(tmp_path: Path) -> N
         project_root=str(tmp_path), available_leaders=AVAILABLE,
     )
     shell = ProductShell(
-        session_service=service, mission_service=None,
+        session_service=service, exit_service=_exit_service(store),
+        mission_service=None,
         available_leaders=AVAILABLE, read_line=lambda _: next(pending),
         write_line=output.append, close=store.close,
     )

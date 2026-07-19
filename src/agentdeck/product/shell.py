@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from typing import Final
 
+from agentdeck.application.exit_service import ExitResult, ExitService
 from agentdeck.application.session_service import SessionService, SessionServiceError
 from agentdeck.application.mission_service import (
     MissionPreviewView,
@@ -50,11 +51,13 @@ class ProductShell:
         self,
         *,
         session_service: SessionService,
+        exit_service: ExitService,
         available_leaders: Mapping[str, tuple[str, ...]],
         read_line: Callable[[str], str],
         write_line: Callable[[str], object],
         close: Callable[[], object],
         mission_service: MissionService | None = None,
+        restored_exit: ExitResult | None = None,
         default_permission: str = _DEFAULT_PERMISSION,
         render_text: Callable[[object], str] = render,
     ) -> None:
@@ -66,6 +69,13 @@ class ProductShell:
         ):
             if not callable(getattr(dependency, method, None)):
                 raise TypeError(f"{label} does not satisfy the Product Shell")
+        if any(
+            not callable(getattr(exit_service, method, None))
+            for method in ("request_exit", "decline", "confirm", "input_closed")
+        ):
+            raise TypeError("exit_service does not satisfy the Product Shell")
+        if restored_exit is not None and type(restored_exit) is not ExitResult:
+            raise TypeError("restored_exit must be an ExitResult or None")
         for dependency, label in (
             (read_line, "read_line"),
             (write_line, "write_line"),
@@ -78,6 +88,8 @@ class ProductShell:
         if default_permission not in _PERMISSIONS:
             raise ValueError("default_permission is unsupported")
         self._service = session_service
+        self._exit = exit_service
+        self._restored_exit = restored_exit
         if mission_service is not None and any(
             not callable(getattr(mission_service, method, None))
             for method in ("propose", "revise", "confirm", "current_preview")
@@ -106,7 +118,16 @@ class ProductShell:
             while True:
                 try:
                     text = self._read_line("agentdeck> ")
+                except KeyboardInterrupt:
+                    if self._show_exit_result(self._exit.request_exit()):
+                        break
+                    continue
                 except EOFError:
+                    result = self._exit.input_closed()
+                    if result.diagnostic is not None:
+                        self._emit(self._render(DiagnosisPresentation(
+                            result.diagnostic
+                        )))
                     break
                 if type(text) is not str:
                     self._emit("Input was not accepted. Use /help.")
@@ -182,12 +203,17 @@ class ProductShell:
         elif kind is CommandKind.DIAGNOSE:
             self._emit("No ProductSession diagnostic is active.")
         elif kind is CommandKind.EXIT:
-            self._emit(self._render(ExitPresentation(
-                summary="The ProductSession is persisted.",
-                active_attempts=(),
-                requires_confirmation=False,
-            )))
-            return True
+            if command.argument is None:
+                result = self._exit.request_exit()
+            elif command.argument == "confirm":
+                result = self._exit.confirm(
+                    command.request_id, command.content_hash
+                )
+            else:
+                result = self._exit.decline(
+                    command.request_id, command.content_hash
+                )
+            return self._show_exit_result(result)
         else:
             self._emit("No active Mission can accept that command.")
         return False
@@ -236,13 +262,48 @@ class ProductShell:
         self._emit(f"Goal ready: {goal}")
 
     def _show_initial_state(self) -> None:
+        view = self._service.current()
+        if view.reentry_diagnostic is not None:
+            self._emit(self._render(DiagnosisPresentation(
+                view.reentry_diagnostic
+            )))
+        if self._restored_exit is not None:
+            self._show_exit_result(self._restored_exit)
         preview = None if self._mission is None else self._mission.current_preview()
         if preview is not None:
             self._emit(self._render(_preview_presentation(preview)))
-        elif self._service.current().state.value == "setup":
+        elif view.state.value == "setup":
             self._show_setup()
         else:
             self._show_status()
+
+    def _show_exit_result(self, result: ExitResult) -> bool:
+        if type(result) is not ExitResult:
+            raise TypeError("ExitService returned an invalid result")
+        if result.diagnostic is not None:
+            self._emit(self._render(DiagnosisPresentation(result.diagnostic)))
+            return False
+        if result.request is not None:
+            request = result.request
+            self._emit(self._render(ExitPresentation(
+                summary="The active Attempt must be interrupted before exit.",
+                active_attempts=(request.attempt.attempt_id,),
+                requires_confirmation=True,
+                request_id=request.request_id,
+                attempt_hash=request.attempt_hash,
+            )))
+            return False
+        if result.mode == "exit_declined":
+            self._emit("Exit request declined. The active Attempt continues.")
+            return False
+        if result.mode == "exit_ready" and result.should_exit:
+            self._emit(self._render(ExitPresentation(
+                summary="The ProductSession is persisted.",
+                active_attempts=(),
+                requires_confirmation=False,
+            )))
+            return True
+        raise ValueError("ExitService returned an unsupported result")
 
     def _show_setup(self) -> None:
         view = self._service.current()

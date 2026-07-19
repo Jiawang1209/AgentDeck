@@ -44,7 +44,10 @@ _PRESENTATION_FIELDS: Final = {
     "diagnosis": (DiagnosisPresentation, ("diagnostic",)),
     "exit": (
         ExitPresentation,
-        ("summary", "active_attempts", "requires_confirmation"),
+        (
+            "summary", "active_attempts", "requires_confirmation",
+            "request_id", "attempt_hash",
+        ),
     ),
     "final": (
         FinalPresentation,
@@ -64,7 +67,8 @@ _OPTIONAL_FIELDS: Final = {
         "leader_adapter": "acp",
         "leader_version": "unreported",
         "additional_budgets": (),
-    }
+    },
+    "exit": {"request_id": None, "attempt_hash": None},
 }
 
 
@@ -229,10 +233,18 @@ def _render_diagnosis(value: DiagnosisPresentation) -> str:
 def _render_exit(value: ExitPresentation) -> str:
     if value.requires_confirmation:
         attempts = ", ".join(value.active_attempts) if value.active_attempts else "unknown"
-        return (
+        lines = (
             "Exit needs confirmation.\n"
             f"Active attempts: {attempts}\n"
             f"Impact: {value.summary}"
+        )
+        if value.request_id is None or value.attempt_hash is None:
+            return lines
+        return (
+            f"{lines}\nConfirm this exact request:\n"
+            f"/exit confirm {value.request_id} {value.attempt_hash}\n"
+            "Or keep the Attempt active:\n"
+            f"/exit decline {value.request_id} {value.attempt_hash}"
         )
     return f"Session is safe to exit.\n{value.summary}"
 

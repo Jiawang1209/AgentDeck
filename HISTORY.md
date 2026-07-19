@@ -4,6 +4,34 @@
 
 ## 2026-07-19
 
+### Bind fail-closed Product Shell exit controls
+
+- Extended the deterministic slash grammar with only bare `/exit` and exact
+  four-token `confirm` / `decline` decisions. Request identities and Attempt
+  hashes are one closed lowercase-hex authority pair; ordinary controls cannot
+  carry them, and malformed, partial, oversize, or extra-token input remains
+  unrecognized.
+- Added bounded exit presentation facts and plain-text rendering for copyable
+  exact confirm and decline commands without exposing the canonical Attempt
+  JSON. Idle exit cannot carry request authority, while compatibility-only
+  confirmation presentations without authority never invent an identity.
+- Bound the foreground Product Shell to an explicitly injected real
+  `ExitService`. Bare exit requests authority, exact decisions reach the
+  corresponding Application operation, active confirm remains fail-closed at
+  `exit_cancellation_unavailable`, Ctrl-C enters the same surface, and EOF only
+  reports the read-only active-work diagnostic before closing input. Bootstrap
+  now gives latest-session selection and exit handling the same Store, clock,
+  and session while keeping independent injectable UUID factories; re-entry
+  restores configuration, Mission Preview, pending exit, and warning-first
+  presentation order.
+- TDD began from a clean `99825835` baseline with 91 adjacent tests passing.
+  RED runs exposed the absent command authority fields, exit presentation
+  fields, explicit ExitService injection, composition factory, Ctrl-C/EOF
+  routing, and SQLite re-entry surface. Final verification passes 115 focused
+  Task 15A tests, 239 R2 regressions, 14 architecture checks, all 1,302 Product
+  Kernel tests, and `compileall`; every touched Product source/test file stays
+  within 500 lines.
+
 ### Persist exact ProductSession exit requests
 
 - Added frozen exit Attempt snapshots and request values with the exact bounded

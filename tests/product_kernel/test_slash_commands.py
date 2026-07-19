@@ -42,6 +42,65 @@ def test_parsed_commands_are_immutable_values() -> None:
         command.argument = "changed"  # type: ignore[misc]
 
 
+@pytest.mark.parametrize("decision", ("confirm", "decline"))
+def test_exit_confirmation_grammar_carries_exact_identity_and_hash(
+    decision: str,
+) -> None:
+    request_id = "xrt_" + "1" * 32
+    content_hash = "a" * 64
+
+    command = parse_command(
+        f"/exit {decision} {request_id} {content_hash}"
+    )
+
+    assert command == SlashCommand(
+        kind=CommandKind.EXIT,
+        argument=decision,
+        request_id=request_id,
+        content_hash=content_hash,
+    )
+
+
+@pytest.mark.parametrize(
+    "text",
+    (
+        "/exit yes",
+        "/exit confirm",
+        "/exit decline xrt_bad " + "a" * 64,
+        "/exit confirm xrt_" + "1" * 32 + " bad",
+        "/exit confirm xrt_" + "1" * 32 + " " + "a" * 64 + " extra",
+    ),
+)
+def test_inexact_exit_confirmation_grammar_is_rejected(text: str) -> None:
+    assert parse_command(text) is None
+
+
+@pytest.mark.parametrize(
+    "values",
+    (
+        {"request_id": "xrt_" + "1" * 32},
+        {"content_hash": "a" * 64},
+        {
+            "request_id": "xrt_" + "1" * 32,
+            "content_hash": "a" * 64,
+        },
+    ),
+)
+def test_non_confirmation_commands_cannot_carry_exit_authority(
+    values: dict[str, str],
+) -> None:
+    with pytest.raises(ValueError):
+        SlashCommand(kind=CommandKind.STATUS, **values)
+
+
+@pytest.mark.parametrize("argument", ("yes", "confirm", "decline"))
+def test_exit_command_value_rejects_incomplete_or_unknown_decisions(
+    argument: str,
+) -> None:
+    with pytest.raises(ValueError):
+        SlashCommand(kind=CommandKind.EXIT, argument=argument)
+
+
 @pytest.mark.parametrize(
     "text",
     (

@@ -210,6 +210,8 @@ class ExitPresentation:
     summary: str
     active_attempts: tuple[str, ...]
     requires_confirmation: bool
+    request_id: str | None = None
+    attempt_hash: str | None = None
 
     def __post_init__(self) -> None:
         _human_text(self.summary, "summary")
@@ -220,6 +222,13 @@ class ExitPresentation:
             raise TypeError("requires_confirmation must be a bool")
         if self.requires_confirmation is not bool(self.active_attempts):
             raise ValueError("active attempts and confirmation must agree")
+        if (self.request_id is None) is not (self.attempt_hash is None):
+            raise ValueError("exit request identity and hash must be a closed pair")
+        if self.request_id is not None:
+            if not self.requires_confirmation:
+                raise ValueError("idle exit cannot carry request authority")
+            _derived_identity(self.request_id, "request_id", "xrt_", 32)
+            _derived_identity(self.attempt_hash, "attempt_hash", "", 64)
 
 
 @dataclass(frozen=True)

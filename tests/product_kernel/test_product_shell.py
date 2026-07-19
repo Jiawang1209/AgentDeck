@@ -8,6 +8,7 @@ import pytest
 
 from agentdeck.adapters.discovery import ReadinessState, ToolDiscovery
 from agentdeck.adapters.sqlite import SQLiteStore
+from agentdeck.application.exit_service import ExitService
 from agentdeck.application.session_service import SessionService
 from agentdeck.product.shell import ProductShell
 from agentdeck.product.bootstrap import build_product_shell
@@ -38,6 +39,12 @@ class ShellHarness:
             project_root=str(self.root),
             available_leaders=AVAILABLE_LEADERS,
         )
+        exit_service = ExitService(
+            store=store,
+            clock=FrozenClock(NOW),
+            session_id="ses_shell",
+            request_id_factory=iter(("xrt_" + "1" * 32,)).__next__,
+        )
 
         def read_line(prompt: str) -> str:
             assert prompt == "agentdeck> "
@@ -48,6 +55,7 @@ class ShellHarness:
 
         shell = ProductShell(
             session_service=service,
+            exit_service=exit_service,
             available_leaders=AVAILABLE_LEADERS,
             read_line=read_line,
             write_line=self.output.append,
@@ -68,6 +76,28 @@ class ShellHarness:
             ),
             store,
         )
+
+
+def test_product_shell_requires_explicit_exit_service(tmp_path: Path) -> None:
+    store = SQLiteStore.open(tmp_path, clock=FrozenClock(NOW))
+    service = SessionService(
+        store=store,
+        clock=FrozenClock(NOW),
+        session_id="ses_explicit_exit",
+        project_root=str(tmp_path),
+        available_leaders=AVAILABLE_LEADERS,
+    )
+    try:
+        with pytest.raises(TypeError, match="exit_service"):
+            ProductShell(
+                session_service=service,
+                available_leaders=AVAILABLE_LEADERS,
+                read_line=lambda _: "/exit",
+                write_line=lambda _: None,
+                close=store.close,
+            )
+    finally:
+        store.close()
 
 
 def test_first_run_shell_retains_goal_and_resumes_after_setup(
