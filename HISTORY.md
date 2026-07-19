@@ -29,9 +29,9 @@
   readiness/composition tests without a real provider, adapter process,
   authentication mutation, install, tmux, or global-configuration change.
 - Fresh final verification covers all 57 Product Kernel modules in four
-  non-overlapping process-safe partitions (`338 + 53 + 657 + 501 = 1549`
+  non-overlapping process-safe partitions (`344 + 53 + 657 + 510 = 1564`
   passed), the complete legacy suite (`4461` passed, `3` explicit opt-in
-  skips), architecture plus focused readiness (`65` passed), compileall, line
+  skips), architecture plus focused readiness (`80` passed), compileall, line
   limits, and diff checks.
 - Spec-review closure hardened every injected executable path to strict bounded
   UTF-8 with an absolute exact basename and no NUL, control, DEL, or oversize
@@ -41,6 +41,30 @@
   diagnostic, exact argv, and backend-specific canonical version before any
   factory call. The added adversarial RED exposed 27 accepted path/version/value
   counterexamples; focused GREEN passes all 51 cases with zero process starts.
+- Quality-review closure now preserves that verified evidence through execution
+  instead of degrading back to a PATH basename. Sealed readiness carries the
+  absolute CLI and adapter paths, separate CLI/adapter versions, Codex schema
+  digest, closed adapter argv, and bounded environment. Codex appends the
+  selected or default model to its absolute bridge argv; Claude freezes
+  `claude-agent-acp 0.58.1` and binds the absolute CLI through
+  `CLAUDE_CODE_EXECUTABLE`.
+- Added the production lazy ACP Worker connection on the official SDK. The
+  composition root no longer requires a test factory, each Worker owns a fresh
+  connection/process identity, singleton factories fail before constructing a
+  second Worker, callbacks remain Worker-owned, and initialize/session/prompt/
+  cancel/error paths close their SDK process context. Readiness and Worker
+  construction still start zero processes.
+- Leader transports now merge only bounded explicit overrides into a copied
+  process environment and pass it to the official SDK spawn. Composition
+  requires a strict UTF-8, control-free, resolve-normalized absolute project
+  root before asserting project-boundary enforcement. Directly constructed
+  readiness lookalikes, relative roots, PATH drift, unsupported Claude adapter
+  versions, and hostile environment data all fail closed.
+- The expanded TDD RED produced 14 focused contract failures plus the expected
+  missing production Worker module collection error. Focused GREEN passes 81
+  readiness, transport, and real fake-stdio Worker-connection cases; R4 passes
+  428 Product Kernel ACP/execution/approval cases and the related legacy surface
+  passes 222 cases with one explicit opt-in skip.
 
 ### Bridge Codex app-server through official ACP
 

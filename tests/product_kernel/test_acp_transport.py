@@ -47,12 +47,10 @@ from .test_leader_contract import valid_proposal
 def _write_proposal(path: Path) -> None:
     path.write_text(json.dumps(valid_proposal()), encoding="utf-8")
 
-
 def _calls(path: Path) -> list[dict[str, object]]:
     if not path.exists():
         return []
     return [json.loads(line) for line in path.read_text().splitlines()]
-
 
 def _exception_text(error: BaseException) -> str:
     rendered = ["".join(traceback.format_exception(error))]
@@ -66,13 +64,11 @@ def _exception_text(error: BaseException) -> str:
             pending.append(current.__context__)
     return "\n".join(rendered)
 
-
 def _sync_test(function):
     @wraps(function)
     def run(*args, **kwargs):
         return asyncio.run(function(*args, **kwargs))
     return run
-
 
 def test_session_provenance_is_bounded_explicit_and_concrete() -> None:
     actual = {"agentdeck": {"resolved_model": "gpt-5.5", "server_version": "0.131.0"}}
@@ -98,18 +94,22 @@ async def test_client_factory_is_injected_and_stays_lazy(tmp_path: Path) -> None
             )
 
     @asynccontextmanager
-    async def factory(callback, command, project_root, max_bytes, timeout_seconds):
-        calls.append(("factory", callback, command, project_root, max_bytes, timeout_seconds))
+    async def factory(callback, command, project_root, max_bytes, timeout_seconds,
+                      environment):
+        calls.append(("factory", callback, command, project_root, max_bytes,
+                      timeout_seconds, environment))
         yield Connection()
-
     transport = ACPStdioTransport(
-        ("never-started",), project_root=str(tmp_path), client_factory=factory
+        ("never-started",), project_root=str(tmp_path), client_factory=factory,
+        environment={"CLAUDE_CODE_EXECUTABLE": "/verified/claude"},
     )
     assert calls == []
     async with transport:
         assert (await transport.initialize()).embedded_context is True
     assert calls[0][0] == "factory"
     assert calls[0][2:4] == (("never-started",), str(tmp_path))
+    assert calls[0][6]["CLAUDE_CODE_EXECUTABLE"] == "/verified/claude"
+    assert calls[0][6]["PATH"] == os.environ["PATH"]
     assert calls[1] == ("initialize", PROTOCOL_VERSION)
 
 

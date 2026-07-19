@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from enum import StrEnum
+import json
 import os
 from pathlib import Path
 import re
@@ -27,12 +28,17 @@ from agentdeck.adapters.input_snapshot import snapshot_mapping
 from agentdeck.adapters.codex_app_server_probe import (
     FROZEN_CODEX_VERSION, FROZEN_SERVER_VERSION, FROZEN_STABLE_SCHEMA_DIGEST,
 )
+from agentdeck.adapters.adapter_readiness import (
+    AdapterDiagnostic, AdapterReadiness, CLAUDE_ADAPTER_VERSION,
+    MAX_PATH_BYTES as _MAX_PATH_BYTES,
+    blocked_readiness, canonical_backend_version, canonical_named_version,
+    exact_absolute_path, _issue_readiness,
+)
 
 
 VersionRunner = Callable[[str], str | bytes]
 PassiveProbe = Callable[[str], bool]
 
-_MAX_PATH_BYTES = 4096
 _TOOL_NAME = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
 _COMMAND_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$")
 _CAPABILITY_NAME = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
@@ -84,40 +90,17 @@ class CodexAdapterFacts:
 class ClaudeAdapterFacts:
     cli_path: str | None; cli_version: str | None; authenticated: bool
     adapter_path: str | None; adapter_version: str | None
-@dataclass(frozen=True)
-class AdapterDiagnostic:
-    code: str
-@dataclass(frozen=True)
-class AdapterReadiness:
-    backend_id: str; ready: bool; command: tuple[str, ...] | None
-    version: str | None; diagnostic: AdapterDiagnostic | None
-    fallbacks: tuple[str, ...] = ()
-
-
 def _adapter_blocked(backend_id: str, code: str) -> AdapterReadiness:
-    return AdapterReadiness(backend_id, False, None, None, AdapterDiagnostic(code))
+    return blocked_readiness(backend_id, code)
 
 def _named(path: object, name: str) -> bool:
-    return (_public_text(path, maximum=_MAX_PATH_BYTES, trimmed=False)
-            and Path(path).is_absolute() and Path(path).name == name)
-
-def _public_text(value: object, *, maximum: int, trimmed: bool) -> bool:
-    if type(value) is not str or not value or trimmed and value != value.strip():
-        return False
-    try:
-        encoded = value.encode("utf-8", errors="strict")
-    except UnicodeEncodeError:
-        return False
-    return len(encoded) <= maximum and all(char.isprintable() for char in value)
+    return exact_absolute_path(path, name)
 
 def _canonical_version(value: object, name: str) -> bool:
-    return (_public_text(value, maximum=MAX_VERSION_BYTES, trimmed=True)
-            and re.fullmatch(rf"{re.escape(name)} [0-9]{{1,6}}(?:\.[0-9]{{1,6}}){{1,3}}", value) is not None)
+    return canonical_named_version(value, name)
 
 def canonical_adapter_version(backend_id: object, value: object) -> bool:
-    if backend_id == "codex-cli":
-        return type(backend_id) is str and type(value) is str and value == FROZEN_SERVER_VERSION
-    return backend_id == "claude-cli" and _canonical_version(value, "claude-cli")
+    return canonical_backend_version(backend_id, value)
 
 def classify_codex(facts: CodexAdapterFacts) -> AdapterReadiness:
     """Classify injected passive facts; never probe or start the adapter."""
@@ -131,8 +114,15 @@ def classify_codex(facts: CodexAdapterFacts) -> AdapterReadiness:
         return _adapter_blocked("codex-cli", "codex_app_server_version_drift")
     if type(facts.schema_digest) is not str or facts.schema_digest != FROZEN_STABLE_SCHEMA_DIGEST:
         return _adapter_blocked("codex-cli", "codex_app_server_schema_drift")
-    return AdapterReadiness(
-        "codex-cli", True, ("agentdeck-codex-acp",), FROZEN_SERVER_VERSION, None,
+    encoded = json.dumps([facts.cli_path, "app-server"], separators=(",", ":"))
+    return _issue_readiness(
+        backend_id="codex-cli", command=(
+            facts.bridge_path, "--app-server-command-json", encoded,
+        ),
+        version=FROZEN_SERVER_VERSION, cli_path=facts.cli_path,
+        cli_version=facts.cli_version, adapter_path=facts.bridge_path,
+        adapter_version=facts.app_server_version,
+        schema_digest=facts.schema_digest, environment=(),
     )
 
 
@@ -142,13 +132,20 @@ def classify_claude(facts: ClaudeAdapterFacts) -> AdapterReadiness:
         return _adapter_blocked("claude-cli", "claude_cli_missing")
     if facts.authenticated is not True:
         return _adapter_blocked("claude-cli", "claude_authentication_missing")
-    if (not _named(facts.adapter_path, "claude-agent-acp")
-            or not _canonical_version(facts.adapter_version, "claude-agent-acp")):
+    if not _named(facts.adapter_path, "claude-agent-acp"):
         return _adapter_blocked("claude-cli", "claude_acp_missing")
+    if facts.adapter_version is None:
+        return _adapter_blocked("claude-cli", "claude_acp_missing")
+    if type(facts.adapter_version) is not str or facts.adapter_version != CLAUDE_ADAPTER_VERSION:
+        return _adapter_blocked("claude-cli", "claude_acp_version_drift")
     if not canonical_adapter_version("claude-cli", facts.cli_version):
         return _adapter_blocked("claude-cli", "claude_cli_missing")
-    return AdapterReadiness(
-        "claude-cli", True, ("claude-agent-acp",), facts.cli_version, None,
+    return _issue_readiness(
+        backend_id="claude-cli", command=(facts.adapter_path,),
+        version=facts.cli_version, cli_path=facts.cli_path,
+        cli_version=facts.cli_version, adapter_path=facts.adapter_path,
+        adapter_version=facts.adapter_version, schema_digest=None,
+        environment=(("CLAUDE_CODE_EXECUTABLE", facts.cli_path),),
     )
 
 

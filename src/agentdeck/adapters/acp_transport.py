@@ -1,7 +1,7 @@
 """Lazy bounded stdio transport built on the official ACP Python SDK."""
 from __future__ import annotations
 import asyncio
-from collections.abc import AsyncIterator, Callable, Sequence
+from collections.abc import AsyncIterator, Callable, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass
 from typing import Any, Final
@@ -14,6 +14,7 @@ from acp.schema import (
     RequestPermissionResponse, ResumeSessionResponse, TextContentBlock,
     TextResourceContents, ToolCallProgress, ToolCallStart, ToolCallUpdate,
 )
+from agentdeck.adapters.adapter_readiness import merged_environment
 from agentdeck.ports.transport import (
     TransportArtifact, TransportCapabilities, TransportDeadline, TransportFailure,
     TransportFailureCode, TransportPermissionDecision,
@@ -25,8 +26,7 @@ _DEFAULT_MAX_BYTES: Final = 1024 * 1024
 _DEFAULT_TIMEOUT_SECONDS: Final = 30.0
 _MAX_TOTAL_MULTIPLIER: Final = 8
 _SENTINEL: Final = object()
-ClientFactory = Callable[[object, tuple[str, ...], str, int, float],
-                         AbstractAsyncContextManager[object]]
+ClientFactory = Callable[..., AbstractAsyncContextManager[object]]
 @dataclass
 class _PendingPermission:
     request_id: str
@@ -35,7 +35,7 @@ class _PendingPermission:
 @asynccontextmanager
 async def _spawn_client(
     callback: object, command: tuple[str, ...], project_root: str,
-    max_bytes: int, timeout_seconds: float,
+    max_bytes: int, timeout_seconds: float, environment: Mapping[str, str],
 ) -> AsyncIterator[object]:
     transport_kwargs = {
         "limit": max_bytes,
@@ -46,6 +46,7 @@ async def _spawn_client(
         callback,
         command[0],
         *command[1:],
+        env=dict(environment),
         cwd=project_root,
         transport_kwargs=transport_kwargs,
         receive_timeout=timeout_seconds,
@@ -94,6 +95,7 @@ class ACPStdioTransport:
         max_bytes: int = _DEFAULT_MAX_BYTES,
         timeout_seconds: float = _DEFAULT_TIMEOUT_SECONDS,
         client_factory: ClientFactory = _spawn_client,
+        environment: Mapping[str, str] | None = None,
     ) -> None:
         if not callable(client_factory):
             raise TypeError("client_factory must be callable")
@@ -101,6 +103,7 @@ class ACPStdioTransport:
         self.project_root = transport_project_root(project_root)
         self.max_bytes = transport_byte_bound(max_bytes)
         self.timeout_seconds = transport_timeout(timeout_seconds)
+        self.environment = merged_environment(environment)
         self._client_factory = client_factory
         self._deadline: TransportDeadline | None = None
         self._manager: AbstractAsyncContextManager[object] | None = None
@@ -286,7 +289,7 @@ class ACPStdioTransport:
             try:
                 manager = self._client_factory(
                     self._callback, self.command, self.project_root,
-                    self.max_bytes, self._budget(),
+                    self.max_bytes, self._budget(), self.environment,
                 )
             except Exception:
                 factory_failed = True

@@ -9,6 +9,17 @@ Status: no legacy code admitted
 | `agentdeck.runtime.acp_client` | none | none | `tests/product_kernel/test_real_adapter_preflight_contract.py` | rejected |
 | `agentdeck.runtime.acp_mapping` | none | none | `tests/product_kernel/test_real_adapter_preflight_contract.py` | rejected |
 
+Task 26 production replacements are new code, not legacy admissions:
+
+- `agentdeck.adapters.adapter_readiness` seals the complete passive executable,
+  version, schema, argv, and environment evidence used by the composition root.
+- `agentdeck.adapters.acp_worker_connection` owns one lazy official-SDK process
+  and callback lifecycle per Product Kernel Worker. Its characterization is
+  `tests/product_kernel/test_acp_worker_connection.py`.
+- `agentdeck.adapters.acp_transport` passes the same bounded environment into
+  the official SDK Leader spawn path. No execution path resolves an adapter or
+  wrapped CLI again through `PATH` after readiness.
+
 Review reasons:
 
 - `agentdeck.runtime.acp` couples process, workflow, and persisted state outside

@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from functools import partial
 from pathlib import Path
 from types import MappingProxyType
 from uuid import uuid4
@@ -10,9 +11,13 @@ from agentdeck.adapters.config import ConfigResolver
 from agentdeck.adapters.acp import ACPWorker
 from agentdeck.adapters.acp_leader import ACPLeader
 from agentdeck.adapters.acp_transport import ACPStdioTransport
+from agentdeck.adapters.acp_worker_connection import create_worker_connection
+from agentdeck.adapters.adapter_readiness import (
+    AdapterReadiness, canonical_project_root, execution_command,
+    verified_readiness,
+)
 from agentdeck.adapters.discovery import (
-    AdapterReadiness, ReadinessState, ToolDiscovery, canonical_adapter_version,
-    discover_tools,
+    ReadinessState, ToolDiscovery, discover_tools,
 )
 from agentdeck.adapters.sqlite import SQLiteStore
 from agentdeck.adapters.system_clock import SystemClock
@@ -33,7 +38,9 @@ def _new_exit_request_id() -> str:
     return f"xrt_{uuid4().hex}"
 
 
-WorkerAgentFactory = Callable[[tuple[str, ...], str], object]
+WorkerAgentFactory = Callable[
+    [tuple[str, ...], str, tuple[tuple[str, str], ...]], object
+]
 TransportFactory = Callable[..., TransportPort]
 
 
@@ -46,37 +53,38 @@ class ACPAdapterComposition:
     clock: Clock
     worker_agent_factory: WorkerAgentFactory
     transport_factory: TransportFactory
+    _worker_owners: list[object] = field(
+        default_factory=list, repr=False, compare=False,
+    )
 
     def _require_ready(self, backend_id: str) -> AdapterReadiness:
         if type(backend_id) is not str:
             raise ValueError("ACP adapter backend is not ready")
         value = self.readiness.get(backend_id)
-        expected = {
-            "codex-cli": ("agentdeck-codex-acp",),
-            "claude-cli": ("claude-agent-acp",),
-        }.get(backend_id)
-        if (
-            type(value) is not AdapterReadiness
-            or type(value.ready) is not bool or value.ready is not True
-            or type(value.backend_id) is not str or value.backend_id != backend_id
-            or type(value.command) is not tuple or value.command != expected
-            or not canonical_adapter_version(backend_id, value.version)
-            or value.diagnostic is not None
-            or type(value.fallbacks) is not tuple or value.fallbacks != ()
-        ):
+        if not verified_readiness(value, backend_id):
             raise ValueError(f"ACP adapter {backend_id} is not ready")
         return value
 
     def leader(self, backend_id: str, *, model: str) -> ACPLeader:
         ready = self._require_ready(backend_id)
+        command = execution_command(ready, model=model)
+        transport_factory = partial(
+            self.transport_factory, environment=dict(ready.environment),
+        )
         return ACPLeader(
-            ready.command, backend_id=backend_id, model=model,
-            version=ready.version, transport_factory=self.transport_factory,
+            command, backend_id=backend_id, model=model,
+            version=ready.version, transport_factory=transport_factory,
         )
 
-    def worker(self, backend_id: str) -> ACPWorker:
+    def worker(self, backend_id: str, *, model: str = "native-default") -> ACPWorker:
         ready = self._require_ready(backend_id)
-        agent = self.worker_agent_factory(ready.command, self.project_root)
+        command = execution_command(ready, model=model)
+        agent = self.worker_agent_factory(
+            command, self.project_root, ready.environment,
+        )
+        if any(owner is agent for owner in self._worker_owners):
+            raise ValueError("ACP Worker factory must return a fresh connection owner")
+        self._worker_owners.append(agent)
         return ACPWorker(
             agent=agent, project_root=self.project_root, clock=self.clock,
             project_boundary_enforced=True,
@@ -85,14 +93,17 @@ class ACPAdapterComposition:
 
 def build_acp_adapter_composition(
     *, readiness: Mapping[str, AdapterReadiness], project_root: str,
-    clock: Clock, worker_agent_factory: WorkerAgentFactory,
+    clock: Clock, worker_agent_factory: WorkerAgentFactory | None = None,
     transport_factory: TransportFactory = ACPStdioTransport,
 ) -> ACPAdapterComposition:
-    if type(project_root) is not str or not project_root.strip():
-        raise ValueError("project_root must be a nonempty string")
+    project_root = canonical_project_root(project_root)
     if not callable(getattr(clock, "now", None)):
         raise TypeError("clock must expose now")
-    if not callable(worker_agent_factory) or not callable(transport_factory):
+    selected_worker_factory = (
+        create_worker_connection
+        if worker_agent_factory is None else worker_agent_factory
+    )
+    if not callable(selected_worker_factory) or not callable(transport_factory):
         raise TypeError("ACP composition factories must be callable")
     copied: dict[str, AdapterReadiness] = {}
     for key, value in readiness.items():
@@ -101,7 +112,7 @@ def build_acp_adapter_composition(
         copied[key] = value
     return ACPAdapterComposition(
         MappingProxyType(copied), project_root, clock,
-        worker_agent_factory, transport_factory,
+        selected_worker_factory, transport_factory,
     )
 
 
