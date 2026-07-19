@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime, timezone
+import json
+
+import pytest
 
 from agentdeck.application.approval_service import ApprovalService
 from agentdeck.application.execution_service import ExecutionService
@@ -23,6 +26,8 @@ class Transaction:
     def save_aggregate(self, kind, identity, snapshot) -> None:
         if kind == "handoffs" and self._store.fail_on_handoff_commit:
             raise RuntimeError("simulated handoff persistence failure")
+        if (kind, identity) == self._store.fail_on_aggregate:
+            raise RuntimeError("simulated aggregate persistence failure")
         self._pending.append((kind, identity, dict(snapshot)))
 
     def append_event(self, event) -> None:
@@ -38,6 +43,7 @@ class MemoryStore:
         self.aggregates: dict[tuple[str, str], dict[str, object]] = {}
         self.commands: dict[tuple[str, str], dict[str, object]] = {}
         self.fail_on_handoff_commit = False
+        self.fail_on_aggregate: tuple[str, str] | None = None
 
     def execute_once(self, command_id, command_kind, callback):
         key = (command_id, command_kind)
@@ -75,6 +81,7 @@ class ScriptedWorker:
     async def start_task(self, request: TaskRequest) -> WorkerHandle:
         assert ("attempts", request.attempt_id) in self._harness.store.aggregates
         self._harness.started_tasks.append(self._task_name)
+        self._harness.requests.append(request)
         self._handle = WorkerHandle(
             "ses_1", request.agent_id, request.task_id, request.attempt_id
         )
@@ -112,6 +119,7 @@ class Harness:
     def __init__(self) -> None:
         self.store = MemoryStore()
         self.started_tasks: list[str] = []
+        self.requests: list[TaskRequest] = []
         self.results = {
             "implementation": {
                 "summary": "implementation complete",
@@ -202,5 +210,269 @@ def test_dependency_without_committed_handoff_never_starts() -> None:
     result = asyncio.run(harness.run())
 
     assert result.diagnostic is not None
-    assert result.diagnostic.code == "handoff_persistence_failed"
+    assert result.diagnostic.code == "stage_bundle_persistence_failed"
     assert harness.started_tasks == ["implementation"]
+
+
+def test_confirmed_permission_profile_cannot_be_replaced_by_caller() -> None:
+    harness = Harness()
+    harness.draft = MissionDraft.coding_default(
+        "drf_1", "build", "/project", "codex-cli", "gpt-test",
+        PermissionProfile.ASK_FOR_APPROVAL,
+    )
+    preview = harness.draft.preview(1)
+    harness.confirmed = preview.confirm(
+        preview_id=preview.preview_id, content_hash=preview.content_hash
+    )
+
+    with pytest.raises(ValueError, match="permission profile"):
+        asyncio.run(harness.service.run_confirmed_mission(
+            session_id="ses_1", confirmed=harness.confirmed, draft=harness.draft,
+            permission_scope=PermissionScope.for_profile(PermissionProfile.FULL_ACCESS),
+        ))
+
+    assert harness.started_tasks == []
+
+
+class DeniedButCompletedWorker(ScriptedWorker):
+    async def _events(self):
+        assert self._handle is not None
+        yield WorkerEvent(
+            event_id="evt_permission", session_id=self._handle.session_id,
+            agent_id=self._handle.agent_id, task_id=self._handle.task_id,
+            attempt_id=self._handle.attempt_id, transport="acp", sequence=1,
+            kind="permission_requested", timestamp=NOW.isoformat(),
+            payload={
+                "permission_request_id": "perm_1", "effect": "network",
+                "risk": "bounded risk",
+            },
+        )
+        yield WorkerEvent(
+            event_id="evt_hostile_complete", session_id=self._handle.session_id,
+            agent_id=self._handle.agent_id, task_id=self._handle.task_id,
+            attempt_id=self._handle.attempt_id, transport="acp", sequence=2,
+            kind="completed", timestamp=NOW.isoformat(), payload={"status": "done"},
+        )
+
+    async def respond_permission(
+        self, handle, *, permission_request_id, allowed, reason,
+    ) -> None:
+        assert allowed is False
+
+    async def cancel_task(self, handle, *, reason) -> None:
+        return None
+
+
+def test_denied_permission_stops_even_if_worker_claims_completed() -> None:
+    harness = Harness()
+    harness.service._worker_factory = lambda task: DeniedButCompletedWorker(
+        harness, task.name
+    )
+
+    result = asyncio.run(harness.run())
+
+    assert result.diagnostic.code == "permission_denied"
+    assert result.diagnostic.outcome_known is False
+    assert all(
+        "retry" not in action.lower()
+        for action in result.diagnostic.recovery_actions
+    )
+    assert harness.started_tasks == ["implementation"]
+    assert result.handoffs == ()
+    assert harness.store.aggregates[("attempts", "att_impl_1")]["state"] == "outcome_unknown"
+
+
+class DriftHandleWorker(ScriptedWorker):
+    async def start_task(self, request: TaskRequest) -> WorkerHandle:
+        self._harness.started_tasks.append(self._task_name)
+        self._harness.requests.append(request)
+        self._handle = WorkerHandle("ses_drift", "agt_drift", "tsk_drift", "att_drift")
+        return self._handle
+
+    async def _events(self):
+        assert self._handle is not None
+        yield WorkerEvent(
+            event_id="evt_drift", session_id=self._handle.session_id,
+            agent_id=self._handle.agent_id, task_id=self._handle.task_id,
+            attempt_id=self._handle.attempt_id, transport="acp", sequence=1,
+            kind="completed", timestamp=NOW.isoformat(), payload={"status": "done"},
+        )
+
+    async def collect_result(self, handle):
+        return WorkerResult(
+            session_id=handle.session_id, agent_id=handle.agent_id,
+            task_id=handle.task_id, attempt_id=handle.attempt_id, status="completed",
+            payload=self._harness.results[self._task_name],
+        )
+
+
+def test_worker_handle_must_match_exact_request_lineage() -> None:
+    harness = Harness()
+    harness.service._worker_factory = lambda task: DriftHandleWorker(harness, task.name)
+
+    result = asyncio.run(harness.run())
+
+    assert result.diagnostic.code == "worker_handle_lineage_invalid"
+    assert result.diagnostic.outcome_known is False
+    assert harness.started_tasks == ["implementation"]
+    assert harness.store.aggregates[("attempts", "att_impl_1")]["state"] == "outcome_unknown"
+
+
+class IndependentACPSessionWorker(ScriptedWorker):
+    async def start_task(self, request: TaskRequest) -> WorkerHandle:
+        assert ("attempts", request.attempt_id) in self._harness.store.aggregates
+        self._harness.started_tasks.append(self._task_name)
+        self._harness.requests.append(request)
+        self._handle = WorkerHandle(
+            f"ses_acp_{self._task_name}", request.agent_id,
+            request.task_id, request.attempt_id,
+        )
+        return self._handle
+
+    async def _events(self):
+        assert self._handle is not None
+        yield WorkerEvent(
+            event_id=f"evt_{self._task_name}", session_id=self._handle.session_id,
+            agent_id=self._handle.agent_id, task_id=self._handle.task_id,
+            attempt_id=self._handle.attempt_id, transport="acp", sequence=1,
+            kind="completed", timestamp=NOW.isoformat(), payload={"status": "done"},
+        )
+
+    async def collect_result(self, handle):
+        return WorkerResult(
+            session_id=handle.session_id, agent_id=handle.agent_id,
+            task_id=handle.task_id, attempt_id=handle.attempt_id, status="completed",
+            payload=self._harness.results[self._task_name],
+        )
+
+
+def test_acp_session_identity_remains_distinct_from_product_session() -> None:
+    harness = Harness()
+    harness.service._worker_factory = lambda task: IndependentACPSessionWorker(
+        harness, task.name
+    )
+
+    result = asyncio.run(harness.run())
+
+    assert result.diagnostic is None
+    assert harness.started_tasks == [
+        "implementation", "review", "revision", "acceptance"
+    ]
+
+
+def test_downstream_requests_receive_canonical_handoff_and_revision_authority() -> None:
+    harness = Harness()
+
+    result = asyncio.run(harness.run())
+
+    review = json.loads(harness.requests[1].instruction)
+    revision = json.loads(harness.requests[2].instruction)
+    assert review["incoming_handoff"] == {
+        "canonical_content": result.handoffs[0].canonical_content,
+        "content_hash": result.handoffs[0].content_hash,
+    }
+    assert revision["incoming_handoff"] == {
+        "canonical_content": result.handoffs[1].canonical_content,
+        "content_hash": result.handoffs[1].content_hash,
+    }
+    assert revision["authoritative_revision_task"] == result.revision_task.canonical_payload()
+    assert "next_agent_command" not in revision["authoritative_revision_task"]
+
+
+class FailedWorker(ScriptedWorker):
+    async def _events(self):
+        assert self._handle is not None
+        yield WorkerEvent(
+            event_id="evt_failed", session_id=self._handle.session_id,
+            agent_id=self._handle.agent_id, task_id=self._handle.task_id,
+            attempt_id=self._handle.attempt_id, transport="acp", sequence=1,
+            kind="failed", timestamp=NOW.isoformat(), payload={"reason": "failed"},
+        )
+
+    async def collect_result(self, handle):
+        return WorkerResult(
+            session_id=handle.session_id, agent_id=handle.agent_id,
+            task_id=handle.task_id, attempt_id=handle.attempt_id, status="failed",
+            payload={"summary": "failed"},
+        )
+
+
+def test_worker_failure_is_durable_before_return() -> None:
+    harness = Harness()
+    harness.service._worker_factory = lambda task: FailedWorker(harness, task.name)
+
+    result = asyncio.run(harness.run())
+
+    assert result.diagnostic.code == "worker_stage_failed"
+    assert result.attempts[0].state.value == "failed"
+    assert harness.store.aggregates[("attempts", "att_impl_1")]["state"] == "failed"
+
+
+def test_invalid_result_schema_is_durable_and_stops_downstream() -> None:
+    harness = Harness()
+    del harness.results["implementation"]["content_hash"]
+
+    result = asyncio.run(harness.run())
+
+    assert result.diagnostic.code == "worker_result_invalid"
+    assert result.diagnostic.outcome_known is False
+    assert harness.started_tasks == ["implementation"]
+    assert harness.store.aggregates[("attempts", "att_impl_1")]["state"] == "outcome_unknown"
+
+
+def test_replaying_confirmed_mission_never_repeats_worker_io() -> None:
+    harness = Harness()
+    first = asyncio.run(harness.run())
+
+    second = asyncio.run(harness.run())
+
+    assert first.diagnostic is None
+    assert second.diagnostic.code == "mission_execution_replayed"
+    assert harness.started_tasks == [
+        "implementation", "review", "revision", "acceptance"
+    ]
+
+
+def test_worker_start_failure_is_durable_and_stops_before_worker_io() -> None:
+    harness = Harness()
+
+    def fail_start(task):
+        raise RuntimeError("raw start failure")
+
+    harness.service._worker_factory = fail_start
+    result = asyncio.run(harness.run())
+
+    assert result.diagnostic.code == "worker_start_failed"
+    assert harness.started_tasks == []
+    assert harness.store.aggregates[("attempts", "att_impl_1")]["state"] == "failed"
+
+
+class BridgeFailureWorker(ScriptedWorker):
+    async def _events(self):
+        raise RuntimeError("raw bridge failure")
+        yield
+
+
+def test_worker_bridge_failure_is_durable_and_stops_downstream() -> None:
+    harness = Harness()
+    harness.service._worker_factory = lambda task: BridgeFailureWorker(harness, task.name)
+
+    result = asyncio.run(harness.run())
+
+    assert result.diagnostic.code == "worker_bridge_failed"
+    assert result.diagnostic.outcome_known is False
+    assert harness.started_tasks == ["implementation"]
+    assert harness.store.aggregates[("attempts", "att_impl_1")]["state"] == "outcome_unknown"
+
+
+def test_acceptance_bundle_failure_has_precise_non_handoff_diagnostic() -> None:
+    harness = Harness()
+    harness.store.fail_on_aggregate = ("evidence", "ev_acceptance_1")
+
+    result = asyncio.run(harness.run())
+
+    assert result.diagnostic.code == "stage_bundle_persistence_failed"
+    assert harness.started_tasks == [
+        "implementation", "review", "revision", "acceptance"
+    ]
+    assert harness.store.aggregates[("attempts", "att_acceptance_1")]["state"] == "running"

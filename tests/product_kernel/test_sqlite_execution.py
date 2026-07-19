@@ -32,11 +32,18 @@ def _seed_lineage(store: SQLiteStore) -> None:
         "INSERT INTO mission_versions VALUES ('msn_1',1,'prv_1',?, '{}', ?)",
         ("a" * 64, now),
     )
-    for ordinal, task_id in enumerate(("tsk_implementation", "tsk_review"), 1):
+    task_ids = ("tsk_implementation", "tsk_review")
+    for ordinal, task_id in enumerate(task_ids, 1):
         agent = "agt_implementation"
+        dependencies = [] if ordinal == 1 else [task_ids[ordinal - 2]]
+        canonical = json.dumps(
+            {"task_id": task_id, "agent_instance_id": agent,
+             "dependencies": dependencies},
+            sort_keys=True, separators=(",", ":"),
+        )
         connection.execute(
-            "INSERT INTO tasks VALUES (?,?,?,?,?,'implementer','codex-cli',?,'acp://route','running','{}',?,?)",
-            (task_id, "msn_1", 1, ordinal, task_id, agent, now, now),
+            "INSERT INTO tasks VALUES (?,?,?,?,?,'implementer','codex-cli',?,'acp://route','running',?,?,?)",
+            (task_id, "msn_1", 1, ordinal, task_id, agent, canonical, now, now),
         )
 
 
@@ -127,6 +134,117 @@ def test_handoff_lineage_drift_rolls_back_terminal_bundle(tmp_path) -> None:
             "SELECT state FROM attempts WHERE attempt_id='att_impl_1'"
         ).fetchone()[0]
         assert state == "running"
+    finally:
+        store.close()
+
+
+def test_handoff_target_must_be_the_frozen_direct_dependency(tmp_path) -> None:
+    store = SQLiteStore.open(tmp_path, clock=FrozenClock(NOW))
+    try:
+        _seed_lineage(store)
+        now = NOW.isoformat()
+        canonical = json.dumps(
+            {"task_id": "tsk_acceptance", "agent_instance_id": "agt_implementation",
+             "dependencies": ["tsk_review"]},
+            sort_keys=True, separators=(",", ":"),
+        )
+        store._require_writer().execute(
+            "INSERT INTO tasks VALUES (?,?,?,?,?,'acceptance_reviewer','claude-cli',?,'acp://route','pending',?,?,?)",
+            ("tsk_acceptance", "msn_1", 1, 3, "acceptance",
+             "agt_implementation", canonical, now, now),
+        )
+        started = Attempt.pending("att_impl_1", "tsk_implementation", 1).start()
+        store.execute_once(
+            "cmd_started", "execution_attempt_started",
+            lambda transaction: (
+                transaction.save_aggregate(
+                    "attempts", started.attempt_id, _attempt_snapshot(started)
+                ) or {"attempt_id": started.attempt_id}
+            ),
+        )
+        terminal = started.complete("complete")
+        evidence = Evidence.create(
+            "ev_implementation_1", EvidenceKind.ARTIFACT_HASH,
+            {"artifact_reference": "patch", "content_hash": "b" * 64},
+        )
+        skipped = Handoff.create(
+            "hnd_skip", terminal.attempt_id, "tsk_acceptance", "complete",
+            (evidence.evidence_id,),
+        )
+
+        with pytest.raises(ValueError, match="direct dependency"):
+            store.execute_once(
+                "cmd_skip", "execution_stage_committed",
+                lambda transaction: _commit_execution(
+                    transaction, terminal, evidence, skipped
+                ),
+            )
+
+        assert store.count("handoffs") == 0
+        assert store.connection.execute(
+            "SELECT state FROM attempts WHERE attempt_id='att_impl_1'"
+        ).fetchone()[0] == "running"
+    finally:
+        store.close()
+
+
+def test_attempt_agent_must_belong_to_the_mission_product_session(tmp_path) -> None:
+    store = SQLiteStore.open(tmp_path, clock=FrozenClock(NOW))
+    try:
+        _seed_lineage(store)
+        now = NOW.isoformat()
+        store._require_writer().execute(
+            "INSERT INTO product_sessions VALUES ('ses_other','prj_1','running','approve_for_me',NULL,?,?)",
+            (now, now),
+        )
+        store._require_writer().execute(
+            "INSERT INTO agent_instances VALUES ('agt_other','ses_other','codex-cli','acp','1','implementer','acp_other','active',?,?)",
+            (now, now),
+        )
+        store._require_writer().execute(
+            "UPDATE tasks SET planned_agent_instance_id='agt_other' WHERE task_id='tsk_implementation'"
+        )
+        started = Attempt.pending("att_impl_1", "tsk_implementation", 1).start()
+        snapshot = _attempt_snapshot(started)
+        snapshot["agent_instance_id"] = "agt_other"
+        store.execute_once(
+            "cmd_started", "execution_attempt_started",
+            lambda transaction: (
+                transaction.save_aggregate("attempts", started.attempt_id, snapshot)
+                or {"attempt_id": started.attempt_id}
+            ),
+        )
+        terminal = started.complete("complete")
+        terminal_snapshot = _attempt_snapshot(terminal)
+        terminal_snapshot["agent_instance_id"] = "agt_other"
+        evidence = Evidence.create(
+            "ev_implementation_1", EvidenceKind.ARTIFACT_HASH,
+            {"artifact_reference": "patch", "content_hash": "b" * 64},
+        )
+
+        with pytest.raises(ValueError, match="mission session"):
+            store.execute_once(
+                "cmd_terminal", "execution_stage_committed",
+                lambda transaction: (
+                    transaction.save_aggregate(
+                        "attempts", terminal.attempt_id, terminal_snapshot
+                    )
+                    or transaction.save_aggregate(
+                        "evidence", evidence.evidence_id,
+                        {
+                            "evidence_id": evidence.evidence_id,
+                            "task_id": terminal.task_id,
+                            "attempt_id": terminal.attempt_id,
+                            "kind": evidence.kind.value,
+                            "canonical_evidence_facts": evidence.canonical_content,
+                        },
+                    )
+                    or {"attempt_id": terminal.attempt_id}
+                ),
+            )
+        assert store._require_writer().execute(
+            "SELECT state FROM attempts WHERE attempt_id='att_impl_1'"
+        ).fetchone()[0] == "running"
     finally:
         store.close()
 

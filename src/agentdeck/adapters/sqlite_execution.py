@@ -44,10 +44,13 @@ def _save_evidence(
         raise StoreSerializationError("evidence canonical facts are invalid") from error
     lineage = connection.execute(
         """SELECT a.task_id,a.state,a.agent_instance_id,t.planned_agent_instance_id,
-                  t.mission_id,t.mission_version
+                  t.mission_id,t.mission_version,m.session_id,ai.session_id
            FROM attempts a JOIN tasks t ON t.task_id=a.task_id
            JOIN mission_versions v ON v.mission_id=t.mission_id
-             AND v.version=t.mission_version WHERE a.attempt_id=?""",
+             AND v.version=t.mission_version
+           JOIN missions m ON m.mission_id=t.mission_id
+           JOIN agent_instances ai ON ai.instance_id=a.agent_instance_id
+           WHERE a.attempt_id=?""",
         (attempt_id,),
     ).fetchone()
     if (
@@ -55,6 +58,8 @@ def _save_evidence(
         or lineage[2] != lineage[3]
     ):
         raise StoreSerializationError("evidence durable lineage is inconsistent")
+    if lineage[6] != lineage[7]:
+        raise ValueError("attempt Agent does not belong to the mission session")
     content_hash = sha256(evidence.canonical_content.encode("utf-8")).hexdigest()
     created_at = _stored_timestamp(now, "evidence created_at")
     record = (
@@ -103,16 +108,27 @@ def _save_handoff(
     lineage = connection.execute(
         """SELECT a.state,source.mission_id,source.mission_version,
                   target.mission_id,target.mission_version,a.agent_instance_id,
-                  source.planned_agent_instance_id
+                  source.planned_agent_instance_id,source.task_id,
+                  target.canonical_task_facts,target.planned_agent_instance_id,
+                  mission.session_id,source_agent.session_id,target_agent.session_id
            FROM attempts a JOIN tasks source ON source.task_id=a.task_id
-           JOIN tasks target ON target.task_id=? WHERE a.attempt_id=?""",
+           JOIN tasks target ON target.task_id=?
+           JOIN missions mission ON mission.mission_id=source.mission_id
+           JOIN agent_instances source_agent ON source_agent.instance_id=a.agent_instance_id
+           JOIN agent_instances target_agent
+             ON target_agent.instance_id=target.planned_agent_instance_id
+           WHERE a.attempt_id=?""",
         (target, source),
     ).fetchone()
     if (
         lineage is None or lineage[0] != "completed"
         or lineage[1:3] != lineage[3:5] or lineage[5] != lineage[6]
+        or lineage[10] != lineage[11] or lineage[10] != lineage[12]
     ):
         raise ValueError("handoff durable lineage is inconsistent")
+    _require_direct_dependency(
+        lineage[8], target, lineage[7], lineage[9]
+    )
     placeholders = ",".join("?" for _ in handoff.verification_evidence_ids)
     evidence_rows = connection.execute(
         f"SELECT evidence_id,attempt_id FROM evidence WHERE evidence_id IN ({placeholders})",
@@ -151,6 +167,22 @@ def _handoff_from_canonical(
         )
     except (KeyError, TypeError, ValueError) as error:
         raise StoreSerializationError("handoff canonical facts are invalid") from error
+
+
+def _require_direct_dependency(
+    canonical: object, target_id: str, source_id: object, target_agent: object
+) -> None:
+    try:
+        payload = json.loads(canonical)
+        if (
+            type(payload) is not dict
+            or payload["task_id"] != target_id
+            or payload["agent_instance_id"] != target_agent
+            or payload["dependencies"] != [source_id]
+        ):
+            raise ValueError
+    except (KeyError, TypeError, ValueError, json.JSONDecodeError) as error:
+        raise ValueError("handoff target is not the frozen direct dependency") from error
 
 
 __all__ = ["_save_execution_aggregate"]

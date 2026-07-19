@@ -85,19 +85,36 @@
   Worker I/O, starts only the dependency whose prior Handoff committed, and
   runs implementation, review, revision, then acceptance in frozen order. Each
   Attempt narrows the confirmed Mission permission scope to that frozen Task's
-  declared effects before any ACP permission request is evaluated.
+  declared effects before any ACP permission request is evaluated. The caller
+  must retain the exact confirmed permission profile; it cannot replace an
+  `ask_for_approval` Mission with `full_access`.
 - Treated Worker review proposals as bounded data. AgentDeck alone creates the
   authoritative Revision Task, and Worker-provided peer-dispatch fields never
-  enter its canonical payload or scheduling authority.
+  enter its canonical payload or scheduling authority. Each downstream ACP
+  request now receives the prior Handoff's canonical content and hash, while
+  the revision request additionally receives the AgentDeck-owned revision
+  payload. ProductSession and ACP session identities remain distinct, but the
+  returned Worker Handle must match the exact requested Agent, Task, Attempt,
+  and ACP transport.
 - Added command-atomic SQLite persistence for a terminal Attempt, one typed
   Evidence record, and its Handoff. The Adapter verifies immutable Task,
-  Attempt, Mission-version, Agent, and Evidence lineage; a failed Handoff write
-  rolls the whole terminal bundle back and prevents the dependent Task from
-  starting. Retry and deeper semantic review policy remain reserved for Task
-  24.
+  Attempt, Mission-version, Agent-session, direct-dependency, and Evidence
+  lineage; any failed stage-bundle write rolls the whole terminal bundle back
+  and prevents the dependent Task from starting. Failed, cancelled, denied,
+  malformed, start-failed, bridge-failed, and Handle-drift Attempts commit a
+  safe terminal state before returning. A Worker that claims completion after
+  denied permission cannot create a Handoff. Re-entry on an already durable
+  execution command stops before Worker I/O instead of replaying side effects.
+  Ambiguous bridge, schema, Handle, and denied-but-completed outcomes persist
+  as `outcome_unknown` with `outcome_known=false`, never as a retryable failure.
+  Retry and deeper semantic review policy remain reserved for Task 24.
 - TDD RED first failed because the Execution Service and SQLite execution
-  helper were absent. The new coordinator and rollback tests pass together
-  with the adjacent ACP permission bridge and SQLite transaction suites.
+  helper were absent. A second strict RED reproduced permission-profile
+  escalation, denied-but-completed Workers, Handle drift, missing downstream
+  Handoffs, non-durable failure, duplicate Worker I/O, skipped dependencies,
+  and cross-session Agent lineage. The coordinator and rollback tests pass
+  together with the adjacent ACP permission bridge and SQLite transaction
+  suites.
 
 ### Close the next Product Kernel production persistence seams
 
