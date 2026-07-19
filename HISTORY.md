@@ -21,12 +21,13 @@
   assignments as well as credential-bearing Python-style single-quoted mapping
   fragments anywhere in presentation text. Numeric, bytes-like, nested, and
   quoted credential values now fail content-free before a Product renderer can
-  expose them; explicit `None`/`null` schema sentinels remain safe.
+  expose them; only complete `None`/`null` mapping values remain safe, while
+  operator, path, and punctuation suffixes fail closed.
 - Preserved safe discussion of credential field names, null-like schema values,
   policy fields, and unrelated Python mappings. Review RED reproduced four
   leaks in the first RED and five structural-value leaks in the closure RED;
-  focused Product renderer, slash-command, and architecture GREEN passed all
-  `97` cases.
+  a final sentinel-prefix RED exposed three more cases. Focused Product
+  renderer, slash-command, and architecture GREEN passed all `102` cases.
 
 ### Validate API credential source labels
 

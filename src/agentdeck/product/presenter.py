@@ -29,7 +29,7 @@ _PROHIBITED_TEXT: Final = re.compile(
     r"|\b(?:password|secret|token|api[_ -]?key)\s*[:=]\s*\S+"
     r"|[\"'][A-Za-z0-9_-]*(?:(?:api|private|ssh)[_ -]?key|authorization"
     r"|(?:set-)?cookie|credentials?|password|passphrase|secret|token)"
-    r"[\"']\s*:\s*(?!(?:null|none)\b)(?=\S)"
+    r"[\"']\s*:\s*(?!(?:null|none)\s*(?:[,}]|$))(?=\S)"
     r"|-----BEGIN(?: [A-Z0-9]+)? PRIVATE KEY-----"
     r"|(?<![A-Za-z0-9])sk-(?:[A-Za-z0-9]{48}|(?:proj|ant)-[A-Za-z0-9_-]{16,})"
     r"|(?<![A-Za-z0-9])(?:ghp_|github_pat_)[A-Za-z0-9_]{20,}"

@@ -277,6 +277,9 @@ def test_unknown_types_modes_and_shapes_fail_closed_without_repr(value: object) 
         "Details: {'password': {'value': 'sensitive-marker'}}",
         'Details: {"password": 123456}',
         'Details: {"password": {"value": "sensitive-marker"}}',
+        "Details: {'password': None or b'sensitive-marker'}",
+        "Details: {'password': None-sensitive-marker}",
+        'Details: {"password": null/sensitive-marker}',
     ),
 )
 def test_secret_like_or_raw_json_human_fields_never_render(secret: str) -> None:
@@ -299,6 +302,8 @@ def test_secret_like_or_raw_json_human_fields_never_render(secret: str) -> None:
         'Details: {"monkey":"banana"}',
         "Discuss the Python key 'password' without assigning a value.",
         "Schema details: {'password': None}",
+        "Schema details: {'password': None, 'documented': True}",
+        'Schema details: {"password": null, "documented": true}',
         "Details: {'password policy': 'minimum length'}",
         "Details: {'monkey': 'banana'}",
     ),
