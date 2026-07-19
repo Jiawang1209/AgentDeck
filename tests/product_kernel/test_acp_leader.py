@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import redirect_stderr
 from dataclasses import replace
 from functools import wraps
+import gc
+import io
 import json
 from pathlib import Path
 import threading
 import traceback
+import warnings
 
 import pytest
 from acp import PROTOCOL_VERSION
@@ -409,4 +413,82 @@ async def test_sync_connection_call_failures_are_typed_and_content_free(
                 else:
                     await transport.cancel(session)
     assert marker not in _chain(caught.value)
+    assert caught.value.__cause__ is None and caught.value.__context__ is None
+
+
+@pytest.mark.parametrize("kind", [
+    "coroutine", "close_getter", "close_call",
+    "close_getter_base", "close_call_base",
+])
+@_sync_test
+async def test_task_construction_failure_closes_awaitable_without_hostile_warning(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, kind: str,
+) -> None:
+    marker = "hostile_coroutine_qualname_marker"
+    created: list[object] = []
+    close_attempts: list[str] = []
+
+    async def hostile_coroutine_qualname_marker() -> NewSessionResponse:
+        return NewSessionResponse(session_id="never-used")
+
+    class GetterFailure:
+        @property
+        def close(self):
+            close_attempts.append(kind)
+            raise (asyncio.CancelledError(marker)
+                if kind.endswith("base") else RuntimeError(marker))
+
+    class CallFailure:
+        def close(self) -> None:
+            close_attempts.append(kind)
+            raise (asyncio.CancelledError(marker)
+                if kind.endswith("base") else RuntimeError(marker))
+
+    async def ready(value):
+        return value
+
+    class Connection:
+        def initialize(self, _version: int):
+            return ready(InitializeResponse(
+                protocol_version=PROTOCOL_VERSION,
+                agent_capabilities=AgentCapabilities(
+                    prompt_capabilities=PromptCapabilities(embedded_context=True)),
+            ))
+
+        def new_session(self, **_kwargs):
+            value = (hostile_coroutine_qualname_marker() if kind == "coroutine"
+                else GetterFailure() if kind.startswith("close_getter") else CallFailure())
+            created.append(value)
+            return value
+
+    class Manager:
+        def __aenter__(self):
+            return ready(Connection())
+
+        def __aexit__(self, *_args):
+            return ready(None)
+
+    transport = ACPStdioTransport(
+        ("unused",), project_root=str(tmp_path),
+        client_factory=lambda *_args: Manager(),
+    )
+    stderr = io.StringIO()
+    with warnings.catch_warnings(record=True) as caught_warnings, redirect_stderr(stderr):
+        warnings.simplefilter("always")
+        async with transport:
+            await transport.initialize()
+            with monkeypatch.context() as patch:
+                patch.setattr(asyncio, "ensure_future", lambda _value: (_ for _ in ()).throw(
+                    RuntimeError("secret-task-construction-failure")))
+                with pytest.raises(TransportFailure, match="session_failed") as caught:
+                    await transport.new_session()
+        coroutine_closed = kind != "coroutine" or created[0].cr_frame is None
+        created.clear()
+        gc.collect()
+    rendered = _chain(caught.value) + stderr.getvalue() + "\n".join(
+        str(item.message) for item in caught_warnings)
+    assert coroutine_closed
+    assert close_attempts == ([] if kind == "coroutine" else [kind])
+    assert marker not in rendered and "was never awaited" not in rendered
+    assert "secret-task-construction-failure" not in rendered
     assert caught.value.__cause__ is None and caught.value.__context__ is None

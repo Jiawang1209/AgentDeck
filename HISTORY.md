@@ -4,6 +4,18 @@
 
 ## 2026-07-19
 
+### Close failed ACP awaitables without warnings
+
+- Added deterministic best-effort cleanup when an ACP awaitable cannot be
+  converted into an asyncio task. Created coroutines are closed before the
+  stable typed failure is raised, preventing un-awaited coroutine warnings from
+  exposing hostile coroutine names.
+- Attribute lookup and invocation failures from hostile `close` implementations
+  are suppressed inside the cleanup boundary and cannot replace the original
+  content-free `TransportFailure`. RED reproduced the coroutine leak plus both
+  hostile close variants, including cancellation-class exceptions; focused
+  GREEN passed all `44` Task 18 cases.
+
 ### Close ACP Leader cancellation-adversary gaps
 
 - Replaced the synchronous bridge's `asyncio.run` / `wait_for` shutdown path

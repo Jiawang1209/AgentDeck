@@ -131,6 +131,16 @@ def transport_timeout(value: object) -> float:
     return checked
 
 
+def close_transport_awaitable(value: object) -> None:
+    """Best-effort cleanup after an awaitable cannot become a task."""
+    try:
+        close = getattr(value, "close", None)
+        if callable(close):
+            close()
+    except BaseException:
+        return
+
+
 @dataclass(frozen=True)
 class TransportCapabilities:
     protocol_version: int
@@ -283,6 +293,6 @@ __all__ = [
     "TransportDeadline", "TransportFailureCode", "TransportPermissionDecision",
     "TransportPermissionRequest", "TransportPort", "TransportPromptPart",
     "TransportPromptResult", "TransportSession", "TransportUpdate",
-    "TransportUpdateKind", "transport_argv", "transport_byte_bound",
+    "TransportUpdateKind", "close_transport_awaitable", "transport_argv", "transport_byte_bound",
     "transport_project_root", "transport_timeout",
 ]

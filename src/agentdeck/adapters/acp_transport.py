@@ -23,7 +23,7 @@ from agentdeck.ports.transport import (
     TransportFailureCode, TransportPermissionDecision,
     TransportPermissionRequest, TransportPromptPart, TransportPromptResult,
     TransportSession, TransportUpdate, TransportUpdateKind,
-    transport_argv, transport_byte_bound, transport_project_root, transport_timeout,
+    close_transport_awaitable, transport_argv, transport_byte_bound, transport_project_root, transport_timeout,
 )
 
 _DEFAULT_MAX_BYTES: Final = 1024 * 1024
@@ -317,13 +317,13 @@ class ACPStdioTransport:
         return self._connection
     async def _invoke(self, awaitable, code: TransportFailureCode) -> object:
         failure: TransportFailureCode | None = None
-        result = None
         task_failed = False
         try:
             task = asyncio.ensure_future(awaitable)
         except Exception:
             task_failed = True
             task = None
+            close_transport_awaitable(awaitable)
         if task_failed or task is None:
             raise TransportFailure(code)
         try:
