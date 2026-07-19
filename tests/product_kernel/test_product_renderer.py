@@ -272,6 +272,11 @@ def test_unknown_types_modes_and_shapes_fail_closed_without_repr(value: object) 
         "Details: {'password': 'sensitive-marker'}",
         "Details: {'ssh_key': 'sensitive-marker'}",
         "Details: {'Authorization': 'Bearer sensitive-marker'}",
+        "Details: {'password': 123456}",
+        "Details: {'password': b'sensitive-marker'}",
+        "Details: {'password': {'value': 'sensitive-marker'}}",
+        'Details: {"password": 123456}',
+        'Details: {"password": {"value": "sensitive-marker"}}',
     ),
 )
 def test_secret_like_or_raw_json_human_fields_never_render(secret: str) -> None:
