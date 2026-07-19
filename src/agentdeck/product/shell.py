@@ -182,7 +182,19 @@ class ProductShell:
         if resumed.goal is None:
             self._emit("AgentDeck setup is ready.")
         else:
-            self._emit(f"Goal ready: {resumed.goal}")
+            self._show_resumed_goal(resumed.goal)
+
+    def _show_resumed_goal(self, goal: str) -> None:
+        try:
+            self._render(SetupPresentation(
+                project=goal,
+                leaders=tuple(self._available_leaders),
+                permission=self._permission,
+            ))
+        except (TypeError, ValueError):
+            self._emit("Goal ready. The retained goal is not displayed.")
+            return
+        self._emit(f"Goal ready: {goal}")
 
     def _show_initial_state(self) -> None:
         if self._service.current().state.value == "setup":

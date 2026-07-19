@@ -4,6 +4,16 @@
 
 ## 2026-07-19
 
+### Harden retained-goal presentation
+
+- Routed the post-setup retained-goal display through the existing Task 13
+  bounded human presentation and renderer before emitting it. JSON-like,
+  ANSI/control-bearing, or oversized goals remain durable session facts but
+  are replaced in the transcript by one fixed non-sensitive fallback.
+- TDD RED reproduced all three leaks with `3 failed, 5 passed`; focused GREEN
+  passed all eight Product Shell transcript cases without changing setup,
+  persistence, provider, terminal, ACP, tmux, or legacy behavior.
+
 ### Add the foreground ProductSession shell
 
 - Added a deterministic foreground Product Shell over the existing
@@ -11,7 +21,7 @@
   are durably retained during setup, staged Leader/model/permission selections
   are applied only through the Application service, and the retained goal
   resumes without being re-entered after setup confirmation.
-- Added fixed human handling for all fourteen declared slash controls. Setup,
+- Added fixed human handling for all thirteen declared slash controls. Setup,
   status, help, diagnostics, unavailable Mission controls, malformed commands,
   and safe exit never use raw JSON, object repr, a provider, tmux, or a legacy
   shell/router path.

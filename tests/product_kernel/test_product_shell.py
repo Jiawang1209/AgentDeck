@@ -4,6 +4,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from agentdeck.adapters.discovery import ReadinessState, ToolDiscovery
 from agentdeck.adapters.sqlite import SQLiteStore
 from agentdeck.application.session_service import SessionService
@@ -160,6 +162,39 @@ def test_rejected_setup_renders_a_diagnostic_without_selecting_a_fallback(
         assert restored.current().leader_backend is None
         assert restored.current().model is None
         assert restored.current().state.value == "setup"
+    finally:
+        store.close()
+
+
+@pytest.mark.parametrize(
+    ("goal", "marker"),
+    (
+        ('{"task":"RAW-JSON-GOAL"}', "RAW-JSON-GOAL"),
+        ("Build RAW-CONTROL-GOAL\x1b[31m", "RAW-CONTROL-GOAL"),
+        ("RAW-OVERSIZE-GOAL-" + "x" * 2_100, "RAW-OVERSIZE-GOAL"),
+    ),
+)
+def test_setup_resume_never_renders_an_unsafe_retained_goal(
+    tmp_path: Path, goal: str, marker: str,
+) -> None:
+    harness = ShellHarness(tmp_path)
+
+    transcript = harness.run([
+        goal,
+        "/leader codex-cli",
+        "/model native-default",
+        "/setup confirm",
+        "/exit",
+    ])
+
+    assert "Goal ready. The retained goal is not displayed." in transcript
+    assert marker not in transcript
+    assert "{" not in transcript
+    assert "\x1b" not in transcript
+    restored, store = harness.restored()
+    try:
+        assert restored.resume().goal == goal
+        assert restored.current().state.value == "ready"
     finally:
         store.close()
 
