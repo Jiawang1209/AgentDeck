@@ -122,7 +122,7 @@ class MissionService:
         if type(proposal) is MissionResult:
             return proposal
         preview = proposal.mission.preview(1)
-        return self._persist_preview(proposal.mission, preview, session)
+        return self._persist_preview(proposal.mission, preview, session, base=None)
 
     def revise(self, user_delta: str) -> MissionResult:
         current = self._current
@@ -142,7 +142,9 @@ class MissionService:
         if type(proposal) is MissionResult:
             return proposal
         preview = proposal.mission.preview(current.version + 1)
-        return self._persist_preview(proposal.mission, preview, session)
+        return self._persist_preview(
+            proposal.mission, preview, session, base=current.preview
+        )
 
     def confirm(self, preview_id: str, content_hash: str) -> MissionResult:
         current = self._current
@@ -158,7 +160,8 @@ class MissionService:
         existing = self._store.lookup_command(command_id, "confirm_mission")
         if existing is not None:
             mission = _confirmed_from_result(existing, confirmed)
-            self._current_state = "confirmed"
+            self._current = None
+            self._current_state = None
             return MissionResult("mission_confirmed", mission=mission)
         session = self._session(SessionState.AWAITING_CONFIRMATION)
         running = session.transition(SessionState.RUNNING)
@@ -197,7 +200,8 @@ class MissionService:
         return MissionResult("mission_confirmed", mission=mission)
 
     def _persist_preview(
-        self, draft: MissionDraft, preview: MissionPreview, session: ProductSession
+        self, draft: MissionDraft, preview: MissionPreview, session: ProductSession,
+        *, base: MissionPreview | None,
     ) -> MissionResult:
         candidate = MissionPreviewView(draft, preview)
         try:
@@ -216,7 +220,10 @@ class MissionService:
         def persist(transaction: StoreTransaction) -> CommandResult:
             transaction.save_aggregate(
                 "mission_previews", preview.preview_id,
-                _mission_snapshot(self._session_id, preview, "awaiting_confirmation", None),
+                _mission_snapshot(
+                    self._session_id, preview, "awaiting_confirmation", None,
+                    base=base,
+                ),
             )
             transaction.save_session(_session_snapshot(
                 awaiting, self._request.permission_ceiling.value
@@ -233,7 +240,13 @@ class MissionService:
                 "version": preview.version,
             }
 
-        result = self._store.execute_once(command_id, "create_mission_preview", persist)
+        try:
+            result = self._store.execute_once(
+                command_id, "create_mission_preview", persist
+            )
+        except ValueError:
+            self._restore_current()
+            return self._drift_diagnostic()
         _validate_preview_result(result, preview)
         self._current = candidate
         self._current_state = "awaiting_confirmation"
@@ -367,15 +380,23 @@ def _goal(value: object) -> str:
 
 
 def _mission_snapshot(
-    session_id: str, preview: MissionPreview, state: str, confirmed_at: str | None
+    session_id: str, preview: MissionPreview, state: str, confirmed_at: str | None,
+    *, base: MissionPreview | None = None,
 ) -> dict[str, object]:
-    return {
+    snapshot: dict[str, object] = {
         "mission_id": f"msn_{preview.content_hash[:24]}", "session_id": session_id,
         "state": state, "current_version": preview.version,
         "preview_id": preview.preview_id, "version": preview.version,
         "content_hash": preview.content_hash,
         "canonical_content": preview.canonical_content, "confirmed_at": confirmed_at,
     }
+    if base is not None:
+        snapshot.update(
+            base_preview_id=base.preview_id,
+            base_content_hash=base.content_hash,
+            base_version=base.version,
+        )
+    return snapshot
 
 
 def _session_snapshot(

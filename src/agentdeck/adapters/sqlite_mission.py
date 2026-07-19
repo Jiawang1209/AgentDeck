@@ -19,6 +19,7 @@ _FIELDS = frozenset(
         "version", "content_hash", "canonical_content", "confirmed_at",
     }
 )
+_BASE_FIELDS = frozenset({"base_preview_id", "base_content_hash", "base_version"})
 
 
 def _text(value: object, field: str) -> str:
@@ -31,8 +32,11 @@ def _text(value: object, field: str) -> str:
     return value
 
 
-def _snapshot(value: object, *, confirmed: bool) -> dict[str, object]:
-    if type(value) is not dict or set(value) != _FIELDS:
+def _snapshot(
+    value: object, *, confirmed: bool, allow_cancelled: bool = False
+) -> dict[str, object]:
+    fields = frozenset(value) if type(value) is dict else frozenset()
+    if type(value) is not dict or fields not in {_FIELDS, _FIELDS | _BASE_FIELDS}:
         raise ValueError("Mission snapshot must have exact fields")
     copied = dict(value)
     mission_id = _text(copied["mission_id"], "mission_id")
@@ -53,9 +57,31 @@ def _snapshot(value: object, *, confirmed: bool) -> dict[str, object]:
             raise ValueError("confirmed Mission requires an exact confirmation time")
         copied["confirmed_at"] = normalize_occurred_at(confirmed_at)
         ConfirmedMissionVersion(mission_id, version, content_hash, canonical)
-    elif copied["state"] != "awaiting_confirmation" or confirmed_at is not None:
+    elif (
+        copied["state"] not in (
+            {"awaiting_confirmation", "cancelled"}
+            if allow_cancelled else {"awaiting_confirmation"}
+        )
+        or confirmed_at is not None
+    ):
         raise ValueError("Mission Preview cannot be confirmed")
+    if fields == _FIELDS | _BASE_FIELDS:
+        if confirmed:
+            raise ValueError("confirmed Mission cannot carry revision CAS input")
+        base_version = copied["base_version"]
+        if type(base_version) is not int or base_version < 1 or version != base_version + 1:
+            raise ValueError("revision base version is invalid")
+        _preview_identity(copied["base_preview_id"], copied["base_content_hash"])
     return copied
+
+
+def _preview_identity(preview_id: object, content_hash: object) -> None:
+    if (
+        type(preview_id) is not str or type(content_hash) is not str
+        or preview_id != f"prv_{content_hash[:24]}" or len(content_hash) != 64
+        or any(character not in "0123456789abcdef" for character in content_hash)
+    ):
+        raise ValueError("revision base Preview identity is invalid")
 
 
 def save_mission_aggregate(
@@ -83,10 +109,36 @@ def save_mission_aggregate(
 def _save_preview(
     connection: sqlite3.Connection, facts: dict[str, object], now: str
 ) -> None:
-    if connection.execute(
-        "SELECT 1 FROM product_sessions WHERE session_id=?", (facts["session_id"],)
-    ).fetchone() is None:
+    session = connection.execute(
+        "SELECT state FROM product_sessions WHERE session_id=?", (facts["session_id"],)
+    ).fetchone()
+    if session is None:
         raise ValueError("Mission Preview requires a durable ProductSession")
+    has_base = _BASE_FIELDS <= set(facts)
+    expected_state = "awaiting_confirmation" if has_base else "ready"
+    if session[0] != expected_state or has_base != (facts["version"] > 1):
+        raise ValueError("Mission Preview does not match ProductSession revision state")
+    current = connection.execute(
+        """SELECT v.preview_id,v.content_hash,v.version
+             FROM missions m JOIN mission_versions v ON v.mission_id=m.mission_id
+              AND v.version=m.current_version
+            WHERE m.session_id=? AND m.state='awaiting_confirmation'
+            ORDER BY v.version DESC LIMIT 1""",
+        (facts["session_id"],),
+    ).fetchone()
+    if has_base:
+        expected = (
+            facts["base_preview_id"], facts["base_content_hash"], facts["base_version"]
+        )
+        if current != expected:
+            raise ValueError("revision base is not the current Mission Preview")
+        connection.execute(
+            """UPDATE missions SET state='cancelled',updated_at=?
+                 WHERE session_id=? AND state='awaiting_confirmation'""",
+            (now, facts["session_id"]),
+        )
+    elif current is not None:
+        raise ValueError("initial Mission Preview already exists")
     connection.execute(
         "INSERT INTO missions VALUES (?,?,?,?,?,?)",
         (
@@ -106,9 +158,11 @@ def _save_preview(
 def _confirm(connection: sqlite3.Connection, facts: dict[str, object]) -> None:
     latest = connection.execute(
         """SELECT m.mission_id,v.preview_id,v.content_hash,v.version
-             FROM missions m JOIN mission_versions v ON v.mission_id=m.mission_id
+             FROM missions m JOIN product_sessions p ON p.session_id=m.session_id
+             JOIN mission_versions v ON v.mission_id=m.mission_id
               AND v.version=m.current_version
             WHERE m.session_id=? AND m.state='awaiting_confirmation'
+              AND p.state='awaiting_confirmation'
             ORDER BY v.version DESC LIMIT 1""",
         (facts["session_id"],),
     ).fetchone()
@@ -164,7 +218,8 @@ def load_mission_aggregate(
         where, parameters = "v.preview_id=?", (aggregate_id,)
     elif aggregate_type == "current_mission_preview":
         where, parameters = (
-            "m.session_id=? AND m.state='awaiting_confirmation'", (aggregate_id,)
+            "m.session_id=? AND m.state='awaiting_confirmation' "
+            "AND p.state='awaiting_confirmation'", (aggregate_id,)
         )
     elif aggregate_type == "confirmed_missions":
         where, parameters = "m.mission_id=? AND m.state='confirmed'", (aggregate_id,)
@@ -174,7 +229,8 @@ def load_mission_aggregate(
         f"""SELECT m.mission_id,m.session_id,m.state,m.current_version,
                    v.preview_id,v.version,v.content_hash,v.canonical_mission_facts,
                    v.confirmed_at
-              FROM missions m JOIN mission_versions v ON v.mission_id=m.mission_id
+              FROM missions m JOIN product_sessions p ON p.session_id=m.session_id
+              JOIN mission_versions v ON v.mission_id=m.mission_id
                AND v.version=m.current_version WHERE {where}
               ORDER BY v.version DESC LIMIT 1""",
         parameters,
@@ -182,7 +238,9 @@ def load_mission_aggregate(
     if row is None:
         return None
     facts = dict(zip(_FIELDS_IN_ROW_ORDER, row, strict=True))
-    return _snapshot(facts, confirmed=facts["state"] == "confirmed")
+    return _snapshot(
+        facts, confirmed=facts["state"] == "confirmed", allow_cancelled=True
+    )
 
 
 _FIELDS_IN_ROW_ORDER = (

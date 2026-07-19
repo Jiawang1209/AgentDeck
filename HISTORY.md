@@ -66,8 +66,17 @@
   Mission requests must match the live Session authority for project, Leader,
   model, and permission; running re-entry has no confirmable Preview; and the
   complete human rendering is bounded and validated before any Mission write.
-  The combined Product flow gate passes `78` cases, the Leader/architecture gate
-  passes `165`, and the SQLite/Product persistence gate passes `243`.
+  Re-review REDs then proved that revision creation itself also needs authority:
+  every revised Preview now carries its base Preview ID, hash, and version into
+  one SQLite compare-and-swap transaction. A successful CAS retires every prior
+  awaiting Preview for that session as `cancelled` without deleting canonical
+  history, then inserts the sole new current Preview; a competing stale revision
+  rolls back without a command, Mission, version, Task, or session-state write.
+  Current-Preview reads additionally require the ProductSession itself to be
+  awaiting confirmation, and duplicate confirmation replay clears every local
+  confirmable cache. The combined Product flow gate passes `82` cases, the
+  Leader/architecture gate passes `165`, and the SQLite/Product persistence
+  gate passes `244`.
 
 ### Close the next Product Kernel production persistence seams
 

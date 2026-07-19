@@ -127,6 +127,41 @@ def test_mission_adapter_rejects_identity_and_confirmation_drift(
         store.close()
 
 
+def test_current_preview_requires_awaiting_product_session_state(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    preview = _preview_snapshot(tmp_path)
+    try:
+        store.execute_once(
+            "mission:preview:one", "create_mission_preview",
+            lambda transaction: _save(transaction, "mission_previews", preview),
+        )
+
+        def mark_running(transaction):
+            session = transaction.load_aggregate("product_sessions", "ses_preview")
+            transaction.save_session({
+                "session_id": "ses_preview", "state": "running",
+                "permission_profile": session["permission_profile"],
+                "pending_goal": session["pending_goal"],
+            })
+            return {"state": "running"}
+
+        store.execute_once("session:force:running", "test_transition", mark_running)
+
+        assert store.load_aggregate("mission_previews", preview["preview_id"]) is not None
+        assert store.load_aggregate("current_mission_preview", "ses_preview") is None
+    finally:
+        store.close()
+
+
 def _save(transaction, aggregate_type: str, snapshot: dict[str, object]):
     transaction.save_aggregate(aggregate_type, str(snapshot["preview_id"] if aggregate_type == "mission_previews" else snapshot["mission_id"]), snapshot)
+    if aggregate_type == "mission_previews":
+        session = transaction.load_aggregate("product_sessions", snapshot["session_id"])
+        transaction.save_session({
+            "session_id": snapshot["session_id"], "state": "awaiting_confirmation",
+            "permission_profile": session["permission_profile"],
+            "pending_goal": session["pending_goal"],
+        })
     return {"saved": True}

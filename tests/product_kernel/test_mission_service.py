@@ -193,6 +193,52 @@ def test_stale_service_cannot_confirm_after_another_service_creates_v2(
         store.close()
 
 
+def test_two_services_cannot_both_revise_the_same_base_preview(
+    tmp_path: Path,
+) -> None:
+    first = _proposal(tmp_path, "Build a page")
+    revised = _proposal(tmp_path, "Build a mobile page")
+    competing = _proposal(tmp_path, "Build a desktop-only page")
+    winner, store = _service(tmp_path, FakeLeader([first, revised]))
+    base = winner.propose("Build a page").preview
+    assert base is not None
+    stale_session = SessionService(
+        store=store, clock=FrozenClock(NOW), session_id="ses_mission",
+        project_root=str(tmp_path),
+        available_leaders={"codex-cli": ("native-default",)},
+    )
+    stale = MissionService(
+        store=store, clock=FrozenClock(NOW), session_id="ses_mission",
+        leader_service=LeaderService(FakeLeader([competing])),
+        request_template=_request(tmp_path), session_authority=stale_session,
+        preview_validator=validate_mission_preview,
+    )
+    winner_v2 = winner.revise("Add mobile acceptance").preview
+    assert winner_v2 is not None
+    tables = ("missions", "mission_versions", "tasks", "commands", "events")
+    before = tuple(store.count(table) for table in tables)
+    try:
+        rejected = stale.revise("Remove mobile acceptance")
+
+        assert rejected.diagnostic is not None
+        assert rejected.diagnostic.code == "mission_preview_drift"
+        assert tuple(store.count(table) for table in tables) == before
+        assert store.count("missions") == store.count("mission_versions") == 2
+        assert store.count("tasks") == 0
+        rows = store.connection.execute(
+            "SELECT mission_id,state FROM missions ORDER BY current_version,mission_id"
+        ).fetchall()
+        assert rows == [
+            (f"msn_{base.content_hash[:24]}", "cancelled"),
+            (f"msn_{winner_v2.content_hash[:24]}", "awaiting_confirmation"),
+        ]
+        current = store.load_aggregate("current_mission_preview", "ses_mission")
+        assert current is not None
+        assert current["preview_id"] == winner_v2.preview_id
+    finally:
+        store.close()
+
+
 def test_confirmed_reentry_has_no_confirmable_current_preview(tmp_path: Path) -> None:
     service, store = _service(
         tmp_path, FakeLeader([_proposal(tmp_path, "Build a page")])
@@ -215,6 +261,69 @@ def test_confirmed_reentry_has_no_confirmable_current_preview(tmp_path: Path) ->
     try:
         assert restored.current_preview() is None
         assert restored_session.current().state.value == "running"
+    finally:
+        store.close()
+
+
+def test_revision_confirmation_reentry_never_resurrects_v1(tmp_path: Path) -> None:
+    service, store = _service(
+        tmp_path,
+        FakeLeader([
+            _proposal(tmp_path, "Build a page"),
+            _proposal(tmp_path, "Build a mobile page"),
+        ]),
+    )
+    v1 = service.propose("Build a page").preview
+    assert v1 is not None
+    v2 = service.revise("Add mobile acceptance").preview
+    assert v2 is not None
+    confirmed = service.confirm(v2.preview_id, v2.content_hash)
+    assert confirmed.mission is not None
+    reentry_session = SessionService(
+        store=store, clock=FrozenClock(NOW), session_id="ses_mission",
+        project_root=str(tmp_path),
+        available_leaders={"codex-cli": ("native-default",)},
+    )
+    reentry = MissionService(
+        store=store, clock=FrozenClock(NOW), session_id="ses_mission",
+        leader_service=LeaderService(FakeLeader([])),
+        request_template=_request(tmp_path), session_authority=reentry_session,
+        preview_validator=validate_mission_preview,
+    )
+    try:
+        assert reentry.current_preview() is None
+        assert store.load_aggregate("mission_previews", v1.preview_id)["state"] == "cancelled"
+        assert store.load_aggregate("current_mission_preview", "ses_mission") is None
+    finally:
+        store.close()
+
+
+def test_duplicate_confirm_replay_clears_second_service_preview_cache(
+    tmp_path: Path,
+) -> None:
+    first, store = _service(
+        tmp_path, FakeLeader([_proposal(tmp_path, "Build a page")])
+    )
+    preview = first.propose("Build a page").preview
+    assert preview is not None
+    second_session = SessionService(
+        store=store, clock=FrozenClock(NOW), session_id="ses_mission",
+        project_root=str(tmp_path),
+        available_leaders={"codex-cli": ("native-default",)},
+    )
+    second = MissionService(
+        store=store, clock=FrozenClock(NOW), session_id="ses_mission",
+        leader_service=LeaderService(FakeLeader([])),
+        request_template=_request(tmp_path), session_authority=second_session,
+        preview_validator=validate_mission_preview,
+    )
+    first_result = first.confirm(preview.preview_id, preview.content_hash)
+    replay = second.confirm(preview.preview_id, preview.content_hash)
+    try:
+        assert replay.mission == first_result.mission
+        assert second.current_preview() is None
+        assert second._current_state is None
+        assert store.count("tasks") == 4
     finally:
         store.close()
 
