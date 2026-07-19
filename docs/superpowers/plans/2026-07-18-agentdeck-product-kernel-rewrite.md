@@ -3743,10 +3743,13 @@ git commit -m "feat: enforce evidence backed execution semantics"
 
 **Files:**
 - Create: src/agentdeck/adapters/codex_app_server.py
+- Create: src/agentdeck/adapters/codex_app_server_probe.py
 - Create: src/agentdeck/adapters/codex_acp_server.py
+- Modify: src/agentdeck/adapters/acp.py
 - Create: tests/product_kernel/fixtures/fake_codex_app_server.py
 - Create: tests/product_kernel/test_codex_app_server.py
 - Create: tests/product_kernel/test_codex_acp_bridge.py
+- Modify: tests/product_kernel/test_acp_worker_contract.py
 - Modify: pyproject.toml
 - Modify: HISTORY.md
 
@@ -3756,6 +3759,25 @@ injection, legacy ACP adapter.
 **Approved legacy evidence:** official installed Codex app-server stable
 JSON-RPC v2 protocol and generated schema for the frozen Codex build. Protocol
 authority: [official Codex app-server README](https://github.com/openai/codex/blob/main/codex-rs/app-server/README.md).
+
+**Post-review real-protocol and provenance closure (2026-07-19):** the frozen
+Codex 0.131.0 wire envelope is the generated stable schema, not a generic
+JSON-RPC envelope assumption. A real passive initialize must pass, and the
+server-reported version plus `thread/start` model must exact-bind Leader
+provenance before `turn/start`. Native permission request identity must survive
+the real outward ACP transport into `ACPWorker` event provenance; recording it
+only in ACP metadata that the Worker discards is insufficient. Server-initiated
+request IDs require bounded pending/seen tracking so duplicate or concurrent
+reuse fails closed. Version/schema probes must enforce byte limits while data
+is being produced, not after an unbounded temporary file has been written.
+Every notification present in the frozen stable schema must be explicitly
+classified as turn-scoped, permission-scoped, safe normalized progress, or
+bounded ignore; a legitimate hook, warning, model reroute, resolved request, or
+global notification must not be misreported as schema drift, while stale
+thread/turn facts still fail closed. Probe/process responsibility is extracted
+to `codex_app_server_probe.py` so the protocol client remains at most 500
+lines. Parameterized tests use the real `ACPWorker`, not only a recording ACP
+client, to prove native permission lineage end to end.
 
 - [ ] **Step 1: Write RED bridge tests**
 
@@ -3802,7 +3824,14 @@ drift is a blocker. Experimental app-server fields are never enabled silently.
 
 ```bash
 conda run -n agentdeck pytest tests/product_kernel/test_codex_app_server.py tests/product_kernel/test_codex_acp_bridge.py tests/product_kernel/test_acp_worker_contract.py -q
-git add src/agentdeck/adapters/codex_app_server.py src/agentdeck/adapters/codex_acp_server.py tests/product_kernel pyproject.toml HISTORY.md
+git add src/agentdeck/adapters/codex_app_server.py \
+  src/agentdeck/adapters/codex_app_server_probe.py \
+  src/agentdeck/adapters/codex_acp_server.py \
+  src/agentdeck/adapters/acp.py \
+  tests/product_kernel/fixtures/fake_codex_app_server.py \
+  tests/product_kernel/test_codex_app_server.py \
+  tests/product_kernel/test_codex_acp_bridge.py \
+  tests/product_kernel/test_acp_worker_contract.py pyproject.toml HISTORY.md
 git commit -m "feat: bridge codex app server through acp"
 ```
 
