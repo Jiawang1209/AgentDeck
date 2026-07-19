@@ -1902,6 +1902,7 @@ git commit -m "feat: migrate product sessions to schema v2"
 - Create: `tests/product_kernel/test_sqlite_session_authority.py`
 - Create: `tests/product_kernel/test_product_session_reentry.py`
 - Modify: `tests/product_kernel/test_session_service.py`
+- Modify: `tests/product_kernel/test_recovery_service.py`
 - Modify: `HISTORY.md`
 
 `sqlite_session.py` receives `_session_record`, session load/save delegation,
@@ -1939,6 +1940,13 @@ def open_service(root: Path) -> tuple[SessionService, SQLiteStore]:
     )
     return service, store
 ```
+
+The shared `_seed_sqlite_running_attempt()` recovery fixture must also create
+its non-setup ProductSession through the same exact setup/configure authority
+path before inserting recovery-specific rows. It is imported by
+`test_sqlite_recovery_integrity.py`, so correcting the single source fixture is
+sufficient; production code must not synthesize a fallback Leader/model pair
+for legacy test data.
 
 For the drift test, update only `product_sessions.leader_model` through the raw
 writer after setup and commit, close the Store, and call `open_service()` again;
@@ -2141,7 +2149,9 @@ conda run -n agentdeck env PYTHONPATH="$PWD/src" pytest \
   tests/product_kernel/test_session_service.py \
   tests/product_kernel/test_session_service_quality.py \
   tests/product_kernel/test_mission_service.py \
-  tests/product_kernel/test_product_shell.py -q
+  tests/product_kernel/test_product_shell.py \
+  tests/product_kernel/test_recovery_service.py \
+  tests/product_kernel/test_sqlite_recovery_integrity.py -q
 ```
 
 - [ ] **Step 8: Update HISTORY and commit 15A.2**
@@ -2154,7 +2164,8 @@ git add src/agentdeck/ports/store.py src/agentdeck/adapters/sqlite.py \
   src/agentdeck/application/session_service.py src/agentdeck/product/bootstrap.py \
   tests/product_kernel/test_sqlite_session_authority.py \
   tests/product_kernel/test_product_session_reentry.py \
-  tests/product_kernel/test_session_service.py HISTORY.md
+  tests/product_kernel/test_session_service.py \
+  tests/product_kernel/test_recovery_service.py HISTORY.md
 git commit -m "feat: restore latest product session authority"
 ```
 
