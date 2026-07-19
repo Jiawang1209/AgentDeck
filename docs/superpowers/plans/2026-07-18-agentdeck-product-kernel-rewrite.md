@@ -1967,8 +1967,10 @@ git commit -m "feat: bridge sequential acp permissions"
 - Create: src/agentdeck/application/execution_service.py
 - Create: src/agentdeck/adapters/sqlite_execution.py
 - Modify: src/agentdeck/adapters/sqlite.py
+- Modify: src/agentdeck/adapters/sqlite_validation.py
 - Create: tests/product_kernel/test_execution_coordinator.py
 - Create: tests/product_kernel/test_sqlite_execution.py
+- Modify: tests/product_kernel/test_sqlite_attempts.py
 - Modify: HISTORY.md
 
 **Repo-truth prerequisite closure:** the Task 11 schema already contains
@@ -1980,6 +1982,20 @@ command transaction. The helper validates exact Task/Attempt/Mission/Agent
 lineage and immutable terminal facts; it does not implement scheduling,
 semantic review policy, retry policy, or Task 24 behavior. `sqlite.py` remains
 at most 500 lines.
+
+**Post-review lineage closure (2026-07-19):** Task 23 must construct and bound
+the complete TaskRequest before starting Worker I/O; construction failure
+persists a safe terminal Attempt rather than leaving `running`. Effective
+Attempt effects are the intersection of the caller's already-narrowed scope
+and the frozen Task effects, computed before Worker start. Once the returned
+ACP WorkerHandle is validated, the Attempt may bind `acp_session_id` exactly
+once from `NULL` to that typed session; later removal or drift is forbidden.
+This requires the explicitly added `sqlite_validation.py` and
+`test_sqlite_attempts.py` scope. Attempt, Evidence, Handoff and command IDs are
+derived from confirmed Mission/Task/ordinal lineage; the short `_1` values in
+the pseudocode assertions below are illustrative test labels, not globally
+reusable production identities. Re-running a confirmed execution must never
+repeat Worker I/O.
 
 **Forbidden legacy imports:** legacy mission orchestration, daemon worker loop,
 action proposals, and pane transport.

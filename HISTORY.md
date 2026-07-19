@@ -4,6 +4,18 @@
 
 ## 2026-07-19
 
+### Close Task Request and ACP Attempt lineage in the formal plan
+
+- Expanded Task 23 only where independent review proved the original boundary
+  insufficient: bounded TaskRequest construction now precedes Worker I/O,
+  effective permissions use a monotonic intersection, and SQLite Attempt
+  validation may bind one exact ACP Session from `NULL` once but never erase or
+  drift it.
+- Required Mission-derived Attempt, Evidence, Handoff and command identities so
+  a different confirmed Mission cannot be mistaken for command replay. Added
+  the exact SQLite Attempt validation files to the formal allowlist; retry and
+  Task 24 semantic budgets remain out of scope.
+
 ### Correct the Product exit and re-entry dependency order
 
 - Rejected the isolated Task 15 implementation after independent review proved
