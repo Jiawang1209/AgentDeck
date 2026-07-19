@@ -4,8 +4,30 @@
 
 ## 2026-07-19
 
+### Migrate exact SQLite schema v1 to schema v2
+
+- Preserved the immutable v1 DDL authority and added an ordered v2 authority
+  with seven nullable ProductSession Leader/pending-exit columns plus the exact
+  insert/update closed-shape triggers. Fresh databases and exact v1 migrations
+  now produce the same known v2 schema fingerprint in one `BEGIN IMMEDIATE`
+  transaction; valid v2 reopen verifies the authority without migration writes.
+- Made migration fail closed unless schema metadata, resolved project root,
+  live objects and stored digest match the known v1 authority exactly. Non-setup
+  sessions backfill Leader/model only from the exact completed canonical
+  `session:configure:<session-id>` result with strict identity, permission, goal
+  and mode lineage; setup sessions cannot have a configure command.
+- Added historical v1 fixtures and rollback evidence for fifteen damaged
+  authorities, injected real `COMMIT` failure, exact fresh/migrated fingerprints,
+  v2 reopen zero-write behavior, and updated SQLite transaction, approval and
+  execution fixtures for the new closed ProductSession shape.
+
 ### Plan the durable ProductSession exit implementation
 
+- Corrected the Task 15A.1 implementation inventory to include the existing
+  SQLite quality-test fixture that creates non-setup ProductSessions. Schema
+  v2 must reject a missing Leader/model pair, so the fixture must carry its
+  explicit configured identity; production migration code may not invent one
+  merely to preserve a stale test shape.
 - Replaced the rejected Task 15 `yes/no` and synchronous fake-cancellation
   steps with four ordered Task 15A TDD commits: exact schema-v2 migration,
   latest project-local nonterminal session restoration, exact pending-exit

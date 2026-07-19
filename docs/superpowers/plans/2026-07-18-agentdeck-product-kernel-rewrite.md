@@ -1401,6 +1401,7 @@ tests are current rewrite code, not legacy evidence.
 - Create: `tests/product_kernel/sqlite_v1_fixture.py`
 - Create: `tests/product_kernel/test_sqlite_schema_v2.py`
 - Modify: `tests/product_kernel/test_sqlite_schema.py`
+- Modify: `tests/product_kernel/test_sqlite_quality.py`
 - Modify: `tests/product_kernel/test_sqlite_transactions.py`
 - Modify: `tests/product_kernel/test_sqlite_approval.py`
 - Modify: `tests/product_kernel/test_sqlite_execution.py`
@@ -1881,6 +1882,7 @@ git add src/agentdeck/adapters/sqlite_migrations.py \
   tests/product_kernel/sqlite_v1_fixture.py \
   tests/product_kernel/test_sqlite_schema_v2.py \
   tests/product_kernel/test_sqlite_schema.py \
+  tests/product_kernel/test_sqlite_quality.py \
   tests/product_kernel/test_sqlite_transactions.py \
   tests/product_kernel/test_sqlite_approval.py \
   tests/product_kernel/test_sqlite_execution.py HISTORY.md
