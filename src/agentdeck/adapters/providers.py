@@ -78,6 +78,34 @@ def _text(value: object, diagnostic: str) -> str:
     return value
 
 
+def _credential_source_label(value: object) -> str:
+    diagnostic = "provider requires a bounded credential source label"
+    if type(value) is not str:
+        raise LeaderUnavailable(diagnostic) from None
+    try:
+        encoded = value.encode("ascii", errors="strict")
+    except UnicodeEncodeError:
+        encoded = b""
+    if not encoded or len(encoded) > 128:
+        raise LeaderUnavailable(diagnostic) from None
+    first = encoded[0]
+    if not (
+        first == ord("_")
+        or ord("A") <= first <= ord("Z")
+        or ord("a") <= first <= ord("z")
+    ):
+        raise LeaderUnavailable(diagnostic) from None
+    if any(
+        byte != ord("_")
+        and not ord("A") <= byte <= ord("Z")
+        and not ord("a") <= byte <= ord("z")
+        and not ord("0") <= byte <= ord("9")
+        for byte in encoded[1:]
+    ):
+        raise LeaderUnavailable(diagnostic) from None
+    return value
+
+
 def _base_url(value: object) -> str:
     text = _text(value, "Custom provider requires an explicit base URL")
     parsed = None
@@ -125,7 +153,7 @@ class OpenAICompatibleLeader:
     provider: str
     base_url: str
     model: str
-    credential_source: str
+    credential_source: str = field(repr=False, compare=False)
     timeout_seconds: float
     max_response_bytes: int
     _credential_resolver: CredentialResolver = field(repr=False, compare=False)
@@ -147,17 +175,15 @@ class OpenAICompatibleLeader:
         checked_model = _text(model, "provider requires an exact model")
         if checked_provider == "custom":
             checked_url = _base_url(base_url)
-            checked_source = _text(
-                credential_source,
-                "Custom provider requires an explicit credential source",
-            )
+            checked_source = _credential_source_label(credential_source)
         else:
             preset_url, preset_source = _PRESETS[checked_provider]
             if base_url is not None:
                 raise LeaderUnavailable("provider preset base URL cannot be overridden")
             if credential_source is not None:
                 raise LeaderUnavailable("provider preset credential source cannot be overridden")
-            checked_url, checked_source = preset_url, preset_source
+            checked_url = preset_url
+            checked_source = _credential_source_label(preset_source)
         if not callable(credential_resolver):
             raise LeaderUnavailable("provider requires a credential resolver")
         object.__setattr__(self, "provider", checked_provider)

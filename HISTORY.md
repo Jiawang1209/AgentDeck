@@ -26,6 +26,18 @@
   leaks; focused Product renderer, slash-command, and architecture GREEN passed
   all `92` cases.
 
+### Validate API credential source labels
+
+- Restricted Custom and preset credential sources to bounded ASCII environment
+  variable labels. Tokens, assignments, headers, paths, whitespace, controls,
+  Unicode, overlong values, and hostile string subclasses now fail with one
+  content-free diagnostic and no retained exception cause or context.
+- Excluded credential-source labels from adapter repr and equality while
+  preserving provider, endpoint, and model as controlled business identity.
+  Credential resolution still occurs on every proposal, and returned secrets
+  remain transient. TDD RED produced `13 failed, 40 passed`; focused GREEN
+  passed all `53` adapter cases.
+
 ### Fail closed on ambiguous ACP tool starts
 
 - Restricted proven pre-effect tool starts to the explicit ACP read/search/think

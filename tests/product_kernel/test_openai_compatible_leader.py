@@ -23,11 +23,15 @@ from agentdeck.ports.leader import (
 from product_kernel.test_leader_contract import request as contract_request
 from product_kernel.test_leader_contract import valid_proposal
 
-
 MODEL = "exact-model-2026-07"
 SECRET = "sk-local-contract-secret-marker"
 BODY_MARKER = "provider-body-must-not-escape"
 
+class HostileCredentialSource(str):
+    def encode(self, *_args: object, **_kwargs: object) -> bytes:
+        raise AssertionError(BODY_MARKER)
+    def __repr__(self) -> str:
+        raise AssertionError(BODY_MARKER)
 
 def api_request(*, provider: str = "custom", model: str = MODEL):
     return replace(
@@ -40,7 +44,6 @@ def api_request(*, provider: str = "custom", model: str = MODEL):
         ),
     )
 
-
 def proposal_payload(*, provider: str = "custom", model: str = MODEL):
     payload = valid_proposal()
     payload.update(
@@ -51,11 +54,9 @@ def proposal_payload(*, provider: str = "custom", model: str = MODEL):
     )
     return payload
 
-
 def openai_response(payload: object | None = None) -> bytes:
     content = json.dumps(proposal_payload() if payload is None else payload)
     return json.dumps({"choices": [{"message": {"content": content}}]}).encode()
-
 
 @dataclass
 class Response:
@@ -66,18 +67,14 @@ class Response:
     chunks: tuple[bytes, ...] = ()
     chunk_delay: float = 0.0
 
-
 class LocalServer:
     def __init__(self) -> None:
         owner = self
-
         class Handler(BaseHTTPRequestHandler):
             def do_GET(self) -> None:
                 self._respond()
-
             def do_POST(self) -> None:
                 self._respond()
-
             def _respond(self) -> None:
                 length = int(self.headers.get("Content-Length", "0"))
                 raw = self.rfile.read(length)
@@ -103,10 +100,8 @@ class LocalServer:
                             time.sleep(response.chunk_delay)
                 except (BrokenPipeError, ConnectionResetError):
                     pass
-
             def log_message(self, *_args: object) -> None:
                 pass
-
         self.response = Response()
         self.request_count = 0
         self.last_path = ""
@@ -115,17 +110,14 @@ class LocalServer:
         self._server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
         self._thread = threading.Thread(target=self._server.serve_forever, daemon=True)
         self._thread.start()
-
     @property
     def url(self) -> str:
         host, port = self._server.server_address
         return f"http://{host}:{port}"
-
     def close(self) -> None:
         self._server.shutdown()
         self._server.server_close()
         self._thread.join(timeout=2)
-
 
 @pytest.fixture
 def http_server():
@@ -134,7 +126,6 @@ def http_server():
         yield server
     finally:
         server.close()
-
 
 def adapter(http_server: LocalServer, **overrides: object) -> OpenAICompatibleLeader:
     options: dict[str, object] = {
@@ -146,7 +137,6 @@ def adapter(http_server: LocalServer, **overrides: object) -> OpenAICompatibleLe
     options.update(overrides)
     return OpenAICompatibleLeader(**options)
 
-
 def oversize_api_request():
     text = "界" * 1_360
     agents = tuple(
@@ -157,7 +147,6 @@ def oversize_api_request():
         for index in range(64)
     )
     return replace(api_request(), available_agents=agents)
-
 
 def exception_text(error: BaseException) -> str:
     parts = [str(error), "".join(traceback.format_exception(error))]
@@ -174,7 +163,6 @@ def exception_text(error: BaseException) -> str:
         if current.__context__ is not None:
             pending.append(current.__context__)
     return "\n".join(parts)
-
 
 def test_adapter_sends_exact_model_schema_and_bearer_credential(http_server) -> None:
     leader = adapter(http_server)
@@ -193,7 +181,6 @@ def test_adapter_sends_exact_model_schema_and_bearer_credential(http_server) -> 
     }
     assert http_server.last_json["stream"] is False
 
-
 def test_adapter_never_falls_back_from_an_exact_custom_model(http_server) -> None:
     exact = "vendor/private-exact-model"
     leader = adapter(http_server, model=exact)
@@ -201,7 +188,6 @@ def test_adapter_never_falls_back_from_an_exact_custom_model(http_server) -> Non
     proposal = leader.propose_mission(api_request(model=exact))
     assert proposal.mission.leader_model == exact
     assert http_server.last_json["model"] == exact
-
 
 @pytest.mark.parametrize(
     ("provider", "base_url", "credential_source"),
@@ -226,13 +212,22 @@ def test_presets_only_resolve_base_url_and_credential_label(
         MODEL,
     )
 
-
 @pytest.mark.parametrize(
     "options, diagnostic",
     [
         ({"model": ""}, "exact model"),
         ({"base_url": None}, "explicit base URL"),
-        ({"credential_source": None}, "explicit credential source"),
+        ({"credential_source": None}, "credential source label"),
+        ({"credential_source": ""}, "credential source label"),
+        ({"credential_source": "sk-" + "A" * 48}, "credential source label"),
+        ({"credential_source": "API_KEY=" + SECRET}, "credential source label"),
+        ({"credential_source": "Authorization: Bearer " + SECRET}, "credential source label"),
+        ({"credential_source": "/tmp/key"}, "credential source label"),
+        ({"credential_source": "API KEY"}, "credential source label"),
+        ({"credential_source": "API_KEY\n"}, "credential source label"),
+        ({"credential_source": "A" * 129}, "credential source label"),
+        ({"credential_source": "clé"}, "credential source label"),
+        ({"credential_source": HostileCredentialSource(BODY_MARKER)}, "credential source label"),
         ({"base_url": "file:///tmp/provider"}, "HTTP base URL"),
         ({"credential_resolver": None}, "credential resolver"),
         ({"timeout_seconds": 0}, "positive timeout"),
@@ -249,10 +244,48 @@ def test_invalid_custom_configuration_fails_before_http(
         "credential_resolver": lambda _source: SECRET,
     }
     configured.update(options)
-    with pytest.raises(LeaderUnavailable, match=diagnostic):
+    with pytest.raises(LeaderUnavailable, match=diagnostic) as error:
         OpenAICompatibleLeader(**configured)
+    rendered = exception_text(error.value)
+    source = options.get("credential_source")
+    if type(source) is str and source:
+        assert source not in rendered
+    assert error.value.__cause__ is None and error.value.__context__ is None
+    assert SECRET not in rendered and BODY_MARKER not in rendered
     assert http_server.request_count == 0
 
+def test_preset_credential_source_is_validated_content_free(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setitem(provider_module._PRESETS, "deepseek", (
+        "https://api.deepseek.com/v1", "API_KEY=" + SECRET))
+    with pytest.raises(LeaderUnavailable, match="credential source label") as error:
+        OpenAICompatibleLeader(provider="deepseek", model=MODEL,
+                               credential_resolver=lambda _source: SECRET)
+    assert SECRET not in exception_text(error.value)
+    assert error.value.__cause__ is None and error.value.__context__ is None
+
+def test_credential_source_is_not_repr_or_equality_identity(http_server) -> None:
+    resolver = lambda _source: SECRET
+    first = adapter(http_server, credential_source="FIRST_API_KEY", credential_resolver=resolver)
+    second = adapter(http_server, credential_source="SECOND_API_KEY", credential_resolver=resolver)
+    changed = adapter(http_server, model="changed-model", credential_resolver=resolver)
+    assert "FIRST_API_KEY" not in repr(first)
+    assert first == second
+    assert first != changed
+
+def test_resolver_runs_each_call_without_persisting_returned_credentials(http_server) -> None:
+    calls: list[str] = []
+    credentials = iter(("first-credential", "second-credential"))
+    def resolver(source: str) -> str:
+        calls.append(source)
+        return next(credentials)
+    leader = adapter(http_server, credential_resolver=resolver)
+    leader.propose_mission(api_request())
+    leader.propose_mission(api_request())
+    assert calls == ["LOCAL_API_KEY", "LOCAL_API_KEY"]
+    assert all(value not in vars(leader).values()
+               for value in ("first-credential", "second-credential"))
 
 def test_presets_reject_identity_overrides() -> None:
     with pytest.raises(LeaderUnavailable, match="preset base URL"):
@@ -270,7 +303,6 @@ def test_presets_reject_identity_overrides() -> None:
             credential_resolver=lambda _source: SECRET,
         )
 
-
 def test_request_identity_drift_is_rejected_before_credential_or_http(http_server) -> None:
     resolver_calls: list[str] = []
     leader = adapter(
@@ -282,7 +314,6 @@ def test_request_identity_drift_is_rejected_before_credential_or_http(http_serve
     assert resolver_calls == []
     assert http_server.request_count == 0
 
-
 @pytest.mark.parametrize("credential", [None, "", "  ", 42])
 def test_missing_or_invalid_credential_never_sends_http(http_server, credential: object) -> None:
     leader = adapter(http_server, credential_resolver=lambda _source: credential)
@@ -290,7 +321,6 @@ def test_missing_or_invalid_credential_never_sends_http(http_server, credential:
         leader.propose_mission(api_request())
     assert error.value.code is LeaderFailureCode.AUTHENTICATION
     assert http_server.request_count == 0
-
 
 def test_credential_resolver_failure_is_content_free_and_sends_no_http(http_server) -> None:
     def resolver(_source: str) -> object:
@@ -301,20 +331,17 @@ def test_credential_resolver_failure_is_content_free_and_sends_no_http(http_serv
     assert SECRET not in exception_text(error.value)
     assert http_server.request_count == 0
 
-
 def test_transport_failure_is_typed_and_does_not_expose_low_level_text(
     http_server, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     def unavailable(*_args: object, **_kwargs: object) -> object:
         raise provider_module.URLError(BODY_MARKER)
-
     monkeypatch.setattr(provider_module, "urlopen", unavailable)
     with pytest.raises(LeaderFailure) as error:
         adapter(http_server).propose_mission(api_request())
     assert error.value.code is LeaderFailureCode.TRANSPORT
     assert BODY_MARKER not in exception_text(error.value)
     assert SECRET not in exception_text(error.value)
-
 
 def test_redirect_is_rejected_without_contacting_or_authorizing_target(http_server) -> None:
     target = LocalServer()
@@ -331,7 +358,6 @@ def test_redirect_is_rejected_without_contacting_or_authorizing_target(http_serv
     finally:
         target.close()
 
-
 def test_slow_trickle_obeys_one_total_deadline(http_server) -> None:
     http_server.response = Response(body=b"", chunks=(b"x",) * 10, chunk_delay=0.03)
     leader = adapter(http_server, timeout_seconds=0.05)
@@ -342,14 +368,11 @@ def test_slow_trickle_obeys_one_total_deadline(http_server) -> None:
     assert error.value.code is LeaderFailureCode.TIMEOUT
     assert elapsed < 0.18
 
-
 def test_hostile_resolver_repr_is_never_evaluated_or_exposed(http_server) -> None:
     class Resolver:
         repr_calls = 0
-
         def __call__(self, _source: str) -> str:
             return SECRET
-
         def __repr__(self) -> str:
             self.repr_calls += 1
             raise AssertionError(BODY_MARKER)
@@ -359,7 +382,6 @@ def test_hostile_resolver_repr_is_never_evaluated_or_exposed(http_server) -> Non
     assert BODY_MARKER not in repr(leader)
     assert resolver.repr_calls == 0
     assert vars(leader)["_credential_resolver"] is resolver
-
 
 @pytest.mark.parametrize("failure_stage", ("body", "read", "close"))
 def test_hostile_response_is_content_free_transport_failure(
@@ -392,7 +414,6 @@ def test_hostile_response_is_content_free_transport_failure(
     assert error.value.code is LeaderFailureCode.TRANSPORT
     assert BODY_MARKER not in exception_text(error.value)
 
-
 def test_oversize_request_fails_before_credential_or_http(http_server) -> None:
     resolver_calls: list[str] = []
     leader = adapter(
@@ -405,7 +426,6 @@ def test_oversize_request_fails_before_credential_or_http(http_server) -> None:
     assert resolver_calls == []
     assert http_server.request_count == 0
 
-
 @pytest.mark.parametrize(
     "status, expected",
     [(401, LeaderFailureCode.AUTHENTICATION), (403, LeaderFailureCode.AUTHENTICATION),
@@ -414,27 +434,21 @@ def test_oversize_request_fails_before_credential_or_http(http_server) -> None:
 )
 def test_http_failures_preserve_typed_categories(http_server, status, expected) -> None:
     http_server.response = Response(status=status, body=BODY_MARKER.encode())
-
     with pytest.raises(LeaderFailure) as error:
         adapter(http_server).propose_mission(api_request())
-
     assert error.value.code is expected
     assert BODY_MARKER not in exception_text(error.value)
     assert SECRET not in exception_text(error.value)
 
-
 def test_timeout_is_bounded_and_content_free(http_server) -> None:
     http_server.response = Response(delay=0.2)
     leader = adapter(http_server, timeout_seconds=0.02)
-
     started = time.monotonic()
     with pytest.raises(LeaderFailure) as error:
         leader.propose_mission(api_request())
-
     assert error.value.code is LeaderFailureCode.TIMEOUT
     assert time.monotonic() - started < 1
     assert SECRET not in exception_text(error.value)
-
 
 @pytest.mark.parametrize(
     "body",
@@ -446,13 +460,10 @@ def test_timeout_is_bounded_and_content_free(http_server) -> None:
 )
 def test_malformed_provider_responses_are_schema_failures(http_server, body: bytes) -> None:
     http_server.response.body = body
-
     with pytest.raises(LeaderFailure) as error:
         adapter(http_server).propose_mission(api_request())
-
     assert error.value.code is LeaderFailureCode.SCHEMA
     assert BODY_MARKER not in exception_text(error.value)
-
 
 @pytest.mark.parametrize(
     "mutation, expected",
@@ -467,30 +478,22 @@ def test_invalid_mission_preserves_schema_or_semantic_category(
     payload = proposal_payload()
     mutation(payload)
     http_server.response.body = openai_response(payload)
-
     with pytest.raises(LeaderFailure) as error:
         adapter(http_server).propose_mission(api_request())
-
     assert error.value.code is expected
-
 
 def test_oversize_response_is_bounded_and_does_not_leak_body(http_server) -> None:
     http_server.response.body = (BODY_MARKER * 20).encode()
-
     with pytest.raises(LeaderFailure) as error:
         adapter(http_server, max_response_bytes=32).propose_mission(api_request())
-
     assert error.value.code is LeaderFailureCode.OVERSIZE
     assert BODY_MARKER not in exception_text(error.value)
-
 
 def test_adapter_does_not_persist_credential_or_expose_bodies(http_server) -> None:
     leader = adapter(http_server)
     http_server.response.body = BODY_MARKER.encode()
-
     with pytest.raises(LeaderFailure) as error:
         leader.propose_mission(api_request())
-
     assert SECRET not in repr(vars(leader))
     rendered = exception_text(error.value)
     assert SECRET not in rendered
