@@ -4,6 +4,25 @@
 
 ## 2026-07-19
 
+### Add ACP-backed CLI Leaders
+
+- Added a pure Transport Port plus a lazy, injectable ACP stdio transport over
+  the pinned official SDK. Each transport owns one bounded process/session,
+  maps official updates into typed values, supports stable load/resume,
+  cancellation and permission responses, and fails content-free on protocol,
+  capability, timeout, lifecycle and individual/cumulative size violations.
+- Added synchronous Codex and Claude ACP Leader adapters that encapsulate the
+  asynchronous SDK lifecycle, freeze exact backend/model/version identity, and
+  accept Mission proposals only from the declared structured ACP resource.
+  Plain Agent text, tool activity and permission requests cannot become plan
+  authority; planning permission requests are explicitly rejected.
+- Kept Task 21 Worker mapping and its fake unchanged and introduced a separate
+  official-model stdio fake. TDD RED failed collection for the absent modules;
+  the first GREEN exposed `13 failed, 5 passed` before SDK notification-order,
+  stable session-load and exception-context fixes. A final hostile-argv RED
+  closed raw codec leakage; focused GREEN passed all `18` Task 18 transport
+  and Leader cases without real network or authentication.
+
 ### Harden retained-goal presentation
 
 - Routed the post-setup retained-goal display through the existing Task 13
