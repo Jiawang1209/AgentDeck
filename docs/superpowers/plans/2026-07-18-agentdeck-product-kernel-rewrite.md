@@ -1552,15 +1552,23 @@ git commit -m "feat: add openai compatible leader adapter"
 
 **Files:**
 - Create: src/agentdeck/ports/transport.py
-- Create: src/agentdeck/adapters/acp.py
-- Create: tests/product_kernel/fixtures/fake_acp_agent.py
+- Create: src/agentdeck/adapters/acp_transport.py
+- Create: src/agentdeck/adapters/acp_leader.py
+- Create: tests/product_kernel/fixtures/fake_acp_stdio_agent.py
 - Create: tests/product_kernel/test_acp_transport.py
 - Create: tests/product_kernel/test_acp_leader.py
-- Modify: pyproject.toml
 - Modify: HISTORY.md
 
+**Existing Task 21 authority (do not modify):**
+`src/agentdeck/adapters/acp.py` owns ACP Worker mapping, tool-effect and
+disconnect outcome classification, permission events, retries, cancellation,
+and terminal Worker results. `tests/product_kernel/fixtures/fake_acp_agent.py`
+is its in-process Worker fake. Task 18 must not move, extend, re-export, or
+refactor either file. The official SDK is already pinned at
+`agent-client-protocol==0.11.0`; this task performs no dependency mutation.
+
 **Forbidden legacy imports:** direct PTY/prompt injection, pane capture, legacy
-ACP mapping/client unless admitted later under Task 23.
+ACP mapping/client; no later composition task implicitly admits them.
 
 **Approved legacy evidence:** official agent-client-protocol package API and its
 installed type definitions; no AgentDeck legacy source.
@@ -1568,19 +1576,17 @@ installed type definitions; no AgentDeck legacy source.
 - [ ] **Step 1: Write RED stdio ACP tests**
 
 ```python
-@pytest.mark.asyncio
-async def test_acp_leader_initializes_session_and_streams_proposal(fake_acp) -> None:
+def test_acp_leader_initializes_session_and_streams_proposal(fake_acp) -> None:
     leader = ACPLeader(fake_acp.command, model="native-default")
-    result = await leader.propose_mission(request())
+    result = leader.propose_mission(request())
     assert fake_acp.calls == ["initialize", "session/new", "session/prompt"]
     assert result.objective == "Build page"
 
 
-@pytest.mark.asyncio
-async def test_acp_leader_rejects_prompt_scraping_and_unbounded_output(fake_acp) -> None:
+def test_acp_leader_rejects_prompt_scraping_and_unbounded_output(fake_acp) -> None:
     fake_acp.mode = "oversize"
     with pytest.raises(TransportFailure, match="response_oversize"):
-        await ACPLeader(fake_acp.command, max_bytes=4096).propose_mission(request())
+        ACPLeader(fake_acp.command, max_bytes=4096).propose_mission(request())
 ```
 
 - [ ] **Step 2: Confirm RED and implement**
@@ -1589,18 +1595,28 @@ async def test_acp_leader_rejects_prompt_scraping_and_unbounded_output(fake_acp)
 conda run -n agentdeck pytest tests/product_kernel/test_acp_transport.py tests/product_kernel/test_acp_leader.py -q
 ```
 
-Expected: transport and adapter absent. Transport Port carries initialize,
-new/resume session, prompt, cancel, permission response, and typed update
-stream. ACP adapter uses the official Python SDK over bounded stdio; it obtains
-proposal data from a structured artifact/update agreed by the fake server, not
+Expected: the Transport Port, bounded stdio transport, ACP Leader adapter, and
+stdio fake are absent. The existing `adapters/acp.py` and
+`fake_acp_agent.py` are Task 21 Worker authority and remain untouched.
+Transport Port carries initialize, new/resume session, prompt, cancel,
+permission response, and typed update stream. `ACPStdioTransport` uses the
+official Python SDK over bounded stdio and exposes a lazy injectable client
+seam; it does not classify Worker effects, retries, disconnect outcomes,
+permissions, or Worker events. `ACPLeader` preserves the existing synchronous
+Leader Port, internally owns any asynchronous SDK lifecycle, and obtains
+proposal data from a structured artifact/update agreed by the stdio fake, not
 terminal text. Separate process/session objects are created per Agent Instance.
-Capability absence fails closed.
+Capability absence fails closed. The physical split into `acp.py`,
+`acp_transport.py`, and `acp_leader.py` changes no behavior authority and keeps
+each file within the 500-line limit.
 
 - [ ] **Step 3: Verify and commit**
 
 ```bash
-conda run -n agentdeck pytest tests/product_kernel/test_acp_transport.py tests/product_kernel/test_acp_leader.py tests/product_kernel/test_leader_service.py -q
-git add src/agentdeck/ports/transport.py src/agentdeck/adapters/acp.py tests/product_kernel pyproject.toml HISTORY.md
+conda run -n agentdeck pytest tests/product_kernel/test_acp_transport.py tests/product_kernel/test_acp_leader.py tests/product_kernel/test_leader_service.py tests/product_kernel/test_acp_worker_contract.py tests/product_kernel/test_acp_worker_failures.py tests/product_kernel/test_fake_worker_contract.py tests/product_kernel/test_architecture.py -q
+python -m compileall src tests -q
+git diff --check
+git add src/agentdeck/ports/transport.py src/agentdeck/adapters/acp_transport.py src/agentdeck/adapters/acp_leader.py tests/product_kernel/fixtures/fake_acp_stdio_agent.py tests/product_kernel/test_acp_transport.py tests/product_kernel/test_acp_leader.py HISTORY.md
 git commit -m "feat: add acp backed cli leaders"
 ```
 
@@ -2113,7 +2129,15 @@ facts and composition wiring for claude-agent-acp and agentdeck-codex-acp. The
 test accepts injected probe results only; no real process runs. Record legacy
 ACP files as reviewed and rejected in the reuse register because their
 state/model coupling violates the new boundary; the new adapter uses official
-SDK types directly.
+SDK types directly. Discovery only reports passive readiness and never imports
+or starts a transport. The composition root alone binds `ACPStdioTransport`
+with `ACPLeader` or the existing `ACPWorker`; each Agent Instance receives its
+own lazy process/session. Claude uses the verified `claude-agent-acp` argv and
+Codex uses the Task 25 `agentdeck-codex-acp` argv. Readiness and preflight do not
+start either process, and there is no PTY, legacy ACP, or prompt-injection
+fallback. The injected composition test must prove the Worker remains the Task
+21 `ACPWorker`, the Leader remains `ACPLeader`, and readiness performs zero
+subprocess starts.
 
 - [ ] **Step 3: Verify R4 and commit**
 

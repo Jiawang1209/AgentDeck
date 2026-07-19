@@ -235,7 +235,9 @@ src/agentdeck/
   adapters/
     discovery.py
     sqlite.py
-    acp.py
+    acp.py              # ACP Worker mapping and outcome authority
+    acp_transport.py    # official SDK and bounded stdio lifecycle
+    acp_leader.py       # structured Leader proposal projection
     tmux_observer.py
     providers.py
   product/
@@ -264,6 +266,9 @@ Hard rules:
 - `product/` renders state and invokes application use cases but does not
   decide Mission validity or permissions;
 - adapters cannot mutate domain objects outside application service commands;
+- the logical ACP adapter boundary is physically split so Worker outcome
+  classification, stdio lifecycle, and Leader projection remain independent
+  and each Product Kernel source file stays within the 500-line limit;
 - an architecture test enforces the import boundary;
 - the new Product Shell cannot call old CLI commands as an internal API.
 

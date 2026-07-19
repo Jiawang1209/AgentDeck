@@ -4,6 +4,17 @@
 
 ## 2026-07-19
 
+### Correct the ACP Leader physical module boundary
+
+- Reconciled Task 18 with the Task 21 repo truth before the next implementation
+  wave. ACP Worker mapping remains authoritative in `adapters/acp.py`, while
+  bounded stdio lifecycle and structured Leader projection receive dedicated
+  `acp_transport.py` and `acp_leader.py` modules plus an isolated stdio fake.
+- Preserved the synchronous Leader Port, existing Worker outcome semantics, the
+  pinned official SDK, and the 500-line limit. Task 26 now explicitly keeps
+  readiness passive and binds lazy per-Agent transports only in the composition
+  root, with no PTY or legacy ACP fallback.
+
 ### Fail closed on ambiguous ACP tool starts
 
 - Restricted proven pre-effect tool starts to the explicit ACP read/search/think
