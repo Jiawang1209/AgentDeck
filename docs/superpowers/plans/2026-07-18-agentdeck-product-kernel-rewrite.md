@@ -1626,12 +1626,27 @@ git commit -m "feat: add acp backed cli leaders"
 
 **Files:**
 - Create: src/agentdeck/application/mission_service.py
+- Create: src/agentdeck/adapters/sqlite_mission.py
+- Modify: src/agentdeck/adapters/sqlite.py
 - Modify: src/agentdeck/product/shell.py
+- Modify: src/agentdeck/product/bootstrap.py
 - Modify: src/agentdeck/product/presenter.py
 - Modify: src/agentdeck/product/renderer.py
 - Create: tests/product_kernel/test_mission_service.py
 - Create: tests/product_kernel/test_product_preview_flow.py
+- Create: tests/product_kernel/test_sqlite_mission.py
 - Modify: HISTORY.md
+
+**Repo-truth prerequisite closure:** the Task 11 schema already contains
+`missions`, `mission_versions`, and `tasks`, but the SQLite Adapter has no
+command-bound save/load path for those aggregates; and the Task 14 composition
+root can inject only `SessionService`, making a MissionService otherwise
+unreachable from the real Product Shell. Task 19 closes only those seams through
+the dedicated `sqlite_mission.py` helper, thin SQLite delegation, and an
+injectable composition binding. `sqlite.py` must remain at most 500 lines and
+must not absorb Mission validation. Tests use injected Leader/adapter factories
+and never start a real provider. Task 26 remains responsible for binding real
+Codex/Claude ACP readiness; this task adds no provider discovery or fallback.
 
 **Forbidden legacy imports:** legacy preview/action/approval/plan machinery.
 
@@ -1904,8 +1919,21 @@ git commit -m "feat: bridge sequential acp permissions"
 
 **Files:**
 - Create: src/agentdeck/application/execution_service.py
+- Create: src/agentdeck/adapters/sqlite_execution.py
+- Modify: src/agentdeck/adapters/sqlite.py
 - Create: tests/product_kernel/test_execution_coordinator.py
+- Create: tests/product_kernel/test_sqlite_execution.py
 - Modify: HISTORY.md
+
+**Repo-truth prerequisite closure:** the Task 11 schema already contains
+`handoffs` and `evidence`, while the SQLite Adapter currently persists only
+sessions, attempts, conversation turns, and approvals. Task 23 therefore adds a
+dedicated `sqlite_execution.py` helper and thin `sqlite.py` delegation so the
+terminal Attempt, typed Evidence, and Handoff can commit in one existing Store
+command transaction. The helper validates exact Task/Attempt/Mission/Agent
+lineage and immutable terminal facts; it does not implement scheduling,
+semantic review policy, retry policy, or Task 24 behavior. `sqlite.py` remains
+at most 500 lines.
 
 **Forbidden legacy imports:** legacy mission orchestration, daemon worker loop,
 action proposals, and pane transport.

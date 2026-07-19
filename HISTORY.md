@@ -4,6 +4,21 @@
 
 ## 2026-07-19
 
+### Close the next Product Kernel production persistence seams
+
+- Reconciled Tasks 19 and 23 with the frozen SQLite and Product Shell truth
+  before implementation. The schema already declares Mission versions, Tasks,
+  Evidence, and Handoffs, but the Adapter cannot save/load those aggregates;
+  the current composition root also cannot inject a MissionService into the
+  real foreground Shell.
+- Extended the formal Task 19 inventory with a dedicated SQLite Mission helper,
+  thin SQLite delegation, composition binding, and real SQLite regression.
+  Extended Task 23 with a dedicated SQLite execution helper and atomic
+  Evidence/Handoff regression. Scheduling stays in Application, canonical
+  persistence stays in Adapters, `sqlite.py` stays within 500 lines, and no
+  provider, daemon, PTY, tmux, legacy orchestration, or later semantic policy
+  is admitted by this prerequisite closure.
+
 ### Bridge sequential ACP permissions durably
 
 - Added stable Approval Port values and a sequential Approval Service that
