@@ -91,9 +91,12 @@ src/agentdeck/
   application/
     __init__.py
     session_service.py
+    session_records.py
+    exit_service.py
     leader_service.py
     mission_service.py
     execution_service.py
+    execution_runtime.py
     approval_service.py
     recovery_service.py
     support_service.py
@@ -114,6 +117,8 @@ src/agentdeck/
     discovery.py
     system_clock.py
     sqlite.py
+    sqlite_migrations.py
+    sqlite_session.py
     acp.py
     codex_app_server.py
     codex_acp_server.py
@@ -1371,101 +1376,1600 @@ git commit -m "feat: add foreground product session shell"
 
 ### Task 15: Make exit, interruption confirmation, and re-entry deterministic
 
-**Post-review dependency correction (2026-07-19):** Task 15 is split into an
-authority slice and a real-transport closure slice. The original four-file
-implementation is not integration-authoritative: a synchronous injected
-callback cannot stand in for the async Worker Port, and an optional
-RecoveryService cannot satisfy production re-entry. Task 19 and Task 23 may
-continue independently, but the R2 exit gate remains open until both slices
-below pass.
+**Post-review dependency correction (2026-07-19):** Task 15 is split into a
+durable authority slice and a real-transport closure slice. The rejected
+synchronous fake-cancellation implementation is not authority. Task 15A runs
+now, after corrected Tasks 19 and 23. Strict numerical execution then resumes
+at Task 24, continues through Tasks 25 and 26, returns once to Task 15B, and
+only then advances to Task 27. The R2 exit gate remains open until 15B passes.
 
-**Task 15A — durable session/exit authority (after the corrected Task 19):**
+**Authority:** Design sections 5.2, 10.4.1–10.4.3, 17.2, 18, 23.
 
-- persist the configured Leader/model identity needed to validate later
-  Mission requests across re-entry;
-- select the latest nonterminal ProductSession deterministically;
-- persist an exact pending-exit request identity, active Attempt snapshot and
-  content hash; decline and confirm must consume that same durable request;
-- treat `running`, `awaiting_approval`, and `human_controlled` as active exit
-  states;
-- Ctrl-C and EOF must fail closed and must not claim that active work was
-  safely cancelled or saved;
-- add schema migration/compatibility coverage before changing the frozen
-  ProductSession persistence shape.
+**Forbidden legacy imports:** legacy state, ConversationSession, Router,
+daemon/background lifecycle, PTY/pane transport, old exit confirmation, and
+M2c recovery/harness code.
 
-Task 15A expands the allowed files to
-`kernel/session.py`, `ports/store.py`, `adapters/sqlite_schema.py`,
-`adapters/sqlite_validation.py`, `adapters/sqlite.py`,
-`application/session_service.py`, `product/shell.py`, `product/bootstrap.py`,
-their exact Product/SQLite re-entry tests, and `HISTORY.md`. It must remain
-foreground-only and cannot claim Worker cancellation.
+**Approved legacy evidence:** none. Existing Product Kernel schema and Store
+tests are current rewrite code, not legacy evidence.
 
-**Task 15B — real ACP cancellation and recovery closure (after Tasks 23, 25,
-and 26):** the composition root must keep the active Attempt, Agent Instance,
-ACP Session, WorkerHandle and Worker in one foreground async lifecycle. Exact
-confirmation awaits the real `Worker.cancel_task()`, then command-atomically
-persists `interrupted` and consumes the durable exit request. Re-entry must run
-the real RecoveryService before accepting input. Fake synchronous callbacks,
-un-awaited coroutines and optional production recovery wiring are forbidden.
-Task 15B may modify `ports/worker.py` or a dedicated execution-control Port,
-`application/execution_service.py`, `application/recovery_service.py`,
-`application/session_service.py` or a dedicated exit service,
-`product/shell.py`, `product/bootstrap.py`, exact Task 23/26/re-entry
-integration tests, and `HISTORY.md`.
-
-**Corrected order:** corrected Task 19 + corrected Task 23 → Task 15A → Tasks
-25–26 → Task 15B → rerun the complete R2 exit/re-entry gate. Task 15 is not
-complete merely because its isolated fake tests pass.
-
-**Authority:** Design sections 5.2, 10.4, 17.2, 18, 23.
+#### Task 15A.1: Migrate exact schema v1 to exact schema v2
 
 **Files:**
-- Modify: src/agentdeck/application/session_service.py
-- Modify: src/agentdeck/product/shell.py
-- Create: tests/product_kernel/test_product_reentry.py
-- Modify: HISTORY.md
+- Create: `src/agentdeck/adapters/sqlite_migrations.py`
+- Modify: `src/agentdeck/adapters/sqlite_schema.py`
+- Modify: `src/agentdeck/adapters/sqlite.py`
+- Create: `tests/product_kernel/sqlite_v1_fixture.py`
+- Create: `tests/product_kernel/test_sqlite_schema_v2.py`
+- Modify: `tests/product_kernel/test_sqlite_schema.py`
+- Modify: `tests/product_kernel/test_sqlite_transactions.py`
+- Modify: `tests/product_kernel/test_sqlite_approval.py`
+- Modify: `tests/product_kernel/test_sqlite_execution.py`
+- Modify: `HISTORY.md`
 
-**Forbidden legacy imports:** daemon/background continuation and lifecycle.
+The helper split is mandatory: `sqlite.py` is already 500 lines and
+`sqlite_schema.py` is already 403. `sqlite_migrations.py` owns known-v1 and
+known-v2 fingerprints, the ordered v2 DDL, strict configure-result backfill,
+and the one-transaction migration. `sqlite_schema.py` retains path/file/schema
+validation primitives. No touched Python or test file may exceed 500 lines.
 
-**Approved legacy evidence:** none.
-
-- [ ] **Step 1: Write RED exit/re-entry tests**
+`sqlite_v1_fixture.py` builds historical inputs without using the current Store
+open path so schema-v2 and re-entry tests share one exact v1 authority. Define
+these exact fixture boundaries in that file:
 
 ```python
-def test_exit_persists_idle_session(shell_factory, project) -> None:
-    first = shell_factory(project).run(["/exit"])
-    assert "Session saved." in first
-    second = shell_factory(project).run(["/status", "/exit"])
-    assert "Restored session" in second
+def authority_snapshot(database: Path) -> tuple[tuple[object, ...], ...]:
+    connection = sqlite3.connect(database)
+    try:
+        objects = connection.execute(
+            "SELECT type,name,tbl_name,sql FROM sqlite_schema "
+            "WHERE sql IS NOT NULL AND name NOT LIKE 'sqlite_%' "
+            "ORDER BY type,name"
+        ).fetchall()
+        metadata = connection.execute(
+            "SELECT * FROM schema_metadata ORDER BY singleton"
+        ).fetchall()
+        sessions = connection.execute(
+            "SELECT * FROM product_sessions ORDER BY session_id"
+        ).fetchall()
+        commands = connection.execute(
+            "SELECT * FROM commands ORDER BY command_id"
+        ).fetchall()
+        return tuple(objects + metadata + sessions + commands)
+    finally:
+        connection.close()
 
 
-def test_exit_with_active_attempt_requires_exact_confirmation(shell_factory, project) -> None:
-    shell = shell_factory(project, active_attempt="att_1")
-    transcript = shell.run(["/exit", "no", "/status", "/exit", "yes"])
-    assert "Exit will interrupt att_1" in transcript
-    assert shell.transport.cancel_calls == ["att_1"]
-    assert shell.store.attempt("att_1")["state"] == "interrupted"
+def create_exact_v1_database(
+    project: Path, *, session: dict[str, object],
+    configure_result: dict[str, object] | None,
+) -> Path:
+    state = project / ".agentdeck"
+    state.mkdir(mode=0o700)
+    database = state / "agentdeck.db"
+    connection = sqlite3.connect(database, isolation_level=None)
+    now = "2026-07-19T00:00:00+00:00"
+    project_id = "prj_" + sha256(
+        str(project.resolve()).encode("utf-8", "strict")
+    ).hexdigest()[:24]
+    try:
+        connection.execute("BEGIN IMMEDIATE")
+        for statement in v1_schema_statements():
+            connection.execute(statement)
+        connection.execute(
+            "INSERT INTO projects VALUES (?, ?, ?)",
+            (project_id, str(project.resolve()), now),
+        )
+        connection.execute(
+            "INSERT INTO product_sessions "
+            "(session_id,project_id,state,permission_profile,pending_goal,created_at,updated_at) "
+            "VALUES (?,?,?,?,?,?,?)",
+            (
+                session["session_id"], project_id, session["state"],
+                session.get("permission_profile"), session.get("pending_goal"),
+                now, now,
+            ),
+        )
+        if configure_result is not None:
+            encoded = json.dumps(
+                configure_result, sort_keys=True, separators=(",", ":")
+            )
+            connection.execute(
+                "INSERT INTO commands VALUES (?,?, 'completed', ?, ?, ?)",
+                (
+                    f"session:configure:{session['session_id']}",
+                    "configure_product_session", encoded, now, now,
+                ),
+            )
+        connection.execute(
+            "INSERT INTO schema_metadata VALUES (1,1,?,?)",
+            (_live_schema_fingerprint(connection), str(project.resolve())),
+        )
+        connection.execute("COMMIT")
+        return database
+    except BaseException:
+        if connection.in_transaction:
+            connection.execute("ROLLBACK")
+        raise
+    finally:
+        connection.close()
 ```
 
-- [ ] **Step 2: Confirm RED and implement**
+```python
+def create_damaged_v1_database(project: Path, damage: str) -> Path:
+    session = {
+        "session_id": "ses_old", "state": "ready",
+        "permission_profile": "approve_for_me", "pending_goal": "Build",
+    }
+    valid_result = {
+        "accepted": True, "goal": "Build", "leader_backend": "codex-cli",
+        "mode": "goal_ready", "model": "native-default",
+        "permission": "approve_for_me", "session_id": "ses_old",
+    }
+    database = create_exact_v1_database(
+        project, session=session,
+        configure_result=None if damage == "missing_configure" else valid_result,
+    )
+    connection = sqlite3.connect(database, isolation_level=None)
+    try:
+        connection.execute("BEGIN IMMEDIATE")
+        if damage == "unknown_version":
+            connection.execute(
+                "UPDATE schema_metadata SET schema_version=99"
+            )
+        elif damage == "self_consistent_non_v1":
+            connection.execute("ALTER TABLE product_sessions ADD COLUMN rogue TEXT")
+            connection.execute(
+                "UPDATE schema_metadata SET schema_digest=?",
+                (_live_schema_fingerprint(connection),),
+            )
+        elif damage == "partial_v2":
+            connection.execute(
+                "ALTER TABLE product_sessions ADD COLUMN leader_backend TEXT"
+            )
+            connection.execute(
+                "UPDATE schema_metadata SET schema_digest=?",
+                (_live_schema_fingerprint(connection),),
+            )
+        elif damage == "setup_with_configure":
+            connection.execute(
+                "UPDATE product_sessions SET state='setup', pending_goal=NULL"
+            )
+        elif damage == "wrong_command_id":
+            connection.execute(
+                "UPDATE commands SET command_id='session:configure:ses_other'"
+            )
+        elif damage == "wrong_command_kind":
+            connection.execute(
+                "UPDATE commands SET command_kind='other_kind'"
+            )
+        elif damage == "started_command":
+            connection.execute(
+                "UPDATE commands SET state='started', canonical_result_facts=NULL, completed_at=NULL"
+            )
+        elif damage == "malformed_configure":
+            connection.execute(
+                "UPDATE commands SET canonical_result_facts='{}'"
+            )
+        elif damage in {
+            "conflicting_permission", "session_lineage", "goal_lineage",
+            "mode_lineage", "leader_oversize", "model_oversize",
+        }:
+            changes = {
+                "conflicting_permission": {"permission": "full_access"},
+                "session_lineage": {"session_id": "ses_other"},
+                "goal_lineage": {"goal": "Other"},
+                "mode_lineage": {"mode": "ready"},
+                "leader_oversize": {"leader_backend": "x" * 4097},
+                "model_oversize": {"model": "x" * 4097},
+            }
+            changed = dict(valid_result, **changes[damage])
+            connection.execute(
+                "UPDATE commands SET canonical_result_facts=?",
+                (json.dumps(changed, sort_keys=True, separators=(",", ":")),),
+            )
+        elif damage != "missing_configure":
+            raise AssertionError(f"unknown damage fixture: {damage}")
+        connection.execute("COMMIT")
+        return database
+    except BaseException:
+        if connection.in_transaction:
+            connection.execute("ROLLBACK")
+        raise
+    finally:
+        connection.close()
+```
+
+The test compares `authority_snapshot()` before and after the failed open.
+
+- [ ] **Step 1: Write the fresh-v2 and known-v1 migration RED tests**
+
+```python
+def test_fresh_database_commits_exact_schema_v2(tmp_path: Path) -> None:
+    store = SQLiteStore.open(tmp_path)
+    try:
+        metadata = store.connection.execute(
+            "SELECT schema_version,schema_digest FROM schema_metadata"
+        ).fetchone()
+        columns = {
+            row[1] for row in store.connection.execute(
+                "PRAGMA table_info(product_sessions)"
+            )
+        }
+        triggers = {
+            row[0] for row in store.connection.execute(
+                "SELECT name FROM sqlite_schema WHERE type='trigger'"
+            )
+        }
+        assert metadata == (2, known_schema_fingerprint(2))
+        assert {
+            "leader_backend", "leader_model", "pending_exit_id",
+            "pending_exit_attempt_id", "canonical_pending_exit_attempt_facts",
+            "pending_exit_attempt_hash", "pending_exit_requested_at",
+        } <= columns
+        assert triggers == {
+            "trg_product_sessions_v2_closed_insert",
+            "trg_product_sessions_v2_closed_update",
+        }
+    finally:
+        store.close()
+
+
+def test_exact_v1_configured_session_migrates_and_backfills(tmp_path: Path) -> None:
+    database = create_exact_v1_database(
+        tmp_path,
+        session={
+            "session_id": "ses_old", "state": "ready",
+            "permission_profile": "approve_for_me", "pending_goal": "Build",
+        },
+        configure_result={
+            "accepted": True, "goal": "Build", "leader_backend": "codex-cli",
+            "mode": "goal_ready", "model": "native-default",
+            "permission": "approve_for_me", "session_id": "ses_old",
+        },
+    )
+    store = SQLiteStore.open(tmp_path)
+    try:
+        row = store.load_aggregate("product_sessions", "ses_old")
+        assert row["leader_backend"] == "codex-cli"
+        assert row["leader_model"] == "native-default"
+        assert store.connection.execute(
+            "SELECT schema_version FROM schema_metadata"
+        ).fetchone() == (2,)
+    finally:
+        store.close()
+
+
+def test_exact_v1_setup_session_migrates_without_inventing_configuration(
+    tmp_path: Path,
+) -> None:
+    create_exact_v1_database(
+        tmp_path,
+        session={
+            "session_id": "ses_setup", "state": "setup",
+            "permission_profile": None, "pending_goal": None,
+        },
+        configure_result=None,
+    )
+    store = SQLiteStore.open(tmp_path)
+    try:
+        row = store.load_aggregate("product_sessions", "ses_setup")
+        assert row["state"] == "setup"
+        assert row["leader_backend"] is None
+        assert row["leader_model"] is None
+    finally:
+        store.close()
+```
+
+- [ ] **Step 2: Run the three tests and verify RED**
 
 ```bash
-conda run -n agentdeck pytest tests/product_kernel/test_product_reentry.py -q
+conda run -n agentdeck env PYTHONPATH="$PWD/src" pytest \
+  tests/product_kernel/test_sqlite_schema_v2.py::test_fresh_database_commits_exact_schema_v2 \
+  tests/product_kernel/test_sqlite_schema_v2.py::test_exact_v1_configured_session_migrates_and_backfills \
+  tests/product_kernel/test_sqlite_schema_v2.py::test_exact_v1_setup_session_migrates_without_inventing_configuration -q
 ```
 
-Expected: exit lacks a durable confirmation protocol. Persist the pending exit
-action with active Attempt identity; only exact confirmation cancels through
-Worker Port, records interrupted, flushes state, closes the writer, and exits.
-Re-entry loads the latest nonterminal ProductSession and runs RecoveryService
-before accepting input.
+Expected: FAIL because schema version is 1 and the v2 columns/helper do not
+exist. A collection/import failure is acceptable only for the missing
+`known_schema_fingerprint`; after adding the test helper import, the behavioral
+assertion must still fail before production migration code is written.
 
-- [ ] **Step 3: Verify R2 exit gate and commit**
+- [ ] **Step 3: Implement the exact migration primitives**
+
+```python
+# sqlite_migrations.py
+SCHEMA_VERSION = 2
+V1_SCHEMA_VERSION = 1
+V2_COLUMNS = (
+    "leader_backend TEXT",
+    "leader_model TEXT",
+    "pending_exit_id TEXT",
+    "pending_exit_attempt_id TEXT",
+    "canonical_pending_exit_attempt_facts TEXT",
+    "pending_exit_attempt_hash TEXT",
+    "pending_exit_requested_at TEXT",
+)
+
+_CLOSED_SESSION_WHEN = """
+    ((NEW.leader_backend IS NULL) <> (NEW.leader_model IS NULL))
+ OR (NEW.state = 'setup' AND NEW.leader_backend IS NOT NULL)
+ OR (NEW.state <> 'setup' AND NEW.leader_backend IS NULL)
+ OR ((NEW.pending_exit_id IS NOT NULL)
+   + (NEW.pending_exit_attempt_id IS NOT NULL)
+   + (NEW.canonical_pending_exit_attempt_facts IS NOT NULL)
+   + (NEW.pending_exit_attempt_hash IS NOT NULL)
+   + (NEW.pending_exit_requested_at IS NOT NULL)) NOT IN (0, 5)
+"""
+
+
+def v2_schema_statements() -> tuple[str, ...]:
+    alters = tuple(
+        f"ALTER TABLE product_sessions ADD COLUMN {column}"
+        for column in V2_COLUMNS
+    )
+    triggers = tuple(
+        f"""CREATE TRIGGER trg_product_sessions_v2_closed_{operation}
+             BEFORE {operation.upper()} ON product_sessions
+             FOR EACH ROW WHEN {_CLOSED_SESSION_WHEN}
+             BEGIN SELECT RAISE(ABORT, 'product session v2 fields are invalid'); END"""
+        for operation in ("insert", "update")
+    )
+    return alters + triggers
+
+
+def known_schema_fingerprint(version: int) -> str:
+    connection = sqlite3.connect(":memory:", isolation_level=None)
+    try:
+        for statement in v1_schema_statements():
+            connection.execute(statement)
+        if version == SCHEMA_VERSION:
+            _apply_v2_ddl(connection)
+        elif version != V1_SCHEMA_VERSION:
+            raise StoreSchemaError("schema version is unknown")
+        return _live_schema_fingerprint(connection)
+    finally:
+        connection.close()
+
+
+def migrate_schema(connection: sqlite3.Connection, root: Path) -> None:
+    connection.execute("BEGIN IMMEDIATE")
+    try:
+        if not _live_schema_objects(connection):
+            for statement in v1_schema_statements():
+                connection.execute(statement)
+            _apply_v2_ddl(connection)
+            _require_exact_live_schema(connection, SCHEMA_VERSION)
+            _insert_metadata(connection, root, SCHEMA_VERSION)
+        else:
+            version = _validate_metadata_root_and_digest(connection, root)
+            if version == V1_SCHEMA_VERSION:
+                _require_exact_live_schema(connection, V1_SCHEMA_VERSION)
+                _apply_v2_ddl(connection)
+                _backfill_configured_sessions(connection)
+                _validate_v2_session_rows(connection)
+                _require_exact_live_schema(connection, SCHEMA_VERSION)
+                _update_metadata(connection, root, SCHEMA_VERSION)
+            elif version == SCHEMA_VERSION:
+                _validate_v2_session_rows(connection)
+                _require_exact_live_schema(connection, SCHEMA_VERSION)
+            else:
+                raise StoreSchemaError("schema version is unknown")
+        if connection.execute("PRAGMA foreign_key_check").fetchall():
+            raise StoreSchemaError("schema migration violates foreign keys")
+        connection.execute("COMMIT")
+    except BaseException:
+        if connection.in_transaction:
+            connection.execute("ROLLBACK")
+        raise
+```
+
+`_apply_v2_ddl()` must execute the seven `ALTER TABLE ... ADD COLUMN`
+statements and create exactly
+`trg_product_sessions_v2_closed_insert` / `_update`. Each trigger rejects
+Leader/model null mismatch, setup with configured identity, non-setup without
+configured identity, and a pending-exit null count other than zero or five.
+`_backfill_configured_sessions()` accepts only the exact completed command
+`session:configure:<session-id>` / `configure_product_session`, decodes the
+closed seven-field result through the existing canonical decoder, validates
+session/permission/goal/mode plus 4096-byte Leader/model bounds, and updates the
+pair. Setup plus any configure command and non-setup without one are blockers.
+
+- [ ] **Step 4: Run the focused GREEN tests**
 
 ```bash
-conda run -n agentdeck pytest tests/product_kernel/test_product_*.py tests/product_kernel/test_recovery_service.py -q
-git add src/agentdeck/application/session_service.py src/agentdeck/product/shell.py tests/product_kernel/test_product_reentry.py HISTORY.md
-git commit -m "feat: persist product exit and reentry"
+conda run -n agentdeck env PYTHONPATH="$PWD/src" pytest \
+  tests/product_kernel/test_sqlite_schema_v2.py -q
 ```
+
+Expected: PASS for fresh v2, configured and setup v1 migration, exact
+fingerprints, and trigger presence.
+
+- [ ] **Step 5: Add adversarial migration RED cases**
+
+```python
+@pytest.mark.parametrize("damage", [
+    "unknown_version", "self_consistent_non_v1", "partial_v2",
+    "missing_configure", "setup_with_configure", "wrong_command_id",
+    "wrong_command_kind", "started_command", "malformed_configure",
+    "conflicting_permission", "session_lineage", "goal_lineage", "mode_lineage",
+    "leader_oversize", "model_oversize",
+])
+def test_v1_migration_blockers_roll_back_all_authority_facts(
+    tmp_path: Path, damage: str,
+) -> None:
+    database = create_damaged_v1_database(tmp_path, damage)
+    before = authority_snapshot(database)
+    with pytest.raises(StoreSchemaError):
+        SQLiteStore.open(tmp_path)
+    assert authority_snapshot(database) == before
+
+
+class FailNextCommitConnection(sqlite3.Connection):
+    fail_next_commit = True
+
+    def execute(self, sql: str, parameters: object = (), /):
+        if sql.strip().upper() == "COMMIT" and self.fail_next_commit:
+            self.fail_next_commit = False
+            raise sqlite3.OperationalError("injected commit failure")
+        return super().execute(sql, parameters)
+
+
+def test_v2_commit_failure_rolls_back_every_authority_fact(tmp_path: Path) -> None:
+    database = create_exact_v1_database(
+        tmp_path, session=VALID_SESSION, configure_result=VALID_CONFIGURE_RESULT
+    )
+    before = authority_snapshot(database)
+    connection = sqlite3.connect(
+        database, isolation_level=None, factory=FailNextCommitConnection,
+    )
+    try:
+        with pytest.raises(sqlite3.OperationalError, match="commit failure"):
+            migrate_schema(connection, tmp_path.resolve())
+    finally:
+        connection.close()
+    assert authority_snapshot(database) == before
+
+
+def test_valid_v2_reopen_performs_no_migration_write(tmp_path: Path) -> None:
+    first = SQLiteStore.open(tmp_path)
+    first.close()
+    second = SQLiteStore.open(tmp_path)
+    try:
+        assert second._writer.total_changes == 0
+        assert second.connection.execute(
+            "SELECT schema_digest FROM schema_metadata"
+        ).fetchone() == (known_schema_fingerprint(2),)
+    finally:
+        second.close()
+```
+
+`FailNextCommitConnection` is test-only and raises from the real `COMMIT`
+statement exactly once, allowing the production exception path to issue its
+normal `ROLLBACK`; no production fault hook or alternate migration path is
+added.
+
+- [ ] **Step 6: Verify RED for each adversarial case, then implement only the
+      missing validation**
+
+Run each parameter node before GREEN. The expected RED is either unintended
+migration success, partial schema persistence, or a changed logical authority
+snapshot. SQLite may legitimately change its main/WAL/SHM byte image while
+opening and rolling back, so the strict assertion is exact rows plus exact
+schema objects/metadata—not raw file-byte equality. Add no repair path.
+
+- [ ] **Step 7: Run schema and Store regressions**
+
+```bash
+conda run -n agentdeck env PYTHONPATH="$PWD/src" pytest \
+  tests/product_kernel/test_sqlite_schema_v2.py \
+  tests/product_kernel/test_sqlite_schema.py \
+  tests/product_kernel/test_sqlite_quality.py \
+  tests/product_kernel/test_sqlite_transactions.py -q
+```
+
+Expected: PASS. Update existing version assertions from `1` to `2` only where
+they describe a fresh current database; v1 fixtures remain explicitly v1.
+Update the three Product Kernel raw `product_sessions` INSERT fixtures to name
+all v2 columns explicitly and supply the matching configured Leader/model for
+their non-setup rows. Do not use positional `INSERT ... VALUES` after v2.
+
+- [ ] **Step 8: Update HISTORY and commit 15A.1**
+
+```bash
+git add src/agentdeck/adapters/sqlite_migrations.py \
+  src/agentdeck/adapters/sqlite_schema.py src/agentdeck/adapters/sqlite.py \
+  tests/product_kernel/sqlite_v1_fixture.py \
+  tests/product_kernel/test_sqlite_schema_v2.py \
+  tests/product_kernel/test_sqlite_schema.py \
+  tests/product_kernel/test_sqlite_transactions.py \
+  tests/product_kernel/test_sqlite_approval.py \
+  tests/product_kernel/test_sqlite_execution.py HISTORY.md
+git commit -m "feat: migrate product sessions to schema v2"
+```
+
+#### Task 15A.2: Restore the latest nonterminal ProductSession authority
+
+**Files:**
+- Create: `src/agentdeck/adapters/sqlite_session.py`
+- Modify: `src/agentdeck/adapters/sqlite_validation.py`
+- Modify: `src/agentdeck/adapters/sqlite.py`
+- Modify: `src/agentdeck/ports/store.py`
+- Create: `src/agentdeck/application/session_records.py`
+- Modify: `src/agentdeck/application/session_service.py`
+- Modify: `src/agentdeck/product/bootstrap.py`
+- Create: `tests/product_kernel/test_sqlite_session_authority.py`
+- Create: `tests/product_kernel/test_product_session_reentry.py`
+- Modify: `tests/product_kernel/test_session_service.py`
+- Modify: `HISTORY.md`
+
+`sqlite_session.py` receives `_session_record`, session load/save delegation,
+and the project-scoped selection query. `session_records.py` receives the pure
+snapshot/event/identity helpers currently at the bottom of
+`session_service.py`. These are responsibility-preserving extractions required
+before behavior is added; `sqlite.py`, `sqlite_validation.py`, and
+`session_service.py` must finish below 500 lines.
+
+The two new test modules define their setup through current public Application
+and Store entrypoints. Use this helper instead of unvalidated raw non-setup
+sessions:
+
+```python
+def seed_session(
+    store: SQLiteStore, root: Path, session_id: str, state: str,
+    *, updated_at: str,
+) -> None:
+    service = SessionService(
+        store=store, clock=FrozenClock(NOW), session_id=session_id,
+        project_root=str(root), available_leaders=AVAILABLE,
+    )
+    service.configure(leader="codex-cli", model="native-default")
+    store._require_writer().execute(
+        "UPDATE product_sessions SET state=?, updated_at=? WHERE session_id=?",
+        (state, updated_at, session_id),
+    )
+
+
+def open_service(root: Path) -> tuple[SessionService, SQLiteStore]:
+    store = SQLiteStore.open(root, clock=FrozenClock(NOW))
+    service = SessionService.open_latest(
+        store=store, clock=FrozenClock(NOW), project_root=str(root),
+        available_leaders=AVAILABLE, session_id_factory=lambda: "ses_new",
+    )
+    return service, store
+```
+
+For the drift test, update only `product_sessions.leader_model` through the raw
+writer after setup and commit, close the Store, and call `open_service()` again;
+do not add separate `forge_session_model()` or `reopen_service()` helpers.
+
+- [ ] **Step 1: Write Store selection RED tests**
+
+```python
+def test_latest_nonterminal_session_is_project_scoped_and_stably_ordered(
+    tmp_path: Path,
+) -> None:
+    store = SQLiteStore.open(tmp_path, clock=FrozenClock(NOW))
+    seed_session(store, tmp_path, "ses_old", "ready", updated_at="2026-07-19T00:00:00+00:00")
+    seed_session(store, tmp_path, "ses_b", "paused", updated_at="2026-07-19T01:00:00+00:00")
+    seed_session(store, tmp_path, "ses_a", "running", updated_at="2026-07-19T01:00:00+00:00")
+    seed_session(store, tmp_path, "ses_done", "completed", updated_at="2026-07-19T02:00:00+00:00")
+    writer = store._require_writer()
+    writer.execute(
+        "INSERT INTO projects VALUES ('prj_other','/other/project',?)",
+        ("2026-07-19T00:00:00+00:00",),
+    )
+    writer.execute(
+        "INSERT INTO product_sessions "
+        "(session_id,project_id,state,permission_profile,pending_goal,created_at,updated_at,leader_backend,leader_model) "
+        "VALUES ('ses_other','prj_other','running','approve_for_me',NULL,?,?,?,?)",
+        (
+            "2026-07-19T00:00:00+00:00", "2026-07-19T03:00:00+00:00",
+            "codex-cli", "native-default",
+        ),
+    )
+
+    selection = store.select_latest_nonterminal_session()
+
+    assert selection.session_id == "ses_b"
+    assert selection.nonterminal_count == 3
+    store.close()
+
+
+def test_terminal_history_causes_a_new_typed_session_identity(tmp_path: Path) -> None:
+    store = SQLiteStore.open(tmp_path)
+    seed_session(
+        store, tmp_path, "ses_done", "completed",
+        updated_at="2026-07-19T02:00:00+00:00",
+    )
+    service = SessionService.open_latest(
+        store=store, clock=clock(), project_root=str(tmp_path),
+        available_leaders=AVAILABLE, session_id_factory=lambda: "ses_new",
+    )
+    assert service.current().session_id == "ses_new"
+
+
+def test_migrated_v1_session_is_selected_with_original_identity(tmp_path: Path) -> None:
+    create_exact_v1_database(
+        tmp_path,
+        session={
+            "session_id": "ses_v1", "state": "ready",
+            "permission_profile": "approve_for_me", "pending_goal": "Build",
+        },
+        configure_result={
+            "accepted": True, "goal": "Build", "leader_backend": "codex-cli",
+            "mode": "goal_ready", "model": "native-default",
+            "permission": "approve_for_me", "session_id": "ses_v1",
+        },
+    )
+    store = SQLiteStore.open(tmp_path, clock=FrozenClock(NOW))
+    service = SessionService.open_latest(
+        store=store, clock=FrozenClock(NOW), project_root=str(tmp_path),
+        available_leaders=AVAILABLE,
+        session_id_factory=lambda: pytest.fail("must restore ses_v1"),
+    )
+    assert service.current().session_id == "ses_v1"
+    assert service.current().leader_backend == "codex-cli"
+    assert service.current().model == "native-default"
+    store.close()
+```
+
+- [ ] **Step 2: Run Store/re-entry tests and verify RED**
+
+```bash
+conda run -n agentdeck env PYTHONPATH="$PWD/src" pytest \
+  tests/product_kernel/test_sqlite_session_authority.py \
+  tests/product_kernel/test_product_session_reentry.py -q
+```
+
+Expected: collection or attribute FAIL because the selection Port and
+`SessionService.open_latest()` do not exist.
+
+- [ ] **Step 3: Extract cohesive helpers without changing behavior**
+
+Move session SQL and validation as described above. Keep thin delegation in
+`SQLiteStore` and `_SQLiteCommandTransaction`. Run before and after extraction:
+
+```bash
+conda run -n agentdeck env PYTHONPATH="$PWD/src" pytest \
+  tests/product_kernel/test_session_service.py \
+  tests/product_kernel/test_session_service_quality.py \
+  tests/product_kernel/test_sqlite_transactions.py -q
+```
+
+Expected before and after: PASS. This refactor does not satisfy the new RED
+until the next step.
+
+- [ ] **Step 4: Add the closed selection Port and Application entrypoint**
+
+```python
+# ports/store.py
+@dataclass(frozen=True)
+class SessionSelection:
+    session_id: str | None
+    nonterminal_count: int
+
+    def __post_init__(self) -> None:
+        if self.session_id is not None and not self.session_id.startswith("ses_"):
+            raise ValueError("session_id must be typed or None")
+        if type(self.nonterminal_count) is not int or self.nonterminal_count < 0:
+            raise ValueError("nonterminal_count must be nonnegative")
+        if (self.session_id is None) is not (self.nonterminal_count == 0):
+            raise ValueError("selection identity and count disagree")
+
+
+class Store(Protocol):
+    def select_latest_nonterminal_session(self) -> SessionSelection: ...
+
+
+# session_service.py
+@classmethod
+def open_latest(
+    cls, *, store: Store, clock: Clock, project_root: str,
+    available_leaders: Mapping[str, tuple[str, ...]],
+    session_id_factory: Callable[[], str],
+) -> "SessionService":
+    selection = store.select_latest_nonterminal_session()
+    session_id = selection.session_id
+    if session_id is None:
+        session_id = validate_session_id(session_id_factory())
+    service = cls(
+        store=store, clock=clock, session_id=session_id,
+        project_root=project_root, available_leaders=available_leaders,
+    )
+    service._nonterminal_count = selection.nonterminal_count
+    return service
+```
+
+The SQLite query is restricted to `self._project_id`, excludes
+`completed/failed/cancelled`, and orders by `updated_at DESC, created_at DESC,
+session_id DESC`. `SessionView` gains a nullable `reentry_diagnostic`; count > 1
+produces `multiple_nonterminal_sessions` severity warning without merging or
+mutating any session. Bootstrap uses `open_latest()` and an injectable
+`session_id_factory`, defaulting to `ses_` plus 32 lowercase UUID hex. Delete
+the project-root hash `_session_id()` helper.
+
+- [ ] **Step 5: Add Leader/model persistence and drift RED tests**
+
+```python
+def test_configure_persists_leader_model_in_product_session(tmp_path: Path) -> None:
+    service, store = open_service(tmp_path)
+    service.configure(leader="codex-cli", model="native-default")
+    row = store.load_aggregate("product_sessions", service.current().session_id)
+    assert (row["leader_backend"], row["leader_model"]) == (
+        "codex-cli", "native-default",
+    )
+
+
+def test_reentry_rejects_session_and_configure_command_identity_drift(tmp_path: Path) -> None:
+    service, store = open_service(tmp_path)
+    service.configure(leader="codex-cli", model="native-default")
+    store._require_writer().execute(
+        "UPDATE product_sessions SET leader_model='other-model' WHERE session_id=?",
+        (service.current().session_id,),
+    )
+    store._require_writer().commit()
+    store.close()
+    with pytest.raises(SessionServiceError, match="configuration lineage"):
+        reopened = SQLiteStore.open(tmp_path, clock=FrozenClock(NOW))
+        try:
+            SessionService.open_latest(
+                store=reopened, clock=FrozenClock(NOW), project_root=str(tmp_path),
+                available_leaders=AVAILABLE,
+                session_id_factory=lambda: "ses_unused",
+            )
+        finally:
+            reopened.close()
+```
+
+- [ ] **Step 6: Verify RED, then persist and validate the exact pair**
+
+`configure()` must pass `leader_backend` and `leader_model` to `save_session()`
+in the same command transaction as `session_configured`. Session row writes
+that omit the pair preserve the existing pair. `_restore_configuration()`
+requires setup/null/null or non-setup/non-null/non-null and exact agreement with
+the completed configure command. Mission session-state writes must preserve the
+pair and pending-exit group.
+
+- [ ] **Step 7: Run 15A.2 GREEN and regression**
+
+```bash
+conda run -n agentdeck env PYTHONPATH="$PWD/src" pytest \
+  tests/product_kernel/test_sqlite_session_authority.py \
+  tests/product_kernel/test_product_session_reentry.py \
+  tests/product_kernel/test_session_service.py \
+  tests/product_kernel/test_session_service_quality.py \
+  tests/product_kernel/test_mission_service.py \
+  tests/product_kernel/test_product_shell.py -q
+```
+
+- [ ] **Step 8: Update HISTORY and commit 15A.2**
+
+```bash
+git add src/agentdeck/ports/store.py src/agentdeck/adapters/sqlite.py \
+  src/agentdeck/adapters/sqlite_session.py \
+  src/agentdeck/adapters/sqlite_validation.py \
+  src/agentdeck/application/session_records.py \
+  src/agentdeck/application/session_service.py src/agentdeck/product/bootstrap.py \
+  tests/product_kernel/test_sqlite_session_authority.py \
+  tests/product_kernel/test_product_session_reentry.py \
+  tests/product_kernel/test_session_service.py HISTORY.md
+git commit -m "feat: restore latest product session authority"
+```
+
+#### Task 15A.3: Persist exact exit requests and fail closed before cancellation
+
+**Files:**
+- Modify: `src/agentdeck/kernel/session.py`
+- Modify: `src/agentdeck/ports/store.py`
+- Modify: `src/agentdeck/adapters/sqlite_session.py`
+- Modify: `src/agentdeck/adapters/sqlite.py`
+- Create: `src/agentdeck/application/exit_service.py`
+- Create: `tests/product_kernel/test_kernel_session_exit.py`
+- Create: `tests/product_kernel/test_sqlite_exit_authority.py`
+- Create: `tests/product_kernel/test_exit_service.py`
+- Modify: `HISTORY.md`
+
+The SQLite/Service tests share only these local deterministic helpers; seed
+the required ProjectSession/Mission/Task/Agent/Attempt foreign-key lineage with
+named-column INSERTs as in `test_sqlite_execution.py`, updated for schema v2:
+
+```python
+EXIT_COLUMNS = (
+    "pending_exit_id", "pending_exit_attempt_id",
+    "canonical_pending_exit_attempt_facts", "pending_exit_attempt_hash",
+    "pending_exit_requested_at",
+)
+
+
+def pending_exit_fields(store: SQLiteStore, session_id: str = "ses_1") -> tuple[object, ...]:
+    row = store.load_aggregate("product_sessions", session_id)
+    assert row is not None
+    return tuple(row[name] for name in EXIT_COLUMNS)
+
+
+def database_facts(store: SQLiteStore) -> tuple[tuple[object, ...], ...]:
+    rows: list[tuple[object, ...]] = []
+    for table in ("product_sessions", "attempts", "commands", "events"):
+        rows.extend(store.connection.execute(f"SELECT * FROM {table} ORDER BY 1").fetchall())
+    return tuple(rows)
+
+
+def advance_active_attempt(store: SQLiteStore, attempt_id: str) -> None:
+    store._require_writer().execute(
+        "UPDATE attempts SET effect_observed=1, updated_at=? WHERE attempt_id=?",
+        ("2026-07-19T04:00:00+00:00", attempt_id),
+    )
+
+
+def forge_malformed_pending_group(store: SQLiteStore) -> None:
+    store._require_writer().execute(
+        "UPDATE product_sessions SET pending_exit_id=?, "
+        "pending_exit_attempt_id='att_1', "
+        "canonical_pending_exit_attempt_facts='{}', "
+        "pending_exit_attempt_hash=?, pending_exit_requested_at=? "
+        "WHERE session_id='ses_1'",
+        ("xrt_" + "f" * 32, "f" * 64, "2026-07-19T03:00:00+00:00"),
+    )
+```
+
+- [ ] **Step 1: Write the exact snapshot/hash RED tests**
+
+```python
+def test_exit_attempt_snapshot_has_exact_canonical_shape_and_hash() -> None:
+    snapshot = ExitAttemptSnapshot(
+        attempt_id="att_1", task_id="tsk_1", agent_instance_id="agt_1",
+        ordinal=1, state=AttemptState.RUNNING, acp_session_id="acp_1",
+        effect_observed=False, durable_fingerprint="a" * 64,
+    )
+    assert set(snapshot.canonical_facts()) == {
+        "attempt_id", "task_id", "agent_instance_id", "ordinal", "state",
+        "acp_session_id", "effect_observed", "durable_fingerprint",
+    }
+    assert snapshot.content_hash == sha256(snapshot.canonical_bytes()).hexdigest()
+
+
+def test_snapshot_rejects_unknown_state_unbounded_or_mutable_facts() -> None:
+    with pytest.raises(ValueError):
+        ExitAttemptSnapshot(
+            attempt_id="att_1", task_id="tsk_1", agent_instance_id="agt_1",
+            ordinal=1, state=AttemptState.COMPLETED, acp_session_id="acp_1",
+            effect_observed=False, durable_fingerprint="a" * 64,
+        )
+```
+
+- [ ] **Step 2: Run RED and implement immutable Kernel values**
+
+```bash
+conda run -n agentdeck env PYTHONPATH="$PWD/src" pytest \
+  tests/product_kernel/test_kernel_session_exit.py -q
+```
+
+Implement frozen `ExitAttemptSnapshot` and `ExitRequest` in `kernel/session.py`.
+Use exact sorted compact JSON, strict UTF-8, maximum 4096 bytes, SQLite signed
+64-bit ordinal, active states only, `xrt_` + 32 lowercase hex request identity,
+and constant-time 64-hex hash comparison. `ExitRequest` rejects a request hash
+that differs from its snapshot.
+
+- [ ] **Step 3: Write active-attempt Store and closed-group RED tests**
+
+```python
+def test_store_lists_all_and_only_active_exit_attempts(store_with_attempts) -> None:
+    snapshots = store_with_attempts.list_active_exit_attempts()
+    assert [item.state for item in snapshots] == [
+        AttemptState.RUNNING,
+        AttemptState.AWAITING_APPROVAL,
+        AttemptState.HUMAN_CONTROLLED,
+    ]
+
+
+@pytest.mark.parametrize("missing", [
+    "pending_exit_id", "pending_exit_attempt_id",
+    "canonical_pending_exit_attempt_facts", "pending_exit_attempt_hash",
+    "pending_exit_requested_at",
+])
+def test_partial_pending_exit_group_is_rejected_without_writes(store, missing) -> None:
+    snapshot = valid_session_with_pending_exit()
+    del snapshot[missing]
+    before = store.load_aggregate("product_sessions", snapshot["session_id"])
+    with pytest.raises(StoreSerializationError):
+        save_session_command(store, snapshot)
+    assert store.load_aggregate("product_sessions", snapshot["session_id"]) == before
+```
+
+- [ ] **Step 4: Verify RED, then add thin Store delegation**
+
+`Store` and `StoreTransaction` gain
+`list_active_exit_attempts() -> tuple[ExitAttemptSnapshot, ...]`. The SQLite
+query uses the active-state allowlist and stable `attempt_id` ordering, calls
+the existing strict Attempt row validator, and supplies its durable
+fingerprint. `sqlite_session.py` validates/preserves/saves the seven v2 session
+fields. Omitted fields preserve existing values; explicitly clearing an exit
+request requires all five keys set to `None` in one snapshot.
+
+- [ ] **Step 5: Write ExitService request/replay/supersede RED tests**
+
+```python
+def test_active_exit_persists_one_exact_request_and_replays_it(service, store) -> None:
+    first = service.request_exit()
+    second = service.request_exit()
+    assert first == second
+    assert first.should_exit is False
+    assert first.request.request_id == "xrt_" + "1" * 32
+    assert store.connection.execute(
+        "SELECT count(*) FROM events WHERE kind='exit_requested'"
+    ).fetchone() == (1,)
+
+
+def test_exit_supersedes_only_well_formed_drifted_request(service, store) -> None:
+    old = service.request_exit().request
+    advance_active_attempt(store, old.attempt.attempt_id)
+    current = service.request_exit().request
+    assert current.request_id != old.request_id
+    assert service.confirm(old.request_id, old.attempt_hash).diagnostic.code \
+        == "exit_request_drift"
+
+
+def test_malformed_pending_group_is_never_silently_overwritten(service, store) -> None:
+    forge_malformed_pending_group(store)
+    before = database_facts(store)
+    result = service.request_exit()
+    assert result.diagnostic.code == "exit_request_malformed"
+    assert database_facts(store) == before
+
+
+def test_multiple_active_attempts_are_ambiguous_and_zero_write(service, store) -> None:
+    seed_second_fk_valid_active_attempt(store, attempt_id="att_2")
+    before = database_facts(store)
+    result = service.request_exit()
+    assert result.diagnostic.code == "exit_active_attempt_ambiguous"
+    assert result.should_exit is False
+    assert database_facts(store) == before
+```
+
+- [ ] **Step 6: Verify RED, then implement request authority**
+
+```python
+@dataclass(frozen=True)
+class ExitResult:
+    mode: str
+    should_exit: bool
+    request: ExitRequest | None = None
+    diagnostic: Diagnostic | None = None
+```
+
+`ExitService` exposes exactly four methods: synchronous `request_exit()`,
+`decline(request_id, attempt_hash)`, `confirm(request_id, attempt_hash)`, and
+read-only `input_closed()`, each returning `ExitResult`. `request_exit()`
+returns `should_exit=True` only when there is no active
+Attempt. More than one produces `exit_active_attempt_ambiguous` and zero
+writes. One active Attempt creates/replays/supersedes exactly as design section
+10.4.3 specifies. The request ID comes from an injected factory and must pass
+the Kernel constructor before a command begins. Every mutation uses
+`execute_once`; the callback re-reads ProductSession and active Attempt facts.
+
+- [ ] **Step 7: Write decline/confirm drift and cancellation blocker RED tests**
+
+```python
+@pytest.mark.parametrize("decision", ["decline", "confirm"])
+def test_stale_exit_decision_rehashes_attempt_and_writes_nothing(
+    service, store, decision,
+) -> None:
+    request = service.request_exit().request
+    advance_active_attempt(store, request.attempt.attempt_id)
+    before = database_facts(store)
+    result = getattr(service, decision)(request.request_id, request.attempt_hash)
+    assert result.diagnostic.code == "exit_request_drift"
+    assert database_facts(store) == before
+
+
+@pytest.mark.parametrize("decision", ["decline", "confirm"])
+@pytest.mark.parametrize("wrong_part", ["request_id", "attempt_hash"])
+def test_wrong_exit_identity_writes_nothing_and_keeps_request(
+    service, store, decision, wrong_part,
+) -> None:
+    request = service.request_exit().request
+    request_id = request.request_id
+    attempt_hash = request.attempt_hash
+    if wrong_part == "request_id":
+        request_id = "xrt_" + "f" * 32
+    else:
+        attempt_hash = "f" * 64
+    before = database_facts(store)
+    result = getattr(service, decision)(request_id, attempt_hash)
+    assert result.diagnostic.code == "exit_request_identity_mismatch"
+    assert database_facts(store) == before
+    assert pending_exit_fields(store) != (None,) * 5
+
+
+@pytest.mark.parametrize("decision", ["decline", "confirm"])
+def test_missing_pending_attempt_writes_nothing_and_keeps_request(
+    service, store, decision,
+) -> None:
+    request = service.request_exit().request
+    delete_attempt_fixture_row(store, request.attempt.attempt_id)
+    before = database_facts(store)
+    result = getattr(service, decision)(
+        request.request_id, request.attempt_hash,
+    )
+    assert result.diagnostic.code == "exit_attempt_missing"
+    assert database_facts(store) == before
+    assert pending_exit_fields(store) != (None,) * 5
+
+
+def test_exact_decline_consumes_request_but_never_changes_attempt(service, store) -> None:
+    request = service.request_exit().request
+    before_attempt = store.load_aggregate("attempts", request.attempt.attempt_id)
+    result = service.decline(request.request_id, request.attempt_hash)
+    assert result.mode == "exit_declined"
+    assert pending_exit_fields(store) == (None,) * 5
+    assert store.load_aggregate("attempts", request.attempt.attempt_id) == before_attempt
+
+
+def test_task15a_exact_confirm_is_fail_closed_without_worker_cancel(service, store) -> None:
+    request = service.request_exit().request
+    before = database_facts(store)
+    result = service.confirm(request.request_id, request.attempt_hash)
+    assert result.diagnostic.code == "exit_cancellation_unavailable"
+    assert result.should_exit is False
+    assert database_facts(store) == before
+```
+
+- [ ] **Step 8: Verify every RED, implement minimal decline and blocker, then
+      run focused GREEN**
+
+```bash
+conda run -n agentdeck env PYTHONPATH="$PWD/src" pytest \
+  tests/product_kernel/test_kernel_session_exit.py \
+  tests/product_kernel/test_sqlite_exit_authority.py \
+  tests/product_kernel/test_exit_service.py -q
+```
+
+Diagnostics expose only allowlisted stage/code/identity facts. They never
+include canonical JSON, paths, prompts, CLI output, or exception text.
+
+- [ ] **Step 9: Update HISTORY and commit 15A.3**
+
+```bash
+git add src/agentdeck/kernel/session.py src/agentdeck/ports/store.py \
+  src/agentdeck/adapters/sqlite.py src/agentdeck/adapters/sqlite_session.py \
+  src/agentdeck/application/exit_service.py \
+  tests/product_kernel/test_kernel_session_exit.py \
+  tests/product_kernel/test_sqlite_exit_authority.py \
+  tests/product_kernel/test_exit_service.py HISTORY.md
+git commit -m "feat: persist exact product exit requests"
+```
+
+#### Task 15A.4: Bind exact exit controls into the foreground Product Shell
+
+**Files:**
+- Modify: `src/agentdeck/product/slash_commands.py`
+- Modify: `src/agentdeck/product/presenter.py`
+- Modify: `src/agentdeck/product/renderer.py`
+- Modify: `src/agentdeck/product/shell.py`
+- Modify: `src/agentdeck/product/bootstrap.py`
+- Modify: `tests/product_kernel/test_slash_commands.py`
+- Create: `tests/product_kernel/test_product_exit_renderer.py`
+- Create: `tests/product_kernel/test_product_reentry.py`
+- Modify: `tests/product_kernel/test_product_shell.py`
+- Modify: `HISTORY.md`
+
+`test_product_reentry.py` owns a real SQLite-backed `shell_harness` fixture.
+It seeds one v2 configured ProductSession plus one FK-valid active Attempt,
+injects deterministic session/request identity iterators, and exposes
+`prime_exit_request()` by calling the real `ExitService.request_exit()` before
+the shell starts. It exposes `attempt_state` through `load_aggregate()` and
+`database_facts()` through ordered rows from ProductSession, Attempt, command,
+and event tables. Its `run()` accepts strings, `KeyboardInterrupt()` and
+`EOFError()` values; the injected `read_line` raises exception values and
+returns strings. `configure_and_preview()` calls the real SessionService and
+MissionService test factory, while `configuration`, `preview_id`, and
+`pending_exit` are read-only Store/Application projections after reopen. Do not
+fake ExitService or Worker cancellation in this file.
+
+- [ ] **Step 1: Write exact slash grammar RED tests**
+
+```python
+def test_exit_confirmation_grammar_carries_exact_identity_and_hash() -> None:
+    command = parse_command(
+        "/exit confirm xrt_" + "1" * 32 + " " + "a" * 64
+    )
+    assert command == SlashCommand(
+        kind=CommandKind.EXIT, argument="confirm",
+        request_id="xrt_" + "1" * 32, content_hash="a" * 64,
+    )
+
+
+@pytest.mark.parametrize("text", [
+    "/exit yes", "/exit confirm", "/exit decline xrt_bad " + "a" * 64,
+    "/exit confirm xrt_" + "1" * 32 + " bad",
+    "/exit confirm xrt_" + "1" * 32 + " " + "a" * 64 + " extra",
+])
+def test_inexact_exit_confirmation_grammar_is_rejected(text: str) -> None:
+    assert parse_command(text) is None
+```
+
+- [ ] **Step 2: Verify RED and implement the closed command value**
+
+`SlashCommand` gains nullable `request_id` and `content_hash`. They must be both
+null for ordinary commands and `/exit`, or both exact for `/exit confirm` and
+`/exit decline`. No other command may carry them. Replace the one-token regex
+with tokenization that accepts exactly 1, 2, or 4 tokens according to command
+kind; keep current UTF-8 and total-byte bounds.
+
+- [ ] **Step 3: Write renderer RED tests**
+
+```python
+def test_exit_request_renders_copyable_exact_commands() -> None:
+    text = render(ExitPresentation(
+        summary="The active Attempt must be interrupted before exit.",
+        active_attempts=("att_1",), requires_confirmation=True,
+        request_id="xrt_" + "1" * 32, attempt_hash="a" * 64,
+    ))
+    assert "/exit confirm xrt_" + "1" * 32 + " " + "a" * 64 in text
+    assert "/exit decline xrt_" + "1" * 32 + " " + "a" * 64 in text
+    assert "{" not in text
+
+
+def test_idle_exit_cannot_carry_request_authority() -> None:
+    with pytest.raises(ValueError):
+        ExitPresentation(
+            summary="safe", active_attempts=(), requires_confirmation=False,
+            request_id="xrt_" + "1" * 32, attempt_hash="a" * 64,
+        )
+```
+
+- [ ] **Step 4: Verify RED and extend only the exit presentation case**
+
+Add the two nullable fields to `ExitPresentation`, the renderer closed field
+map, and `_render_exit()`. Exact identities are machine facts validated by
+dedicated lower-hex helpers; the human summary remains bounded/redacted.
+
+- [ ] **Step 5: Write shell exit/re-entry/EOF/Ctrl-C RED tests**
+
+```python
+def test_active_exit_requires_copyable_exact_confirmation(shell_harness) -> None:
+    request, digest = shell_harness.prime_exit_request()
+    transcript = shell_harness.run([
+        "/exit", f"/exit confirm {request} {digest}",
+        f"/exit decline {request} {digest}", "/status", "/exit",
+    ])
+    assert f"/exit confirm {request} {digest}" in transcript
+    assert "Diagnosis exit_cancellation_unavailable" in transcript
+    assert "Session is safe to exit" not in transcript
+    assert shell_harness.attempt_state == "running"
+
+
+def test_ctrl_c_enters_exit_surface_but_does_not_claim_safe_cancel(shell_harness) -> None:
+    request, digest = shell_harness.prime_exit_request()
+    transcript = shell_harness.run([
+        KeyboardInterrupt(), f"/exit decline {request} {digest}", "/exit",
+    ])
+    assert "Exit needs confirmation" in transcript
+    assert "safely cancelled" not in transcript
+
+
+def test_eof_with_active_attempt_is_content_free_and_does_not_mutate(shell_harness) -> None:
+    before = shell_harness.database_facts()
+    transcript = shell_harness.run([EOFError()])
+    assert "Diagnosis exit_input_closed_with_active_work" in transcript
+    assert "Session saved" not in transcript
+    assert shell_harness.database_facts() == before
+
+
+def test_bootstrap_restores_latest_session_and_pending_exit(tmp_path: Path) -> None:
+    first = build_harness(tmp_path, ids=iter(["ses_first", "xrt_" + "1" * 32]))
+    preview_id = first.configure_and_preview(
+        leader="codex-cli", model="native-default",
+        permission="approve_for_me", goal="Build",
+    ).preview_id
+    request = first.request_active_exit()
+    first.close_input()
+    second = build_harness(tmp_path, ids=iter(["ses_must_not_be_used"]))
+    assert second.session_id == "ses_first"
+    assert second.configuration == (
+        "codex-cli", "native-default", "approve_for_me", "Build",
+    )
+    assert second.preview_id == preview_id
+    assert second.pending_exit == request
+```
+
+- [ ] **Step 6: Verify RED and inject the real Task 15A ExitService**
+
+`ProductShell` requires an `ExitService`. Bare `/exit` calls `request_exit()`;
+exact decline/confirm call the matching methods. It returns `True` only for an
+idle `should_exit=True` result. `KeyboardInterrupt` invokes the same request
+surface and continues when active. `EOFError` calls read-only `input_closed()`,
+renders its Diagnostic when active, then closes the foreground Store without
+creating or consuming a request. `_show_initial_state()` first renders the
+multiple-session warning and any restored pending exit request, then the normal
+Preview/setup/status surface.
+
+Bootstrap constructs `SessionService.open_latest()` and `ExitService` from the
+same Store/clock/session identity. Factories for session and exit request IDs
+are injectable; production defaults use separate `uuid4().hex` values. There
+is no Worker, RecoveryService, async callback, tmux, or cancellation claim in
+15A.
+
+- [ ] **Step 7: Run Task 15A focused and R2 regression gates**
+
+```bash
+conda run -n agentdeck env PYTHONPATH="$PWD/src" pytest \
+  tests/product_kernel/test_slash_commands.py \
+  tests/product_kernel/test_product_exit_renderer.py \
+  tests/product_kernel/test_product_reentry.py \
+  tests/product_kernel/test_product_shell.py \
+  tests/product_kernel/test_product_preview_flow.py \
+  tests/product_kernel/test_exit_service.py \
+  tests/product_kernel/test_product_session_reentry.py -q
+
+conda run -n agentdeck env PYTHONPATH="$PWD/src" pytest \
+  tests/product_kernel/test_kernel_session.py \
+  tests/product_kernel/test_kernel_session_exit.py \
+  tests/product_kernel/test_sqlite_schema.py \
+  tests/product_kernel/test_sqlite_schema_v2.py \
+  tests/product_kernel/test_sqlite_session_authority.py \
+  tests/product_kernel/test_sqlite_exit_authority.py \
+  tests/product_kernel/test_session_service.py \
+  tests/product_kernel/test_session_service_quality.py \
+  tests/product_kernel/test_mission_service.py -q
+
+conda run -n agentdeck env PYTHONPATH="$PWD/src" python -m compileall src tests -q
+git diff --check
+```
+
+Expected: all PASS, every touched Product Kernel Python/test file at most 500
+lines, no forbidden import, and Task 15A confirm still fail-closed.
+
+- [ ] **Step 8: Update HISTORY and commit 15A.4**
+
+```bash
+git add src/agentdeck/product/slash_commands.py \
+  src/agentdeck/product/presenter.py src/agentdeck/product/renderer.py \
+  src/agentdeck/product/shell.py src/agentdeck/product/bootstrap.py \
+  tests/product_kernel/test_slash_commands.py \
+  tests/product_kernel/test_product_exit_renderer.py \
+  tests/product_kernel/test_product_reentry.py \
+  tests/product_kernel/test_product_shell.py HISTORY.md
+git commit -m "feat: bind fail closed product exit controls"
+```
+
+- [ ] **Step 9: Perform Task 15A two-stage review before Task 24**
+
+Dispatch a fresh spec reviewer against design sections 5.2, 10.4.1–10.4.3 and
+all four 15A commits. Fix every Critical/Important issue and re-review. Then
+dispatch a fresh code-quality reviewer, fix and re-review. Rerun the complete
+focused gates above after the last fix. Do not mark R2 complete and do not begin
+15B.
+
+#### Task 15B: Bind real ACP cancellation and mandatory recovery
+
+**Scheduling gate:** execute this subsection only after Task 24, Task 25, and
+Task 26 are implemented, reviewed, and integrated. It is the only authorized
+return from the numerical sequence before Task 27.
+
+**Files:**
+- Modify: `src/agentdeck/ports/worker.py`
+- Create: `src/agentdeck/application/execution_runtime.py`
+- Modify: `src/agentdeck/application/execution_service.py` only for injected
+  runtime registration/de-registration
+- Modify: `src/agentdeck/application/recovery_service.py`
+- Modify: `src/agentdeck/application/exit_service.py`
+- Modify: `src/agentdeck/product/shell.py`
+- Modify: `src/agentdeck/product/bootstrap.py`
+- Create: `tests/product_kernel/test_execution_runtime.py`
+- Create: `tests/product_kernel/test_product_exit_acp_integration.py`
+- Modify: `tests/product_kernel/test_product_reentry.py`
+- Modify: `tests/product_kernel/test_recovery_service.py`
+- Modify: `HISTORY.md`
+
+`test_product_exit_acp_integration.py` defines one explicit integration
+`runtime` fixture from Task 26's real composition factories with an in-process
+conforming Worker. The fixture exposes only the exact bound `worker`,
+`exact_worker_handle`, `store`, `request_exit_for_running_attempt()`,
+`confirm_exit()`, ordered `database_facts()` / `exit_authority_facts()`, and
+read-only test-side `event_count()` / `command_count()` helpers. The authority
+snapshot excludes only the command replay row being asserted separately.
+Counts use direct read-only SQL; do not add production count APIs merely for
+the test.
+
+```python
+def pending_exit_fields(store: SQLiteStore, session_id: str = "ses_1") -> tuple[object, ...]:
+    row = store.load_aggregate("product_sessions", session_id)
+    assert row is not None
+    return tuple(row[name] for name in (
+        "pending_exit_id", "pending_exit_attempt_id",
+        "canonical_pending_exit_attempt_facts", "pending_exit_attempt_hash",
+        "pending_exit_requested_at",
+    ))
+```
+
+`ports/worker.py` adds one bounded, content-free transport failure value used
+by every conforming Worker cancellation path:
+
+```python
+class WorkerCancellationError(RuntimeError):
+    ALLOWED_CODES = frozenset({
+        "cancel_rejected", "cancel_timeout", "transport_disconnected",
+    })
+
+    def __init__(self, *, code: str, outcome_known: bool) -> None: ...
+```
+
+It stores only an allowlisted code plus `outcome_known`; adapters never attach
+stderr, protocol frames, prompts, paths, credentials, or exception text.
+
+`execution_runtime.py` owns the exact in-memory active binding and nothing
+else:
+
+```python
+@dataclass(frozen=True)
+class ActiveExecutionBinding:
+    attempt_id: str
+    task_id: str
+    agent_instance_id: str
+    acp_session_id: str
+    worker_handle: WorkerHandle
+    worker: Worker
+
+
+class ForegroundExecutionRuntime:
+    def bind(self, binding: ActiveExecutionBinding) -> None: ...
+    def resolve_exact(self, snapshot: ExitAttemptSnapshot) -> ActiveExecutionBinding: ...
+    def release(self, attempt_id: str, worker_handle: WorkerHandle) -> None: ...
+```
+
+`bind` rejects duplicate/drifted Attempt, Agent, ACP session, handle, Worker,
+or event-loop ownership. `resolve_exact` compares every shared lineage field,
+including the full typed `WorkerHandle`, and returns no fallback by Leader,
+backend name, role, pane, or “latest” process. `release` is exact and
+idempotent only for the already-released same handle.
+
+The composition root must keep the exact Attempt, Agent Instance, ACP Session,
+`WorkerHandle`, Worker, `ExecutionService`, `AsyncExitCoordinator`,
+`RecoveryService`, and `ProductShell` on one foreground event loop.
+`ExecutionService` registers the binding only after the returned handle and
+durable ACP-session bind pass validation, and releases it only after terminal
+Attempt/Handoff persistence. If `execution_service.py` cannot accept those
+thin calls while remaining at most 500 lines, move its cohesive active-binding
+bookkeeping into `execution_runtime.py`; do not raise the limit. No synchronous
+callback, un-awaited coroutine, optional production recovery, transport lookup
+by backend name, nested `asyncio.run`, or cross-loop Worker is acceptable.
+
+- [ ] **Step 1: Write RED integration tests after Task 26 exists**
+
+```python
+@pytest.mark.asyncio
+async def test_exact_exit_confirm_awaits_bound_worker_then_commits_once(runtime) -> None:
+    request = await runtime.request_exit_for_running_attempt()
+    result = await runtime.confirm_exit(request.request_id, request.attempt_hash)
+    assert runtime.worker.cancel_calls == [
+        (runtime.exact_worker_handle, "product_exit_confirmed")
+    ]
+    assert result.should_exit is True
+    assert runtime.store.load_aggregate("attempts", request.attempt.attempt_id)["state"] \
+        == "interrupted"
+    assert pending_exit_fields(runtime.store) == (None,) * 5
+    assert runtime.store.connection.execute(
+        "SELECT count(*) FROM events WHERE kind='attempt_interrupted'"
+    ).fetchone() == (1,)
+    assert runtime.store.connection.execute(
+        "SELECT count(*) FROM events WHERE kind='exit_confirmed'"
+    ).fetchone() == (1,)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("code,outcome_known,diagnostic", [
+    ("cancel_rejected", True, "exit_cancellation_failed"),
+    ("cancel_timeout", False, "exit_cancellation_outcome_unknown"),
+    ("transport_disconnected", False, "exit_cancellation_outcome_unknown"),
+])
+async def test_cancel_failure_keeps_request_and_never_claims_interruption(
+    runtime, code, outcome_known, diagnostic,
+) -> None:
+    request = await runtime.request_exit_for_running_attempt()
+    runtime.worker.cancel_error = WorkerCancellationError(
+        code=code, outcome_known=outcome_known,
+    )
+    before = runtime.exit_authority_facts()
+    first = await runtime.confirm_exit(request.request_id, request.attempt_hash)
+    second = await runtime.confirm_exit(request.request_id, request.attempt_hash)
+    assert first.diagnostic.code == diagnostic
+    assert second == first
+    assert runtime.exit_authority_facts() == before
+    assert pending_exit_fields(runtime.store) != (None,) * 5
+    assert runtime.worker.cancel_calls == [
+        (runtime.exact_worker_handle, "product_exit_confirmed")
+    ]
+    assert runtime.event_count("attempt_interrupted") == 0
+    assert runtime.event_count("exit_confirmed") == 0
+    assert runtime.command_count(
+        f"exit:confirm:{request.request_id}", "confirm_product_exit"
+    ) == 1
+
+
+@pytest.mark.asyncio
+async def test_handle_drift_before_cancel_performs_zero_worker_io_and_zero_write(runtime) -> None:
+    request = await runtime.request_exit_for_running_attempt()
+    runtime.replace_binding_with_drifted_handle()
+    before = runtime.database_facts()
+    result = await runtime.confirm_exit(request.request_id, request.attempt_hash)
+    assert result.diagnostic.code == "exit_worker_binding_drift"
+    assert runtime.worker.cancel_calls == []
+    assert runtime.database_facts() == before
+
+
+@pytest.mark.asyncio
+async def test_authority_drift_after_cancel_ack_never_commits_interruption(runtime) -> None:
+    request = await runtime.request_exit_for_running_attempt()
+    runtime.worker.after_cancel_ack = runtime.advance_attempt_authority
+    before_exit_fields = pending_exit_fields(runtime.store)
+    first = await runtime.confirm_exit(request.request_id, request.attempt_hash)
+    second = await runtime.confirm_exit(request.request_id, request.attempt_hash)
+    assert runtime.worker.cancel_calls == [
+        (runtime.exact_worker_handle, "product_exit_confirmed")
+    ]
+    assert first.diagnostic.code == "exit_authority_changed_after_cancel"
+    assert first.should_exit is False
+    assert second == first
+    assert pending_exit_fields(runtime.store) == before_exit_fields
+    assert runtime.attempt_state() != "interrupted"
+    assert runtime.event_count("exit_confirmed") == 0
+    assert runtime.command_count(
+        f"exit:confirm:{request.request_id}", "confirm_product_exit"
+    ) == 1
+
+
+@pytest.mark.asyncio
+async def test_replayed_confirm_after_success_never_cancels_twice(runtime) -> None:
+    request = await runtime.request_exit_for_running_attempt()
+    first = await runtime.confirm_exit(request.request_id, request.attempt_hash)
+    second = await runtime.confirm_exit(request.request_id, request.attempt_hash)
+    assert first.should_exit is True
+    assert second == first
+    assert runtime.worker.cancel_calls == [
+        (runtime.exact_worker_handle, "product_exit_confirmed")
+    ]
+    assert runtime.event_count("attempt_interrupted") == 1
+    assert runtime.event_count("exit_confirmed") == 1
+
+
+@pytest.mark.asyncio
+async def test_product_shell_exact_confirm_uses_same_loop_and_real_worker(
+    running_shell_harness,
+) -> None:
+    request = await running_shell_harness.prime_exit_request()
+    transcript = await running_shell_harness.run_async([
+        "/exit",
+        f"/exit confirm {request.request_id} {request.attempt_hash}",
+    ])
+    assert running_shell_harness.worker.cancel_calls == [
+        (running_shell_harness.worker_handle, "product_exit_confirmed")
+    ]
+    assert running_shell_harness.attempt_state() == "interrupted"
+    assert "Cancellation acknowledged; exiting AgentDeck." in transcript
+    assert running_shell_harness.read_count == 2
+
+
+@pytest.mark.asyncio
+async def test_bootstrap_runs_mandatory_recovery_before_first_prompt(
+    reentry_harness,
+) -> None:
+    transcript = await reentry_harness.run_async(["/status", "/exit"])
+    assert reentry_harness.calls[:2] == ["recover", "read_line"]
+    assert "Restored session" in transcript
+```
+
+`test_execution_runtime.py` separately proves duplicate bind, event-loop
+drift, mismatched full handle, ACP-session drift, and wrong release are
+rejected without Worker I/O. The fake Worker implements the real Port
+signature `await cancel_task(handle, *, reason: str)`; no local callback-shaped
+fake is allowed.
+
+- [ ] **Step 2: Verify RED for missing async lifecycle and mandatory recovery**
+
+```bash
+conda run -n agentdeck env PYTHONPATH="$PWD/src" pytest \
+  tests/product_kernel/test_execution_runtime.py \
+  tests/product_kernel/test_product_exit_acp_integration.py \
+  tests/product_kernel/test_product_reentry.py \
+  tests/product_kernel/test_recovery_service.py -q
+```
+
+- [ ] **Step 3: Implement the minimal async confirmation boundary**
+
+`AsyncExitCoordinator.confirm()` is the sole real-confirm path. It first looks
+up stable command `exit:confirm:<request-id>` / `confirm_product_exit`. A
+completed command must have exact closed result fields with the matching
+request ID and Attempt hash. Exact replay returns that first `ExitResult`
+before examining the now-cleared pending group; a mismatched hash is rejected
+without Worker I/O or writes. If no completed command exists, it asks
+`ExitService` for the exact still-pending request, re-reads and rehashes the
+eight-field active Attempt snapshot, and resolves the exact
+`ActiveExecutionBinding`. Then it calls exactly:
+
+```python
+await binding.worker.cancel_task(
+    binding.worker_handle, reason="product_exit_confirmed"
+)
+```
+
+After a positive acknowledgement, one `execute_once` callback again re-reads
+and rehashes ProductSession, request, Attempt, Agent, ACP session, and full
+handle lineage; only then does it change Attempt to `interrupted`, clear all
+five pending fields, append `attempt_interrupted` and `exit_confirmed`, and
+store the closed completed command result (request ID, Attempt ID/hash, mode,
+and `should_exit`) in the same transaction. Callback failure
+rolls back every database mutation. Authority drift after external
+acknowledgement returns `exit_authority_changed_after_cancel`, leaves the
+request pending, never claims the Attempt was interrupted, and stores only the
+closed diagnostic command result so replay cannot cancel again. A rejected,
+timed-out, disconnected, or otherwise uncertain cancellation likewise keeps
+the request, records no interruption/event, and command-atomically stores only
+the closed content-free diagnostic result so exact replay cannot repeat Worker
+I/O. Replayed confirmation returns that stored first outcome and never calls
+Worker or appends events again. An unknown request ID, wrong hash, or missing
+pending Attempt never creates a command row.
+
+`ProductShell.run_async()` owns the input loop. Production reads use
+`await asyncio.to_thread(self._read_line, "agentdeck> ")`, while injected tests
+provide a deterministic async reader. Mission execution is a child task of the
+same foreground loop, so input remains available while the Worker runs.
+`_accept_line_async()` awaits the coordinator for exact confirm; non-I/O
+commands may delegate to existing synchronous pure/Application services.
+`run_product_dev()` calls `asyncio.run(shell.run_async())` exactly once at the
+outer process boundary. No other Product Kernel module may call
+`asyncio.run()`.
+
+Bootstrap constructs the shared `ForegroundExecutionRuntime`, injects it into
+ExecutionService and AsyncExitCoordinator, constructs the exact Workers from
+Task 26, and awaits the real `RecoveryService` before the first `read_line`.
+Recovery is mandatory, uses the same Worker/transport registry and event loop,
+and cannot be replaced by a no-op production default. Recovery completes
+before any new mission child task may start. In this slice,
+`TransportReconciler.reconcile()` and `RecoveryService.reconcile()` become
+async Port/Application methods so a real ACP session check is awaited on that
+same loop; update the existing recovery tests to await them. No
+`run_until_complete`, thread bridge, or synchronous adapter shim is permitted.
+
+- [ ] **Step 4: Run GREEN, full R2/R4 integration, and commit**
+
+```bash
+conda run -n agentdeck env PYTHONPATH="$PWD/src" pytest \
+  tests/product_kernel/test_execution_runtime.py \
+  tests/product_kernel/test_product_exit_acp_integration.py \
+  tests/product_kernel/test_product_reentry.py \
+  tests/product_kernel/test_recovery_service.py \
+  tests/product_kernel/test_execution_coordinator.py \
+  tests/product_kernel/test_real_adapter_preflight_contract.py -q
+
+conda run -n agentdeck env PYTHONPATH="$PWD/src" pytest tests/product_kernel -q
+conda run -n agentdeck env PYTHONPATH="$PWD/src" pytest \
+  tests --ignore=tests/product_kernel -q
+conda run -n agentdeck env PYTHONPATH="$PWD/src" python -m compileall src tests -q
+conda run -n agentdeck python -c \
+  'from pathlib import Path; files=[Path(p) for p in ("src/agentdeck/ports/worker.py","src/agentdeck/application/execution_runtime.py","src/agentdeck/application/execution_service.py","src/agentdeck/application/recovery_service.py","src/agentdeck/application/exit_service.py","src/agentdeck/product/shell.py","src/agentdeck/product/bootstrap.py","tests/product_kernel/test_execution_runtime.py","tests/product_kernel/test_product_exit_acp_integration.py","tests/product_kernel/test_product_reentry.py","tests/product_kernel/test_recovery_service.py")]; over={str(p):len(p.read_text().splitlines()) for p in files if len(p.read_text().splitlines())>500}; assert not over, over'
+git diff --check
+
+git add src/agentdeck/ports/worker.py \
+  src/agentdeck/application/execution_runtime.py \
+  src/agentdeck/application/execution_service.py \
+  src/agentdeck/application/recovery_service.py \
+  src/agentdeck/application/exit_service.py src/agentdeck/product/shell.py \
+  src/agentdeck/product/bootstrap.py \
+  tests/product_kernel/test_execution_runtime.py \
+  tests/product_kernel/test_product_exit_acp_integration.py \
+  tests/product_kernel/test_product_reentry.py \
+  tests/product_kernel/test_recovery_service.py HISTORY.md
+git commit -m "feat: close product exit through real acp cancellation"
+```
+
+- [ ] **Step 5: Review and close R2 only after integrated evidence**
+
+Run independent spec and code-quality reviews, fix all Critical/Important
+findings, rerun Product Kernel full alone, then run the legacy suite excluding
+`tests/product_kernel`. R2 closes only when exact cancellation, mandatory
+recovery, re-entry, compileall, diff check, line limits, and both full suites
+pass from the integrated HEAD.
 
 ## Phase R3 — Leader and exact Mission Preview
 

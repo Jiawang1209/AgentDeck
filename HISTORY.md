@@ -4,6 +4,26 @@
 
 ## 2026-07-19
 
+### Plan the durable ProductSession exit implementation
+
+- Replaced the rejected Task 15 `yes/no` and synchronous fake-cancellation
+  steps with four ordered Task 15A TDD commits: exact schema-v2 migration,
+  latest project-local nonterminal session restoration, exact pending-exit
+  authority, and foreground Product Shell controls. Every behavior now names
+  its RED reason, minimal GREEN boundary, focused regression, file allowlist,
+  line-limit split, HISTORY update, and local commit.
+- Added dedicated SQLite migration/session, Application exit/session-record,
+  and foreground execution-runtime modules so the already-full Store and
+  execution files are not enlarged past 500 lines. The plan freezes strict v1
+  setup-command backfill, known-v1/v2
+  fingerprints, closed nullable groups, the eight-key Attempt snapshot,
+  transactional stale-decision checks, deterministic session selection, and
+  content-free EOF/Ctrl-C behavior.
+- Preserved Task 15B as a gated return after Tasks 24–26. Only that slice may
+  await the exact real Worker handle, atomically persist interruption plus exit
+  consumption, and run mandatory RecoveryService before input; Task 15A must
+  remain fail-closed and cannot claim cancellation or R2 completion.
+
 ### Specify durable ProductSession exit and schema-v2 re-entry authority
 
 - Closed the Task 15A design gap with an explicit v1-to-v2 SQLite migration
