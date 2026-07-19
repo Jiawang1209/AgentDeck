@@ -267,6 +267,11 @@ def test_unknown_types_modes_and_shapes_fail_closed_without_repr(value: object) 
         'Details: {"password":"sensitive-marker"}',
         'Details: {"OPENAI_API_KEY":"sensitive-marker"}',
         "Cookie: sid=sensitive-marker",
+        "Cookie=sid=sensitive-marker",
+        "Set-Cookie=session=sensitive-marker",
+        "Details: {'password': 'sensitive-marker'}",
+        "Details: {'ssh_key': 'sensitive-marker'}",
+        "Details: {'Authorization': 'Bearer sensitive-marker'}",
     ),
 )
 def test_secret_like_or_raw_json_human_fields_never_render(secret: str) -> None:
@@ -287,6 +292,10 @@ def test_secret_like_or_raw_json_human_fields_never_render(secret: str) -> None:
         'Schema details: {"password": null}',
         'Details: {"password policy":"minimum length"}',
         'Details: {"monkey":"banana"}',
+        "Discuss the Python key 'password' without assigning a value.",
+        "Schema details: {'password': None}",
+        "Details: {'password policy': 'minimum length'}",
+        "Details: {'monkey': 'banana'}",
     ),
 )
 def test_safe_json_credential_discussion_is_not_overclassified(

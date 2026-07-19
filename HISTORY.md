@@ -15,6 +15,17 @@
   readiness passive and binds lazy per-Agent transports only in the composition
   root, with no PTY or legacy ACP fallback.
 
+### Close Product presenter credential redaction gaps
+
+- Extended the bounded human-text guard to reject Cookie and Set-Cookie
+  assignments as well as credential-bearing Python-style single-quoted mapping
+  fragments anywhere in presentation text. These forms now fail content-free
+  before a Product renderer can expose them.
+- Preserved safe discussion of credential field names, null-like schema values,
+  policy fields, and unrelated Python mappings. Review RED reproduced four
+  leaks; focused Product renderer, slash-command, and architecture GREEN passed
+  all `92` cases.
+
 ### Fail closed on ambiguous ACP tool starts
 
 - Restricted proven pre-effect tool starts to the explicit ACP read/search/think
