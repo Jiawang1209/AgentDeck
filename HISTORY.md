@@ -4,6 +4,20 @@
 
 ## 2026-07-19
 
+### Harden the API Leader transport boundary
+
+- Disabled every HTTP redirect so the exact configured endpoint cannot forward
+  Authorization or silently change provider origin. Redirect status remains a
+  content-free nonzero failure, including same-origin redirects.
+- Added a monotonic request deadline with deadline-aware incremental reads,
+  explicit request/response byte limits, exact-bytes response validation, and
+  content-free handling for hostile read and close behavior. Oversize requests
+  now fail before credential resolution or HTTP.
+- Removed the credential resolver from adapter repr/equality while retaining
+  only the callable reference needed for per-call resolution. TDD RED produced
+  five targeted failures for redirect, slow trickle, hostile repr/body, and
+  oversize request behavior; focused GREEN passed all `40` adapter cases.
+
 ### Harden Product presentation boundaries
 
 - Extended bounded human-text validation to reject credential-shaped JSON

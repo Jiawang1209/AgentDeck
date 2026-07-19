@@ -3,14 +3,15 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import json
 from math import isfinite
 import socket
+from time import monotonic
 from typing import Final
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
-from urllib.request import Request, urlopen
+from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 from agentdeck.ports.leader import (
     LeaderFailure,
@@ -29,6 +30,8 @@ _DEFAULT_TIMEOUT_SECONDS: Final = 30.0
 _DEFAULT_MAX_RESPONSE_BYTES: Final = 1_048_576
 _MAX_TIMEOUT_SECONDS: Final = 120.0
 _MAX_RESPONSE_BYTES: Final = 8_388_608
+_MAX_REQUEST_BYTES: Final = 1_048_576
+_READ_CHUNK_BYTES: Final = 65_536
 _MAX_TEXT_BYTES: Final = 4096
 _MAX_CREDENTIAL_BYTES: Final = 65_536
 _PRESETS: Final = {
@@ -36,6 +39,20 @@ _PRESETS: Final = {
     "kimi": ("https://api.moonshot.cn/v1", "MOONSHOT_API_KEY"),
     "glm": ("https://open.bigmodel.cn/api/paas/v4", "ZHIPUAI_API_KEY"),
 }
+
+
+class _RejectRedirects(HTTPRedirectHandler):
+    def redirect_request(self, *_args: object, **_kwargs: object) -> None:
+        return None
+
+
+_HTTP_OPENER: Final = build_opener(_RejectRedirects())
+
+
+def urlopen(request: Request, *, timeout: float):
+    """Open one exact endpoint without urllib's credential-forwarding redirects."""
+
+    return _HTTP_OPENER.open(request, timeout=timeout)
 
 
 class LeaderUnavailable(ValueError):
@@ -111,7 +128,7 @@ class OpenAICompatibleLeader:
     credential_source: str
     timeout_seconds: float
     max_response_bytes: int
-    _credential_resolver: CredentialResolver
+    _credential_resolver: CredentialResolver = field(repr=False, compare=False)
 
     def __init__(
         self,
@@ -166,10 +183,12 @@ class OpenAICompatibleLeader:
         )
         if actual != expected:
             raise LeaderUnavailable("request does not match the frozen resolved Leader identity")
+        body = self._request_body(request)
+        if len(body) > _MAX_REQUEST_BYTES:
+            raise LeaderFailure(LeaderFailureCode.OVERSIZE)
         credential, credential_failure = self._resolve_credential()
         if credential_failure is not None:
             raise LeaderFailure(credential_failure)
-        body = self._request_body(request)
         raw, failure = self._post(body, credential)
         credential = ""
         if failure is not None:
@@ -258,9 +277,11 @@ class OpenAICompatibleLeader:
     def _post(
         self, body: bytes, credential: str
     ) -> tuple[bytes, LeaderFailureCode | None]:
+        deadline = monotonic() + self.timeout_seconds
         raw = b""
         failure: LeaderFailureCode | None = None
         status = None
+        response = None
         try:
             request = Request(
                 f"{self.base_url}/chat/completions",
@@ -272,15 +293,26 @@ class OpenAICompatibleLeader:
                 },
                 method="POST",
             )
-            with urlopen(request, timeout=self.timeout_seconds) as response:
+            remaining = deadline - monotonic()
+            if remaining <= 0:
+                failure = LeaderFailureCode.TIMEOUT
+            else:
+                response = urlopen(request, timeout=remaining)
                 status = response.status
-                raw = response.read(self.max_response_bytes + 1)
+                if monotonic() >= deadline:
+                    failure = LeaderFailureCode.TIMEOUT
+                elif type(status) is not int:
+                    failure = LeaderFailureCode.TRANSPORT
+                elif 200 <= status < 300:
+                    raw, failure = _read_response(
+                        response, deadline, self.max_response_bytes
+                    )
         except HTTPError as error:
             status = error.code
             try:
                 error.close()
             except Exception:
-                pass
+                failure = LeaderFailureCode.TRANSPORT
         except (socket.timeout, TimeoutError):
             failure = LeaderFailureCode.TIMEOUT
         except URLError as error:
@@ -292,14 +324,18 @@ class OpenAICompatibleLeader:
             failure = LeaderFailureCode.TRANSPORT
         except Exception:
             failure = LeaderFailureCode.TRANSPORT
+        if response is not None:
+            try:
+                response.close()
+            except Exception:
+                if failure is None:
+                    failure = LeaderFailureCode.TRANSPORT
         if failure is not None:
             return b"", failure
         if status in {401, 403}:
             return b"", LeaderFailureCode.AUTHENTICATION
         if type(status) is not int or not 200 <= status < 300:
             return b"", LeaderFailureCode.NONZERO
-        if len(raw) > self.max_response_bytes:
-            return b"", LeaderFailureCode.OVERSIZE
         return raw, None
 
     @staticmethod
@@ -340,6 +376,47 @@ class OpenAICompatibleLeader:
         except Exception:
             return None, LeaderFailureCode.SCHEMA
         return proposal, None
+
+
+def _read_response(
+    response: object, deadline: float, maximum: int
+) -> tuple[bytes, LeaderFailureCode | None]:
+    chunks: list[bytes] = []
+    total = 0
+    failure: LeaderFailureCode | None = None
+    try:
+        reader = getattr(response, "read1", None)
+        socket_object = response.fp.raw._sock  # type: ignore[attr-defined]
+        if not callable(reader) or not callable(getattr(socket_object, "settimeout", None)):
+            failure = LeaderFailureCode.TRANSPORT
+        while failure is None and total <= maximum:
+            remaining = deadline - monotonic()
+            if remaining <= 0:
+                failure = LeaderFailureCode.TIMEOUT
+                break
+            socket_object.settimeout(remaining)
+            chunk = reader(min(_READ_CHUNK_BYTES, maximum + 1 - total))
+            if type(chunk) is not bytes:
+                failure = LeaderFailureCode.TRANSPORT
+                break
+            if monotonic() >= deadline:
+                failure = LeaderFailureCode.TIMEOUT
+                break
+            if not chunk:
+                break
+            chunks.append(chunk)
+            total += len(chunk)
+            if total > maximum:
+                failure = LeaderFailureCode.OVERSIZE
+            elif response.isclosed():  # type: ignore[attr-defined]
+                break
+    except (socket.timeout, TimeoutError):
+        failure = LeaderFailureCode.TIMEOUT
+    except Exception:
+        failure = LeaderFailureCode.TRANSPORT
+    if failure is not None:
+        return b"", failure
+    return b"".join(chunks), None
 
 
 __all__ = ["LeaderUnavailable", "OpenAICompatibleLeader"]
