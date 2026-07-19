@@ -223,17 +223,23 @@ def select_latest_nonterminal_session(
 
 
 def list_active_exit_attempts(
-    connection: sqlite3.Connection,
+    connection: sqlite3.Connection, session_id: str,
 ) -> tuple[ExitAttemptSnapshot, ...]:
+    session_id = _session_identity(session_id)
     active = tuple(state.value for state in (
         AttemptState.RUNNING,
         AttemptState.AWAITING_APPROVAL,
         AttemptState.HUMAN_CONTROLLED,
     ))
+    columns = ",".join(f"attempts.{column}" for column in _ATTEMPT_COLUMNS)
     rows = connection.execute(
-        f"""SELECT {','.join(_ATTEMPT_COLUMNS)} FROM attempts
-            WHERE state IN ({','.join('?' for _ in active)}) ORDER BY attempt_id""",
-        active,
+        f"""SELECT {columns} FROM attempts
+            JOIN tasks ON tasks.task_id=attempts.task_id
+            JOIN missions ON missions.mission_id=tasks.mission_id
+            WHERE missions.session_id=?
+              AND attempts.state IN ({','.join('?' for _ in active)})
+            ORDER BY attempts.attempt_id""",
+        (session_id, *active),
     ).fetchall()
     validated = (_attempt_from_row(row)[1] for row in rows)
     return tuple(ExitAttemptSnapshot(

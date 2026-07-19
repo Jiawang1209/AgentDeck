@@ -38,6 +38,18 @@ class EchoLeader:
         return payload
 
 
+class CountingIds:
+    def __init__(self, *values: str) -> None:
+        self._values, self.calls = iter(values), 0
+
+    def __iter__(self) -> CountingIds:
+        return self
+
+    def __next__(self) -> str:
+        self.calls += 1
+        return next(self._values)
+
+
 class ReentryHarness:
     def __init__(
         self,
@@ -351,23 +363,50 @@ def test_bootstrap_restores_latest_session_and_pending_exit(tmp_path: Path) -> N
     request = first.request_active_exit()
     first.seed_older_nonterminal_session()
     first.close_input()
-
+    before = first.database_facts()
+    request_ids = CountingIds("xrt_" + "2" * 32)
     second = build_harness(
-        tmp_path,
-        session_ids=iter(("ses_must_not_be_used",)),
-        request_ids=iter(("xrt_" + "2" * 32,)),
+        tmp_path, session_ids=iter(("ses_must_not_be_used",)), request_ids=request_ids,
     )
-
     assert second.session_id == "ses_first"
     assert second.configuration == (
         "codex-cli", "native-default", "approve_for_me", "Build",
     )
     assert second.preview_id == preview_id
     assert second.pending_exit == request
+    assert request_ids.calls == 0
+    assert second.database_facts() == before
     transcript = second.run([EOFError()])
     assert transcript.index("Diagnosis multiple_nonterminal_sessions") < (
         transcript.index("Exit needs confirmation")
     ) < transcript.index(f"Mission Preview {preview_id}")
+
+
+def test_bootstrap_reports_pending_exit_drift_without_superseding_it(tmp_path: Path) -> None:
+    first = build_harness(
+        tmp_path, session_ids=iter(("ses_first",)),
+        request_ids=iter(("xrt_" + "1" * 32,)),
+    )
+    first.configure()
+    first.seed_active_attempt()
+    request = first.request_active_exit()
+    assert first.store is not None
+    first.store._require_writer().execute(
+        "UPDATE attempts SET effect_observed=1 WHERE attempt_id='att_active'"
+    )
+    first.store._require_writer().commit()
+    first.close_input()
+    before = first.database_facts()
+    request_ids = CountingIds("xrt_" + "2" * 32)
+    second = build_harness(
+        tmp_path, session_ids=iter(("ses_must_not_be_used",)), request_ids=request_ids,
+    )
+    restored = second.shell._restored_exit
+    assert restored is not None and restored.diagnostic is not None
+    assert restored.diagnostic.code == "exit_request_drift"
+    assert restored.request == request
+    assert request_ids.calls == 0
+    assert second.database_facts() == before
 
 
 def _discovery() -> dict[str, ToolDiscovery]:

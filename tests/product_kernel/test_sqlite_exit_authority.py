@@ -147,7 +147,7 @@ def test_store_lists_all_and_only_active_exit_attempts(store: SQLiteStore) -> No
         "completed", "human_controlled", "running", "awaiting_approval", "failed",
     ))
 
-    snapshots = store.list_active_exit_attempts()
+    snapshots = store.list_active_exit_attempts("ses_1")
 
     assert [item.attempt_id for item in snapshots] == ["att_2", "att_3", "att_4"]
     assert [item.state for item in snapshots] == [
@@ -156,7 +156,7 @@ def test_store_lists_all_and_only_active_exit_attempts(store: SQLiteStore) -> No
         AttemptState.AWAITING_APPROVAL,
     ]
     assert all(item.durable_fingerprint is not None for item in snapshots)
-    assert snapshots == store.list_active_exit_attempts()
+    assert snapshots == store.list_active_exit_attempts("ses_1")
 
 
 def test_transaction_lists_active_attempts_from_its_live_authority(
@@ -165,7 +165,7 @@ def test_transaction_lists_active_attempts_from_its_live_authority(
     _seed_lineage(store, ("running",))
 
     def inspect(transaction: object) -> dict[str, object]:
-        attempts = transaction.list_active_exit_attempts()  # type: ignore[attr-defined]
+        attempts = transaction.list_active_exit_attempts("ses_1")  # type: ignore[attr-defined]
         assert attempts[0].attempt_id == "att_1"
         return {"count": len(attempts)}
 
@@ -183,7 +183,27 @@ def test_active_attempt_listing_strictly_validates_the_durable_row(
     connection.execute("UPDATE attempts SET effect_observed=2 WHERE attempt_id='att_1'")
 
     with pytest.raises(StoreCommandStateError, match="stored attempt"):
-        store.list_active_exit_attempts()
+        store.list_active_exit_attempts("ses_1")
+
+
+def test_active_attempt_listing_is_bound_to_a_typed_product_session(
+    store: SQLiteStore,
+) -> None:
+    _seed_lineage(store, ("running",))
+    connection = store._require_writer()
+    connection.execute(
+        "INSERT INTO product_sessions (session_id,project_id,state,permission_profile,"
+        "pending_goal,created_at,updated_at,leader_backend,leader_model) "
+        "SELECT 'ses_2',project_id,state,permission_profile,pending_goal,created_at,"
+        "updated_at,leader_backend,leader_model FROM product_sessions WHERE session_id='ses_1'"
+    )
+
+    assert store.list_active_exit_attempts("ses_2") == ()
+    assert [item.attempt_id for item in store.list_active_exit_attempts("ses_1")] == [
+        "att_1"
+    ]
+    with pytest.raises((TypeError, ValueError), match="session_id"):
+        store.list_active_exit_attempts("not-a-session")
 
 
 def test_pending_exit_write_round_trips_exact_canonical_authority(

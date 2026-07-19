@@ -192,8 +192,8 @@ class _SQLiteCommandTransaction:
             record,
         )
 
-    def list_active_exit_attempts(self):
-        return list_active_exit_attempts(self._store._require_writer())
+    def list_active_exit_attempts(self, session_id: str):
+        return list_active_exit_attempts(self._store._require_writer(), session_id)
 
     def recover_attempt(
         self, attempt_id: str, state: AttemptState, reason: str | None,
@@ -406,8 +406,8 @@ class SQLiteStore:
             bool(row["effect_observed"]), _attempt_fingerprint(row),
         ) for row in validated)
 
-    def list_active_exit_attempts(self):
-        return list_active_exit_attempts(self._read_connection())
+    def list_active_exit_attempts(self, session_id: str):
+        return list_active_exit_attempts(self._read_connection(), session_id)
 
     def count(self, table: str) -> int:
         if table not in _REQUIRED_TABLES:

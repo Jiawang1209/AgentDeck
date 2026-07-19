@@ -3,15 +3,19 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
 from datetime import datetime, timezone
 from hashlib import sha256
 from hmac import compare_digest, compare_digest as _compare_internal
 import json
 
-from agentdeck.kernel.diagnostics import Diagnostic, Severity
+from agentdeck.application.exit_records import (
+    EXIT_FIELDS as _EXIT_FIELDS,
+    ExitResult,
+    exit_failure,
+    request_from_session as _request_from_session,
+    snapshot_from_facts as _snapshot_from_facts,
+)
 from agentdeck.kernel.events import DomainEvent
-from agentdeck.kernel.execution import AttemptState
 from agentdeck.kernel.session import ExitAttemptSnapshot, ExitRequest
 from agentdeck.ports.clock import Clock
 from agentdeck.ports.store import (
@@ -22,29 +26,7 @@ from agentdeck.ports.store import (
 )
 
 
-_EXIT_FIELDS = (
-    "pending_exit_id", "pending_exit_attempt_id",
-    "canonical_pending_exit_attempt_facts", "pending_exit_attempt_hash",
-    "pending_exit_requested_at",
-)
 _LOWER_HEX = frozenset("0123456789abcdef")
-_DIAGNOSTIC_CODES = frozenset({
-    "exit_active_attempt_ambiguous", "exit_attempt_missing",
-    "exit_authority_invalid", "exit_cancellation_unavailable",
-    "exit_input_closed_with_active_work", "exit_request_drift",
-    "exit_request_identity_mismatch", "exit_request_malformed",
-    "exit_request_missing", "exit_session_missing",
-})
-
-
-@dataclass(frozen=True)
-class ExitResult:
-    mode: str
-    should_exit: bool
-    request: ExitRequest | None = None
-    diagnostic: Diagnostic | None = None
-
-
 class _ExitAbort(RuntimeError):
     def __init__(self, code: str, request: ExitRequest | None = None) -> None:
         super().__init__(code)
@@ -71,45 +53,6 @@ def _valid_request_id(value: object) -> bool:
         and value.startswith("xrt_")
         and _valid_lower_hex(value[4:], 32)
     )
-
-def _snapshot_from_facts(value: object) -> ExitAttemptSnapshot:
-    if type(value) is not dict or set(value) != {
-        "attempt_id", "task_id", "agent_instance_id", "ordinal", "state",
-        "acp_session_id", "effect_observed", "durable_fingerprint",
-    }:
-        raise ValueError("exit snapshot shape is invalid")
-    if type(value["state"]) is not str:
-        raise ValueError("exit snapshot state is invalid")
-    return ExitAttemptSnapshot(
-        attempt_id=value["attempt_id"],
-        task_id=value["task_id"],
-        agent_instance_id=value["agent_instance_id"],
-        ordinal=value["ordinal"],
-        state=AttemptState(value["state"]),
-        acp_session_id=value["acp_session_id"],
-        effect_observed=value["effect_observed"],
-        durable_fingerprint=value["durable_fingerprint"],
-    )
-
-def _request_from_session(session: Mapping[str, object]) -> ExitRequest | None:
-    if not all(field in session for field in _EXIT_FIELDS):
-        raise ValueError("pending exit group is absent")
-    values = tuple(session[field] for field in _EXIT_FIELDS)
-    if values == (None,) * len(_EXIT_FIELDS):
-        return None
-    if any(value is None for value in values):
-        raise ValueError("pending exit group is partial")
-    request_id, attempt_id, canonical, attempt_hash, requested_at = values
-    if type(canonical) is not str:
-        raise ValueError("pending exit canonical facts are invalid")
-    snapshot = _snapshot_from_facts(json.loads(canonical))
-    request = ExitRequest(request_id, snapshot, attempt_hash, requested_at)
-    if (
-        attempt_id != snapshot.attempt_id
-        or canonical != snapshot.canonical_bytes().decode("utf-8")
-    ):
-        raise ValueError("pending exit lineage is invalid")
-    return request
 
 def _request_result(request: ExitRequest) -> CommandResult:
     return {
@@ -214,6 +157,9 @@ class ExitService:
         self._request_id_factory = request_id_factory
 
     def request_exit(self) -> ExitResult:
+        session, pending, error = self._load_pending()
+        if error is not None:
+            return self._failure(error)
         attempts = self._active_attempts()
         if attempts is None:
             return self._failure("exit_authority_invalid")
@@ -221,9 +167,7 @@ class ExitService:
             return ExitResult("exit_ready", True)
         if len(attempts) > 1:
             return self._failure("exit_active_attempt_ambiguous")
-        session, pending = self._load_pending()
-        if session is None:
-            return self._failure("exit_request_malformed")
+        assert session is not None
         current = attempts[0]
         if pending is not None and _same_attempt(pending.attempt, current):
             return ExitResult("exit_confirmation_required", False, pending)
@@ -244,7 +188,7 @@ class ExitService:
 
         def persist(transaction: StoreTransaction) -> CommandResult:
             live_session, live_pending = self._transaction_pending(transaction)
-            live_attempts = transaction.list_active_exit_attempts()
+            live_attempts = transaction.list_active_exit_attempts(self._session_id)
             if len(live_attempts) != 1:
                 raise _ExitAbort(
                     "exit_attempt_missing" if not live_attempts
@@ -325,6 +269,9 @@ class ExitService:
         )
 
     def input_closed(self) -> ExitResult:
+        _, _, error = self._load_pending()
+        if error is not None:
+            return self._failure(error, should_exit=True)
         attempts = self._active_attempts()
         if attempts is None:
             return self._failure("exit_authority_invalid", should_exit=True)
@@ -337,9 +284,9 @@ class ExitService:
     def _decision_authority(
         self, request_id: str, attempt_hash: str,
     ) -> ExitRequest | ExitResult:
-        session, pending = self._load_pending()
-        if session is None:
-            return self._failure("exit_request_malformed")
+        _, pending, error = self._load_pending()
+        if error is not None:
+            return self._failure(error)
         if pending is None:
             return self._failure("exit_request_missing")
         request_matches = request_id == pending.request_id
@@ -395,7 +342,7 @@ class ExitService:
     def _require_live_attempt(
         self, transaction: StoreTransaction, pending: ExitRequest,
     ) -> None:
-        attempts = transaction.list_active_exit_attempts()
+        attempts = transaction.list_active_exit_attempts(self._session_id)
         matching = tuple(
             attempt for attempt in attempts
             if attempt.attempt_id == pending.attempt.attempt_id
@@ -413,7 +360,7 @@ class ExitService:
 
     def _active_attempts(self) -> tuple[ExitAttemptSnapshot, ...] | None:
         try:
-            attempts = self._store.list_active_exit_attempts()
+            attempts = self._store.list_active_exit_attempts(self._session_id)
         except (TypeError, ValueError, RuntimeError):
             return None
         if type(attempts) is not tuple or any(
@@ -424,16 +371,19 @@ class ExitService:
 
     def _load_pending(
         self,
-    ) -> tuple[Mapping[str, object] | None, ExitRequest | None]:
+    ) -> tuple[Mapping[str, object] | None, ExitRequest | None, str | None]:
         try:
             session = self._store.load_aggregate(
                 "product_sessions", self._session_id
             )
-            if session is None:
-                return None, None
-            return session, _request_from_session(session)
         except (TypeError, ValueError, RuntimeError):
-            return None, None
+            return None, None, "exit_request_malformed"
+        if session is None:
+            return None, None, "exit_session_missing"
+        try:
+            return session, _request_from_session(session), None
+        except (TypeError, ValueError, RuntimeError):
+            return None, None, "exit_request_malformed"
 
     def _transaction_pending(
         self, transaction: StoreTransaction,
@@ -453,24 +403,9 @@ class ExitService:
         request: ExitRequest | None = None,
         should_exit: bool = False,
     ) -> ExitResult:
-        if code not in _DIAGNOSTIC_CODES:
-            raise ValueError("exit diagnostic code is not allowlisted")
-        diagnostic = Diagnostic.create(
-            code=code,
-            stage="exit",
-            severity=Severity.WARNING,
-            actor="agentdeck",
-            summary="The requested exit action could not be completed.",
-            cause="The durable exit authority did not match the required state.",
-            impact="No active Attempt was changed by this decision.",
-            protection="AgentDeck kept the authoritative work and decision state intact.",
-            recovery_actions=("Review the current exit status and retry explicitly.",),
-            retryable=True,
-            outcome_known=True,
-            occurred_at=self._now(),
-            attempt_id=None if request is None else request.attempt.attempt_id,
+        return exit_failure(
+            self._clock, code, request=request, should_exit=should_exit,
         )
-        return ExitResult("diagnostic", should_exit, request, diagnostic)
 
     def _now(self) -> str:
         value = self._clock.now()

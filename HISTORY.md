@@ -4,6 +4,31 @@
 
 ## 2026-07-19
 
+### Bind exit authority to the restored ProductSession
+
+- Changed active-exit Store reads to require a typed ProductSession identity.
+  SQLite now joins Attempt through Task and Mission and filters by that exact
+  session in both ordinary reads and command transactions, so another
+  ProductSession's work cannot become the current session's exit authority.
+- Added a cohesive read-only Application projection for pending exit records.
+  Bootstrap now restores an exact request without allocating an identity or
+  writing a command, and reports a drifted request while preserving the old
+  request unchanged; only an explicit `/exit` may supersede that authority.
+- TDD REDs reproduced the former unscoped Store API and bootstrap's implicit
+  supersede. The new SQLite and real re-entry regressions assert session
+  isolation, typed identity validation, exact/drifted zero-write restoration,
+  and zero request-factory calls while `ExitService` retains exactly four
+  public operations.
+- Closed an independent quality-review fail-open: both explicit exit and EOF
+  now validate the bound ProductSession before returning `exit_ready`. A
+  missing session returns the distinct content-free `exit_session_missing`
+  diagnostic with zero writes and zero identity allocation; EOF may close only
+  its foreground boundary, while explicit exit remains open for recovery.
+- Final gates pass 145 focused exit/shell tests, 391 adjacent
+  SQLite/session/recovery tests, 66 architecture/firewall checks, and all 1,306
+  Product Kernel tests. `compileall`, diff hygiene, the exact authorized-file
+  scope, and the 500-line source/test limit also pass.
+
 ### Bind fail-closed Product Shell exit controls
 
 - Extended the deterministic slash grammar with only bare `/exit` and exact

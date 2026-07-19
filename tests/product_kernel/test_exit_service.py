@@ -53,10 +53,7 @@ def _seed_session(store: SQLiteStore) -> None:
 
 
 def _seed_attempt(
-    store: SQLiteStore,
-    *,
-    attempt_id: str = "att_1",
-    state: str = "running",
+    store: SQLiteStore, *, attempt_id: str = "att_1", state: str = "running",
     task_ordinal: int = 1,
 ) -> None:
     connection = store._require_writer()
@@ -99,8 +96,7 @@ def store(tmp_path: Path) -> SQLiteStore:
 
 class IdentityFactory:
     def __init__(self, *identities: str) -> None:
-        self.identities = iter(identities)
-        self.calls = 0
+        self.identities, self.calls = iter(identities), 0
 
     def __call__(self) -> str:
         self.calls += 1
@@ -109,8 +105,7 @@ class IdentityFactory:
 
 class AdvancingClock:
     def __init__(self, *values: datetime) -> None:
-        self.values = iter(values)
-        self.calls = 0
+        self.values, self.calls = iter(values), 0
 
     def now(self) -> datetime:
         self.calls += 1
@@ -137,22 +132,18 @@ def active_exit(store: SQLiteStore) -> tuple[ExitService, ExitRequest]:
     return service, request
 
 
-def pending_exit_fields(
-    store: SQLiteStore, session_id: str = "ses_1",
-) -> tuple[object, ...]:
+def pending_exit_fields(store: SQLiteStore, session_id: str = "ses_1") -> tuple[object, ...]:
     row = store.load_aggregate("product_sessions", session_id)
     assert row is not None
     return tuple(row[name] for name in EXIT_COLUMNS)
 
 
 def database_facts(store: SQLiteStore) -> tuple[tuple[object, ...], ...]:
-    rows: list[tuple[object, ...]] = []
-    for table in ("product_sessions", "attempts", "commands", "events"):
-        rows.extend(store._require_writer().execute(
-            f"SELECT * FROM {table} ORDER BY 1"
-        ).fetchall())
-    return tuple(rows)
-
+    connection = store._require_writer()
+    return tuple(
+        row for table in ("product_sessions", "attempts", "commands", "events")
+        for row in connection.execute(f"SELECT * FROM {table} ORDER BY 1").fetchall()
+    )
 
 def advance_active_attempt(store: SQLiteStore, attempt_id: str) -> None:
     store._require_writer().execute(
@@ -170,7 +161,6 @@ def forge_malformed_pending_group(store: SQLiteStore) -> None:
         "WHERE session_id='ses_1'",
         ("xrt_" + "f" * 32, "f" * 64, NOW.isoformat()),
     )
-
 
 def test_exit_service_exposes_only_the_four_exit_operations() -> None:
     public = {
@@ -194,9 +184,28 @@ def test_no_active_attempt_exits_without_request_or_write(store: SQLiteStore) ->
     assert factory.calls == 0
 
 
-def test_active_exit_persists_one_exact_request_and_replays_it(
-    store: SQLiteStore,
+@pytest.mark.parametrize(
+    ("operation", "should_exit"), (("request_exit", False), ("input_closed", True)),
+)
+def test_missing_bound_session_never_claims_safe_exit(
+    tmp_path: Path, operation: str, should_exit: bool,
 ) -> None:
+    store = SQLiteStore.open(tmp_path, clock=FrozenClock(NOW))
+    factory = IdentityFactory("xrt_" + "1" * 32)
+    service = ExitService(store=store, clock=FrozenClock(NOW),
+                          session_id="ses_missing", request_id_factory=factory)
+    before = database_facts(store)
+    try:
+        result = getattr(service, operation)()
+        assert result.diagnostic is not None and result.diagnostic.code == "exit_session_missing"
+        assert result.should_exit is should_exit
+        assert database_facts(store) == before
+        assert factory.calls == 0
+    finally:
+        store.close()
+
+
+def test_active_exit_persists_one_exact_request_and_replays_it(store: SQLiteStore) -> None:
     _seed_attempt(store)
     factory = IdentityFactory("xrt_" + "1" * 32, "xrt_" + "2" * 32)
     service = ExitService(
@@ -226,9 +235,7 @@ def test_active_exit_persists_one_exact_request_and_replays_it(
     assert factory.calls == 1
 
 
-def test_exit_supersedes_only_well_formed_drifted_request(
-    store: SQLiteStore,
-) -> None:
+def test_exit_supersedes_only_well_formed_drifted_request(store: SQLiteStore) -> None:
     _seed_attempt(store)
     service = _service(store)
     old = service.request_exit().request
@@ -243,9 +250,7 @@ def test_exit_supersedes_only_well_formed_drifted_request(
     assert result.diagnostic.code == "exit_request_drift"
 
 
-def test_malformed_pending_group_is_never_silently_overwritten(
-    store: SQLiteStore,
-) -> None:
+def test_malformed_pending_group_is_never_silently_overwritten(store: SQLiteStore) -> None:
     _seed_attempt(store)
     forge_malformed_pending_group(store)
     before = database_facts(store)
@@ -255,9 +260,7 @@ def test_malformed_pending_group_is_never_silently_overwritten(
     assert database_facts(store) == before
 
 
-def test_multiple_active_attempts_are_ambiguous_and_zero_write(
-    store: SQLiteStore,
-) -> None:
+def test_multiple_active_attempts_are_ambiguous_and_zero_write(store: SQLiteStore) -> None:
     _seed_attempt(store)
     _seed_attempt(store, attempt_id="att_2", task_ordinal=2)
     before = database_facts(store)
@@ -268,9 +271,7 @@ def test_multiple_active_attempts_are_ambiguous_and_zero_write(
     assert database_facts(store) == before
 
 
-def test_invalid_factory_identity_is_rejected_before_any_command(
-    store: SQLiteStore,
-) -> None:
+def test_invalid_factory_identity_is_rejected_before_any_command(store: SQLiteStore) -> None:
     _seed_attempt(store)
     before = database_facts(store)
     with pytest.raises(ValueError):

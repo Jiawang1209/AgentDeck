@@ -8,8 +8,10 @@ from agentdeck.adapters.config import ConfigResolver
 from agentdeck.adapters.discovery import ReadinessState, ToolDiscovery, discover_tools
 from agentdeck.adapters.sqlite import SQLiteStore
 from agentdeck.adapters.system_clock import SystemClock
+from agentdeck.application.exit_records import restore_pending_exit
 from agentdeck.application.exit_service import ExitResult, ExitService
 from agentdeck.application.session_service import SessionService
+from agentdeck.ports.clock import Clock
 from agentdeck.product.renderer import render
 from agentdeck.product.shell import ProductShell, validate_mission_preview
 
@@ -63,7 +65,7 @@ def build_product_shell(
             session_id=service.current().session_id,
             request_id_factory=exit_request_id_factory,
         )
-        restored_exit = _restored_exit(store, service, exit_service)
+        restored_exit = _restored_exit(store, service, clock)
         mission_service = None
         if mission_service_factory is not None:
             mission_service = mission_service_factory(
@@ -91,14 +93,11 @@ def build_product_shell(
 def _restored_exit(
     store: SQLiteStore,
     service: SessionService,
-    exit_service: ExitService,
+    clock: Clock,
 ) -> ExitResult | None:
-    snapshot = store.load_aggregate(
-        "product_sessions", service.current().session_id
+    return restore_pending_exit(
+        store=store, clock=clock, session_id=service.current().session_id,
     )
-    if snapshot is None or snapshot.get("pending_exit_id") is None:
-        return None
-    return exit_service.request_exit()
 
 
 def _available_leaders(
