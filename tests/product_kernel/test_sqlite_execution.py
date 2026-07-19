@@ -8,9 +8,9 @@ from types import SimpleNamespace
 import pytest
 
 from agentdeck.adapters.sqlite import SQLiteStore
+from agentdeck.application.execution_authority import attempt_snapshot
 from agentdeck.application.execution_records import (
-    attempt_snapshot, command_id, evidence_snapshot, handoff_snapshot,
-    terminal_command_result,
+    command_id, evidence_snapshot, handoff_snapshot, terminal_command_result,
     validated_terminal_bundle,
 )
 from agentdeck.kernel.execution import Attempt, Evidence, EvidenceKind, Handoff

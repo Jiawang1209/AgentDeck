@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from hashlib import sha256
 import json
 from types import MappingProxyType
+from agentdeck.application.execution_authority import attempt_snapshot
 from agentdeck.kernel.diagnostics import Diagnostic
 from agentdeck.kernel.execution import (
     Attempt,
@@ -28,65 +29,6 @@ _TERMINAL_RESULT_FIELDS = {
     "mission_id", "mission_version", "task_id", "attempt_id",
     "evidence_ids", "handoff_id",
 }
-_STOPPED_RESULT_FIELDS = {
-    "mission_id", "mission_version", "task_id", "attempt_id", "state",
-    "reason", "retryable", "acp_session_id",
-}
-def attempt_snapshot(
-    attempt: Attempt, task: TaskDefinition, acp_session_id: str | None = None,
-) -> dict[str, object]:
-    return {
-        "attempt_id": attempt.attempt_id,
-        "task_id": attempt.task_id,
-        "agent_instance_id": task.agent_instance_id,
-        "ordinal": attempt.ordinal,
-        "state": attempt.state.value,
-        "reason": attempt.reason,
-        "result_summary": attempt.result_summary,
-        "retryable": attempt.retryable,
-        "acp_session_id": acp_session_id,
-        "effect_observed": False,
-    }
-def stopped_command_result(
-    confirmed: ConfirmedMissionVersion, task: TaskDefinition, attempt: Attempt,
-    acp_session_id: str | None,
-) -> dict[str, object]:
-    return {
-        "mission_id": confirmed.mission_id, "mission_version": confirmed.version,
-        "task_id": task.task_id, "attempt_id": attempt.attempt_id,
-        "state": attempt.state.value, "reason": attempt.reason,
-        "retryable": attempt.retryable, "acp_session_id": acp_session_id,
-    }
-def stopped_attempt_reference(result: object) -> str:
-    if type(result) is not dict or set(result) != _STOPPED_RESULT_FIELDS:
-        raise ValueError("stopped execution attempt is invalid")
-    identity = result["attempt_id"]
-    if type(identity) is not str or not identity.startswith("att_"):
-        raise ValueError("stopped execution attempt is invalid")
-    return identity
-def validated_stopped_attempt(
-    result: object, confirmed: ConfirmedMissionVersion, task: TaskDefinition,
-    expected_attempt: Attempt, expected_acp_session_id: str | None,
-    attempt_facts: object,
-) -> Attempt:
-    expected_result = stopped_command_result(
-        confirmed, task, expected_attempt, expected_acp_session_id
-    )
-    expected_facts = attempt_snapshot(
-        expected_attempt, task, expected_acp_session_id
-    )
-    if type(result) is not dict or type(attempt_facts) is not dict or (
-        json.dumps(result, sort_keys=True) != json.dumps(expected_result, sort_keys=True)
-        or json.dumps(attempt_facts, sort_keys=True)
-        != json.dumps(expected_facts, sort_keys=True)
-    ):
-        raise ValueError("stopped execution attempt is invalid")
-    return Attempt(
-        attempt_facts["attempt_id"], attempt_facts["task_id"],
-        attempt_facts["ordinal"], AttemptState(attempt_facts["state"]),
-        attempt_facts["reason"], attempt_facts["result_summary"],
-        attempt_facts["retryable"],
-    )
 def evidence_snapshot(evidence: Evidence, attempt: Attempt) -> dict[str, object]:
     return {
         "evidence_id": evidence.evidence_id, "task_id": attempt.task_id,
@@ -478,11 +420,10 @@ def worker_failure_condition(result: WorkerResult) -> str | None:
 __all__ = [
     "AuthoritativeRevisionFinding", "AuthoritativeRevisionTask",
     "CommittedEvidence", "CommittedTerminalBundle", "EvidenceAuthority",
-    "EvidenceLineageError", "ValidatedStageResult", "attempt_snapshot", "command_id",
+    "EvidenceLineageError", "ValidatedStageResult", "command_id",
     "evidence_snapshot", "exception_condition", "handle_matches_request",
     "handoff_snapshot", "payload_text", "review_result",
-    "stage_id", "stopped_attempt_reference", "stopped_command_result",
-    "task_instruction", "terminal_command_result", "terminal_references",
-    "validate_evidence_lineage", "validated_stopped_attempt", "validated_terminal_bundle",
+    "stage_id", "task_instruction", "terminal_command_result", "terminal_references",
+    "validate_evidence_lineage", "validated_terminal_bundle",
     "validated_stage_result", "worker_failure_condition",
 ]

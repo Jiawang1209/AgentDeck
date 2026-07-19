@@ -190,6 +190,7 @@ class _SQLiteCommandTransaction:
                ON CONFLICT(attempt_id) DO UPDATE SET state=excluded.state,
                  reason=excluded.reason, result_summary=excluded.result_summary,
                  retryable=excluded.retryable,
+                 acp_session_id=excluded.acp_session_id,
                  effect_observed=excluded.effect_observed, updated_at=excluded.updated_at""",
             record,
         )

@@ -47,6 +47,15 @@
   canonical Attempt snapshot from the Store. Missing, legacy, drifted or
   cross-lineage command results and snapshots stop content-free before Attempt
   2, while an exact durable replay permits only the existing bounded retry.
+- Inventoried every Execution Coordinator command boundary and extracted shared
+  pure Attempt command/snapshot authority into `execution_authority.py`. Start
+  replay remains deliberately non-advancing before Worker construction or I/O;
+  ACP bind, stopped-Attempt and terminal-bundle replay can advance only after a
+  closed result and exact Store readback. ACP bind now validates exact
+  Mission/version, Task, Attempt and session lineage before the approval bridge;
+  corrupt or missing facts return `acp_session_binding_failed` without rewriting
+  an untrusted Attempt. SQLite now persists the validated ACP session during its
+  running-Attempt update instead of silently retaining `NULL`.
 - Made every accepted finding actionable in the authoritative Revision Task and
   actual Worker instruction through a closed immutable projection of scope,
   severity, summary, criterion and finding-to-Evidence lineage. Rejected findings
@@ -64,10 +73,18 @@
   preventing both fresh and replay validation. Stopped-attempt replay then
   proved 22 MemoryStore/SQLite corrupt-command-or-snapshot cases incorrectly
   started Attempt 2 while two exact replay controls remained bounded; GREEN
-  passes all 24 cases. Focused GREEN covers 135
+  passes all 24 cases. The cross-command RED then produced 20 failures: the
+  inventory and 18 invalid MemoryStore/SQLite bind cases lacked authority, and
+  SQLite's exact replay exposed its missing ACP-session update; three
+  non-advancing/exact controls passed. GREEN passes all 23 authority cases and
+  preserves one bind mutation. Real SQLite terminal-bundle parity was immediate
+  GREEN after correcting the Store-neutral fixture: 11 missing, legacy,
+  mismatched, partial, reordered or extra replay cases stop before revision,
+  while the exact replay completes the frozen four-stage graph. Focused GREEN
+  covers 170
   Task24/Task23/SQLite tests; expanded execution, Kernel, ACP, SQLite and Leader
-  coverage passes 787, architecture/firewall passes 50, the full Product Kernel
-  passes 1,421, and the approved legacy substitute passes 4,461 with 3 skipped.
+  coverage passes 822, architecture/firewall passes 50, the full Product Kernel
+  passes 1,456, and the approved legacy substitute passes 4,461 with 3 skipped.
 
 ### Enforce evidence-backed execution semantics
 

@@ -3,28 +3,9 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 from agentdeck.application.approval_service import ApprovalContext, ApprovalService
-from agentdeck.application.execution_records import (
-    AuthoritativeRevisionTask,
-    CommittedEvidence as _CommittedEvidence,
-    EvidenceAuthority as _EvidenceAuthority,
-    EvidenceLineageError as _EvidenceLineageError,
-    attempt_snapshot as _attempt_snapshot,
-    command_id as _command_id,
-    evidence_snapshot as _evidence_snapshot,
-    exception_condition as _exception_condition,
-    handle_matches_request as _handle_matches_request,
-    handoff_snapshot as _handoff_snapshot,
-    stage_id as _stage_id,
-    stopped_attempt_reference as _stopped_attempt_reference,
-    stopped_command_result as _stopped_command_result,
-    task_instruction as _task_instruction,
-    terminal_command_result as _terminal_command_result,
-    terminal_references as _terminal_references,
-    validated_terminal_bundle as _validated_terminal_bundle,
-    validated_stage_result as _validated_stage_result,
-    validated_stopped_attempt as _validated_stopped_attempt,
-    worker_failure_condition as _worker_failure_condition,
-)
+from agentdeck.application import execution_authority as _authority
+from agentdeck.application import execution_records as _records
+from agentdeck.application.execution_records import AuthoritativeRevisionTask
 from agentdeck.kernel.diagnostics import Diagnostic, Severity
 from agentdeck.kernel.execution import Attempt, Evidence, Handoff
 from agentdeck.kernel.execution_semantics import RetryPolicy, materialize_revision
@@ -56,7 +37,7 @@ class ExecutionService:
         self._validate_authority(session_id, confirmed, draft, permission_scope)
         attempts: list[Attempt] = []
         evidence: list[Evidence] = []
-        committed_evidence: list[_CommittedEvidence] = []
+        committed_evidence: list[_records.CommittedEvidence] = []
         handoffs: list[Handoff] = []
         revision_task = AuthoritativeRevisionTask(
             "tsk_revision", "agentdeck", draft.scope, ()
@@ -71,13 +52,13 @@ class ExecutionService:
             reconnects = 0
             for ordinal in range(1, max_attempts + 1):
                 attempt = Attempt.pending(
-                    _stage_id("att_", confirmed, task, str(ordinal)),
+                    _records.stage_id("att_", confirmed, task, str(ordinal)),
                     task.task_id, ordinal,
                 ).start()
                 try:
                     request = TaskRequest(
                         task.agent_instance_id, task.task_id, attempt.attempt_id,
-                        _task_instruction(
+                        _records.task_instruction(
                             draft, confirmed, task, attempt,
                             handoffs[-1] if handoffs else None,
                             (
@@ -111,7 +92,7 @@ class ExecutionService:
                     worker = self._worker_factory(task)
                     handle = await worker.start_task(request)
                 except Exception as error:
-                    condition = _exception_condition(
+                    condition = _records.exception_condition(
                         error, task_id=task.task_id, attempt_id=attempt.attempt_id
                     )
                     can_reconnect = (
@@ -140,7 +121,7 @@ class ExecutionService:
                         terminal, code,
                         "ACP Worker task start failed",
                     )
-                if not _handle_matches_request(handle, request):
+                if not _records.handle_matches_request(handle, request):
                     return self._stop_attempt(
                         confirmed, attempts, evidence, handoffs, revision_task, task,
                         attempt.unknown_outcome("worker_handle_lineage_invalid"),
@@ -148,13 +129,18 @@ class ExecutionService:
                         "ACP Worker handle did not match the exact Task request",
                     )
                 try:
-                    self._bind_acp_session(attempt, task, confirmed, handle.session_id)
+                    attempt = self._bind_acp_session(
+                        attempt, task, confirmed, handle.session_id
+                    )
+                    attempts[-1] = attempt
                 except Exception:
-                    return self._stop_attempt(
-                        confirmed, attempts, evidence, handoffs, revision_task, task,
-                        attempt.unknown_outcome("acp_session_binding_failed"),
-                        "acp_session_binding_failed",
-                        "the validated ACP session did not bind durably",
+                    failed = attempt.unknown_outcome("acp_session_binding_failed")
+                    return ExecutionResult(
+                        tuple(attempts), tuple(evidence), tuple(handoffs),
+                        revision_task, self._diagnostic(
+                            "acp_session_binding_failed", confirmed, task, failed,
+                            "the validated ACP session did not bind durably",
+                        ),
                     )
                 try:
                     bridge = await self._approval_service.bridge_attempt(
@@ -165,7 +151,7 @@ class ExecutionService:
                         ),
                     )
                 except Exception as error:
-                    condition = _exception_condition(
+                    condition = _records.exception_condition(
                         error, task_id=task.task_id, attempt_id=attempt.attempt_id
                     )
                     can_reconnect = (
@@ -212,21 +198,21 @@ class ExecutionService:
                         attempt, worker_result, handle.session_id,
                     )
                 evidence_authority = (
-                    None if not index else _EvidenceAuthority(
+                    None if not index else _records.EvidenceAuthority(
                         tuple(committed_evidence), confirmed.mission_id,
                         draft.tasks[index - 1].task_id, tuple(attempts),
                     )
                 )
                 try:
-                    validated = _validated_stage_result(
-                        _stage_id("ev_", confirmed, task, str(ordinal)),
+                    validated = _records.validated_stage_result(
+                        _records.stage_id("ev_", confirmed, task, str(ordinal)),
                         task, worker_result, draft,
                         accepted_finding_ids=revision_task.accepted_finding_ids,
                         expected_revision_evidence_ids=revision_task.review_evidence_ids,
                         evidence_authority=evidence_authority,
                     )
                     terminal = attempt.complete(validated.summary)
-                except _EvidenceLineageError:
+                except _records.EvidenceLineageError:
                     return self._stop_attempt(
                         confirmed, attempts, evidence, handoffs, revision_task, task,
                         attempt.unknown_outcome("evidence_lineage_invalid"),
@@ -281,7 +267,7 @@ class ExecutionService:
                 handoff = None
                 if index < len(draft.tasks) - 1:
                     handoff = Handoff.create(
-                        _stage_id(
+                        _records.stage_id(
                             "hnd_", confirmed, task,
                             draft.tasks[index + 1].task_id, str(ordinal),
                         ),
@@ -315,7 +301,7 @@ class ExecutionService:
                 attempts[-1] = terminal
                 evidence.extend(committed.evidence)
                 committed_evidence.extend(
-                    _CommittedEvidence(
+                    _records.CommittedEvidence(
                         item, confirmed.mission_id, task.task_id, terminal.attempt_id,
                     ) for item in committed.evidence
                 )
@@ -377,62 +363,72 @@ class ExecutionService:
         def commit(transaction):
             nonlocal created
             transaction.save_aggregate(
-                "attempts", attempt.attempt_id, _attempt_snapshot(attempt, task)
+                "attempts", attempt.attempt_id, _authority.attempt_snapshot(attempt, task)
             )
             created = True
             return {"attempt_id": attempt.attempt_id, "state": attempt.state.value}
         self._store.execute_once(
-            _command_id("start", confirmed, task, attempt.ordinal),
+            _records.command_id("start", confirmed, task, attempt.ordinal),
             "execution_attempt_started", commit,
         )
         return created
     def _bind_acp_session(
         self, attempt: Attempt, task: TaskDefinition,
         confirmed: ConfirmedMissionVersion, acp_session_id: str,
-    ) -> None:
+    ) -> Attempt:
+        expected = _authority.bound_command_result(
+            confirmed, task, attempt, acp_session_id
+        )
         def commit(transaction):
             transaction.save_aggregate(
                 "attempts", attempt.attempt_id,
-                _attempt_snapshot(attempt, task, acp_session_id),
+                _authority.attempt_snapshot(attempt, task, acp_session_id),
             )
-            return {"attempt_id": attempt.attempt_id, "acp_session_id": acp_session_id}
-        self._store.execute_once(
-            _command_id("bind_acp", confirmed, task, attempt.ordinal),
+            return expected
+        result = self._store.execute_once(
+            _records.command_id("bind_acp", confirmed, task, attempt.ordinal),
             "execution_acp_session_bound", commit,
+        )
+        identity = _authority.bound_attempt_reference(result)
+        facts = self._store.load_aggregate("attempts", identity)
+        return _authority.validated_bound_attempt(
+            result, confirmed, task, attempt, acp_session_id, facts
         )
     def _persist_terminal(
         self, attempt: Attempt, task: TaskDefinition,
         evidence: tuple[Evidence, ...], handoff: Handoff | None,
         confirmed: ConfirmedMissionVersion, acp_session_id: str,
     ):
-        expected_result = _terminal_command_result(confirmed, task, attempt, evidence, handoff)
+        expected_result = _records.terminal_command_result(
+            confirmed, task, attempt, evidence, handoff
+        )
         def commit(transaction):
             transaction.save_aggregate("attempts", attempt.attempt_id,
-                _attempt_snapshot(attempt, task, acp_session_id))
+                _authority.attempt_snapshot(attempt, task, acp_session_id))
             for item in evidence:
                 transaction.save_aggregate("evidence", item.evidence_id,
-                                           _evidence_snapshot(item, attempt))
+                                           _records.evidence_snapshot(item, attempt))
             if handoff is not None:
                 transaction.save_aggregate("handoffs", handoff.handoff_id,
-                                           _handoff_snapshot(handoff))
+                                           _records.handoff_snapshot(handoff))
             return expected_result
         result = self._store.execute_once(
-            _command_id("terminal", confirmed, task, attempt.ordinal),
+            _records.command_id("terminal", confirmed, task, attempt.ordinal),
             "execution_stage_committed", commit,
         )
-        attempt_id, evidence_ids, handoff_id = _terminal_references(result)
+        attempt_id, evidence_ids, handoff_id = _records.terminal_references(result)
         attempt_facts = self._store.load_aggregate("attempts", attempt_id)
         evidence_facts = tuple(self._store.load_aggregate("evidence", identity)
                                for identity in evidence_ids)
         handoff_facts = (None if handoff_id is None else self._store.load_aggregate("handoffs", handoff_id))
-        return _validated_terminal_bundle(
+        return _records.validated_terminal_bundle(
             result, confirmed, task, attempt, evidence, handoff,
             acp_session_id, attempt_facts, evidence_facts, handoff_facts)
     def _worker_failure(
         self, confirmed, attempts, evidence, handoffs, revision_task,
         task, attempt, result, acp_session_id,
     ) -> ExecutionResult:
-        condition = _worker_failure_condition(result)
+        condition = _records.worker_failure_condition(result)
         terminal = (
             attempt.cancel("worker_cancelled")
             if result.status == "cancelled"
@@ -467,17 +463,21 @@ class ExecutionService:
         self, attempt: Attempt, task: TaskDefinition,
         confirmed: ConfirmedMissionVersion, acp_session_id: str | None,
     ) -> Attempt:
-        expected = _stopped_command_result(confirmed, task, attempt, acp_session_id)
+        expected = _authority.stopped_command_result(
+            confirmed, task, attempt, acp_session_id
+        )
         def commit(transaction):
             transaction.save_aggregate("attempts", attempt.attempt_id,
-                _attempt_snapshot(attempt, task, acp_session_id))
+                _authority.attempt_snapshot(attempt, task, acp_session_id))
             return expected
-        result = self._store.execute_once(_command_id(
+        result = self._store.execute_once(_records.command_id(
             "stop", confirmed, task, attempt.ordinal),
             "execution_attempt_stopped", commit)
-        identity = _stopped_attempt_reference(result)
+        identity = _authority.stopped_attempt_reference(result)
         facts = self._store.load_aggregate("attempts", identity)
-        return _validated_stopped_attempt(result, confirmed, task, attempt, acp_session_id, facts)
+        return _authority.validated_stopped_attempt(
+            result, confirmed, task, attempt, acp_session_id, facts
+        )
     def _diagnostic(self, code, confirmed, task, attempt, cause) -> Diagnostic:
         outcome_known = attempt.state.value in {
             "completed", "failed", "cancelled", "interrupted",
