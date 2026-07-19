@@ -4,6 +4,34 @@
 
 ## 2026-07-19
 
+### Restore latest ProductSession authority and durable Leader identity
+
+- Replaced project-root-derived session IDs in Product Shell composition with
+  project-scoped latest-nonterminal selection and an injectable UUID-backed
+  session factory. Selection excludes only completed/failed/cancelled history,
+  orders equal authorities deterministically by updated time, created time and
+  typed session ID, restores exact migrated-v1 identities, and surfaces a
+  content-free `multiple_nonterminal_sessions` warning without merging or
+  mutating parallel nonterminal sessions. A new-session factory identity that
+  collides with terminal history is rejected without restoring or rewriting it.
+- Extracted ProductSession SQLite row ownership into `sqlite_session.py` and
+  pure Application snapshots/events/identity projections into
+  `session_records.py`. Every session load/save now covers all seven schema-v2
+  extension columns: configure persists the exact Leader/backend pair in the
+  same command transaction, later Mission/session writes preserve omitted
+  Leader and pending-exit facts, and partial, invalid or drifted identity fails
+  closed with transaction rollback.
+- Made re-entry require exact agreement among the ProductSession row and its
+  completed `session:configure:<id>` result for Leader, model, permission,
+  retained goal, session ID and mode. Terminal-only history creates one new
+  typed session; setup keeps a null pair and no configure result; migration and
+  recovery fixtures now exercise the same production project hash and exact v2
+  setup-to-configure authority. Malformed durable configure identities are
+  normalized to content-free `SessionServiceError` failures with zero writes.
+- Verification evidence: 21 focused Task 15A.2 tests, 193 session/mission/shell/
+  SQLite regressions, 33 recovery regressions, 14 architecture checks, and the
+  complete 1,205-test Product Kernel suite pass; `compileall` also passes.
+
 ### Migrate exact SQLite schema v1 to schema v2
 
 - Preserved the immutable v1 DDL authority and added an ordered v2 authority

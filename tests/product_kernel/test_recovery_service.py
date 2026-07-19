@@ -16,6 +16,7 @@ from agentdeck.application.recovery_service import (
     RecoveryOutcome,
     RecoveryService,
 )
+from agentdeck.application.session_service import SessionService
 from agentdeck.kernel.events import DomainEvent
 from agentdeck.kernel.execution import AttemptState
 from agentdeck.ports.store import RunningAttempt
@@ -330,8 +331,21 @@ def test_combined_recovery_command_identity_is_bounded() -> None:
 
 def _seed_sqlite_running_attempt(store: SQLiteStore) -> None:
     now = "2026-07-19T04:05:06+00:00"
+    session = SessionService(
+        store=store,
+        clock=FrozenClock(NOW),
+        session_id="ses_1",
+        project_root=str(store._project_root),
+        available_leaders={"codex-cli": ("native-default",)},
+    )
+    session.configure(leader="codex-cli", model="native-default")
+    configured = session.current()
     with store.command("cmd_test_fixture", "test_fixture") as transaction:
-        transaction.save_session({"session_id": "ses_1", "state": "running"})
+        transaction.save_session({
+            "session_id": "ses_1", "state": "running",
+            "permission_profile": configured.permission,
+            "pending_goal": configured.pending_goal,
+        })
         project_id = transaction.load_aggregate("product_sessions", "ses_1")["project_id"]
         connection = store._writer
         connection.execute(
@@ -358,6 +372,26 @@ def _seed_sqlite_running_attempt(store: SQLiteStore) -> None:
              "acp_1", 0, now, now),
         )
         assert type(project_id) is str
+
+
+def test_sqlite_recovery_fixture_preserves_exact_session_reentry_authority(
+    tmp_path: Path,
+) -> None:
+    store = SQLiteStore.open(tmp_path, clock=FrozenClock(NOW))
+    _seed_sqlite_running_attempt(store)
+    try:
+        restored = SessionService(
+            store=store, clock=FrozenClock(NOW), session_id="ses_1",
+            project_root=str(tmp_path),
+            available_leaders={"codex-cli": ("native-default",)},
+        ).current()
+        assert (restored.leader_backend, restored.model, restored.permission) == (
+            "codex-cli", "native-default", "approve_for_me",
+        )
+        assert restored.pending_goal is None
+        assert restored.state.value == "running"
+    finally:
+        store.close()
 
 
 def test_sqlite_reopen_replays_same_run_then_new_run_reconciles(

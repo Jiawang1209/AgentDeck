@@ -28,6 +28,11 @@ from agentdeck.adapters.sqlite_schema import (
     _resolved_project_root,
     _state_directory,
 )
+from agentdeck.adapters.sqlite_session import (
+    load_session_aggregate,
+    save_session,
+    select_latest_nonterminal_session,
+)
 from agentdeck.adapters.sqlite_validation import (
     StateIdentity,
     StoreWriterBusyError,
@@ -42,7 +47,6 @@ from agentdeck.adapters.sqlite_validation import (
     _release_writer_lock,
     _require_state_identity,
     _save_conversation_turn,
-    _session_record,
     _state_identity,
     _timestamp,
     _validate_command_row,
@@ -54,6 +58,7 @@ from agentdeck.ports.clock import Clock
 from agentdeck.ports.store import (
     CommandResult,
     RunningAttempt,
+    SessionSelection,
     STORE_COMMAND_ID_MAX_BYTES,
     STORE_COMMAND_KIND_MAX_BYTES,
     StoreTransaction,
@@ -157,28 +162,11 @@ class _SQLiteCommandTransaction:
         raise ValueError("unsupported aggregate type")
 
     def save_session(self, snapshot: Mapping[str, object]) -> None:
-        connection = self._require_mutable()
-        if not isinstance(snapshot, Mapping):
-            raise StoreSerializationError("session snapshot must be an object")
-        now = _timestamp(self._store._clock)
-        session_id = snapshot.get("session_id")
-        existing = connection.execute(
-            "SELECT project_id,created_at,updated_at FROM product_sessions WHERE session_id=?",
-            (session_id,),
-        ).fetchone() if type(session_id) is str else None
-        record = _session_record(snapshot, self._store._project_id, now, existing)
-        connection.execute(
-            "INSERT OR IGNORE INTO projects VALUES (?, ?, ?)",
-            (record[1], str(self._store._project_root), now),
-        )
-        connection.execute(
-            """INSERT INTO product_sessions (
-                 session_id,project_id,state,permission_profile,pending_goal,
-                 created_at,updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)
-               ON CONFLICT(session_id) DO UPDATE SET
-                 state=excluded.state, permission_profile=excluded.permission_profile,
-                 pending_goal=excluded.pending_goal, updated_at=excluded.updated_at""",
-            record,
+        save_session(
+            self._require_mutable(), snapshot,
+            project_id=self._store._project_id,
+            project_root=self._store._project_root,
+            now=_timestamp(self._store._clock),
         )
 
     def save_attempt(self, snapshot: Mapping[str, object]) -> None:
@@ -374,11 +362,9 @@ class SQLiteStore:
         _validate_text_reference(aggregate_id, "aggregate_id", 255)
         if aggregate_type in MISSION_AGGREGATE_TYPES:
             return load_mission_aggregate(connection, aggregate_type, aggregate_id)
+        if aggregate_type == "product_sessions":
+            return load_session_aggregate(connection, aggregate_id)
         specs = {
-            "product_sessions": ("session_id", (
-                "session_id", "project_id", "state", "permission_profile", "pending_goal",
-                "created_at", "updated_at",
-            )),
             "attempts": ("attempt_id", (
                 "attempt_id", "task_id", "agent_instance_id", "ordinal", "state", "reason",
                 "result_summary", "retryable", "acp_session_id", "effect_observed",
@@ -399,6 +385,11 @@ class SQLiteStore:
 
     def load_aggregate(self, aggregate_type: str, aggregate_id: str) -> CommandResult | None:
         return self._load_aggregate(self._read_connection(), aggregate_type, aggregate_id)
+
+    def select_latest_nonterminal_session(self) -> SessionSelection:
+        return select_latest_nonterminal_session(
+            self._read_connection(), self._project_id
+        )
 
     def list_running_attempts(self):
         rows = self._read_connection().execute(

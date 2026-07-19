@@ -278,59 +278,6 @@ _ATTEMPT_COLUMNS = (
     "created_at", "updated_at",
 )
 
-_SESSION_STATES = frozenset({
-    "setup", "ready", "drafting", "awaiting_confirmation", "running",
-    "awaiting_approval", "paused", "needs_attention", "completed", "failed",
-    "cancelled",
-})
-_PERMISSION_PROFILES = frozenset({
-    "ask_for_approval", "approve_for_me", "full_access",
-})
-
-
-def _session_record(
-    snapshot: Mapping[str, object], default_project_id: str, now: str,
-    existing: tuple[object, ...] | None,
-) -> tuple[object, ...]:
-    _, facts = _canonical(snapshot)
-    allowed = {
-        "session_id", "project_id", "state", "permission_profile", "pending_goal",
-        "created_at", "updated_at",
-    }
-    if not set(facts) <= allowed:
-        raise StoreSerializationError("session snapshot contains unsupported fields")
-    session_id = _bounded_text(facts.get("session_id"), "session_id", 255)
-    state = _bounded_text(facts.get("state"), "session state", 64)
-    if state not in _SESSION_STATES:
-        raise StoreSerializationError("session state is unsupported")
-    old = dict(zip(
-        ("project_id", "created_at", "updated_at"), existing, strict=True
-    )) if existing is not None else {}
-    project_id = _bounded_text(
-        facts.get("project_id", old.get("project_id", default_project_id)),
-        "project_id", 255,
-    )
-    permission = facts.get("permission_profile")
-    if permission is not None and permission not in _PERMISSION_PROFILES:
-        raise StoreSerializationError("permission_profile is unsupported")
-    pending_goal = facts.get("pending_goal")
-    if pending_goal is not None:
-        _bounded_text(pending_goal, "pending_goal", _MAX_STRING_BYTES)
-    created_at = facts.get("created_at", old.get("created_at", now))
-    updated_at = facts.get("updated_at", now)
-    _stored_timestamp(created_at, "session created_at")
-    _stored_timestamp(updated_at, "session updated_at")
-    if existing is not None and (
-        project_id != old["project_id"] or created_at != old["created_at"]
-    ):
-        raise ValueError("session immutable lineage cannot drift")
-    if datetime.fromisoformat(updated_at) < datetime.fromisoformat(created_at):
-        raise ValueError("session updated_at precedes created_at")
-    return (
-        session_id, project_id, state, permission, pending_goal, created_at, updated_at,
-    )
-
-
 def _save_conversation_turn(
     connection: sqlite3.Connection, snapshot: Mapping[str, object], now: str
 ) -> None:

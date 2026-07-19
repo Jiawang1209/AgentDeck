@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
-from hashlib import sha256
 from pathlib import Path
+from uuid import uuid4
 
 from agentdeck.adapters.config import ConfigResolver
 from agentdeck.adapters.discovery import ReadinessState, ToolDiscovery, discover_tools
@@ -11,6 +11,10 @@ from agentdeck.adapters.system_clock import SystemClock
 from agentdeck.application.session_service import SessionService
 from agentdeck.product.renderer import render
 from agentdeck.product.shell import ProductShell, validate_mission_preview
+
+
+def _new_session_id() -> str:
+    return f"ses_{uuid4().hex}"
 
 
 def build_product_shell(
@@ -24,6 +28,7 @@ def build_product_shell(
     store_factory: Callable[..., object] = SQLiteStore.open,
     shell_factory: Callable[..., ProductShell] = ProductShell,
     mission_service_factory: Callable[..., object] | None = None,
+    session_id_factory: Callable[[], str] = _new_session_id,
 ) -> ProductShell:
     """Compose the foreground Product Shell through injectable factories."""
 
@@ -39,12 +44,12 @@ def build_product_shell(
     available_leaders = _available_leaders(discovered)
     store = store_factory(project_root, clock=clock)
     try:
-        service = SessionService(
+        service = SessionService.open_latest(
             store=store,
             clock=clock,
-            session_id=_session_id(project_root),
             project_root=project_root,
             available_leaders=available_leaders,
+            session_id_factory=session_id_factory,
         )
         mission_service = None
         if mission_service_factory is not None:
@@ -82,12 +87,6 @@ def _available_leaders(
         ):
             available[f"{name}-cli"] = ("native-default",)
     return dict(sorted(available.items()))
-
-
-def _session_id(project_root: str) -> str:
-    resolved = Path(project_root).resolve(strict=True)
-    digest = sha256(str(resolved).encode("utf-8", "strict")).hexdigest()[:24]
-    return f"ses_{digest}"
 
 
 def run_product_dev(*, diagnostic: bool = False) -> int:

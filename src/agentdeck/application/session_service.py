@@ -2,11 +2,22 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
-from dataclasses import dataclass, replace
-from hashlib import sha256
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass
 from typing import Final
-from uuid import uuid4
+
+from agentdeck.application.session_records import (
+    load_session_command,
+    new_turn_command_id,
+    project_id_for_root,
+    result_from_command,
+    session_event,
+    session_from_snapshot,
+    session_snapshot,
+    turn_id,
+    validated_configuration_facts,
+    validated_session_identity,
+)
 
 from agentdeck.application.session_validation import (
     SessionServiceError,
@@ -22,11 +33,15 @@ from agentdeck.application.session_validation import (
     validate_goal,
 )
 from agentdeck.kernel.diagnostics import Diagnostic, Severity
-from agentdeck.kernel.events import DomainEvent
 from agentdeck.kernel.permissions import PermissionProfile
 from agentdeck.kernel.session import ProductSession, SessionState
 from agentdeck.ports.clock import Clock
-from agentdeck.ports.store import CommandResult, Store, StoreTransaction
+from agentdeck.ports.store import (
+    CommandResult,
+    SessionSelection,
+    Store,
+    StoreTransaction,
+)
 
 
 _MAX_SELECTION_BYTES: Final = 4_096
@@ -41,6 +56,7 @@ class SessionView:
     leader_backend: str | None
     model: str | None
     permission: str | None
+    reentry_diagnostic: Diagnostic | None = None
 
 
 @dataclass(frozen=True)
@@ -67,6 +83,7 @@ class SessionService:
         _require_dependency(clock, ("now",), "clock")
         self._store = store
         self._clock = clock
+        self._nonterminal_count = 1
         self._available_leaders = snapshot_available_leaders(available_leaders)
         root = canonical_project_root(project_root)
         self._session = self._create_or_load(session_id, root)
@@ -75,19 +92,71 @@ class SessionService:
         self._permission = self._load_permission()
         self._restore_configuration()
 
+    @classmethod
+    def open_latest(
+        cls,
+        *,
+        store: Store,
+        clock: Clock,
+        project_root: str,
+        available_leaders: Mapping[str, tuple[str, ...]],
+        session_id_factory: Callable[[], str],
+    ) -> "SessionService":
+        _require_dependency(
+            store,
+            (
+                "execute_once", "load_aggregate", "lookup_command",
+                "select_latest_nonterminal_session",
+            ),
+            "store",
+        )
+        if not callable(session_id_factory):
+            raise TypeError("session_id_factory must be callable")
+        try:
+            selection = store.select_latest_nonterminal_session()
+        except (TypeError, ValueError, RuntimeError):
+            raise SessionServiceError(
+                "ProductSession selection authority is invalid"
+            ) from None
+        if type(selection) is not SessionSelection:
+            raise SessionServiceError("ProductSession selection authority is invalid")
+        session_id = selection.session_id
+        if session_id is None:
+            session_id = validated_session_identity(session_id_factory())
+            if store.load_aggregate("product_sessions", session_id) is not None:
+                raise SessionServiceError(
+                    "ProductSession factory identity is already durable")
+        service = cls(
+            store=store,
+            clock=clock,
+            session_id=session_id,
+            project_root=project_root,
+            available_leaders=available_leaders,
+        )
+        service._nonterminal_count = selection.nonterminal_count
+        return service
+
     def _create_or_load(self, session_id: str, project_root: str) -> ProductSession:
+        session_id = validated_session_identity(session_id)
         candidate = ProductSession.new(session_id, project_root)
         root_digest = project_root_digest(project_root)
         command_id = f"session:create:{session_id}"
         loaded = self._store.load_aggregate("product_sessions", session_id)
         if loaded is not None:
-            result = self._store.lookup_command(command_id, "create_product_session")
-            validate_creation_result(result, session_id, root_digest)
-            return _session_from_snapshot(loaded, project_root)
+            if loaded.get("project_id") != project_id_for_root(project_root):
+                raise SessionServiceError("ProductSession project root does not match")
+            result = load_session_command(
+                self._store, command_id, "create_product_session")
+            if result is not None:
+                validate_creation_result(result, session_id, root_digest)
+            restored = session_from_snapshot(loaded, project_root)
+            if restored.session_id != session_id:
+                raise SessionServiceError("stored ProductSession identity is invalid")
+            return restored
 
         def create(transaction: StoreTransaction) -> CommandResult:
-            transaction.save_session(_session_snapshot(candidate, None))
-            transaction.append_event(_event(
+            transaction.save_session(session_snapshot(candidate, None))
+            transaction.append_event(session_event(
                 command_id,
                 "session_created",
                 session_id,
@@ -105,40 +174,42 @@ class SessionService:
         loaded = self._store.load_aggregate("product_sessions", session_id)
         if loaded is None:
             raise SessionServiceError("created ProductSession is unavailable")
-        return _session_from_snapshot(loaded, project_root)
+        return session_from_snapshot(loaded, project_root)
 
     def accept_text(
         self, text: str, *, command_id: str | None = None
     ) -> SessionResult:
         goal = validate_goal(text)
         stable_id = (
-            _new_turn_command_id(self._session.session_id)
+            new_turn_command_id(self._session.session_id)
             if command_id is None
             else validate_command_id(command_id)
         )
-        turn_id = _turn_id(self._session.session_id, stable_id)
+        turn_id_value = turn_id(self._session.session_id, stable_id)
         if command_id is not None:
             existing = self._store.lookup_command(stable_id, "accept_session_text")
             if existing is not None:
-                return self._validated_accept_result(existing, goal, turn_id)
+                return self._validated_accept_result(existing, goal, turn_id_value)
         if self._session.state is not SessionState.SETUP:
             raise SessionServiceError("goal retention requires setup state")
         updated = self._session.retain_goal(goal)
 
         def retain(transaction: StoreTransaction) -> CommandResult:
             occurred_at = self._now()
-            transaction.save_session(_session_snapshot(updated, self._permission))
-            transaction.save_aggregate("conversation_turns", turn_id, {
+            transaction.save_session(session_snapshot(updated, self._permission))
+            transaction.save_aggregate("conversation_turns", turn_id_value, {
                 "actor_role": "human",
                 "occurred_at": occurred_at,
                 "sanitized_content": goal,
                 "session_id": updated.session_id,
-                "turn_id": turn_id,
+                "turn_id": turn_id_value,
             })
-            durable_turn = transaction.load_aggregate("conversation_turns", turn_id)
+            durable_turn = transaction.load_aggregate(
+                "conversation_turns", turn_id_value
+            )
             if durable_turn is None:
                 raise SessionServiceError("durable turn is missing or malformed")
-            transaction.append_event(_event(
+            transaction.append_event(session_event(
                 stable_id,
                 "conversation_turn_recorded",
                 updated.session_id,
@@ -150,7 +221,7 @@ class SessionService:
                 "goal": goal,
                 "mode": "setup_required",
                 "session_id": updated.session_id,
-                "turn_id": turn_id,
+                "turn_id": turn_id_value,
                 "turn_occurred_at": durable_turn["occurred_at"],
                 "turn_ordinal": durable_turn["ordinal"],
             }
@@ -159,7 +230,7 @@ class SessionService:
         self._reload_session()
         if self._session.pending_goal != goal:
             raise SessionServiceError("stored accept result is malformed")
-        return self._validated_accept_result(result, goal, turn_id)
+        return self._validated_accept_result(result, goal, turn_id_value)
 
     def _validated_accept_result(
         self, result: CommandResult, goal: str, turn_id: str
@@ -214,8 +285,13 @@ class SessionService:
         updated = self._session.transition(SessionState.READY)
 
         def persist(transaction: StoreTransaction) -> CommandResult:
-            transaction.save_session(_session_snapshot(updated, profile.value))
-            transaction.append_event(_event(
+            transaction.save_session(session_snapshot(
+                updated,
+                profile.value,
+                leader_backend=leader,
+                leader_model=model,
+            ))
+            transaction.append_event(session_event(
                 command_id,
                 "session_configured",
                 updated.session_id,
@@ -267,6 +343,7 @@ class SessionService:
             leader_backend=self._leader_backend,
             model=self._model,
             permission=self._permission,
+            reentry_diagnostic=self._reentry_warning(),
         )
 
     def _reload_session(self) -> None:
@@ -275,8 +352,9 @@ class SessionService:
         )
         if loaded is None:
             raise SessionServiceError("ProductSession disappeared from Store")
-        self._session = _session_from_snapshot(loaded, self._session.project_root)
+        self._session = session_from_snapshot(loaded, self._session.project_root)
         self._permission = self._load_permission()
+        self._restore_configuration()
 
     def _load_permission(self) -> str | None:
         loaded = self._store.load_aggregate(
@@ -292,28 +370,17 @@ class SessionService:
         return permission
 
     def _apply_configuration_result(self, result: CommandResult) -> None:
-        if set(result) != {
-            "accepted", "goal", "leader_backend", "mode", "model", "permission",
-            "session_id",
-        }:
-            raise SessionServiceError("stored setup result is malformed")
-        leader = result.get("leader_backend")
-        model = result.get("model")
-        permission = result.get("permission")
-        if (
-            result.get("accepted") is not True
-            or type(leader) is not str
-            or type(model) is not str
-            or type(permission) is not str
-        ):
-            raise SessionServiceError("stored setup result is malformed")
-        checked_leader = bounded_text(leader, "stored leader", _MAX_SELECTION_BYTES)
-        checked_model = bounded_text(model, "stored model", _MAX_SELECTION_BYTES)
-        if permission not in {profile.value for profile in PermissionProfile}:
-            raise SessionServiceError("stored setup permission is invalid")
+        checked_leader, checked_model, permission = validated_configuration_facts(
+            result)
         expected_mode = "goal_ready" if self._session.pending_goal is not None else "ready"
+        stored = self._store.load_aggregate(
+            "product_sessions", self._session.session_id
+        )
         if (
-            permission != self._permission
+            stored is None
+            or stored.get("leader_backend") != checked_leader
+            or stored.get("leader_model") != checked_model
+            or permission != self._permission
             or self._session.state is SessionState.SETUP
             or result.get("goal") != self._session.pending_goal
             or result.get("mode") != expected_mode
@@ -325,15 +392,45 @@ class SessionService:
 
     def _restore_configuration(self) -> None:
         command_id = f"session:configure:{self._session.session_id}"
-        result = self._store.lookup_command(command_id, "configure_product_session")
+        result = load_session_command(
+            self._store, command_id, "configure_product_session")
         if self._session.state is SessionState.SETUP:
-            if result is not None:
+            stored = self._store.load_aggregate(
+                "product_sessions", self._session.session_id
+            )
+            if (
+                result is not None
+                or stored is None
+                or stored.get("leader_backend") is not None
+                or stored.get("leader_model") is not None
+            ):
                 raise SessionServiceError("setup command conflicts with ProductSession")
             return
         if result is None:
             raise SessionServiceError("configured ProductSession has no durable setup result")
         _result_from_command(result, self._session.session_id)
         self._apply_configuration_result(result)
+
+    def _reentry_warning(self) -> Diagnostic | None:
+        if self._nonterminal_count <= 1:
+            return None
+        return Diagnostic.create(
+            code="multiple_nonterminal_sessions",
+            stage="reentry",
+            severity=Severity.WARNING,
+            actor="agentdeck",
+            summary="Multiple nonterminal ProductSessions remain in this project.",
+            cause=(
+                f"The project has {self._nonterminal_count} nonterminal "
+                "ProductSessions."
+            ),
+            impact="Only the latest stable ProductSession was restored.",
+            protection="AgentDeck did not merge or mutate session history.",
+            recovery_actions=("Review session history before continuing.",),
+            retryable=False,
+            outcome_known=True,
+            occurred_at=self._now(),
+        )
 
     def _selection_error(
         self, leader: str, model: str, permission: str
@@ -383,79 +480,8 @@ def _require_dependency(value: object, methods: tuple[str, ...], label: str) -> 
         raise TypeError(f"{label} does not satisfy the session dependency")
 
 
-def _session_from_snapshot(
-    snapshot: Mapping[str, object], project_root: str
-) -> ProductSession:
-    try:
-        session_id = snapshot["session_id"]
-        state = snapshot["state"]
-        pending_goal = snapshot.get("pending_goal")
-        if type(session_id) is not str or type(state) is not str:
-            raise TypeError
-        if pending_goal is not None and type(pending_goal) is not str:
-            raise TypeError
-        return ProductSession(
-            session_id=session_id,
-            project_root=project_root,
-            state=SessionState(state),
-            pending_goal=pending_goal,
-        )
-    except (KeyError, TypeError, ValueError) as error:
-        raise SessionServiceError("stored ProductSession is malformed") from error
-
-
-def _session_snapshot(
-    session: ProductSession, permission: str | None
-) -> dict[str, object]:
-    return {
-        "session_id": session.session_id,
-        "state": session.state.value,
-        "permission_profile": permission,
-        "pending_goal": session.pending_goal,
-    }
-
-
-def _event(
-    command_id: str,
-    kind: str,
-    session_id: str,
-    payload: Mapping[str, object],
-    occurred_at: str,
-) -> DomainEvent:
-    digest = sha256(f"{command_id}:{kind}".encode("utf-8", "strict")).hexdigest()[:32]
-    return replace(DomainEvent.create(
-        kind=kind,
-        aggregate_type="product_session",
-        aggregate_id=session_id,
-        payload=payload,
-        occurred_at=occurred_at,
-    ), event_id=f"evt_{digest}")
-
-
-def _new_turn_command_id(session_id: str) -> str:
-    session_digest = sha256(session_id.encode("utf-8", "strict")).hexdigest()[:16]
-    return f"session:text:{session_digest}:{uuid4().hex}"
-
-
-def _turn_id(session_id: str, command_id: str) -> str:
-    digest = sha256(
-        f"{session_id}:{command_id}".encode("utf-8", "strict")
-    ).hexdigest()[:32]
-    return f"trn_{digest}"
-
-
 def _result_from_command(
     result: CommandResult, expected_session_id: str
 ) -> SessionResult:
-    mode = result.get("mode")
-    accepted = result.get("accepted")
-    goal = result.get("goal")
-    if result.get("session_id") != expected_session_id:
-        raise SessionServiceError("stored session command lineage is invalid")
-    if (
-        type(mode) is not str
-        or type(accepted) is not bool
-        or (goal is not None and type(goal) is not str)
-    ):
-        raise SessionServiceError("stored session command result is malformed")
+    mode, accepted, goal = result_from_command(result, expected_session_id)
     return SessionResult(mode=mode, accepted=accepted, goal=goal)

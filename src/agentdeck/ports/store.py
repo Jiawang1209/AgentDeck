@@ -17,6 +17,45 @@ CommandResult: TypeAlias = dict[str, JsonValue]
 AggregateSnapshot: TypeAlias = CommandResult
 STORE_COMMAND_ID_MAX_BYTES: Final = 255
 STORE_COMMAND_KIND_MAX_BYTES: Final = 128
+STORE_SESSION_ID_MAX_BYTES: Final = 255
+
+
+def _session_identity(value: object) -> str:
+    if type(value) is not str:
+        raise TypeError("session_id must be a typed identity")
+    try:
+        encoded = value.encode("utf-8", "strict")
+    except UnicodeEncodeError:
+        raise ValueError("session_id must be a typed identity") from None
+    suffix = value[4:] if value.startswith("ses_") else ""
+    if (
+        not suffix
+        or len(encoded) > STORE_SESSION_ID_MAX_BYTES
+        or not suffix.isascii()
+        or not suffix[0].isalnum()
+        or any(not (character.isalnum() or character in "_.-") for character in suffix)
+    ):
+        raise ValueError("session_id must be a typed identity")
+    return value
+
+
+@dataclass(frozen=True)
+class SessionSelection:
+    session_id: str | None
+    nonterminal_count: int
+
+    def __post_init__(self) -> None:
+        if type(self.nonterminal_count) is not int:
+            raise TypeError("nonterminal_count must be an exact integer")
+        if self.nonterminal_count < 0:
+            raise ValueError("nonterminal_count cannot be negative")
+        if self.session_id is None:
+            if self.nonterminal_count != 0:
+                raise ValueError("a nonterminal selection requires a session_id")
+            return
+        _session_identity(self.session_id)
+        if self.nonterminal_count == 0:
+            raise ValueError("an empty selection cannot have a session_id")
 
 
 @dataclass(frozen=True)
@@ -94,6 +133,7 @@ class Store(Protocol):
     def load_aggregate(
         self, aggregate_type: str, aggregate_id: str
     ) -> AggregateSnapshot | None: ...
+    def select_latest_nonterminal_session(self) -> SessionSelection: ...
     def list_running_attempts(self) -> tuple[RunningAttempt, ...]: ...
     def count(self, table: str) -> int: ...
     def close(self) -> None: ...
