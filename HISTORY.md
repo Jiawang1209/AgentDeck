@@ -26,14 +26,16 @@
   existing schema, with immutable lineage and terminal-decision drift guards.
   SQLite now joins Attempt, Task, Mission version, and Agent lineage before any
   approval row can commit. Concurrent local requests share one reviewer call,
-  every response uses the first durable decision, and terminal Worker results
-  must match the exact handle lineage rather than status alone.
+  including across multiple Approval Service wrappers of the same authoritative
+  foreground Store; every response uses the first durable decision, and
+  terminal Worker results must match the exact handle lineage rather than
+  status alone.
   The permission bridge processes a finite ordered sequence and never authorizes
   the next Task before a validated terminal result and future Handoff commit.
 - TDD RED first failed collection for the absent Port and service. The focused
-  Approval Service gate passes `14` cases; the formal Task 22 gate passes `90`
+  Approval Service gate passes `14` cases; the formal Task 22 gate passes `91`
   cases and the broader SQLite/ACP/approval/permission/architecture gate passes
-  `267` cases after reviewer, concurrency, boundary, and lineage hardening.
+  `268` cases after reviewer, concurrency, boundary, and lineage hardening.
 
 ### Normalize every rejected ACP task construction
 

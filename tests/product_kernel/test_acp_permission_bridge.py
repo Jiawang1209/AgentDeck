@@ -240,6 +240,59 @@ def test_concurrent_permission_replay_uses_one_durable_reviewer_outcome() -> Non
     asyncio.run(scenario())
 
 
+def test_services_sharing_one_store_share_the_reviewer_decision_lock() -> None:
+    class SharedReviewer:
+        reviewer_id = "human"
+
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def review(self, request):
+            self.calls += 1
+            await asyncio.sleep(0)
+            return ReviewerVerdict(True, "shared durable decision")
+
+    async def scenario() -> None:
+        store = FakeStore()
+        reviewer = SharedReviewer()
+        services = [
+            ApprovalService(
+                store=store, clock=FrozenClock(NOW), human_reviewer=reviewer
+            )
+            for _ in range(2)
+        ]
+        handle = WorkerHandle("ses_1", "agt_executor", "tsk_implementation", "att_1")
+        workers = [SequentialPermissionWorker(), SequentialPermissionWorker()]
+        for worker in workers:
+            worker.handle = handle
+            worker._pending = "perm_1"
+        permission_event = WorkerEvent(
+            event_id="evt_permission", session_id="ses_1", agent_id="agt_executor",
+            task_id="tsk_implementation", attempt_id="att_1", transport="acp",
+            sequence=1, kind="permission_requested", timestamp=NOW.isoformat(),
+            payload={
+                "permission_request_id": "perm_1", "tool_call_id": "call_1",
+                "option_count": 2, "effect": "write_project", "risk": "bounded risk",
+            },
+        )
+        approval_context = ApprovalContext(
+            "msn_1", 1,
+            PermissionScope.for_profile(PermissionProfile.ASK_FOR_APPROVAL),
+            "a" * 64,
+        )
+
+        records = await asyncio.gather(*(
+            service.handle_permission(worker, handle, permission_event, approval_context)
+            for service, worker in zip(services, workers, strict=True)
+        ))
+
+        assert reviewer.calls == 1
+        assert records[0] == records[1]
+        assert workers[0].responses == workers[1].responses
+
+    asyncio.run(scenario())
+
+
 def test_terminal_result_requires_exact_handle_lineage() -> None:
     class WrongResultWorker(SequentialPermissionWorker):
         async def collect_result(self, handle):

@@ -6,6 +6,7 @@ import asyncio
 from dataclasses import dataclass
 from datetime import datetime
 from hashlib import sha256
+from weakref import WeakKeyDictionary
 
 from agentdeck.kernel.diagnostics import Diagnostic, Severity
 from agentdeck.kernel.permissions import Effect, PermissionScope
@@ -22,6 +23,7 @@ from agentdeck.ports.worker import Worker, WorkerEvent, WorkerHandle, WorkerResu
 
 
 _MAX_PERMISSION_REQUESTS = 64
+_STORE_DECISION_LOCKS: WeakKeyDictionary[object, asyncio.Lock] = WeakKeyDictionary()
 
 
 @dataclass(frozen=True)
@@ -83,7 +85,7 @@ class ApprovalService:
         self._clock = clock
         self._human_reviewer = human_reviewer
         self._independent_reviewer = independent_reviewer
-        self._decision_lock = asyncio.Lock()
+        self._decision_lock = _STORE_DECISION_LOCKS.setdefault(store, asyncio.Lock())
 
     async def handle_permission(
         self,
@@ -339,7 +341,6 @@ def _request_command(approval_id: str) -> str:
 def _decision_command(approval_id: str) -> str:
     return f"cmd_{approval_id}_decision"
 
-
 def _request_facts(request: ApprovalRequest) -> dict[str, object]:
     return {
         "mission_id": request.mission_id,
@@ -351,7 +352,6 @@ def _request_facts(request: ApprovalRequest) -> dict[str, object]:
         "effect": request.effect.value,
         "risk": request.risk,
     }
-
 
 def _decision_facts(decision: ApprovalDecision) -> dict[str, object]:
     return {
