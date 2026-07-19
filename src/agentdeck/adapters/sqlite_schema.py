@@ -1,17 +1,14 @@
-"""Version-one SQLite schema authority and validation helpers."""
+"""Immutable SQLite DDL authorities and filesystem safety helpers."""
 
 from __future__ import annotations
 
-from hashlib import sha256
-from hmac import compare_digest
-import json
 import os
 from pathlib import Path
 import sqlite3
 import stat
 from typing import Final
 
-_SCHEMA_VERSION: Final = 1
+_SCHEMA_VERSION: Final = 2
 _STATE_DIRECTORY: Final = ".agentdeck"
 _DATABASE_NAME: Final = "agentdeck.db"
 _REQUIRED_TABLES: Final = frozenset(
@@ -40,8 +37,7 @@ class StoreSerializationError(ValueError):
     """Raised when a command fact cannot be safely bounded and canonicalized."""
 
 
-def _migration_statements() -> tuple[str, ...]:
-    return (
+V1_DDL: Final = (
         """CREATE TABLE schema_metadata (
             singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
             schema_version INTEGER NOT NULL CHECK (schema_version >= 1),
@@ -219,20 +215,49 @@ def _migration_statements() -> tuple[str, ...]:
         "CREATE INDEX idx_events_aggregate ON events(aggregate_type, aggregate_id, occurred_at)",
     )
 
+V2_DDL: Final = (
+    "ALTER TABLE product_sessions ADD COLUMN leader_backend TEXT",
+    "ALTER TABLE product_sessions ADD COLUMN leader_model TEXT",
+    "ALTER TABLE product_sessions ADD COLUMN pending_exit_id TEXT",
+    "ALTER TABLE product_sessions ADD COLUMN pending_exit_attempt_id TEXT",
+    """ALTER TABLE product_sessions
+       ADD COLUMN canonical_pending_exit_attempt_facts TEXT""",
+    "ALTER TABLE product_sessions ADD COLUMN pending_exit_attempt_hash TEXT",
+    "ALTER TABLE product_sessions ADD COLUMN pending_exit_requested_at TEXT",
+    """CREATE TRIGGER trg_product_sessions_v2_closed_insert
+       BEFORE INSERT ON product_sessions
+       WHEN ((NEW.leader_backend IS NULL) != (NEW.leader_model IS NULL))
+         OR (NEW.state = 'setup' AND NEW.leader_backend IS NOT NULL)
+         OR (NEW.state != 'setup' AND NEW.leader_backend IS NULL)
+         OR ((NEW.pending_exit_id IS NULL)
+           + (NEW.pending_exit_attempt_id IS NULL)
+           + (NEW.canonical_pending_exit_attempt_facts IS NULL)
+           + (NEW.pending_exit_attempt_hash IS NULL)
+           + (NEW.pending_exit_requested_at IS NULL)) NOT IN (0, 5)
+       BEGIN
+         SELECT RAISE(ABORT, 'invalid product_sessions v2 closed shape');
+       END""",
+    """CREATE TRIGGER trg_product_sessions_v2_closed_update
+       BEFORE UPDATE ON product_sessions
+       WHEN ((NEW.leader_backend IS NULL) != (NEW.leader_model IS NULL))
+         OR (NEW.state = 'setup' AND NEW.leader_backend IS NOT NULL)
+         OR (NEW.state != 'setup' AND NEW.leader_backend IS NULL)
+         OR ((NEW.pending_exit_id IS NULL)
+           + (NEW.pending_exit_attempt_id IS NULL)
+           + (NEW.canonical_pending_exit_attempt_facts IS NULL)
+           + (NEW.pending_exit_attempt_hash IS NULL)
+           + (NEW.pending_exit_requested_at IS NULL)) NOT IN (0, 5)
+       BEGIN
+         SELECT RAISE(ABORT, 'invalid product_sessions v2 closed shape');
+       END""",
+)
 
-def _live_schema_objects(connection: sqlite3.Connection) -> list[tuple[str, ...]]:
-    return connection.execute(
-        """SELECT type, name, tbl_name, sql FROM sqlite_schema
-           WHERE sql IS NOT NULL AND name NOT LIKE 'sqlite_%'
-           ORDER BY type, name"""
-    ).fetchall()
+
+def _migration_statements() -> tuple[str, ...]:
+    """Return the immutable historical v1 DDL for compatibility tests."""
+    return V1_DDL
 
 
-def _live_schema_fingerprint(connection: sqlite3.Connection) -> str:
-    serialized = json.dumps(
-        _live_schema_objects(connection), ensure_ascii=False, separators=(",", ":")
-    ).encode("utf-8", "strict")
-    return sha256(serialized).hexdigest()
 def _table_names(connection: sqlite3.Connection) -> set[str]:
     return {
         row[0]
@@ -241,45 +266,6 @@ def _table_names(connection: sqlite3.Connection) -> set[str]:
                WHERE type = 'table' AND name NOT LIKE 'sqlite_%'"""
         )
     }
-
-
-def _validate_existing_schema(connection: sqlite3.Connection, root: Path) -> None:
-    columns = tuple(
-        (row[1], row[2].upper(), row[3], row[5])
-        for row in connection.execute("PRAGMA table_info(schema_metadata)")
-    )
-    if columns != _METADATA_COLUMNS:
-        raise StoreSchemaError("schema metadata is damaged")
-    rows = connection.execute(
-        "SELECT singleton, schema_version, schema_digest, project_root FROM schema_metadata"
-    ).fetchall()
-    if (
-        len(rows) != 1
-        or rows[0][:2] != (1, _SCHEMA_VERSION)
-        or type(rows[0][2]) is not str
-        or len(rows[0][2]) != 64
-        or type(rows[0][3]) is not str
-    ):
-        raise StoreSchemaError("schema version is unknown or damaged")
-    try:
-        rows[0][3].encode("utf-8", "strict")
-    except UnicodeEncodeError as error:
-        raise StoreSchemaError("stored project root is not strict UTF-8") from error
-    if rows[0][3] != str(root):
-        raise StoreSchemaError("database belongs to a different project root")
-    if _table_names(connection) != _REQUIRED_TABLES:
-        raise StoreSchemaError("versioned schema is damaged")
-    if not compare_digest(rows[0][2], _live_schema_fingerprint(connection)):
-        raise StoreSchemaError("live schema drifted from its version authority")
-
-
-def _validate_before_durability(connection: sqlite3.Connection, root: Path) -> None:
-    if not _live_schema_objects(connection):
-        return
-    tables = _table_names(connection)
-    if "schema_metadata" not in tables:
-        raise StoreSchemaError("database has no recognized schema authority")
-    _validate_existing_schema(connection, root)
 
 
 def _path_exists(path: Path) -> bool:
@@ -374,29 +360,6 @@ def _configure_durability(connection: sqlite3.Connection) -> None:
     if connection.execute("PRAGMA journal_mode = DELETE").fetchone() != ("delete",):
         raise StoreSchemaError("SQLite rollback journal mode is unavailable")
     connection.execute("PRAGMA synchronous = FULL")
-
-
-def _migrate_schema(
-    connection: sqlite3.Connection, root: Path, statements: tuple[str, ...]
-) -> None:
-    connection.execute("BEGIN IMMEDIATE")
-    try:
-        if not _live_schema_objects(connection):
-            for statement in statements:
-                connection.execute(statement)
-            connection.execute(
-                "INSERT INTO schema_metadata VALUES (?, ?, ?, ?)",
-                (1, _SCHEMA_VERSION, _live_schema_fingerprint(connection), str(root)),
-            )
-        elif "schema_metadata" in _table_names(connection):
-            _validate_existing_schema(connection, root)
-        else:
-            raise StoreSchemaError("database has no recognized schema authority")
-        connection.execute("COMMIT")
-    except BaseException:
-        if connection.in_transaction:
-            connection.execute("ROLLBACK")
-        raise
 
 
 def _no_op_path_hook(path: Path) -> None:

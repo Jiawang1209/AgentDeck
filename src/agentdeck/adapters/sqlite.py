@@ -9,6 +9,7 @@ import sqlite3
 from agentdeck.adapters.sqlite_approval import _save_approval
 from agentdeck.adapters.sqlite_execution import _save_execution_aggregate
 from agentdeck.adapters.sqlite_mission import MISSION_AGGREGATE_TYPES, load_mission_aggregate, save_mission_aggregate
+from agentdeck.adapters.sqlite_migrations import migrate_schema, _validate_before_durability, _validate_existing_schema
 from agentdeck.adapters.sqlite_schema import (
     FileIdentity,
     _REQUIRED_TABLES,
@@ -20,16 +21,12 @@ from agentdeck.adapters.sqlite_schema import (
     _connect_database,
     _connect_inspection_database,
     _database_path,
-    _migration_statements,
-    _migrate_schema,
     _no_op_path_hook as _after_command_commit,
     _no_op_path_hook as _after_inspection_validation,
     _no_op_path_hook as _after_migrate,
     _require_database_identity,
     _resolved_project_root,
     _state_directory,
-    _validate_before_durability,
-    _validate_existing_schema,
 )
 from agentdeck.adapters.sqlite_validation import (
     StateIdentity,
@@ -76,7 +73,7 @@ def _validate_command_reference(command_id: object, command_kind: object | None)
     if command_kind is not None:
         _validate_text_reference(command_kind, "command_kind", STORE_COMMAND_KIND_MAX_BYTES)
 def _migrate(connection: sqlite3.Connection, root: Path) -> None:
-    _migrate_schema(connection, root, _migration_statements())
+    migrate_schema(connection, root)
 def _open_inspection_connection(
     path: Path, expected: FileIdentity, root: Path
 ) -> sqlite3.Connection:
@@ -175,7 +172,9 @@ class _SQLiteCommandTransaction:
             (record[1], str(self._store._project_root), now),
         )
         connection.execute(
-            """INSERT INTO product_sessions VALUES (?, ?, ?, ?, ?, ?, ?)
+            """INSERT INTO product_sessions (
+                 session_id,project_id,state,permission_profile,pending_goal,
+                 created_at,updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)
                ON CONFLICT(session_id) DO UPDATE SET
                  state=excluded.state, permission_profile=excluded.permission_profile,
                  pending_goal=excluded.pending_goal, updated_at=excluded.updated_at""",

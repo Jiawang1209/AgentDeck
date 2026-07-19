@@ -92,7 +92,7 @@ def test_store_binds_only_the_supplied_resolved_project(
         assert _tables(store.connection) == TABLES
         assert store.connection.execute(
             "SELECT singleton, schema_version, project_root FROM schema_metadata"
-        ).fetchall() == [(1, 1, str(project.resolve()))]
+        ).fetchall() == [(1, 2, str(project.resolve()))]
         assert not (elsewhere / ".agentdeck").exists()
         assert not (tmp_path / ".agentdeck").exists()
     finally:
@@ -169,7 +169,7 @@ def test_writer_and_read_only_open_keep_one_version_and_root_row(tmp_path: Path)
         assert first.path == second.path
         assert first.connection.execute(
             "SELECT singleton, schema_version, project_root FROM schema_metadata"
-        ).fetchall() == [(1, 1, str(tmp_path.resolve()))]
+        ).fetchall() == [(1, 2, str(tmp_path.resolve()))]
         assert second.connection.execute(
             "SELECT count(*) FROM schema_metadata"
         ).fetchone() == (1,)
@@ -215,21 +215,22 @@ def test_migration_failure_rolls_back_ddl_and_closes_writer(
         connection = sqlite3.connect(path, isolation_level=None, factory=TrackingConnection)
         tracked.append(connection)
         return connection
-    original = adapter._migration_statements
+    import agentdeck.adapters.sqlite_migrations as migrations
+    original = migrations.V2_DDL
     monkeypatch.setattr(adapter, "_connect_database", connect)
-    monkeypatch.setattr(adapter, "_migration_statements", lambda: (*original(), "BAD SQL"))
+    monkeypatch.setattr(migrations, "V2_DDL", (*original, "BAD SQL"))
     with pytest.raises(sqlite3.DatabaseError):
         SQLiteStore.open(tmp_path)
     assert len(tracked) == 1 and tracked[0].closed
     with _raw(tmp_path / ".agentdeck" / "agentdeck.db") as connection:
         assert _tables(connection) == set()
-    monkeypatch.setattr(adapter, "_migration_statements", original)
+    monkeypatch.setattr(migrations, "V2_DDL", original)
     recovered = SQLiteStore.open(tmp_path)
-    assert recovered.connection.execute("SELECT schema_version FROM schema_metadata").fetchone() == (1,)
+    assert recovered.connection.execute("SELECT schema_version FROM schema_metadata").fetchone() == (2,)
     recovered.close()
 
 
-def test_precreated_zero_byte_database_initializes_v1(tmp_path: Path) -> None:
+def test_precreated_zero_byte_database_initializes_v2(tmp_path: Path) -> None:
     database = tmp_path / ".agentdeck" / "agentdeck.db"
     database.parent.mkdir()
     database.touch()
@@ -262,7 +263,7 @@ def test_invalid_version_in_wal_fails_without_changing_database(
     database = _valid_database(tmp_path / damage)
     with _raw(database) as connection:
         assert connection.execute("PRAGMA journal_mode = WAL").fetchone() == ("wal",)
-        sql = ("UPDATE schema_metadata SET schema_version = 2" if damage == "higher"
+        sql = ("UPDATE schema_metadata SET schema_version = 3" if damage == "higher"
                else "DELETE FROM schema_metadata")
         connection.execute(sql)
     before = database.read_bytes()

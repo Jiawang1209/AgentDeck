@@ -17,8 +17,12 @@ def seed_lineage(store: SQLiteStore) -> None:
     connection = store._writer
     connection.execute("INSERT INTO projects VALUES (?,?,?)", ("prj_1", "/tmp/project", now))
     connection.execute(
-        "INSERT INTO product_sessions VALUES (?,?,?,?,?,?,?)",
-        ("ses_1", "prj_1", "running", "approve_for_me", None, now, now),
+        """INSERT INTO product_sessions (
+               session_id,project_id,state,permission_profile,pending_goal,
+               created_at,updated_at,leader_backend,leader_model
+           ) VALUES (?,?,?,?,?,?,?,?,?)""",
+        ("ses_1", "prj_1", "running", "approve_for_me", None, now, now,
+         "codex-cli", "native-default"),
     )
     connection.execute(
         "INSERT INTO missions VALUES (?,?,?,?,?,?)",

@@ -43,7 +43,7 @@ def test_state_command_and_event_rollback_together(tmp_path: Path) -> None:
     try:
         with pytest.raises(RuntimeError, match="stop"):
             with store.command("cmd_1", "confirm") as transaction:
-                transaction.save_session({"session_id": "ses_1", "state": "running"})
+                transaction.save_session({"session_id": "ses_1", "state": "setup"})
                 transaction.append_event(_event())
                 raise RuntimeError("stop")
         assert store.count("product_sessions") == 0
@@ -58,7 +58,7 @@ def test_execute_once_commits_state_event_result_and_clock_together(tmp_path: Pa
     store = _open(tmp_path)
     try:
         def command(transaction):
-            transaction.save_session({"session_id": "ses_1", "state": "running"})
+            transaction.save_session({"session_id": "ses_1", "state": "setup"})
             transaction.append_event(_event())
             return {"mission_id": "mis_1", "ordered": {"b": 2, "a": 1}}
 
@@ -87,17 +87,17 @@ def test_command_bound_aggregate_save_and_load_are_defensive(tmp_path: Path) -> 
     store = _open(tmp_path)
     try:
         def command(transaction):
-            snapshot = {"session_id": "ses_1", "state": "running"}
+            snapshot = {"session_id": "ses_1", "state": "setup"}
             transaction.save_aggregate("product_sessions", "ses_1", snapshot)
             snapshot["state"] = "failed"
             return {"saved": transaction.load_aggregate("product_sessions", "ses_1")}
 
         result = store.execute_once("cmd_aggregate", "save_session", command)
 
-        assert result["saved"]["state"] == "running"
+        assert result["saved"]["state"] == "setup"
         loaded = store.load_aggregate("product_sessions", "ses_1")
         loaded["state"] = "failed"
-        assert store.load_aggregate("product_sessions", "ses_1")["state"] == "running"
+        assert store.load_aggregate("product_sessions", "ses_1")["state"] == "setup"
     finally:
         store.close()
 
@@ -163,7 +163,7 @@ def test_callback_exception_rolls_back_and_same_command_can_retry(tmp_path: Path
         def failing(transaction):
             nonlocal calls
             calls += 1
-            transaction.save_session({"session_id": "ses_1", "state": "running"})
+            transaction.save_session({"session_id": "ses_1", "state": "setup"})
             raise RuntimeError("retry me")
 
         with pytest.raises(RuntimeError, match="retry me"):
@@ -186,10 +186,10 @@ def test_nested_command_and_close_during_transaction_are_rejected(tmp_path: Path
                 store.execute_once("cmd_2", "dispatch", lambda nested: {})
             with pytest.raises(StoreCommandStateError, match="active"):
                 store.close()
-            transaction.save_session({"session_id": "ses_1", "state": "running"})
+            transaction.save_session({"session_id": "ses_1", "state": "setup"})
 
         with pytest.raises(StoreCommandStateError, match="inactive"):
-            transaction.save_session({"session_id": "ses_2", "state": "running"})
+            transaction.save_session({"session_id": "ses_2", "state": "setup"})
     finally:
         store.close()
 
@@ -250,7 +250,7 @@ def test_second_writer_same_project_fails_promptly_and_lock_releases(tmp_path: P
     try:
         assert reopened.connection.execute(
             "SELECT singleton, schema_version, project_root FROM schema_metadata"
-        ).fetchall() == [(1, 1, str(tmp_path.resolve()))]
+        ).fetchall() == [(1, 2, str(tmp_path.resolve()))]
         assert reopened.connection.execute(
             "SELECT count(*) FROM schema_metadata"
         ).fetchone() == (1,)

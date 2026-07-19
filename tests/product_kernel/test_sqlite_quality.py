@@ -28,8 +28,18 @@ def _open(root: Path) -> SQLiteStore:
 
 def _seed_task(store: SQLiteStore) -> None:
     with store.command("cmd_seed_lineage", "test_fixture") as transaction:
-        transaction.save_session({"session_id": "ses_1", "state": "running"})
         connection = store._writer
+        connection.execute(
+            "INSERT INTO projects VALUES (?, ?, ?)",
+            (store._project_id, str(store._project_root), NOW_TEXT),
+        )
+        connection.execute(
+            """INSERT INTO product_sessions (
+                   session_id,project_id,state,permission_profile,pending_goal,
+                   created_at,updated_at,leader_backend,leader_model
+               ) VALUES ('ses_1',?,'running','approve_for_me',NULL,?,?,?,?)""",
+            (store._project_id, NOW_TEXT, NOW_TEXT, "codex-cli", "native-default"),
+        )
         connection.execute(
             "INSERT INTO agent_instances VALUES (?,?,?,?,?,?,?,?,?,?)",
             ("agt_1", "ses_1", "codex", "acp", "1", "implementer", "acp_1",
@@ -300,11 +310,11 @@ def test_store_reads_its_uncommitted_command_then_rollback_hides_it(tmp_path: Pa
     try:
         with pytest.raises(RuntimeError, match="rollback"):
             with store.command("cmd_read_own_write", "save") as transaction:
-                transaction.save_session({"session_id": "ses_live", "state": "running"})
+                transaction.save_session({"session_id": "ses_live", "state": "setup"})
                 assert store.count("product_sessions") == 1
                 assert store.load_aggregate(
                     "product_sessions", "ses_live"
-                )["state"] == "running"
+                )["state"] == "setup"
                 raise RuntimeError("rollback")
         assert store.count("product_sessions") == 0
         assert store.load_aggregate("product_sessions", "ses_live") is None
@@ -384,12 +394,12 @@ def test_mapping_event_and_domain_timestamp_are_preserved(tmp_path: Path) -> Non
 
 def test_mapping_proxy_session_snapshot_is_copied(tmp_path: Path) -> None:
     store = _open(tmp_path)
-    snapshot = MappingProxyType({"session_id": "ses_1", "state": "running"})
+    snapshot = MappingProxyType({"session_id": "ses_1", "state": "setup"})
     try:
         store.execute_once("cmd_mapping", "save", lambda transaction: (
             transaction.save_session(snapshot) or {"saved": True}
         ))
-        assert store.load_aggregate("product_sessions", "ses_1")["state"] == "running"
+        assert store.load_aggregate("product_sessions", "ses_1")["state"] == "setup"
     finally:
         store.close()
 

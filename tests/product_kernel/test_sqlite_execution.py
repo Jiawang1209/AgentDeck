@@ -18,8 +18,11 @@ def _seed_lineage(store: SQLiteStore) -> None:
     now = NOW.isoformat()
     connection.execute("INSERT INTO projects VALUES ('prj_1', ?, ?)", (str(store._project_root), now))
     connection.execute(
-        "INSERT INTO product_sessions VALUES ('ses_1','prj_1','running','approve_for_me',NULL,?,?)",
-        (now, now),
+        """INSERT INTO product_sessions (
+               session_id,project_id,state,permission_profile,pending_goal,
+               created_at,updated_at,leader_backend,leader_model)
+           VALUES ('ses_1','prj_1','running','approve_for_me',NULL,?,?,?,?)""",
+        (now, now, "codex-cli", "native-default"),
     )
     connection.execute(
         "INSERT INTO agent_instances VALUES ('agt_implementation','ses_1','codex-cli','acp','1','implementer','acp_1','active',?,?)",
@@ -194,8 +197,11 @@ def test_attempt_agent_must_belong_to_the_mission_product_session(tmp_path) -> N
         _seed_lineage(store)
         now = NOW.isoformat()
         store._require_writer().execute(
-            "INSERT INTO product_sessions VALUES ('ses_other','prj_1','running','approve_for_me',NULL,?,?)",
-            (now, now),
+            """INSERT INTO product_sessions (
+                   session_id,project_id,state,permission_profile,pending_goal,
+                   created_at,updated_at,leader_backend,leader_model)
+               VALUES ('ses_other','prj_1','running','approve_for_me',NULL,?,?,?,?)""",
+            (now, now, "codex-cli", "native-default"),
         )
         store._require_writer().execute(
             "INSERT INTO agent_instances VALUES ('agt_other','ses_other','codex-cli','acp','1','implementer','acp_other','active',?,?)",
