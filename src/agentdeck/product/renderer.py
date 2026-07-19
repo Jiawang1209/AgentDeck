@@ -86,24 +86,46 @@ def _coerce_presentation(value: object) -> object:
     supported = tuple(spec[0] for spec in _PRESENTATION_FIELDS.values())
     if type(value) in supported:
         return value
-    if type(value) is not dict:
+    snapshot = _safe_mapping_snapshot(value)
+    if snapshot is None:
         raise RenderError("unsupported presentation")
-    mode = value.get("mode")
+    mode = snapshot.get("mode")
     if type(mode) is not str or mode not in _PRESENTATION_FIELDS:
         raise RenderError("unsupported presentation")
     constructor, fields = _PRESENTATION_FIELDS[mode]
-    if set(value) != {"mode", *fields}:
+    if set(snapshot) != {"mode", *fields}:
         raise RenderError("unsupported presentation")
     facts: dict[str, object] = {}
     for field in fields:
-        fact = value[field]
+        fact = snapshot[field]
         if field in _SEQUENCE_FIELDS and type(fact) in {list, tuple}:
             fact = tuple(fact)
         facts[field] = fact
+    presentation = _safe_construct(constructor, facts)
+    if presentation is None:
+        raise RenderError("unsupported presentation")
+    return presentation
+
+
+def _safe_mapping_snapshot(value: object) -> dict[str, object] | None:
+    try:
+        if type(value) is not dict:
+            return None
+        items = tuple(value.items())
+        if any(type(key) is not str for key, _ in items):
+            return None
+        return {key: fact for key, fact in items}
+    except BaseException:
+        return None
+
+
+def _safe_construct(
+    constructor: type[object], facts: dict[str, object]
+) -> object | None:
     try:
         return constructor(**facts)
-    except (TypeError, ValueError):
-        raise RenderError("unsupported presentation") from None
+    except BaseException:
+        return None
 
 
 def _render_setup(value: SetupPresentation) -> str:

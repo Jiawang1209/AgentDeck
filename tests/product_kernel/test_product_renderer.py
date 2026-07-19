@@ -175,6 +175,50 @@ def test_renderer_has_explicit_human_cases(
     assert "{" not in text
 
 
+@pytest.mark.parametrize(
+    ("active_attempts", "requires_confirmation"),
+    (
+        (("sensitive-marker",), False),
+        ((), True),
+    ),
+)
+def test_exit_presentation_rejects_inconsistent_attempt_and_confirmation_state(
+    active_attempts: tuple[str, ...], requires_confirmation: bool
+) -> None:
+    with pytest.raises(ValueError, match="active attempts and confirmation") as error:
+        ExitPresentation(
+            summary="Persist the current ProductSession.",
+            active_attempts=active_attempts,
+            requires_confirmation=requires_confirmation,
+        )
+
+    assert "sensitive-marker" not in str(error.value)
+
+
+def test_exit_mapping_never_renders_safe_to_exit_with_active_attempts() -> None:
+    with pytest.raises(RenderError, match="unsupported presentation"):
+        render(
+            {
+                "mode": "exit",
+                "summary": "The active Attempt will be interrupted.",
+                "active_attempts": ["att_1"],
+                "requires_confirmation": False,
+            }
+        )
+
+
+def test_exit_without_active_attempts_is_safe_without_confirmation() -> None:
+    text = render(
+        ExitPresentation(
+            summary="The ProductSession is persisted.",
+            active_attempts=(),
+            requires_confirmation=False,
+        )
+    )
+
+    assert text.startswith("Session is safe to exit.")
+
+
 def test_diagnosis_answers_what_happened_and_what_the_user_can_do() -> None:
     text = render(DiagnosisPresentation(diagnostic()))
 
@@ -220,6 +264,8 @@ def test_unknown_types_modes_and_shapes_fail_closed_without_repr(value: object) 
         "sk-" + "A" * 48,
         "Authorization: Bearer sensitive-marker",
         '{"password":"sensitive-marker"}',
+        'Details: {"password":"sensitive-marker"}',
+        'Details: {"OPENAI_API_KEY":"sensitive-marker"}',
         "Cookie: sid=sensitive-marker",
     ),
 )
@@ -234,6 +280,26 @@ def test_secret_like_or_raw_json_human_fields_never_render(secret: str) -> None:
     assert secret not in str(error.value)
 
 
+@pytest.mark.parametrize(
+    "safe_text",
+    (
+        'Discuss the JSON key "password" without assigning a value.',
+        'Schema details: {"password": null}',
+        'Details: {"password policy":"minimum length"}',
+        'Details: {"monkey":"banana"}',
+    ),
+)
+def test_safe_json_credential_discussion_is_not_overclassified(
+    safe_text: str,
+) -> None:
+    presentation = FinalPresentation(
+        state="completed", summary=safe_text, completed=("review",),
+        incomplete=(), evidence=("tests passed",),
+    )
+
+    assert safe_text in render(presentation)
+
+
 def test_hostile_mapping_is_rejected_without_inspection() -> None:
     class HostileDict(dict[str, object]):
         def get(self, key: str, default: object = None) -> object:
@@ -243,3 +309,70 @@ def test_hostile_mapping_is_rejected_without_inspection() -> None:
         render(HostileDict(mode="status"))
 
     assert "sensitive-marker" not in str(error.value)
+
+
+def _assert_content_free_render_error(value: object) -> None:
+    with pytest.raises(RenderError, match="unsupported presentation") as error:
+        render(value)
+
+    assert "sensitive-marker" not in str(error.value)
+    assert error.value.__cause__ is None
+    assert error.value.__context__ is None
+
+
+def test_exact_dict_rejects_hostile_equality_key_without_raw_exception() -> None:
+    class HostileEqualityKey:
+        def __hash__(self) -> int:
+            return hash("mode")
+
+        def __eq__(self, other: object) -> bool:
+            raise RuntimeError("sensitive-marker")
+
+        def __repr__(self) -> str:
+            raise RuntimeError("sensitive-marker")
+
+    _assert_content_free_render_error({HostileEqualityKey(): "status"})
+
+
+def test_exact_dict_rejects_hostile_hash_key_without_raw_exception() -> None:
+    class HostileHashKey:
+        armed = False
+
+        def __hash__(self) -> int:
+            if self.armed:
+                raise RuntimeError("sensitive-marker")
+            return 1
+
+        def __repr__(self) -> str:
+            raise RuntimeError("sensitive-marker")
+
+    hostile_key = HostileHashKey()
+    value: dict[object, object] = {
+        "mode": "status", "state": "ready", "agents": [], hostile_key: "extra",
+    }
+    hostile_key.armed = True
+
+    _assert_content_free_render_error(value)
+
+
+def test_exact_dict_rejects_hostile_value_without_raw_exception() -> None:
+    class HostileValue:
+        def __hash__(self) -> int:
+            raise RuntimeError("sensitive-marker")
+
+        def __str__(self) -> str:
+            raise RuntimeError("sensitive-marker")
+
+        def __repr__(self) -> str:
+            raise RuntimeError("sensitive-marker")
+
+    _assert_content_free_render_error(
+        {
+            "mode": "final",
+            "state": HostileValue(),
+            "summary": "Mission stopped.",
+            "completed": [],
+            "incomplete": ["implementation"],
+            "evidence": [],
+        }
+    )

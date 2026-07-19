@@ -27,6 +27,9 @@ _PROHIBITED_TEXT: Final = re.compile(
     r"\b(?:authorization|cookie|set-cookie)\s*:\s*\S+"
     r"|\bbearer\s+\S+"
     r"|\b(?:password|secret|token|api[_ -]?key)\s*[:=]\s*\S+"
+    r"|\"[A-Za-z0-9_-]*(?:(?:api|private|ssh)[_ -]?key|authorization"
+    r"|(?:set-)?cookie|credentials?|password|passphrase|secret|token)\""
+    r"\s*:\s*\"[^\"]+\""
     r"|-----BEGIN(?: [A-Z0-9]+)? PRIVATE KEY-----"
     r"|(?<![A-Za-z0-9])sk-(?:[A-Za-z0-9]{48}|(?:proj|ant)-[A-Za-z0-9_-]{16,})"
     r"|(?<![A-Za-z0-9])(?:ghp_|github_pat_)[A-Za-z0-9_]{20,}"
@@ -208,6 +211,8 @@ class ExitPresentation:
         )
         if type(self.requires_confirmation) is not bool:
             raise TypeError("requires_confirmation must be a bool")
+        if self.requires_confirmation is not bool(self.active_attempts):
+            raise ValueError("active attempts and confirmation must agree")
 
 
 @dataclass(frozen=True)

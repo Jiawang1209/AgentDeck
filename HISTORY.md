@@ -4,6 +4,26 @@
 
 ## 2026-07-19
 
+### Harden Product presentation boundaries
+
+- Extended bounded human-text validation to reject credential-shaped JSON
+  string fields even when the fragment is embedded in surrounding prose. The
+  check remains limited to exact credential key/value shapes, preserving safe
+  discussion of JSON keys, `null` schema fields, and similarly named policy
+  fields.
+- Bound exit confirmation to active Attempt facts: nonempty attempts require
+  confirmation and an empty attempt set cannot claim confirmation. Contradictory
+  dataclass or dict input now fails closed, so the renderer cannot report that
+  exit is safe while active Attempts exist.
+- Moved exact built-in dict snapshot and presentation construction behind
+  content-free exception boundaries. Non-plain keys are rejected without
+  hashing or equality checks, hostile values cannot leak raw constructor
+  exceptions, and fixed `RenderError` failures retain no cause or context.
+- Review TDD RED produced two embedded-JSON failures, three exit-invariant
+  failures, and two raw hostile-dict failures. Focused GREEN passed all `67`
+  Product parser and renderer tests, then all `69` after the credential-key
+  suffix and safe-neighbor cases were added.
+
 ### Add deterministic Product presenters
 
 - Added an exact, LLM-free parser for every declared ProductSession slash
