@@ -4,6 +4,40 @@
 
 ## 2026-07-19
 
+### Enforce evidence-backed execution semantics
+
+- Added closed, frozen and bounded review/acceptance validators plus a pure
+  Revision materializer. Only typed-evidence-backed findings inside normalized
+  confirmed scope become AgentDeck-owned revision authority; rejected findings
+  retain only a typed identity and fixed rejection reason.
+- Added the closed default RetryPolicy and bound the coordinator to at most two
+  Attempts per non-acceptance Task, one lineage-valid reconnect before effect,
+  one fixed revision cycle and one final acceptance Attempt. Only an explicit
+  typed `worker_schema_invalid` or pre-effect transport condition may retry on
+  ordinal one; denied permission, known test failure, scope insufficiency,
+  login loss, project drift and unknown outcome stop without blind replay.
+- Preserved Task 23 authority while adding retries: an ordinary malformed
+  completed Worker result remains a single `outcome_unknown`, whereas only a
+  lineage-matching typed schema diagnostic can consume the second Attempt.
+  Failed typed acceptance now commits its acceptance evidence and failed
+  Attempt atomically before returning the `acceptance_failed` diagnostic.
+- Extracted pure Kernel semantics into `execution_semantics.py` and pure
+  no-I/O Application serialization/classification into `execution_records.py`.
+  The coordinator retains sequencing and Store ownership; neither extraction
+  imports legacy orchestration, providers, tmux, subprocess or network code.
+- TDD RED first failed during collection because `ReviewResult` and
+  `RetryPolicy` were absent. Additional focused REDs reproduced Task 23 result
+  replay drift, hostile Acceptance truthiness, forged diagnostic lineage,
+  failed acceptance being reported as success and start-time unknown outcome
+  being downgraded to a known failure. Focused GREEN reached 312 execution,
+  Leader, ACP permission/Worker, SQLite and architecture tests, and the full
+  Product Kernel integration reached 1,345 passing tests before final gates.
+- Final fresh gates pass 55 named Task 24/Task 23 tests, 50 architecture and
+  context-firewall tests, all 1,345 Product Kernel tests, and the approved
+  legacy substitute at 4,461 passed / 3 skipped. `compileall src tests`, diff
+  hygiene, the exact seven-file authorized scope and every touched source/test
+  file's 500-line limit also pass.
+
 ### Bind exit authority to the restored ProductSession
 
 - Changed active-exit Store reads to require a typed ProductSession identity.

@@ -37,7 +37,7 @@ class FindingSeverity(StrEnum):
 _SQLITE_MIN_INTEGER = -(2**63)
 _SQLITE_MAX_INTEGER = 2**63 - 1
 _LOWER_HEX = frozenset("0123456789abcdef")
-_KNOWN_RETRYABLE_FAILURES = frozenset({"worker_failed", "recoverable_transport_interruption"})
+_KNOWN_RETRYABLE_FAILURES = frozenset({"worker_failed", "worker_schema_invalid", "recoverable_transport_interruption"})
 _TERMINAL_ATTEMPT_STATES = frozenset({AttemptState.COMPLETED, AttemptState.FAILED, AttemptState.CANCELLED, AttemptState.INTERRUPTED, AttemptState.OUTCOME_UNKNOWN})
 _LEGAL_ATTEMPT_TRANSITIONS = {
     AttemptState.PENDING: frozenset({
@@ -68,8 +68,8 @@ def _require_string(value: object, field: str) -> str:
         value.encode("utf-8", "strict")
     except UnicodeEncodeError as error:
         raise ValueError(f"{field} must be valid UTF-8") from error
-    if not value.strip():
-        raise ValueError(f"{field} must not be empty")
+    if not value.strip() or len(value.encode("utf-8")) > 64 * 1024:
+        raise ValueError(f"{field} must be nonempty and bounded")
     return value
 
 def _require_id(value: object, prefix: str, field: str) -> str:

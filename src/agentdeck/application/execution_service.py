@@ -4,21 +4,28 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from hashlib import sha256
-import json
-from types import MappingProxyType
 
 from agentdeck.application.approval_service import ApprovalContext, ApprovalService
-from agentdeck.kernel.diagnostics import Diagnostic, Severity
-from agentdeck.kernel.execution import (
-    AcceptanceResult, Attempt, Evidence, EvidenceKind, FindingSeverity, Handoff,
-    ReviewFinding,
+from agentdeck.application.execution_records import (
+    attempt_snapshot as _attempt_snapshot,
+    command_id as _command_id,
+    exception_condition as _exception_condition,
+    handle_matches_request as _handle_matches_request,
+    payload_text as _payload_text,
+    review_finding as _review_finding,
+    stage_id as _stage_id,
+    task_instruction as _task_instruction,
+    typed_evidence as _typed_evidence,
+    worker_failure_condition as _worker_failure_condition,
 )
+from agentdeck.kernel.diagnostics import Diagnostic, Severity
+from agentdeck.kernel.execution import Attempt, Evidence, Handoff
+from agentdeck.kernel.execution_semantics import RetryPolicy, materialize_revision
 from agentdeck.kernel.mission import ConfirmedMissionVersion, MissionDraft, TaskDefinition
 from agentdeck.kernel.permissions import PermissionScope
 from agentdeck.ports.clock import Clock
 from agentdeck.ports.store import Store
-from agentdeck.ports.worker import TaskRequest, Worker, WorkerHandle, WorkerResult
+from agentdeck.ports.worker import TaskRequest, Worker
 
 @dataclass(frozen=True)
 class AuthoritativeRevisionTask:
@@ -61,157 +68,258 @@ class ExecutionService:
         revision_task = AuthoritativeRevisionTask(
             "tsk_revision", "agentdeck", draft.scope, ()
         )
+        retry_policy = RetryPolicy.default()
         for index, task in enumerate(draft.tasks):
             if task.dependencies and (
                 not handoffs or handoffs[-1].target_task_id != task.task_id
             ):
                 raise RuntimeError("task dependency has no committed handoff")
-            attempt = Attempt.pending(
-                _stage_id("att_", confirmed, task, "1"), task.task_id, 1,
-            ).start()
-            try:
-                request = TaskRequest(
-                    task.agent_instance_id, task.task_id, attempt.attempt_id,
-                    _task_instruction(
-                        draft, confirmed, task, attempt,
-                        handoffs[-1] if handoffs else None,
-                        revision_task if task.name == "revision" else None,
-                    ),
-                )
-                effective_scope = permission_scope.narrow(
-                    permission_scope.effects.intersection(task.allowed_effects)
-                )
-            except Exception:
-                invalid = attempt.fail("task_request_invalid", retryable=False)
-                return ExecutionResult(
-                    tuple(attempts), tuple(evidence), tuple(handoffs), revision_task,
-                    self._diagnostic(
-                        "task_request_invalid", confirmed, task, invalid,
-                        "the complete bounded Task request was invalid",
-                    ),
-                )
-            if not self._persist_started(attempt, task, confirmed):
-                return ExecutionResult(
-                    tuple(attempts), tuple(evidence), tuple(handoffs), revision_task,
-                    self._diagnostic(
-                        "mission_execution_replayed", confirmed, task, attempt,
-                        "the confirmed execution command already exists",
-                    ),
-                )
-            attempts.append(attempt)
-            try:
-                worker = self._worker_factory(task)
-                handle = await worker.start_task(request)
-            except Exception:
-                return self._stop_attempt(
-                    confirmed, attempts, evidence, handoffs, revision_task, task,
-                    attempt.fail("worker_start_failed", retryable=False),
-                    "worker_start_failed", "ACP Worker task start failed",
-                )
-            if not _handle_matches_request(handle, request):
-                return self._stop_attempt(
-                    confirmed, attempts, evidence, handoffs, revision_task, task,
-                    attempt.unknown_outcome("worker_handle_lineage_invalid"),
-                    "worker_handle_lineage_invalid",
-                    "ACP Worker handle did not match the exact Task request",
-                )
-            try:
-                self._bind_acp_session(attempt, task, confirmed, handle.session_id)
-            except Exception:
-                return self._stop_attempt(
-                    confirmed, attempts, evidence, handoffs, revision_task, task,
-                    attempt.unknown_outcome("acp_session_binding_failed"),
-                    "acp_session_binding_failed",
-                    "the validated ACP session did not bind durably",
-                )
-            try:
-                bridge = await self._approval_service.bridge_attempt(
-                    worker, handle,
-                    ApprovalContext(
-                        confirmed.mission_id, confirmed.version,
-                        effective_scope,
-                        confirmed.content_hash,
-                    ),
-                )
-            except Exception:
-                return self._stop_attempt(
-                    confirmed, attempts, evidence, handoffs, revision_task, task,
-                    attempt.unknown_outcome("worker_bridge_failed"),
-                    "worker_bridge_failed", "ACP Worker event bridge failed",
-                    acp_session_id=handle.session_id,
-                )
-            worker_result = bridge.worker_result
-            if bridge.diagnostic is not None or any(
-                approval.state != "approved" for approval in bridge.approvals
-            ):
-                return self._stop_attempt(
-                    confirmed, attempts, evidence, handoffs, revision_task, task,
-                    (
-                        attempt.cancel("permission_denied")
-                        if worker_result.status == "cancelled"
-                        else attempt.unknown_outcome("permission_denied")
-                    ),
-                    "permission_denied",
-                    "an ACP permission request was denied",
-                    acp_session_id=handle.session_id,
-                )
-            if worker_result.status != "completed":
-                return self._worker_failure(
-                    confirmed, attempts, evidence, handoffs, revision_task, task,
-                    attempt, worker_result, handle.session_id,
-                )
-            try:
-                terminal = attempt.complete(_payload_text(worker_result, "summary"))
-                typed_evidence, artifacts = _typed_evidence(
-                    _stage_id("ev_", confirmed, task, "1"),
-                    task, worker_result, draft,
-                )
-                candidate_revision = revision_task
-                if task.name == "review":
-                    finding = _review_finding(worker_result)
-                    candidate_revision = AuthoritativeRevisionTask(
-                        draft.tasks[2].task_id, "agentdeck", draft.scope,
-                        (finding.finding_id,),
+            max_attempts = 1 if task.name == "acceptance" else min(draft.max_attempts, 2)
+            reconnects = 0
+            for ordinal in range(1, max_attempts + 1):
+                attempt = Attempt.pending(
+                    _stage_id("att_", confirmed, task, str(ordinal)),
+                    task.task_id, ordinal,
+                ).start()
+                try:
+                    request = TaskRequest(
+                        task.agent_instance_id, task.task_id, attempt.attempt_id,
+                        _task_instruction(
+                            draft, confirmed, task, attempt,
+                            handoffs[-1] if handoffs else None,
+                            (
+                                revision_task.canonical_payload()
+                                if task.name == "revision" else None
+                            ),
+                        ),
                     )
-            except Exception:
-                return self._stop_attempt(
-                    confirmed, attempts, evidence, handoffs, revision_task, task,
-                    attempt.unknown_outcome("worker_result_invalid"),
-                    "worker_result_invalid", "ACP Worker result schema was invalid",
-                    acp_session_id=handle.session_id,
-                )
-            handoff = None
-            if index < len(draft.tasks) - 1:
-                handoff = Handoff.create(
-                    _stage_id(
-                        "hnd_", confirmed, task,
-                        draft.tasks[index + 1].task_id, "1",
-                    ),
-                    terminal.attempt_id,
-                    draft.tasks[index + 1].task_id, terminal.result_summary,
-                    (typed_evidence.evidence_id,), artifact_references=artifacts,
-                )
-            try:
-                self._persist_terminal(
-                    terminal, task, typed_evidence, handoff, confirmed,
-                    handle.session_id,
-                )
-            except Exception:
-                return ExecutionResult(
-                    tuple(attempts), tuple(evidence), tuple(handoffs), revision_task,
-                    self._diagnostic(
-                        "stage_bundle_persistence_failed", confirmed, task, terminal,
-                        "terminal execution bundle did not commit",
-                    ),
-                )
-            attempts[-1] = terminal
-            evidence.append(typed_evidence)
-            if handoff is not None:
-                handoffs.append(handoff)
-            revision_task = candidate_revision
+                    effective_scope = permission_scope.narrow(
+                        permission_scope.effects.intersection(task.allowed_effects)
+                    )
+                except Exception:
+                    invalid = attempt.fail("task_request_invalid", retryable=False)
+                    return ExecutionResult(
+                        tuple(attempts), tuple(evidence), tuple(handoffs), revision_task,
+                        self._diagnostic(
+                            "task_request_invalid", confirmed, task, invalid,
+                            "the complete bounded Task request was invalid",
+                        ),
+                    )
+                if not self._persist_started(attempt, task, confirmed):
+                    return ExecutionResult(
+                        tuple(attempts), tuple(evidence), tuple(handoffs), revision_task,
+                        self._diagnostic(
+                            "mission_execution_replayed", confirmed, task, attempt,
+                            "the confirmed execution command already exists",
+                        ),
+                    )
+                attempts.append(attempt)
+                try:
+                    worker = self._worker_factory(task)
+                    handle = await worker.start_task(request)
+                except Exception as error:
+                    condition = _exception_condition(
+                        error, task_id=task.task_id, attempt_id=attempt.attempt_id
+                    )
+                    can_reconnect = (
+                        condition == "transport_before_effect"
+                        and reconnects < min(draft.max_acp_reconnects, 1)
+                    )
+                    if (can_reconnect or condition == "worker_schema_invalid") and self._retry_attempt(
+                        retry_policy, condition, attempt, task, confirmed,
+                        attempts, max_attempts, acp_session_id=None,
+                    ):
+                        reconnects += int(condition == "transport_before_effect")
+                        continue
+                    code = condition or "worker_start_failed"
+                    reason = (
+                        "recoverable_transport_interruption"
+                        if condition == "transport_before_effect"
+                        else condition or "worker_start_failed"
+                    )
+                    terminal = (
+                        attempt.unknown_outcome("outcome_unknown")
+                        if condition == "outcome_unknown"
+                        else attempt.fail(reason, retryable=False)
+                    )
+                    return self._stop_attempt(
+                        confirmed, attempts, evidence, handoffs, revision_task, task,
+                        terminal, code,
+                        "ACP Worker task start failed",
+                    )
+                if not _handle_matches_request(handle, request):
+                    return self._stop_attempt(
+                        confirmed, attempts, evidence, handoffs, revision_task, task,
+                        attempt.unknown_outcome("worker_handle_lineage_invalid"),
+                        "worker_handle_lineage_invalid",
+                        "ACP Worker handle did not match the exact Task request",
+                    )
+                try:
+                    self._bind_acp_session(attempt, task, confirmed, handle.session_id)
+                except Exception:
+                    return self._stop_attempt(
+                        confirmed, attempts, evidence, handoffs, revision_task, task,
+                        attempt.unknown_outcome("acp_session_binding_failed"),
+                        "acp_session_binding_failed",
+                        "the validated ACP session did not bind durably",
+                    )
+                try:
+                    bridge = await self._approval_service.bridge_attempt(
+                        worker, handle,
+                        ApprovalContext(
+                            confirmed.mission_id, confirmed.version,
+                            effective_scope, confirmed.content_hash,
+                        ),
+                    )
+                except Exception as error:
+                    condition = _exception_condition(
+                        error, task_id=task.task_id, attempt_id=attempt.attempt_id
+                    )
+                    can_reconnect = (
+                        condition == "transport_before_effect"
+                        and reconnects < min(draft.max_acp_reconnects, 1)
+                    )
+                    if (can_reconnect or condition == "worker_schema_invalid") and self._retry_attempt(
+                        retry_policy, condition, attempt, task, confirmed,
+                        attempts, max_attempts, acp_session_id=handle.session_id,
+                    ):
+                        reconnects += int(condition == "transport_before_effect")
+                        continue
+                    if condition == "outcome_unknown":
+                        terminal = attempt.unknown_outcome("outcome_unknown")
+                    elif condition == "transport_before_effect":
+                        terminal = attempt.fail(
+                            "recoverable_transport_interruption", retryable=False
+                        )
+                    else:
+                        terminal = attempt.unknown_outcome("worker_bridge_failed")
+                    return self._stop_attempt(
+                        confirmed, attempts, evidence, handoffs, revision_task, task,
+                        terminal, condition or "worker_bridge_failed",
+                        "ACP Worker event bridge failed",
+                        acp_session_id=handle.session_id,
+                    )
+                worker_result = bridge.worker_result
+                if bridge.diagnostic is not None or any(
+                    approval.state != "approved" for approval in bridge.approvals
+                ):
+                    return self._stop_attempt(
+                        confirmed, attempts, evidence, handoffs, revision_task, task,
+                        (
+                            attempt.cancel("permission_denied")
+                            if worker_result.status == "cancelled"
+                            else attempt.unknown_outcome("permission_denied")
+                        ),
+                        "permission_denied", "an ACP permission request was denied",
+                        acp_session_id=handle.session_id,
+                    )
+                if worker_result.status != "completed":
+                    return self._worker_failure(
+                        confirmed, attempts, evidence, handoffs, revision_task, task,
+                        attempt, worker_result, handle.session_id,
+                    )
+                try:
+                    terminal = attempt.complete(_payload_text(worker_result, "summary"))
+                    typed_evidence, artifacts = _typed_evidence(
+                        _stage_id("ev_", confirmed, task, str(ordinal)),
+                        task, worker_result, draft,
+                    )
+                    candidate_revision = revision_task
+                    if task.name == "review":
+                        finding = _review_finding(worker_result)
+                        materialized = materialize_revision(
+                            findings=(finding,), confirmed_scope=(draft.scope,)
+                        )
+                        if materialized.rejected:
+                            return self._stop_attempt(
+                                confirmed, attempts, evidence, handoffs,
+                                revision_task, task,
+                                attempt.fail("scope_insufficiency", retryable=False),
+                                "scope_insufficiency",
+                                "review findings exceeded the confirmed scope",
+                                acp_session_id=handle.session_id,
+                            )
+                        candidate_revision = AuthoritativeRevisionTask(
+                            draft.tasks[2].task_id, "agentdeck", draft.scope,
+                            tuple(item.finding_id for item in materialized.findings),
+                        )
+                    if (
+                        task.name == "acceptance"
+                        and worker_result.payload["accepted"] is False
+                    ):
+                        terminal = attempt.fail("acceptance_failed", retryable=False)
+                except Exception:
+                    code = (
+                        "acceptance_evidence_missing"
+                        if task.name == "acceptance" else "worker_result_invalid"
+                    )
+                    return self._stop_attempt(
+                        confirmed, attempts, evidence, handoffs, revision_task, task,
+                        attempt.unknown_outcome(code), code,
+                        "ACP Worker result schema was invalid",
+                        acp_session_id=handle.session_id,
+                    )
+                handoff = None
+                if index < len(draft.tasks) - 1:
+                    handoff = Handoff.create(
+                        _stage_id(
+                            "hnd_", confirmed, task,
+                            draft.tasks[index + 1].task_id, str(ordinal),
+                        ),
+                        terminal.attempt_id, draft.tasks[index + 1].task_id,
+                        terminal.result_summary, (typed_evidence.evidence_id,),
+                        artifact_references=artifacts,
+                    )
+                try:
+                    self._persist_terminal(
+                        terminal, task, typed_evidence, handoff, confirmed,
+                        handle.session_id,
+                    )
+                except Exception:
+                    return ExecutionResult(
+                        tuple(attempts), tuple(evidence), tuple(handoffs), revision_task,
+                        self._diagnostic(
+                            "stage_bundle_persistence_failed", confirmed, task,
+                            terminal, "terminal execution bundle did not commit",
+                        ),
+                    )
+                attempts[-1] = terminal
+                evidence.append(typed_evidence)
+                if handoff is not None:
+                    handoffs.append(handoff)
+                revision_task = candidate_revision
+                if terminal.reason == "acceptance_failed":
+                    return ExecutionResult(
+                        tuple(attempts), tuple(evidence), tuple(handoffs), revision_task,
+                        self._diagnostic(
+                            "acceptance_failed", confirmed, task, terminal,
+                            "the typed acceptance result did not accept every criterion",
+                        ),
+                    )
+                break
         return ExecutionResult(
             tuple(attempts), tuple(evidence), tuple(handoffs), revision_task
         )
+    def _retry_attempt(
+        self, policy, condition, attempt, task, confirmed, attempts,
+        max_attempts, *, acp_session_id,
+    ) -> bool:
+        decision = policy.decision(condition, ordinal=attempt.ordinal)
+        if not decision.retry or attempt.ordinal >= max_attempts:
+            return False
+        reason = (
+            "recoverable_transport_interruption"
+            if condition == "transport_before_effect" else "worker_schema_invalid"
+        )
+        terminal = attempt.fail(reason, retryable=True)
+        try:
+            self._persist_terminal_attempt(
+                terminal, task, confirmed, acp_session_id
+            )
+        except Exception:
+            return False
+        attempts[-1] = terminal
+        return True
     def _validate_authority(
         self, session_id: str, confirmed: ConfirmedMissionVersion,
         draft: MissionDraft, permission_scope: PermissionScope,
@@ -307,14 +415,15 @@ class ExecutionService:
         self, confirmed, attempts, evidence, handoffs, revision_task,
         task, attempt, result, acp_session_id,
     ) -> ExecutionResult:
+        condition = _worker_failure_condition(result)
         terminal = (
             attempt.cancel("worker_cancelled")
             if result.status == "cancelled"
-            else attempt.fail("worker_failed", retryable=False)
+            else attempt.fail(condition or "worker_failed", retryable=False)
         )
         return self._stop_attempt(
             confirmed, attempts, evidence, handoffs, revision_task, task, terminal,
-            "worker_stage_failed",
+            condition or "worker_stage_failed",
             "ACP Worker returned a non-completed terminal result",
             acp_session_id=acp_session_id,
         )
@@ -374,123 +483,3 @@ class ExecutionService:
             task_id=None if task is None else task.task_id,
             attempt_id=attempt.attempt_id,
         )
-
-
-def _attempt_snapshot(
-    attempt: Attempt, task: TaskDefinition, acp_session_id: str | None = None,
-) -> dict[str, object]:
-    return {
-        "attempt_id": attempt.attempt_id, "task_id": attempt.task_id,
-        "agent_instance_id": task.agent_instance_id, "ordinal": attempt.ordinal,
-        "state": attempt.state.value, "reason": attempt.reason,
-        "result_summary": attempt.result_summary, "retryable": attempt.retryable,
-        "acp_session_id": acp_session_id, "effect_observed": False,
-    }
-def _handle_matches_request(handle: object, request: TaskRequest) -> bool:
-    return type(handle) is WorkerHandle and (
-        handle.agent_id, handle.task_id, handle.attempt_id, handle.transport
-    ) == (request.agent_id, request.task_id, request.attempt_id, "acp")
-def _derived_id(prefix: str, *parts: str) -> str:
-    canonical = json.dumps(parts, ensure_ascii=False, separators=(",", ":"))
-    return prefix + sha256(canonical.encode("utf-8")).hexdigest()[:24]
-def _stage_id(
-    prefix: str, confirmed: ConfirmedMissionVersion,
-    task: TaskDefinition, *parts: str,
-) -> str:
-    return _derived_id(
-        prefix, confirmed.mission_id, str(confirmed.version), task.task_id, *parts
-    )
-def _command_id(
-    phase: str, confirmed: ConfirmedMissionVersion,
-    task: TaskDefinition, ordinal: int,
-) -> str:
-    return _stage_id("cmd_", confirmed, task, phase, str(ordinal))
-def _task_instruction(
-    draft: MissionDraft,
-    confirmed: ConfirmedMissionVersion,
-    task: TaskDefinition,
-    attempt: Attempt,
-    incoming_handoff: Handoff | None,
-    revision_task: AuthoritativeRevisionTask | None,
-) -> str:
-    payload = {
-        "mission": {
-            "mission_id": confirmed.mission_id,
-            "version": confirmed.version,
-            "content_hash": confirmed.content_hash,
-            "objective": draft.objective,
-            "scope": draft.scope,
-        },
-        "task": task.canonical_projection(),
-        "attempt": {
-            "attempt_id": attempt.attempt_id, "ordinal": attempt.ordinal,
-        },
-        "incoming_handoff": (
-            None if incoming_handoff is None else {
-                "canonical_content": incoming_handoff.canonical_content,
-                "content_hash": incoming_handoff.content_hash,
-            }
-        ),
-        "authoritative_revision_task": (
-            None if revision_task is None else revision_task.canonical_payload()
-        ),
-    }
-    return json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
-
-
-def _payload_value(result: WorkerResult, field: str) -> object:
-    if field not in result.payload:
-        raise ValueError(f"worker result missing {field}")
-    return result.payload[field]
-
-
-def _payload_text(result: WorkerResult, field: str) -> str:
-    value = _payload_value(result, field)
-    if type(value) is not str or not value.strip():
-        raise ValueError(f"worker result {field} must be text")
-    return value
-
-
-def _review_finding(result: WorkerResult) -> ReviewFinding:
-    evidence_ids = _payload_value(result, "evidence_ids")
-    if type(evidence_ids) is not tuple:
-        raise ValueError("review evidence_ids must be a sequence")
-    return ReviewFinding(
-        _payload_text(result, "finding_id"), _payload_text(result, "scope"),
-        FindingSeverity(_payload_text(result, "severity")),
-        _payload_text(result, "summary"), _payload_text(result, "criterion"),
-        evidence_ids,
-    )
-
-
-def _typed_evidence(
-    identity: str, task: TaskDefinition, result: WorkerResult, draft: MissionDraft
-) -> tuple[Evidence, tuple[str, ...]]:
-    if task.name == "implementation":
-        artifact = _payload_text(result, "artifact_reference")
-        return Evidence.create(identity, EvidenceKind.ARTIFACT_HASH, {
-            "artifact_reference": artifact,
-            "content_hash": _payload_text(result, "content_hash"),
-        }), (artifact,)
-    if task.name == "review":
-        finding = _review_finding(result)
-        return Evidence.create(
-            identity, EvidenceKind.REVIEW_FINDING, finding.canonical_projection()
-        ), ()
-    if task.name == "revision":
-        return Evidence.create(identity, EvidenceKind.DIFF_IDENTITY, {
-            "base": _payload_text(result, "base"),
-            "head": _payload_text(result, "head"),
-            "diff_hash": _payload_text(result, "diff_hash"),
-        }), ()
-    mapping = _payload_value(result, "evidence_by_criterion")
-    if not isinstance(mapping, MappingProxyType):
-        raise ValueError("acceptance evidence mapping must be an object")
-    acceptance = AcceptanceResult.create(
-        draft.acceptance_criteria, dict(mapping),
-        accepted=_payload_value(result, "accepted"),
-        failure_reason=_payload_value(result, "failure_reason"),
-    )
-    return Evidence.acceptance(
-        identity, result=acceptance, source_kind=EvidenceKind.ACCEPTANCE_RESULT
-    ), ()
