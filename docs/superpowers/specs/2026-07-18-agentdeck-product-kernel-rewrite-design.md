@@ -1,8 +1,7 @@
 # AgentDeck Product Kernel Rewrite Design
 
-**Status:** Approved design and Rewrite Context Firewall; implementation
-remains locked pending review of this cleaned written spec and a separate
-`writing-plans` TDD plan
+**Status:** Approved active design and Rewrite Context Firewall; implementation
+follows the reviewed TDD plan and its explicitly approved corrections
 
 **Date:** 2026-07-18
 
@@ -10,6 +9,14 @@ remains locked pending review of this cleaned written spec and a separate
 Product North Star protects long-term product intent. P0/P1/M2/M2c remain
 recoverable historical evidence but cannot create requirements, dictate task
 order, or veto the rewrite.
+
+**Normative Task 15B correction:** The conversation-approved, written-review
+pending [Task 15B ACP Cancellation and Recovery Design](2026-07-20-task-15b-acp-cancellation-recovery-design.md)
+defines the exact foreground cancellation and restart-recovery semantics for
+sections 10.4 and 10.4.3. It narrows no product promise: it makes explicit that
+current ACP cancel is a bounded notification plus local owner shutdown, and
+that a fresh process without durable raw resume authority must recover
+conservatively rather than claim a fabricated ACP reconnection.
 
 **Branch:** `codex/product-kernel-rewrite`
 
@@ -527,9 +534,13 @@ confirmation, dispatch, approval, completion, or handoff delivery returns the
 first outcome instead of duplicating effects.
 
 On restart, any Attempt left `running` becomes `interrupted` unless the same ACP
-Session can be safely reconciled. AgentDeck never treats a surviving tmux pane
-as completion. An uncertain disconnect produces `outcome_unknown` and cannot
-be blindly retried.
+Session can be safely reconciled. In the MVP schema, a fresh process has no
+durable raw ACP resume authority, so an old running Attempt has no provable live
+binding: no observed effect becomes `interrupted`, while any observed effect
+becomes `outcome_unknown`. AgentDeck never treats a surviving tmux pane,
+backend name, role, process, or latest Worker as reconciliation evidence. An
+uncertain disconnect cannot be blindly retried. True cross-process ACP resume
+requires a later explicit schema-and-adapter design.
 
 #### 10.4.1 Schema-v2 session authority and compatibility
 
@@ -655,15 +666,21 @@ returns a content-free Diagnostic with zero writes and leaves the request
 present. A valid decline then clears the complete pending group and leaves the
 Attempt untouched.
 
-A valid confirm may consume the request and exit only after the real bound
-Worker acknowledges `cancel_task()`. Task 15B then executes one Store command
+A valid confirm may consume the request and exit only after the exact bound
+Worker has written the ACP cancel notification within a deadline and completed
+bounded local connection/process shutdown. ACP cancel is a notification, so
+this success does not claim a separate remote business acknowledgement or
+prove that no earlier effect occurred. Task 15B then executes one Store command
 transaction that compare-and-swaps the same request and snapshot, changes the
 Attempt to `interrupted`, clears all five pending fields, appends the Attempt
 and ProductSession audit events, and saves the completed command result. Any
 failure rolls back all of those database effects. Missing cancellation
-capability, cancellation failure, changed lineage, or uncertain outcome leaves
-the request and Attempt authoritative, keeps an interactive foreground shell
-open when input remains available, and returns a content-free Diagnostic.
+capability, rejection, timeout, disconnect, shutdown uncertainty, changed
+lineage, or uncertain outcome leaves the request and Attempt authoritative,
+keeps an interactive foreground shell open when input remains available, and
+returns a content-free Diagnostic. That first failure or post-cancel authority
+drift is stored as a closed replay result so confirmation never sends a second
+cancel.
 
 Task 15A implements the durable request, validation, decline, re-entry, and
 fail-closed blocker but cannot claim Worker cancellation. Task 15B binds the

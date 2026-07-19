@@ -4,6 +4,26 @@
 
 ## 2026-07-20
 
+### Approve honest foreground ACP cancellation and restart recovery
+
+- Corrected the Task 15B design after two independent read-only reviews proved
+  that the existing Store preserves only a derived Worker session identity,
+  not the raw ACP resume authority required for a truthful cross-process
+  reconnect. A fresh process therefore classifies abandoned work
+  conservatively: no observed effect becomes `interrupted`, while any observed
+  effect becomes `outcome_unknown`; tmux, backend, role, process, and latest
+  Worker are never recovery evidence.
+- Defined real ACP cancellation success as a bounded cancel-notification write
+  followed by bounded shutdown of the AgentDeck-owned connection and local
+  adapter process. This does not invent a remote acknowledgement. Rejection,
+  timeout, disconnect, shutdown uncertainty, or post-cancel authority drift
+  cannot produce a false interruption and exact replay cannot send cancel
+  twice.
+- Approved the narrow Adapter, async coordinator, runtime-binding, recovery,
+  and deterministic TDD file boundary needed to close R2. True cross-process
+  ACP resume remains a later schema-and-adapter design rather than hidden Task
+  15B scope.
+
 ### Bind passive Codex and Claude ACP readiness
 
 - Added closed, injected readiness facts for the two MVP CLI backends. Codex is
