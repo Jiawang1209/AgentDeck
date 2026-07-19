@@ -3864,8 +3864,13 @@ git commit -m "feat: bridge codex app server through acp"
 
 **Files:**
 - Modify: src/agentdeck/adapters/discovery.py
+- Create: src/agentdeck/adapters/adapter_readiness.py
+- Create: src/agentdeck/adapters/acp_worker_connection.py
+- Modify: src/agentdeck/adapters/acp_transport.py
 - Modify: src/agentdeck/product/bootstrap.py
 - Create: tests/product_kernel/test_real_adapter_preflight_contract.py
+- Modify: tests/product_kernel/test_acp_transport.py
+- Create: tests/product_kernel/test_acp_worker_connection.py
 - Modify: docs/migrations/product-kernel-legacy-reuse-register.md
 - Modify: HISTORY.md
 
@@ -3873,6 +3878,31 @@ git commit -m "feat: bridge codex app server through acp"
 remain not admitted; no auth/install/global config mutation.
 
 **Approved legacy evidence:** read-only executable/version facts only.
+
+**Post-review executable identity and production composition closure
+(2026-07-19):** readiness must preserve the complete classified evidence that
+authorizes later execution; it may not validate absolute paths and then emit a
+bare PATH-resolved basename. A sealed readiness value carries backend-specific
+absolute CLI/adapter paths, CLI and adapter versions, Codex schema digest, the
+closed adapter argv, and bounded environment overrides. Codex composition
+passes the verified absolute `codex app-server` argv plus the selected model to
+the absolute `agentdeck-codex-acp` bridge. Claude composition starts the
+absolute `claude-agent-acp` and binds `CLAUDE_CODE_EXECUTABLE` to the verified
+absolute Claude CLI; the supported adapter version is frozen rather than merely
+numeric. Directly constructed lookalike readiness values never authorize a
+factory call.
+
+The Product Kernel supplies a real lazy Worker connection factory built on the
+official ACP SDK; test injection remains available but is no longer required
+for production composition. Each `worker()` call must receive a fresh
+connection owner and attempts to reuse one factory object fail before a second
+Worker can start. The connection owns process/session cleanup on initialize,
+session, prompt, cancel, error, and context-close paths. Leader transports carry
+the same bounded environment override into the official SDK spawn path.
+`project_root` must be a canonical absolute path before any Worker is labeled
+`project_boundary_enforced=True`. These responsibilities are extracted into
+`adapter_readiness.py` and `acp_worker_connection.py` so discovery/bootstrap
+remain below the 500-line gate and no legacy ACP implementation is admitted.
 
 - [ ] **Step 1: Write RED readiness tests**
 
@@ -3919,7 +3949,15 @@ subprocess starts.
 ```bash
 conda run -n agentdeck pytest tests/product_kernel/test_*acp*.py tests/product_kernel/test_*execution*.py tests/product_kernel/test_*approval*.py tests/product_kernel/test_real_adapter_preflight_contract.py -q
 conda run -n agentdeck pytest tests/test_acp_*.py tests/test_mission_*.py -q
-git add src/agentdeck/adapters/discovery.py src/agentdeck/product/bootstrap.py tests/product_kernel docs/migrations/product-kernel-legacy-reuse-register.md HISTORY.md
+git add src/agentdeck/adapters/discovery.py \
+  src/agentdeck/adapters/adapter_readiness.py \
+  src/agentdeck/adapters/acp_worker_connection.py \
+  src/agentdeck/adapters/acp_transport.py \
+  src/agentdeck/product/bootstrap.py \
+  tests/product_kernel/test_real_adapter_preflight_contract.py \
+  tests/product_kernel/test_acp_transport.py \
+  tests/product_kernel/test_acp_worker_connection.py \
+  docs/migrations/product-kernel-legacy-reuse-register.md HISTORY.md
 git commit -m "feat: bind codex and claude acp readiness"
 ```
 
