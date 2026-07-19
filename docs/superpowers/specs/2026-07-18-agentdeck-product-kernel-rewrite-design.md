@@ -181,8 +181,12 @@ Natural language is the primary interface. Deterministic slash commands are:
 ```
 
 `/exit` safely persists the session. If a Worker is active, the foreground MVP
-explains that exit will interrupt the Attempt and requires confirmation before
-stopping it. Re-entry reconstructs the same ProductSession.
+creates an exact durable exit request, explains that exit will interrupt the
+Attempt, and requires `/exit confirm <request-id> <attempt-hash>` before
+stopping it. `/exit decline <request-id> <attempt-hash>` consumes the same
+request without stopping work. A stale identity, changed Attempt snapshot, or
+missing real cancellation capability fails closed. Re-entry reconstructs the
+latest nonterminal ProductSession for the current project only.
 
 ### 5.3 Mission Preview
 
@@ -527,6 +531,149 @@ Session can be safely reconciled. AgentDeck never treats a surviving tmux pane
 as completion. An uncertain disconnect produces `outcome_unknown` and cannot
 be blindly retried.
 
+#### 10.4.1 Schema-v2 session authority and compatibility
+
+The first post-v1 migration is an explicit schema-v2 authority change. A fresh
+database is created directly at v2. An existing database may migrate only when
+all of the following are true:
+
+- the metadata row declares version 1;
+- its project root equals the current resolved project root;
+- its table set and live schema fingerprint equal the exact known v1 shape;
+- its stored schema digest equals that live fingerprint.
+
+The v1-to-v2 migration runs in one `BEGIN IMMEDIATE` transaction. It applies an
+exact ordered v2 DDL sequence: add `leader_backend`, `leader_model`, and the
+nullable pending-exit columns to `product_sessions`; create fixed insert/update
+triggers for the two closed nullable groups; backfill configured identities;
+validate foreign keys, rows, and the exact known v2 live fingerprint; then
+update the metadata version and digest. A fresh database applies the same v1
+base DDL plus the same v2 DDL sequence before its metadata row is committed, so
+fresh and migrated databases have byte-equivalent schema authority. Any DDL,
+backfill, validation, identity, or commit failure rolls the entire transaction
+back. Unknown versions, self-consistent but non-v1 schemas, partial v2 columns,
+and damaged metadata are blockers rather than repair targets. Reopening a
+valid v2 database verifies both the exact known-v2 fingerprint and its stored
+digest and performs no migration write.
+
+`leader_backend` and `leader_model` are nullable `TEXT` columns and form one
+closed pair. The Adapter additionally enforces strict UTF-8, nonblank content,
+and at most 4096 encoded bytes per value. A v1 `setup` session must have no
+completed `configure_product_session` command and migrates with both fields
+null. Every non-setup v1 session must have the one completed command
+`session:configure:<session-id>` with the exact command kind, closed result
+fields, matching session/permission/goal lineage, and bounded Leader/model;
+the migration backfills that validated pair. A missing, malformed, or
+conflicting command is a migration blocker and rolls back the whole database,
+not a partially migrated re-entry warning. In v2, setup requires both fields
+null and every non-setup session requires both non-null. The persisted pair and
+the completed configuration command must agree on every load.
+
+The pending-exit fields are one closed nullable group:
+
+```text
+pending_exit_id
+pending_exit_attempt_id
+canonical_pending_exit_attempt_facts
+pending_exit_attempt_hash
+pending_exit_requested_at
+```
+
+Either all five fields are null or all five are present. The canonical Attempt
+snapshot is a plain JSON object with exactly these keys and types:
+
+```text
+attempt_id          nonempty `att_` string, at most 255 UTF-8 bytes
+task_id             nonempty `tsk_` string, at most 255 UTF-8 bytes
+agent_instance_id   nonempty `agt_` string or null, at most 255 UTF-8 bytes
+ordinal             integer, 1 through SQLite signed-64 maximum
+state               running | awaiting_approval | human_controlled
+acp_session_id      nonblank string or null, at most 255 UTF-8 bytes
+effect_observed     JSON boolean
+durable_fingerprint 64 lowercase hexadecimal characters or null
+```
+
+Unknown or missing keys are invalid. Canonical JSON uses sorted keys, compact
+separators, strict UTF-8, and no NaN-like values; the encoded object is bounded
+to 4096 bytes. `pending_exit_attempt_hash` is SHA-256 over those exact bytes.
+The SQL columns are nullable `TEXT`; when present, the request ID is exactly 36
+ASCII characters (`xrt_` plus 32 lowercase hex), the Attempt ID is bounded as
+above, the hash is 64 lowercase hex, the canonical object is nonempty, and the
+timestamp is a normalized bounded Product clock value. Exact v2 insert/update
+triggers reject a partially null group, while Adapter validation enforces the
+closed JSON and encoded-byte constraints before SQL. These facts never contain
+a prompt, protocol frame, terminal output, credential, or Worker prose.
+
+#### 10.4.2 Deterministic session selection
+
+A new foreground launch asks the Store for the latest nonterminal
+ProductSession belonging to the current project identity. Nonterminal means
+every declared ProductSession state except `completed`, `failed`, and
+`cancelled`. Selection is stable by `updated_at DESC`, `created_at DESC`, then
+`session_id DESC`. It never searches another project database or global state.
+
+If a matching session exists, bootstrap reuses its persisted identity and
+configuration. If none exists, bootstrap creates a new typed session identity
+through an injectable identity factory. The old project-root-derived fixed
+session ID is not the re-entry authority; an existing v1 session keeps its
+identity through migration and is found by the same query. Multiple historical
+terminal sessions remain immutable history. Multiple nonterminal rows are not
+silently merged; deterministic selection chooses one while diagnostics expose
+the unexpected count.
+
+#### 10.4.3 Exact exit request and fail-closed interruption
+
+Attempt states `running`, `awaiting_approval`, and `human_controlled` are active
+for exit purposes. The foreground execution model permits at most one active
+Attempt. More than one is an authority inconsistency: `/exit` returns a
+diagnostic and creates no request.
+
+With no active Attempt, explicit `/exit` closes the writer and exits without a
+confirmation request. With one active Attempt, `/exit` command-atomically
+persists a typed request identity, the exact canonical Attempt snapshot, its
+hash, timestamp, and an audit event. Repeating `/exit` while that snapshot is
+unchanged returns the same request. If the durable Attempt changes, the old
+request cannot be confirmed; a later `/exit` creates a new request bound to the
+new snapshot.
+
+An exit request identity is `xrt_` plus 32 lowercase hexadecimal characters
+from an injectable cryptographic-random identity factory. An all-null pending
+group permits creation. A well-formed pending request whose Attempt snapshot
+still matches is returned unchanged. A well-formed but drifted request may be
+atomically superseded by `/exit` only after the old request and current Attempt
+are both revalidated; a malformed or partially null group returns a Diagnostic
+with zero writes and is never silently overwritten. Consequently, repeated
+reads of one pending request are stable, while declining and later requesting
+exit for the same unchanged Attempt produces a new command lineage rather than
+replaying the consumed decision.
+
+Decline and confirm accept only the current request ID and Attempt hash. In the
+same write transaction, both operations reload the Attempt, rebuild the exact
+canonical object, and compare its hash and lineage with the pending request.
+Any drift, missing Attempt, stale identity, or malformed persisted snapshot
+returns a content-free Diagnostic with zero writes and leaves the request
+present. A valid decline then clears the complete pending group and leaves the
+Attempt untouched.
+
+A valid confirm may consume the request and exit only after the real bound
+Worker acknowledges `cancel_task()`. Task 15B then executes one Store command
+transaction that compare-and-swaps the same request and snapshot, changes the
+Attempt to `interrupted`, clears all five pending fields, appends the Attempt
+and ProductSession audit events, and saves the completed command result. Any
+failure rolls back all of those database effects. Missing cancellation
+capability, cancellation failure, changed lineage, or uncertain outcome leaves
+the request and Attempt authoritative, keeps an interactive foreground shell
+open when input remains available, and returns a content-free Diagnostic.
+
+Task 15A implements the durable request, validation, decline, re-entry, and
+fail-closed blocker but cannot claim Worker cancellation. Task 15B binds the
+real async Worker lifecycle and is the first slice allowed to make active
+confirm exit successfully. Ctrl-C is converted to the same safe exit surface
+when input remains available. EOF with active work closes only the foreground
+input/store boundary, records no false cancellation or completion, and reports
+that recovery is required; it never prints `Session saved` or `safely
+cancelled` for active work.
+
 ### 10.5 Secrets
 
 The database does not store API keys, CLI login tokens, full environment
@@ -743,8 +890,15 @@ The current user-visible failures become explicit RED tests:
 - unavailable DeepSeek is not silently selected;
 - interactive mode does not print raw JSON;
 - Leader failures retain exact diagnostic categories;
-- `/exit` safely persists and exits;
-- re-entry restores the ProductSession.
+- a known v1 database migrates atomically to v2 and damaged/unknown sources do
+  not migrate;
+- `/exit` without an active Attempt safely persists and exits;
+- active `/exit` persists an exact request and stale confirm/decline inputs
+  perform zero mutation;
+- active confirm cannot report success before real ACP cancellation is bound;
+- Ctrl-C and EOF never claim active work was safely cancelled or saved;
+- re-entry restores the latest nonterminal ProductSession, Leader, model,
+  permission, pending goal, Preview, and pending exit request for this project.
 
 ### 17.3 Real preflight
 

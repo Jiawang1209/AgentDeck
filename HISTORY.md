@@ -4,6 +4,29 @@
 
 ## 2026-07-19
 
+### Specify durable ProductSession exit and schema-v2 re-entry authority
+
+- Closed the Task 15A design gap with an explicit v1-to-v2 SQLite migration
+  contract. Only the exact known v1 schema may migrate; fresh databases start
+  at v2, valid existing rows are preserved in one transaction, unknown or
+  damaged schemas fail closed, and valid v2 reopen performs no migration write.
+  Existing configured sessions backfill Leader/model only from their strictly
+  validated idempotent setup command; missing or conflicting setup lineage
+  rolls the entire migration back.
+- Made configured Leader/model and the complete pending-exit authority durable
+  ProductSession facts. An exit request binds one active Attempt's bounded
+  canonical snapshot and SHA-256 hash; stale confirm or decline input performs
+  no mutation, and no prompt, protocol frame, terminal output, credential, or
+  Worker prose enters the snapshot.
+- Defined project-local latest-nonterminal session selection and removed the
+  project-root-derived fixed session ID as re-entry authority. Active exit may
+  report success only after real Worker cancellation and atomic interruption;
+  Task 15A therefore stays fail-closed until Task 15B binds that async ACP
+  lifecycle. Confirm and decline both rehash the exact eight-field active
+  Attempt snapshot in their write transaction, Task 15B consumes confirmation
+  with interruption in one Store transaction, and Ctrl-C/EOF cannot claim
+  active work was safely saved.
+
 ### Close Task Request and ACP Attempt lineage in the formal plan
 
 - Expanded Task 23 only where independent review proved the original boundary
