@@ -4,6 +4,26 @@
 
 ## 2026-07-19
 
+### Bridge sequential ACP permissions durably
+
+- Added stable Approval Port values and a sequential Approval Service that
+  validates exact Worker lineage, persists each pending request before review,
+  persists the decision before the matching ACP response, and replays the first
+  durable outcome without calling a reviewer twice. Human, independent,
+  automatic, narrowed-scope, full-access, reviewer-failure, and self-review
+  paths all fail closed or proceed according to the confirmed profile.
+- Added conservative ACP tool-kind effect/risk classification. Read/search/think
+  remain read-only; project writes, commands, network, deletion, and unknown
+  kinds receive explicit bounded facts. Unknown kinds remain denied even under
+  full access, and raw tool input never enters approval authority.
+- Added command-atomic SQLite approval request/decision persistence over the
+  existing schema, with immutable lineage and terminal-decision drift guards.
+  The permission bridge processes a finite ordered sequence and never authorizes
+  the next Task before a validated terminal result and future Handoff commit.
+- TDD RED first failed collection for the absent Port and service. Focused
+  GREEN reached `12` cases; the final SQLite, ACP Worker, permission, bridge,
+  and architecture regression gate passed all `344` cases.
+
 ### Normalize every rejected ACP task construction
 
 - Extended the task-construction boundary to catch synchronous cancellation-

@@ -1,13 +1,10 @@
 """Map official ACP session traffic into the stable Worker Port."""
-
 from __future__ import annotations
-
 import asyncio
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from hashlib import sha256
 from typing import Any, Final
-
 from acp import PROTOCOL_VERSION
 from acp.schema import (
     AgentMessageChunk,
@@ -39,6 +36,12 @@ from agentdeck.ports.worker import (
 _MAX_ACP_UPDATE_BYTES: Final = 64 * 1024
 _MAX_ACP_TOTAL_BYTES: Final = 1024 * 1024
 _PROVEN_READ_ONLY_TOOL_KINDS: Final = frozenset({"read", "search", "think"})
+_PERMISSION_EFFECTS: Final = {
+    "read": ("read", "read_only"), "search": ("read", "read_only"),
+    "think": ("read", "read_only"), "edit": ("write_project", "project_mutation"),
+    "move": ("write_project", "project_mutation"), "fetch": ("network", "network_access"),
+    "execute": ("command_project", "project_command"), "delete": ("destructive", "project_deletion"),
+}
 
 
 class ACPWorkerError(RuntimeError):
@@ -266,11 +269,13 @@ class ACPWorker:
         run.pending_permission = _PermissionWaiter(
             permission_id, tuple(options), future,
         )
+        effect, risk = _permission_effect(tool_call.kind)
         try:
             self._emit("permission_requested", {
                 "permission_request_id": permission_id,
                 "tool_call_id": tool_call.tool_call_id,
                 "option_count": len(options),
+                "effect": effect, "risk": risk,
             })
         except (TypeError, ValueError):
             run.pending_permission = None
@@ -471,6 +476,12 @@ def _permission_id(value: object) -> str:
     except (UnicodeEncodeError, ValueError):
         raise ValueError("permission_request_id must be typed and bounded") from None
     return value
+
+
+def _permission_effect(kind: object) -> tuple[str, str]:
+    if type(kind) is not str:
+        return "destructive", "unclassified_tool_effect"
+    return _PERMISSION_EFFECTS.get(kind, ("destructive", "unclassified_tool_effect"))
 
 
 def _is_recoverable_disconnect(error: Exception) -> bool:

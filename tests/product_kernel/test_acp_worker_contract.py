@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 from datetime import datetime, timezone
 
-from agentdeck.adapters.acp import ACPWorker
+from agentdeck.adapters.acp import ACPWorker, _permission_effect
 from product_kernel.fakes import FrozenClock
 from product_kernel.fixtures.fake_acp_agent import FakeACPAgent
 from product_kernel.worker_contract import assert_worker_contract, task_request
@@ -27,6 +27,23 @@ def test_acp_worker_passes_shared_contract() -> None:
     asyncio.run(assert_worker_contract(worker_factory()))
 
 
+def test_permission_effect_mapping_is_conservative_and_bounded() -> None:
+    expected = {
+        "read": ("read", "read_only"), "search": ("read", "read_only"),
+        "think": ("read", "read_only"),
+        "edit": ("write_project", "project_mutation"),
+        "move": ("write_project", "project_mutation"),
+        "execute": ("command_project", "project_command"),
+        "fetch": ("network", "network_access"),
+        "delete": ("destructive", "project_deletion"),
+    }
+    assert {kind: _permission_effect(kind) for kind in expected} == expected
+    for unknown in ("other", "switch_mode", "future_kind", None, []):
+        assert _permission_effect(unknown) == (
+            "destructive", "unclassified_tool_effect",
+        )
+
+
 def test_two_permissions_are_sequential_and_lineage_bound() -> None:
     async def scenario() -> None:
         worker = worker_factory("two_permissions")()
@@ -44,6 +61,16 @@ def test_two_permissions_are_sequential_and_lineage_bound() -> None:
                 )
 
         assert permission_ids == ["perm_1", "perm_2"]
+        permission_events = [
+            event for event in events if event.kind == "permission_requested"
+        ]
+        assert [event.payload["effect"] for event in permission_events] == [
+            "write_project", "write_project",
+        ]
+        assert all(
+            event.payload["risk"] == "project_mutation"
+            for event in permission_events
+        )
         assert [event.sequence for event in events] == list(range(1, len(events) + 1))
         assert all(event.session_id == handle.session_id for event in events)
         assert {"progress", "tool_started", "tool_completed", "artifact_changed"} <= {

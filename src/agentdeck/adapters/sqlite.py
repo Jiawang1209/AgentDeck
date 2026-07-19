@@ -1,14 +1,12 @@
 """Single-writer, command-atomic project-local SQLite authority."""
-
 from __future__ import annotations
-
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from hashlib import sha256
 import os
 from pathlib import Path
 import sqlite3
-
+from agentdeck.adapters.sqlite_approval import _save_approval
 from agentdeck.adapters.sqlite_schema import (
     FileIdentity,
     _REQUIRED_TABLES,
@@ -61,11 +59,7 @@ from agentdeck.ports.store import (
     STORE_COMMAND_KIND_MAX_BYTES,
     StoreTransaction,
 )
-
-
 class StoreCommandConflictError(RuntimeError): pass
-
-
 def _validate_text_reference(value: object, label: str, maximum: int) -> None:
     if type(value) is not str or not value.strip():
         raise ValueError(f"{label} must be a nonempty string")
@@ -158,6 +152,11 @@ class _SQLiteCommandTransaction:
             if snapshot.get("turn_id", aggregate_id) != aggregate_id:
                 raise ValueError("aggregate identity does not match turn_id")
             _save_conversation_turn(self._require_mutable(), snapshot, _timestamp(self._store._clock))
+            return
+        if aggregate_type == "approvals":
+            if snapshot.get("approval_id", aggregate_id) != aggregate_id:
+                raise ValueError("aggregate identity does not match approval_id")
+            _save_approval(self._require_mutable(), snapshot, _timestamp(self._store._clock))
             return
         raise ValueError("unsupported aggregate type")
 
