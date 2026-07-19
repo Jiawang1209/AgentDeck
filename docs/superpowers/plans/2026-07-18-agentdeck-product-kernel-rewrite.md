@@ -1371,6 +1371,52 @@ git commit -m "feat: add foreground product session shell"
 
 ### Task 15: Make exit, interruption confirmation, and re-entry deterministic
 
+**Post-review dependency correction (2026-07-19):** Task 15 is split into an
+authority slice and a real-transport closure slice. The original four-file
+implementation is not integration-authoritative: a synchronous injected
+callback cannot stand in for the async Worker Port, and an optional
+RecoveryService cannot satisfy production re-entry. Task 19 and Task 23 may
+continue independently, but the R2 exit gate remains open until both slices
+below pass.
+
+**Task 15A — durable session/exit authority (after the corrected Task 19):**
+
+- persist the configured Leader/model identity needed to validate later
+  Mission requests across re-entry;
+- select the latest nonterminal ProductSession deterministically;
+- persist an exact pending-exit request identity, active Attempt snapshot and
+  content hash; decline and confirm must consume that same durable request;
+- treat `running`, `awaiting_approval`, and `human_controlled` as active exit
+  states;
+- Ctrl-C and EOF must fail closed and must not claim that active work was
+  safely cancelled or saved;
+- add schema migration/compatibility coverage before changing the frozen
+  ProductSession persistence shape.
+
+Task 15A expands the allowed files to
+`kernel/session.py`, `ports/store.py`, `adapters/sqlite_schema.py`,
+`adapters/sqlite_validation.py`, `adapters/sqlite.py`,
+`application/session_service.py`, `product/shell.py`, `product/bootstrap.py`,
+their exact Product/SQLite re-entry tests, and `HISTORY.md`. It must remain
+foreground-only and cannot claim Worker cancellation.
+
+**Task 15B — real ACP cancellation and recovery closure (after Tasks 23, 25,
+and 26):** the composition root must keep the active Attempt, Agent Instance,
+ACP Session, WorkerHandle and Worker in one foreground async lifecycle. Exact
+confirmation awaits the real `Worker.cancel_task()`, then command-atomically
+persists `interrupted` and consumes the durable exit request. Re-entry must run
+the real RecoveryService before accepting input. Fake synchronous callbacks,
+un-awaited coroutines and optional production recovery wiring are forbidden.
+Task 15B may modify `ports/worker.py` or a dedicated execution-control Port,
+`application/execution_service.py`, `application/recovery_service.py`,
+`application/session_service.py` or a dedicated exit service,
+`product/shell.py`, `product/bootstrap.py`, exact Task 23/26/re-entry
+integration tests, and `HISTORY.md`.
+
+**Corrected order:** corrected Task 19 + corrected Task 23 → Task 15A → Tasks
+25–26 → Task 15B → rerun the complete R2 exit/re-entry gate. Task 15 is not
+complete merely because its isolated fake tests pass.
+
 **Authority:** Design sections 5.2, 10.4, 17.2, 18, 23.
 
 **Files:**

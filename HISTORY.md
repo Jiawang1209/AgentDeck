@@ -4,6 +4,22 @@
 
 ## 2026-07-19
 
+### Correct the Product exit and re-entry dependency order
+
+- Rejected the isolated Task 15 implementation after independent review proved
+  that its synchronous cancellation callback could not invoke the real async
+  Worker Port and its optional RecoveryService was not production composition.
+  No fake-only exit implementation was integrated.
+- Split Task 15 into durable ProductSession/exit authority and a later real ACP
+  cancellation/recovery closure. The first slice owns exact pending-exit
+  lineage, active-state classification, latest nonterminal re-entry and durable
+  Leader/model identity. The second runs only after the Execution Coordinator
+  and real ACP adapters exist, and must await actual Worker cancellation inside
+  the foreground lifecycle before persisting interruption.
+- Reordered the formal plan so Task 19 and Task 23 can continue independently,
+  while the R2 exit gate remains explicitly open until both corrected slices
+  and their integration tests pass.
+
 ### Close the next Product Kernel production persistence seams
 
 - Reconciled Tasks 19 and 23 with the frozen SQLite and Product Shell truth
