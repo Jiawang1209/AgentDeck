@@ -1,7 +1,5 @@
 """Official ACP Agent surface backed only by Codex app-server JSON-RPC v2."""
-
 from __future__ import annotations
-
 import argparse
 import asyncio
 from collections.abc import Sequence
@@ -9,7 +7,6 @@ import json
 from pathlib import Path
 import sys
 from typing import Any, Final
-
 from acp import PROTOCOL_VERSION, run_agent
 from acp.helpers import (
     embedded_text_resource, resource_block, start_tool_call,
@@ -22,13 +19,10 @@ from acp.schema import (
     PromptResponse, ResumeSessionResponse, SessionCapabilities,
     SessionResumeCapabilities, TextContentBlock, TextResourceContents, ToolCallUpdate,
 )
-
 from agentdeck.adapters.codex_app_server import (
     AppServerPermissionRequest, AppServerProtocolError, CodexAppServerClient,
 )
 from agentdeck.ports.leader import leader_proposal_json_schema
-
-
 _MAX_PROMPT_BYTES: Final = 1024 * 1024
 _MAX_COMMAND_JSON_BYTES: Final = 64 * 1024
 _REQUEST_URI: Final = "agentdeck://leader/mission-request"
@@ -39,13 +33,40 @@ _LEADER_INSTRUCTION: Final = (
     "Propose one AgentDeck Mission. Return the proposal only as the "
     "declared structured ACP resource; do not execute tools or work."
 )
-_IGNORED_NOTIFICATIONS: Final = frozenset({
-    "turn/started", "turn/completed", "thread/started", "thread/status/changed",
-    "thread/tokenUsage/updated", "turn/diff/updated", "turn/plan/updated",
-    "item/plan/delta", "item/reasoning/summaryTextDelta",
+_TURN_NOTIFICATIONS: Final = frozenset({
+    "error", "thread/goal/updated", "thread/tokenUsage/updated", "turn/started",
+    "hook/started", "turn/completed", "hook/completed", "turn/diff/updated",
+    "turn/plan/updated", "item/started", "item/autoApprovalReview/started",
+    "item/autoApprovalReview/completed", "item/completed",
+    "item/agentMessage/delta", "item/plan/delta",
+    "item/commandExecution/outputDelta", "item/commandExecution/terminalInteraction",
+    "item/fileChange/outputDelta", "item/fileChange/patchUpdated",
+    "item/mcpToolCall/progress", "item/reasoning/summaryTextDelta",
     "item/reasoning/summaryPartAdded", "item/reasoning/textDelta",
-    "item/autoApprovalReview/started", "item/autoApprovalReview/completed",
+    "thread/compacted", "model/rerouted", "model/verification",
 })
+_THREAD_NOTIFICATIONS: Final = frozenset({
+    "thread/started", "thread/status/changed", "thread/archived",
+    "thread/unarchived", "thread/closed", "thread/name/updated",
+    "thread/goal/cleared", "serverRequest/resolved", "warning",
+    "guardianWarning", "thread/realtime/started", "thread/realtime/itemAdded",
+    "thread/realtime/transcript/delta", "thread/realtime/transcript/done",
+    "thread/realtime/outputAudio/delta", "thread/realtime/sdp",
+    "thread/realtime/error", "thread/realtime/closed",
+})
+_GLOBAL_NOTIFICATIONS: Final = frozenset({
+    "skills/changed", "command/exec/outputDelta", "process/outputDelta",
+    "process/exited", "mcpServer/oauthLogin/completed",
+    "mcpServer/startupStatus/updated", "account/updated",
+    "account/rateLimits/updated", "app/list/updated", "remoteControl/status/changed",
+    "externalAgentConfig/import/completed", "fs/changed", "deprecationNotice",
+    "configWarning", "fuzzyFileSearch/sessionUpdated",
+    "fuzzyFileSearch/sessionCompleted", "windows/worldWritableWarning",
+    "windowsSandbox/setupCompleted", "account/login/completed",
+})
+STABLE_NOTIFICATION_METHODS: Final = frozenset().union(
+    _TURN_NOTIFICATIONS, _THREAD_NOTIFICATIONS, _GLOBAL_NOTIFICATIONS,
+)
 _PROGRESS_KINDS: Final = {
     "item/commandExecution/outputDelta": "execute",
     "item/commandExecution/terminalInteraction": "execute",
@@ -78,10 +99,11 @@ class CodexACPServer:
         self._app = CodexAppServerClient(command)
         self._connection: object | None = None
         self._initialized = False
-        self._sessions: dict[str, str] = {}
+        self._sessions: dict[str, tuple[str, str]] = {}
         self._active_session: str | None = None
         self._active_turn: str | None = None
         self._leader_output: list[str] | None = None
+        self._server_version: str | None = None
 
     @property
     def command(self) -> tuple[str, ...]:
@@ -102,6 +124,7 @@ class CodexACPServer:
         if protocol_version != PROTOCOL_VERSION or self._initialized:
             raise AppServerProtocolError("codex_acp_protocol_mismatch")
         await self._app.initialize()
+        self._server_version = self._app.server_version
         self._initialized = True
         return InitializeResponse(
             protocol_version=PROTOCOL_VERSION,
@@ -116,9 +139,15 @@ class CodexACPServer:
 
     async def new_session(self, cwd: str, **_kwargs: Any) -> NewSessionResponse:
         self._require_initialized()
-        thread_id = await self._app.start_thread(cwd=cwd, model=self._model)
-        self._sessions[thread_id] = cwd
-        return NewSessionResponse(session_id=thread_id)
+        thread = await self._app.start_thread(cwd=cwd, model=self._model)
+        self._sessions[thread.thread_id] = (cwd, thread.model)
+        return NewSessionResponse(
+            session_id=thread.thread_id,
+            field_meta={"agentdeck": {
+                "resolved_model": thread.model,
+                "server_version": self._server_version,
+            }},
+        )
 
     async def load_session(
         self, cwd: str, session_id: str, **_kwargs: Any,
@@ -138,7 +167,9 @@ class CodexACPServer:
         self._require_session(session_id)
         if self._active_session is not None:
             raise ValueError("Codex ACP turn already active")
-        text, output_schema = _prompt_contract(prompt, model=self._model)
+        text, output_schema = _prompt_contract(
+            prompt, model=self._sessions[session_id][1], version=self._server_version,
+        )
         self._leader_output = [] if output_schema is not None else None
         self._active_session = session_id
         try:
@@ -180,18 +211,22 @@ class CodexACPServer:
         self._require_initialized()
         if session_id in self._sessions:
             raise ValueError("Codex ACP session already loaded")
-        thread_id = await self._app.resume_thread(session_id, cwd=cwd)
-        self._sessions[thread_id] = cwd
+        thread = await self._app.resume_thread(session_id, cwd=cwd, model=self._model)
+        self._sessions[thread.thread_id] = (cwd, thread.model)
 
     async def _map_notification(
         self, method: str, params: dict[str, object],
     ) -> None:
         connection = self._require_connection()
         session_id = self._active_session
-        if session_id is None or params.get("threadId") != session_id:
-            raise AppServerProtocolError("codex_acp_lineage_mismatch")
-        if method.startswith("item/") and params.get("turnId") != self._app.active_turn_id:
-            raise AppServerProtocolError("codex_acp_lineage_mismatch")
+        _validate_notification_lineage(
+            method, params, session_id=session_id,
+            turn_id=self._app.active_turn_id,
+        )
+        if method == "model/rerouted":
+            actual_model = self._sessions[session_id][1]
+            if any(params.get(key) != actual_model for key in ("fromModel", "toModel")):
+                raise AppServerProtocolError("codex_app_server_model_drift")
         update = None
         if method == "item/agentMessage/delta":
             delta = _bounded_text(params.get("delta"))
@@ -220,10 +255,10 @@ class CodexACPServer:
                 _bounded_text(params.get("itemId"), limit=256),
                 kind=_PROGRESS_KINDS[method], status="in_progress",
             )
-        elif method in _IGNORED_NOTIFICATIONS:
-            return
         elif method == "error":
             raise AppServerProtocolError("codex_app_server_turn_failed")
+        elif method in STABLE_NOTIFICATION_METHODS:
+            return
         else:
             raise AppServerProtocolError("codex_app_server_notification_drift")
         await connection.session_update(session_id, update)
@@ -282,7 +317,7 @@ class CodexACPServer:
 
 
 def _prompt_contract(
-    prompt: list[object], *, model: str,
+    prompt: list[object], *, model: str, version: str | None,
 ) -> tuple[str, dict[str, object] | None]:
     if type(prompt) is not list or not prompt:
         raise ValueError("ACP prompt must contain text")
@@ -308,6 +343,8 @@ def _prompt_contract(
     request = _leader_request_object(resource.text)
     if request["resolved_leader"]["model_id"] != model:
         raise ValueError("Codex bridge Leader model identity does not match")
+    if request["resolved_leader"]["version"] != version:
+        raise ValueError("Codex bridge Leader version identity does not match")
     text = _bounded_text(
         f"{_LEADER_INSTRUCTION}\n\nAgentDeck Mission request JSON:\n{resource.text}",
         limit=_MAX_PROMPT_BYTES,
@@ -361,6 +398,40 @@ def _proposal_object(raw: str) -> dict[str, object]:
     if type(value) is not dict:
         raise AppServerProtocolError("codex_acp_protocol_mismatch")
     return value
+
+
+def _validate_notification_lineage(
+    method: str, params: dict[str, object], *,
+    session_id: str | None, turn_id: str | None,
+) -> None:
+    if method not in STABLE_NOTIFICATION_METHODS:
+        raise AppServerProtocolError("codex_app_server_notification_drift")
+    if method in _GLOBAL_NOTIFICATIONS:
+        return
+    if method == "warning" and params.get("threadId") is None:
+        return
+    actual_thread = params.get("threadId")
+    if method == "thread/started":
+        thread = params.get("thread")
+        if type(thread) is not dict:
+            raise AppServerProtocolError("codex_acp_protocol_mismatch")
+        actual_thread = thread.get("id")
+    if session_id is None or actual_thread != session_id:
+        raise AppServerProtocolError("codex_acp_lineage_mismatch")
+    if method not in _TURN_NOTIFICATIONS:
+        return
+    actual_turn = params.get("turnId")
+    if method in {"turn/started", "turn/completed"}:
+        turn = params.get("turn")
+        if type(turn) is not dict:
+            raise AppServerProtocolError("codex_acp_protocol_mismatch")
+        actual_turn = turn.get("id")
+    if actual_turn is None and method in {
+        "error", "thread/goal/updated", "hook/started", "hook/completed",
+    }:
+        return
+    if turn_id is None or actual_turn != turn_id:
+        raise AppServerProtocolError("codex_acp_lineage_mismatch")
 
 
 def _bounded_text(value: object, *, limit: int = 64 * 1024) -> str:
@@ -424,4 +495,4 @@ if __name__ == "__main__":
     main()
 
 
-__all__ = ["CodexACPServer", "main"]
+__all__ = ["CodexACPServer", "STABLE_NOTIFICATION_METHODS", "main"]

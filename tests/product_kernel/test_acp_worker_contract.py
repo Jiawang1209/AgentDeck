@@ -3,14 +3,31 @@ from __future__ import annotations
 import asyncio
 from datetime import datetime, timezone
 
-from agentdeck.adapters.acp import ACPWorker, _permission_effect
+import pytest
+from acp import spawn_agent_process
+
+from agentdeck.adapters.acp import ACPWorker, _native_request_id, _permission_effect
+from agentdeck.adapters.codex_acp_server import CodexACPServer
 from agentdeck.kernel.permissions import Effect, PermissionProfile, PermissionScope
 from product_kernel.fakes import FrozenClock
 from product_kernel.fixtures.fake_acp_agent import FakeACPAgent
+from product_kernel.fixtures.fake_codex_app_server import fake_command
 from product_kernel.worker_contract import assert_worker_contract, task_request
 
 
 NOW = datetime(2026, 7, 19, 9, 0, 0, tzinfo=timezone.utc)
+
+
+class _WorkerCallback:
+    worker: ACPWorker | None = None
+
+    async def session_update(self, *args, **kwargs):
+        assert self.worker is not None
+        return await self.worker.session_update(*args, **kwargs)
+
+    async def request_permission(self, *args, **kwargs):
+        assert self.worker is not None
+        return await self.worker.request_permission(*args, **kwargs)
 
 
 def worker_factory(scenario: str = "success"):
@@ -117,3 +134,45 @@ def test_raw_acp_frames_never_enter_stable_worker_payloads() -> None:
         assert "raw-acp-session" not in rendered
 
     asyncio.run(scenario())
+
+
+def test_real_codex_bridge_permission_preserves_native_request_lineage(tmp_path) -> None:
+    async def scenario() -> None:
+        bridge = CodexACPServer(app_server_command=fake_command(tmp_path / "calls.jsonl"))
+        callback = _WorkerCallback()
+        async with spawn_agent_process(
+            callback, bridge.command[0], *bridge.command[1:], cwd=str(tmp_path),
+            transport_kwargs={"shutdown_timeout": 2}, receive_timeout=5,
+        ) as (connection, _process):
+            worker = ACPWorker(
+                agent=connection, project_root=str(tmp_path), clock=FrozenClock(NOW),
+                project_boundary_enforced=True,
+            )
+            callback.worker = worker
+            handle = await worker.start_task(task_request())
+            permissions = []
+            async for event in worker.stream_events(handle):
+                if event.kind == "permission_requested":
+                    permissions.append(event.payload)
+                    await worker.respond_permission(
+                        handle,
+                        permission_request_id=event.payload["permission_request_id"],
+                        allowed=True, reason="approved exact native lineage",
+                    )
+            assert permissions == [{
+                "permission_request_id": "perm_1",
+                "native_request_id": "perm_42",
+                "tool_call_id": "item_42", "option_count": 2,
+                "effect": "command_project", "risk": "project_command",
+            }]
+            assert (await worker.collect_result(handle)).status == "completed"
+
+    asyncio.run(scenario())
+
+
+def test_native_permission_identity_is_bounded_and_content_free() -> None:
+    assert _native_request_id({"native_request_id": "native_42"}) == "native_42"
+    assert _native_request_id({}) is None
+    for invalid in (42, "", "x" * 257, "native id", "native\x00id"):
+        with pytest.raises(ValueError, match="native request identity"):
+            _native_request_id({"native_request_id": invalid})

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable, Sequence
+from dataclasses import replace
 import json
 from math import isfinite
 import threading
@@ -142,7 +143,6 @@ class ACPLeader:
             transport = None
         if factory_failed or transport is None:
             raise TransportFailure(TransportFailureCode.INITIALIZATION_FAILED)
-        request_part = self._request_part(request)
         artifacts: list[str] = []
         unexpected_side_effect = False
         async with transport:  # type: ignore[attr-defined]
@@ -150,6 +150,11 @@ class ACPLeader:
             if not capabilities.embedded_context:
                 raise TransportFailure(TransportFailureCode.CAPABILITY_MISSING)
             session = await transport.new_session()
+            resolved_request = _resolved_request(
+                request, session, backend_id=self.backend_id,
+                model=self.model, version=self.version,
+            )
+            request_part = self._request_part(resolved_request)
             prompt_task = asyncio.create_task(transport.prompt(session, (
                 TransportPromptPart.text(
                     "Propose one AgentDeck Mission. Return the proposal only as the "
@@ -195,9 +200,10 @@ class ACPLeader:
                 raise LeaderFailure(LeaderFailureCode.NONZERO)
         if len(artifacts) != 1:
             raise LeaderFailure(LeaderFailureCode.SCHEMA)
-        return _decode_proposal(artifacts[0], request)
+        return _decode_proposal(artifacts[0], resolved_request)
 
     def _request_part(self, request: LeaderRequest) -> TransportPromptPart:
+        resolved = request.resolved_model
         payload = {
             "user_goal": request.user_goal,
             "project_context": {
@@ -215,10 +221,10 @@ class ACPLeader:
             ],
             "permission_ceiling": request.permission_ceiling.value,
             "resolved_leader": {
-                "backend_id": self.backend_id,
-                "adapter_id": _ADAPTER_ID,
-                "model_id": self.model,
-                "version": self.version,
+                "backend_id": resolved.backend_id,
+                "adapter_id": resolved.adapter_id,
+                "model_id": resolved.model_id,
+                "version": resolved.version,
             },
             "schema_repair": request.schema_repair is not None,
             "proposal_schema": leader_proposal_json_schema(),
@@ -233,6 +239,28 @@ class ACPLeader:
             mime_type=_REQUEST_MIME,
             text=encoded.decode("utf-8"),
         )
+
+
+def _resolved_request(
+    request: LeaderRequest, session: object, *, backend_id: str,
+    model: str, version: str,
+) -> LeaderRequest:
+    actual_model = getattr(session, "resolved_model", None)
+    actual_version = getattr(session, "resolved_version", None)
+    if actual_model is None and actual_version is None:
+        if backend_id == "codex-cli":
+            raise TransportFailure(TransportFailureCode.PROTOCOL_MISMATCH)
+        return request
+    if (
+        type(actual_model) is not str or type(actual_version) is not str
+        or actual_version != version
+        or model != "native-default" and actual_model != model
+    ):
+        raise TransportFailure(TransportFailureCode.PROTOCOL_MISMATCH)
+    resolved = replace(
+        request.resolved_model, model_id=actual_model, version=actual_version,
+    )
+    return replace(request, resolved_model=resolved)
 
 
 def _decode_proposal(raw: str, request: LeaderRequest) -> LeaderProposal:

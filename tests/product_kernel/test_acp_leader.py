@@ -1,5 +1,4 @@
 from __future__ import annotations
-
 import asyncio
 from contextlib import redirect_stderr
 from dataclasses import replace
@@ -11,7 +10,6 @@ from pathlib import Path
 import threading
 import traceback
 import warnings
-
 import pytest
 from acp import PROTOCOL_VERSION
 from acp.schema import (
@@ -19,8 +17,7 @@ from acp.schema import (
     NewSessionResponse, PromptCapabilities, PromptResponse,
     ResumeSessionResponse, SessionCapabilities, SessionResumeCapabilities,
 )
-
-from agentdeck.adapters.acp_leader import ACPLeader
+from agentdeck.adapters.acp_leader import ACPLeader, _resolved_request
 from agentdeck.adapters.acp_transport import ACPStdioTransport
 from agentdeck.ports.leader import (
     LeaderFailure,
@@ -38,10 +35,8 @@ from .fixtures.fake_acp_stdio_agent import (
     fake_command,
 )
 from .test_leader_contract import request, valid_proposal
-
-
 def _fixture_files(
-    tmp_path: Path, mode: str = "success", backend_id: str = "codex-cli"
+    tmp_path: Path, mode: str = "success", backend_id: str = "test-cli"
 ) -> tuple[tuple[str, ...], Path]:
     log = tmp_path / f"{mode}.jsonl"
     proposal = tmp_path / "proposal.json"
@@ -50,9 +45,7 @@ def _fixture_files(
     payload["leader_backend"] = backend_id
     proposal.write_text(json.dumps(payload), encoding="utf-8")
     return fake_command(log_path=log, proposal_path=proposal, mode=mode), log
-
-
-def _request(tmp_path: Path, backend_id: str = "codex-cli"):
+def _request(tmp_path: Path, backend_id: str = "test-cli"):
     return replace(
         request(),
         project_context=ProjectContext(
@@ -66,14 +59,10 @@ def _request(tmp_path: Path, backend_id: str = "codex-cli"):
             version="1.2.3",
         ),
     )
-
-
 def _calls(path: Path) -> list[dict[str, object]]:
     if not path.exists():
         return []
     return [json.loads(line) for line in path.read_text().splitlines()]
-
-
 def _chain(error: BaseException) -> str:
     rendered = ["".join(traceback.format_exception(error))]
     pending = [error]
@@ -85,27 +74,37 @@ def _chain(error: BaseException) -> str:
         if current.__context__ is not None:
             pending.append(current.__context__)
     return "\n".join(rendered)
-
-
 def _sync_test(function):
     @wraps(function)
     def run(*args, **kwargs):
         import asyncio
         return asyncio.run(function(*args, **kwargs))
     return run
-
-
 def _leader(command: tuple[str, ...], **overrides: object) -> ACPLeader:
     options: dict[str, object] = {
-        "backend_id": "codex-cli",
+        "backend_id": "test-cli",
         "model": "native-default",
         "version": "1.2.3",
     }
     options.update(overrides)
     return ACPLeader(command, **options)
+def test_session_actual_normalizes_default_leader_authority(tmp_path: Path) -> None:
+    normalized = _resolved_request(_request(tmp_path), TransportSession(
+        "session", "gpt-5.5", "1.2.3"), backend_id="test-cli",
+        model="native-default", version="1.2.3")
+    assert normalized.resolved_model.model_id == "gpt-5.5"
+    with pytest.raises(TransportFailure, match="protocol_mismatch"):
+        _resolved_request(_request(tmp_path), TransportSession(
+            "session", "gpt-5.5", "9.9.9"), backend_id="test-cli",
+            model="native-default", version="1.2.3")
+    for session, model in ((TransportSession("missing"), "native-default"),
+                           (TransportSession("drift", "gpt-5.5", "1.2.3"), "gpt-5.4")):
+        with pytest.raises(TransportFailure, match="protocol_mismatch"):
+            _resolved_request(_request(tmp_path, "codex-cli"), session,
+                              backend_id="codex-cli", model=model, version="1.2.3")
 
 
-@pytest.mark.parametrize("backend_id", ["codex-cli", "claude-cli"])
+@pytest.mark.parametrize("backend_id", ["test-cli", "claude-cli"])
 def test_acp_leader_initializes_session_and_uses_only_structured_artifact(
     tmp_path: Path, backend_id: str,
 ) -> None:

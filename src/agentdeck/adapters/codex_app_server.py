@@ -5,23 +5,18 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
-from hashlib import sha256
 import inspect
 import json
-from pathlib import Path
-import subprocess
-import tempfile
 from typing import Any, Final
 
-FROZEN_CODEX_VERSION: Final = "codex-cli 0.131.0"
-FROZEN_STABLE_SCHEMA_DIGEST: Final = (
-    "91fae2120975b74d2d02184de2d8fed5f90770ce5009f308bbcaeec02dedcc23"
+from agentdeck.adapters.codex_app_server_probe import (
+    BridgeDiagnostic, CodexBridgeReadiness, FROZEN_CODEX_VERSION,
+    FROZEN_SERVER_VERSION, FROZEN_STABLE_SCHEMA_DIGEST,
+    command_argv as _command, probe_codex_bridge,
 )
-_SCHEMA_NAME: Final = "codex_app_server_protocol.v2.schemas.json"
 _MAX_LINE_BYTES: Final = 1024 * 1024
 _MAX_TOTAL_BYTES: Final = 8 * 1024 * 1024
-_MAX_SCHEMA_BYTES: Final = 8 * 1024 * 1024
-_MAX_PROBE_OUTPUT: Final = 4096
+_MAX_NATIVE_REQUEST_IDS: Final = 64
 _TIMEOUT_SECONDS: Final = 30.0
 NotificationHandler = Callable[[str, dict[str, object]], Awaitable[None] | None]
 PermissionHandler = Callable[["AppServerPermissionRequest"], Awaitable[object] | object]
@@ -31,15 +26,6 @@ class AppServerProtocolError(RuntimeError):
     def __init__(self, code: str) -> None:
         self.code = code
         super().__init__(f"Codex app-server unavailable: {code}")
-@dataclass(frozen=True)
-class BridgeDiagnostic:
-    code: str
-@dataclass(frozen=True)
-class CodexBridgeReadiness:
-    ready: bool
-    version: str | None
-    schema_digest: str | None
-    diagnostic: BridgeDiagnostic | None
 @dataclass(frozen=True)
 class AppServerPermissionRequest:
     native_id: object
@@ -55,67 +41,10 @@ class AppServerTurnResult:
     turn_id: str
     status: str
 
-
-def _command(value: Sequence[str]) -> tuple[str, ...]:
-    if isinstance(value, (str, bytes)):
-        raise TypeError("command must be an argv sequence")
-    result = tuple(value)
-    if not result or any(type(part) is not str or not part for part in result):
-        raise ValueError("command must contain nonempty argv strings")
-    return result
-
-
-def _probe_run(command: tuple[str, ...]) -> bytes:
-    try:
-        with tempfile.TemporaryFile() as output:
-            result = subprocess.run(command, stdin=subprocess.DEVNULL, stdout=output,
-                stderr=subprocess.DEVNULL, timeout=10, check=False)
-            if result.returncode != 0 or output.tell() > _MAX_PROBE_OUTPUT:
-                raise AppServerProtocolError("codex_app_server_probe_failed")
-            output.seek(0)
-            return output.read()
-    except (OSError, subprocess.SubprocessError):
-        raise AppServerProtocolError("codex_app_server_probe_failed") from None
-
-
-def probe_codex_bridge(
-    app_server_command: Sequence[str], *,
-    expected_version: str = FROZEN_CODEX_VERSION,
-    expected_digest: str = FROZEN_STABLE_SCHEMA_DIGEST,
-) -> CodexBridgeReadiness:
-    """Passively verify the frozen CLI and stable generated schema in temp space."""
-    command = _command(app_server_command)
-    if command[-1] != "app-server":
-        raise ValueError("app-server command must end with app-server")
-    root = command[:-1]
-    try:
-        version = _probe_run((*root, "--version")).decode("utf-8", "strict").strip()
-    except (UnicodeDecodeError, AppServerProtocolError):
-        return CodexBridgeReadiness(
-            False, None, None, BridgeDiagnostic("codex_app_server_probe_failed")
-        )
-    if version != expected_version:
-        return CodexBridgeReadiness(
-            False, None, None, BridgeDiagnostic("codex_app_server_version_drift")
-        )
-    try:
-        with tempfile.TemporaryDirectory(prefix="agentdeck-codex-schema-") as directory:
-            _probe_run((*command, "generate-json-schema", "--out", directory))
-            schema_path = Path(directory) / _SCHEMA_NAME
-            size = schema_path.stat().st_size
-            if not 0 < size <= _MAX_SCHEMA_BYTES:
-                raise AppServerProtocolError("codex_app_server_probe_failed")
-            canonical = json.dumps(json.loads(schema_path.read_text("utf-8")), sort_keys=True, separators=(",", ":"), ensure_ascii=False)
-            digest = sha256(canonical.encode("utf-8", "strict")).hexdigest()
-    except (OSError, ValueError, AppServerProtocolError):
-        return CodexBridgeReadiness(
-            False, version, None, BridgeDiagnostic("codex_app_server_probe_failed")
-        )
-    if digest != expected_digest:
-        return CodexBridgeReadiness(
-            False, version, None, BridgeDiagnostic("codex_app_server_schema_drift")
-        )
-    return CodexBridgeReadiness(True, version, digest, None)
+@dataclass(frozen=True)
+class AppServerThreadResult:
+    thread_id: str
+    model: str
 
 
 class CodexAppServerClient:
@@ -139,10 +68,14 @@ class CodexAppServerClient:
         self._process: asyncio.subprocess.Process | None = None
         self._reader_task: asyncio.Task[None] | None = None
         self._request_tasks: set[asyncio.Task[None]] = set()
+        self._native_pending: set[int | str] = set()
+        self._native_seen: set[int | str] = set()
         self._pending: dict[int, asyncio.Future[object]] = {}
         self._next_id = 1
         self._total_bytes = 0
         self._initialized = False
+        self._server_version: str | None = None
+        self._server_user_agent: str | None = None
         self._closed = False
         self._fatal: AppServerProtocolError | None = None
         self._notification: NotificationHandler | None = None
@@ -161,6 +94,14 @@ class CodexAppServerClient:
     def active_turn_id(self) -> str | None:
         return self._active_turn
 
+    @property
+    def server_version(self) -> str | None:
+        return self._server_version
+
+    @property
+    def server_user_agent(self) -> str | None:
+        return self._server_user_agent
+
     async def initialize(self) -> dict[str, object]:
         if self._initialized:
             raise ValueError("app-server is already initialized")
@@ -174,26 +115,44 @@ class CodexAppServerClient:
             "userAgent", "codexHome", "platformFamily", "platformOs",
         )):
             raise AppServerProtocolError("codex_app_server_protocol")
+        user_agent = _text(value["userAgent"])
+        actual_version = _user_agent_version(user_agent)
+        if actual_version != FROZEN_SERVER_VERSION:
+            raise AppServerProtocolError("codex_app_server_version_drift")
+        self._server_user_agent = user_agent
+        self._server_version = actual_version
         await self._notify("initialized")
         self._initialized = True
         return value
 
-    async def start_thread(self, *, cwd: str, model: str | None = None) -> str:
+    async def start_thread(
+        self, *, cwd: str, model: str | None = None,
+    ) -> AppServerThreadResult:
         self._require_initialized()
         params: dict[str, object] = {"cwd": _text(cwd), "approvalPolicy": "on-request"}
         if model is not None and model != "native-default":
             params["model"] = _text(model)
-        return _thread_id(await self._request("thread/start", params))
+        response = _object(await self._request("thread/start", params))
+        actual_model = _text(response.get("model"))
+        if model not in {None, "native-default"} and actual_model != model:
+            raise AppServerProtocolError("codex_app_server_model_drift")
+        return AppServerThreadResult(_thread_id(response), actual_model)
 
-    async def resume_thread(self, thread_id: str, *, cwd: str) -> str:
+    async def resume_thread(
+        self, thread_id: str, *, cwd: str, model: str | None = None,
+    ) -> AppServerThreadResult:
         self._require_initialized()
         requested = _text(thread_id)
-        actual = _thread_id(await self._request(
+        response = _object(await self._request(
             "thread/resume", {"threadId": requested, "cwd": _text(cwd)}
         ))
+        actual = _thread_id(response)
         if actual != requested:
             raise AppServerProtocolError("codex_app_server_protocol")
-        return actual
+        actual_model = _text(response.get("model"))
+        if model not in {None, "native-default"} and actual_model != model:
+            raise AppServerProtocolError("codex_app_server_model_drift")
+        return AppServerThreadResult(actual, actual_model)
 
     async def start_turn(
         self, *, thread_id: str, text: str,
@@ -358,9 +317,18 @@ class CodexAppServerClient:
     async def _dispatch(self, message: dict[str, object]) -> None:
         if "method" in message:
             if "id" in message:
+                native_id = _native_wire_id(message["id"])
+                if (
+                    native_id in self._native_pending or native_id in self._native_seen
+                    or len(self._native_pending) + len(self._native_seen)
+                    >= _MAX_NATIVE_REQUEST_IDS
+                ):
+                    raise AppServerProtocolError("codex_app_server_permission_failed")
+                self._native_pending.add(native_id)
                 task = asyncio.create_task(self._handle_server_request(message))
                 self._request_tasks.add(task)
                 task.add_done_callback(self._request_tasks.discard)
+                await asyncio.sleep(0)
             else:
                 await self._handle_notification(message)
             return
@@ -403,7 +371,7 @@ class CodexAppServerClient:
         self._active_turn = turn_id
 
     async def _handle_server_request(self, message: dict[str, object]) -> None:
-        native_id = message.get("id")
+        native_id = _native_wire_id(message.get("id"))
         try:
             if set(message) not in (
                 {"id", "method", "params"}, {"id", "method", "params", "trace"},
@@ -422,6 +390,9 @@ class CodexAppServerClient:
             raise
         except Exception:
             self._set_fatal(AppServerProtocolError("codex_app_server_permission_failed"))
+        finally:
+            self._native_pending.discard(native_id)
+            self._native_seen.add(native_id)
 
     def _set_fatal(self, error: AppServerProtocolError) -> None:
         if self._fatal is None:
@@ -431,6 +402,10 @@ class CodexAppServerClient:
                 future.set_exception(self._fatal)
         if self._turn_done is not None and not self._turn_done.done():
             self._turn_done.set_exception(self._fatal)
+        current = asyncio.current_task()
+        for task in tuple(self._request_tasks):
+            if task is not current and not task.done():
+                task.cancel()
 
     def _raise_fatal(self) -> None:
         if self._fatal is not None:
@@ -467,6 +442,24 @@ def _text(value: object, *, limit: int = 4096) -> str:
 
 def _thread_id(response: object) -> str:
     return _text(_object(_object(response).get("thread")).get("id"))
+
+
+def _user_agent_version(value: str) -> str:
+    _product, separator, remainder = value.partition("/")
+    version = remainder.split(" ", 1)[0] if separator else ""
+    if not version:
+        raise AppServerProtocolError("codex_app_server_protocol")
+    return version
+
+
+def _native_wire_id(value: object) -> int | str:
+    if type(value) is int:
+        return value
+    if type(value) is not str or not value or len(value.encode("utf-8", "strict")) > 256:
+        raise AppServerProtocolError("codex_app_server_protocol")
+    if any(character.isspace() or ord(character) < 32 for character in value):
+        raise AppServerProtocolError("codex_app_server_protocol")
+    return value
 
 
 def _permission_request(native_id: object, method_value: object, params_value: object) -> AppServerPermissionRequest:

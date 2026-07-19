@@ -53,6 +53,9 @@ def test_bridge_translates_acp_session_to_codex_thread_and_turn(tmp_path) -> Non
         initialized = await bridge.initialize(PROTOCOL_VERSION)
         assert initialized.protocol_version == PROTOCOL_VERSION
         session = await bridge.new_session(cwd=str(tmp_path))
+        assert session.field_meta == {
+            "agentdeck": {"resolved_model": "gpt-5.5", "server_version": "0.131.0"}
+        }
         response = await bridge.prompt(
             session.session_id,
             [TextContentBlock(type="text", text="Implement the frozen task.")],
@@ -118,6 +121,8 @@ def test_same_thread_previous_turn_update_fails_closed(tmp_path) -> None:
 def test_acp_leader_reaches_fake_app_server_through_console_bridge(tmp_path) -> None:
     proposal = valid_proposal()
     proposal["project_root"] = str(tmp_path)
+    proposal["leader_model"] = "gpt-5.5"
+    proposal["leader_version"] = "0.131.0"
     proposal_path = tmp_path / "proposal.json"
     proposal_path.write_text(json.dumps(proposal), encoding="utf-8")
     app_log = tmp_path / "app-server.jsonl"
@@ -129,12 +134,12 @@ def test_acp_leader_reaches_fake_app_server_through_console_bridge(tmp_path) -> 
         project_context=ProjectContext(str(tmp_path), "isolated bridge project"),
         resolved_model=ResolvedLeaderModel(
             backend_id="codex-cli", adapter_id="acp",
-            model_id="native-default", version="1.2.3",
+            model_id="gpt-5.5", version="0.131.0",
         ),
     )
     result = ACPLeader(
         bridge.command, backend_id="codex-cli",
-        model="native-default", version="1.2.3", timeout_seconds=5,
+        model="gpt-5.5", version="0.131.0", timeout_seconds=5,
     ).propose_mission(leader_request)
     assert result.objective == "Build an accessible page"
     turn = next(
@@ -146,8 +151,46 @@ def test_acp_leader_reaches_fake_app_server_through_console_bridge(tmp_path) -> 
     assert "AgentDeck Mission request JSON:" in turn["params"]["input"][0]["text"]
 
 
+def test_native_default_leader_resolves_session_model_before_turn(tmp_path) -> None:
+    proposal = valid_proposal()
+    proposal["project_root"] = str(tmp_path)
+    proposal["leader_model"] = "gpt-5.5"
+    proposal["leader_version"] = "0.131.0"
+    proposal_path = tmp_path / "proposal.json"
+    proposal_path.write_text(json.dumps(proposal), encoding="utf-8")
+    log = tmp_path / "app-server.jsonl"
+    bridge = CodexACPServer(app_server_command=fake_command(
+        log, mode="leader", proposal_path=proposal_path,
+    ))
+    leader_request = replace(
+        request(),
+        project_context=ProjectContext(str(tmp_path), "default model bridge"),
+        resolved_model=ResolvedLeaderModel(
+            backend_id="codex-cli", adapter_id="acp",
+            model_id="native-default", version="0.131.0",
+        ),
+    )
+    result = ACPLeader(
+        bridge.command, backend_id="codex-cli", model="native-default",
+        version="0.131.0", timeout_seconds=5,
+    ).propose_mission(leader_request)
+    assert result.mission.leader_model == "gpt-5.5"
+    assert "turn/start" in _methods(log)
+    turn = next(item["message"] for item in map(json.loads, log.read_text().splitlines())
+                if item["kind"] == "received" and item["message"].get("method") == "turn/start")
+    request_json = turn["params"]["input"][0]["text"].split(
+        "AgentDeck Mission request JSON:\n", 1)[1]
+    assert json.loads(request_json)["resolved_leader"] == {
+        "backend_id": "codex-cli", "adapter_id": "acp",
+        "model_id": "gpt-5.5", "version": "0.131.0",
+    }
+
+
 @pytest.mark.parametrize(
-    "case", ["extra", "malformed", "wrong_resource", "model_mismatch"],
+    "case", [
+        "extra", "malformed", "wrong_resource", "model_mismatch",
+        "version_mismatch",
+    ],
 )
 def test_leader_resource_contract_rejects_ambiguous_input(tmp_path, case) -> None:
     async def scenario() -> None:
@@ -158,8 +201,8 @@ def test_leader_resource_contract_rejects_ambiguous_input(tmp_path, case) -> Non
         session = await bridge.new_session(cwd=str(tmp_path))
         leader = ACPLeader(
             ("unused",), backend_id="codex-cli",
-            model="other-model" if case == "model_mismatch" else "native-default",
-            version="1.2.3",
+            model="other-model" if case == "model_mismatch" else "gpt-5.5",
+            version="other-version" if case == "version_mismatch" else "0.131.0",
         )
         leader_request = replace(
             request(),
@@ -184,6 +227,96 @@ def test_leader_resource_contract_rejects_ambiguous_input(tmp_path, case) -> Non
             await bridge.prompt(session.session_id, blocks)
         await bridge.close()
         assert "turn/start" not in _methods(log)
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize(
+    "mode", [
+        "duplicate_permission_concurrent", "duplicate_permission_sequential",
+        "permission_id_flood",
+    ],
+)
+def test_duplicate_native_permission_request_id_fails_closed_once(tmp_path, mode) -> None:
+    async def scenario() -> None:
+        log = tmp_path / "calls.jsonl"
+        bridge = CodexACPServer(app_server_command=fake_command(log, mode=mode))
+        client = RecordingACPClient()
+        bridge.on_connect(client)
+        await bridge.initialize(PROTOCOL_VERSION)
+        session = await bridge.new_session(cwd=str(tmp_path))
+        with pytest.raises(AppServerProtocolError):
+            await bridge.prompt(session.session_id, [TextContentBlock(type="text", text="work")])
+        await bridge.close()
+        if mode == "permission_id_flood":
+            assert len(client.permissions) <= 64
+        else:
+            assert len(client.permissions) == 1
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("mode", ["stable_notifications", "unknown_notification"])
+def test_frozen_notifications_are_classified_and_unknown_drift_fails(tmp_path, mode) -> None:
+    async def scenario() -> None:
+        bridge = CodexACPServer(app_server_command=fake_command(
+            tmp_path / "calls.jsonl", mode=mode,
+        ))
+        client = RecordingACPClient()
+        bridge.on_connect(client)
+        await bridge.initialize(PROTOCOL_VERSION)
+        session = await bridge.new_session(cwd=str(tmp_path))
+        if mode == "stable_notifications":
+            response = await bridge.prompt(
+                session.session_id, [TextContentBlock(type="text", text="work")]
+            )
+            assert response.stop_reason == "end_turn"
+        else:
+            with pytest.raises(AppServerProtocolError) as raised:
+                await bridge.prompt(
+                    session.session_id, [TextContentBlock(type="text", text="work")]
+                )
+            assert raised.value.code == "codex_app_server_notification_drift"
+        await bridge.close()
+
+    asyncio.run(scenario())
+
+
+def test_stable_error_notification_fails_turn_instead_of_being_ignored(tmp_path) -> None:
+    async def scenario() -> None:
+        bridge = CodexACPServer(app_server_command=fake_command(
+            tmp_path / "calls.jsonl", mode="error_notification",
+        ))
+        bridge.on_connect(RecordingACPClient())
+        await bridge.initialize(PROTOCOL_VERSION)
+        session = await bridge.new_session(cwd=str(tmp_path))
+        with pytest.raises(AppServerProtocolError) as raised:
+            await bridge.prompt(
+                session.session_id, [TextContentBlock(type="text", text="work")]
+            )
+        await bridge.close()
+        assert raised.value.code == "codex_app_server_turn_failed"
+        assert "RAW-TURN-FAILURE" not in str(raised.value)
+
+    asyncio.run(scenario())
+
+
+def test_same_lineage_model_reroute_drift_fails_before_later_updates(tmp_path) -> None:
+    async def scenario() -> None:
+        bridge = CodexACPServer(app_server_command=fake_command(
+            tmp_path / "calls.jsonl", mode="model_rerouted_drift",
+        ))
+        client = RecordingACPClient()
+        bridge.on_connect(client)
+        await bridge.initialize(PROTOCOL_VERSION)
+        session = await bridge.new_session(cwd=str(tmp_path))
+        with pytest.raises(AppServerProtocolError) as raised:
+            await bridge.prompt(
+                session.session_id, [TextContentBlock(type="text", text="work")]
+            )
+        await bridge.close()
+        assert raised.value.code == "codex_app_server_model_drift"
+        assert "RAW-AFTER-MODEL-DRIFT" not in repr(client.updates)
 
     asyncio.run(scenario())
 

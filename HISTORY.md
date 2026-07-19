@@ -38,6 +38,31 @@
   permission requests from a stale same-thread turn now fail closed before ACP
   forwarding; deterministic tests cover malformed/extra Leader resources and the
   full ACPLeader-to-console-bridge-to-app-server chain.
+- Closed runtime provenance against server-reported facts. The initialized Codex
+  user agent is preserved, its actual `0.131.0` version is validated, and the
+  actual `thread/start` model must equal an explicit requested model;
+  `native-default` is resolved to and stored as the server's concrete session
+  model. The bridge returns that bounded model/version in ACP session metadata;
+  transport and Leader normalize the request before `turn/start`, so the final
+  Mission freezes concrete provenance instead of the selection sentinel.
+- Preserved native permission lineage through the official outward ACP wire into
+  the real `ACPWorker`: AgentDeck keeps its internal permission ID while exposing
+  a separately bounded `native_request_id`, without carrying raw command content.
+- Added a bounded pending/seen state machine for server-initiated request IDs.
+  Concurrent or sequential reuse fails closed after exactly one ACP request, ID
+  cardinality is capped, and pending state is removed on response, error or cancel.
+- Extracted passive probing into `codex_app_server_probe.py`. Stdout is drained
+  through a 4097-byte bounded pipe, schema files run under an 8 MiB file-size
+  limit and total-directory polling, and oversized/timed-out process groups are
+  terminated and reaped instead of filling temporary space. Group cleanup now
+  escalates to `SIGKILL` even when the group leader exited before a descendant
+  that ignores `SIGTERM`.
+- Classified all 63 notifications in the frozen non-experimental 0.131.0 schema.
+  Global notifications no longer inherit turn lineage, thread/turn notifications
+  remain exact-bound, known hook/model/warning/resolved events are boundedly
+  ignored or normalized, `model/rerouted` must preserve the session's actual
+  from/to model, stable `error` fails the turn, and unknown methods remain
+  protocol drift.
 
 ## 2026-07-19
 

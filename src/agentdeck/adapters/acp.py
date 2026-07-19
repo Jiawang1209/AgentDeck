@@ -19,7 +19,6 @@ from agentdeck.ports.clock import Clock
 from agentdeck.ports.worker import (
     TaskRequest, WorkerEvent, WorkerHandle, WorkerResult, validate_worker_reason,
 )
-
 _MAX_ACP_UPDATE_BYTES: Final = 64 * 1024
 _MAX_ACP_TOTAL_BYTES: Final = 1024 * 1024
 _PROVEN_READ_ONLY_TOOL_KINDS: Final = frozenset({"read", "search", "think"})
@@ -28,20 +27,17 @@ _PERMISSION_EFFECTS: Final = {
     "think": ("read", "read_only"), "fetch": ("network", "network_access"),
     "delete": ("destructive", "project_deletion"),
 }
-
 class ACPWorkerError(RuntimeError):
     """Content-free typed failure at the ACP Worker boundary."""
 
     def __init__(self, diagnostic: Diagnostic) -> None:
         super().__init__(f"ACP Worker failed: {diagnostic.code}")
         self.diagnostic = diagnostic
-
 @dataclass
 class _PermissionWaiter:
     permission_id: str
     options: tuple[PermissionOption, ...]
     future: asyncio.Future[RequestPermissionResponse]
-
 @dataclass
 class _Run:
     request: TaskRequest
@@ -61,7 +57,6 @@ class _Run:
     cancellation_requested: bool = False
     stream_started: bool = False
     terminal: bool = False
-
 class ACPWorker:
     """One-task ACP Worker adapter; Task 26 supplies the real connection."""
 
@@ -98,7 +93,6 @@ class ACPWorker:
         connector = getattr(agent, "on_connect", None)
         if callable(connector):
             connector(self)
-
     async def start_task(self, request: TaskRequest) -> WorkerHandle:
         if type(request) is not TaskRequest or self._run is not None:
             raise ValueError("ACP Worker task start invalid")
@@ -128,14 +122,12 @@ class ACPWorker:
         self._emit("started", {"protocol_version": PROTOCOL_VERSION})
         self._run.prompt_task = asyncio.create_task(self._run_prompt())
         return handle
-
     def stream_events(self, handle: WorkerHandle) -> AsyncIterator[WorkerEvent]:
         run = self._require_handle(handle)
         if run.stream_started:
             raise ValueError("ACP Worker event stream already consumed")
         run.stream_started = True
         return self._event_stream(run)
-
     async def respond_permission(
         self, handle: WorkerHandle, *, permission_request_id: str,
         allowed: bool, reason: str,
@@ -165,7 +157,6 @@ class ACPWorker:
         run.pending_permission = None
         if not waiter.future.done():
             waiter.future.set_result(response)
-
     async def cancel_task(self, handle: WorkerHandle, *, reason: str) -> None:
         run = self._require_handle(handle)
         if run.terminal:
@@ -181,7 +172,6 @@ class ACPWorker:
             raise error from None
         await self._cancel_prompt(run)
         self._finish("cancelled", {"reason": reason})
-
     async def collect_result(self, handle: WorkerHandle) -> WorkerResult:
         run = self._require_handle(handle)
         if not run.terminal:
@@ -191,7 +181,6 @@ class ACPWorker:
         if run.result is None:
             raise ValueError("ACP Worker result unavailable")
         return run.result
-
     async def session_update(
         self, session_id: str, update: object, **kwargs: Any,
     ) -> None:
@@ -228,7 +217,6 @@ class ACPWorker:
             raise
         except (TypeError, ValueError):
             raise self._run_error("acp_sensitive_output_redacted", run) from None
-
     async def request_permission(
         self, session_id: str, tool_call: ToolCallUpdate,
         options: list[PermissionOption], **kwargs: Any,
@@ -260,17 +248,24 @@ class ACPWorker:
             project_boundary_enforced=self._project_boundary_enforced,
         )
         try:
-            self._emit("permission_requested", {
+            native_id = _native_request_id(tool_call.field_meta)
+        except ValueError:
+            run.pending_permission = None
+            raise self._run_error("acp_protocol_mismatch", run) from None
+        try:
+            payload: dict[str, object] = {
                 "permission_request_id": permission_id,
                 "tool_call_id": tool_call.tool_call_id,
                 "option_count": len(options),
                 "effect": effect, "risk": risk,
-            })
+            }
+            if native_id is not None:
+                payload["native_request_id"] = native_id
+            self._emit("permission_requested", payload)
         except (TypeError, ValueError):
             run.pending_permission = None
             raise self._run_error("acp_sensitive_output_redacted", run) from None
         return await future
-
     async def _run_prompt(self) -> None:
         run = self._current()
         try:
@@ -314,7 +309,6 @@ class ACPWorker:
                 code, known, run.request,
                 retryable=known and _is_recoverable_disconnect(error),
             ))
-
     async def _cancel_prompt(self, run: _Run) -> None:
         task = run.prompt_task
         if task is not None and not task.done():
@@ -323,7 +317,6 @@ class ACPWorker:
                 await task
             except asyncio.CancelledError:
                 pass
-
     def _inspect_raw_update(self, run: _Run, update: object) -> None:
         serializer = getattr(update, "model_dump_json", None)
         if not callable(serializer):
@@ -346,12 +339,10 @@ class ACPWorker:
             if type(sequence) is not int or sequence <= run.raw_sequence:
                 raise self._run_error("acp_sequence_violation", run)
             run.raw_sequence = sequence
-
     def _consume_raw_size(self, run: _Run, size: int) -> None:
         run.raw_total_bytes += size
         if size > self._max_update_bytes or run.raw_total_bytes > self._max_total_bytes:
             raise self._run_error("acp_output_oversize", run)
-
     def _emit(self, kind: str, payload: dict[str, object]) -> None:
         run = self._current()
         if run.terminal:
@@ -371,7 +362,6 @@ class ACPWorker:
         except (TypeError, ValueError):
             raise self._run_error("acp_sensitive_output_redacted", run) from None
         run.queue.put_nowait(event)
-
     def _finish(self, status: str, payload: dict[str, object]) -> None:
         run = self._current()
         if run.terminal:
@@ -385,7 +375,6 @@ class ACPWorker:
             status=status, payload=payload,
         )
         run.queue.put_nowait(None)
-
     def _fail(self, error: ACPWorkerError) -> None:
         run = self._current()
         if run.terminal:
@@ -398,33 +387,28 @@ class ACPWorker:
         run.error = error
         run.terminal = True
         run.queue.put_nowait(None)
-
     async def _event_stream(self, run: _Run) -> AsyncIterator[WorkerEvent]:
         while True:
             event = await run.queue.get()
             if event is None:
                 return
             yield event
-
     def _require_handle(self, handle: WorkerHandle) -> _Run:
         run = self._current()
         if type(handle) is not WorkerHandle or handle != run.handle:
             raise ValueError("ACP Worker handle invalid")
         return run
-
     def _require_raw_session(self, session_id: str) -> _Run:
         run = self._current()
         if type(session_id) is not str or session_id != run.raw_session_id:
             raise self._run_error("acp_protocol_mismatch", run)
         return run
-
     @staticmethod
     def _cancel_pending_permission(run: _Run) -> None:
         waiter = run.pending_permission
         run.pending_permission = None
         if waiter is not None and not waiter.future.done():
             waiter.future.cancel()
-
     def _current(self) -> _Run:
         if self._run is None:
             raise ValueError("ACP Worker has no active task")
@@ -464,8 +448,22 @@ def _permission_id(value: object) -> str:
     except (UnicodeEncodeError, ValueError):
         raise ValueError("permission_request_id must be typed and bounded") from None
     return value
-
-
+def _native_request_id(metadata: object) -> str | None:
+    if metadata is None:
+        return None
+    if type(metadata) is not dict:
+        raise ValueError("native request identity must be bounded")
+    value = metadata.get("native_request_id")
+    if value is None:
+        return None
+    if type(value) is not str or not value or any(c.isspace() or ord(c) < 32 for c in value):
+        raise ValueError("native request identity must be bounded")
+    try:
+        if len(value.encode("utf-8", "strict")) > 256:
+            raise ValueError
+    except (UnicodeEncodeError, ValueError):
+        raise ValueError("native request identity must be bounded") from None
+    return value
 def _permission_effect(
     kind: object, *, project_boundary_enforced: bool = False,
 ) -> tuple[str, str]:

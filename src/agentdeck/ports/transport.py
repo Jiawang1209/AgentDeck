@@ -160,9 +160,18 @@ class TransportCapabilities:
 @dataclass(frozen=True)
 class TransportSession:
     session_id: str
+    resolved_model: str | None = None
+    resolved_version: str | None = None
 
     def __post_init__(self) -> None:
         _text(self.session_id, "session_id", maximum=4096)
+        if (self.resolved_model is None) != (self.resolved_version is None):
+            raise ValueError("session model provenance must be complete")
+        if self.resolved_model is not None:
+            _text(self.resolved_model, "resolved model", maximum=4096)
+            _text(self.resolved_version, "resolved version", maximum=4096)
+            if self.resolved_model == "native-default":
+                raise ValueError("session model provenance must be concrete")
 
 
 @dataclass(frozen=True)

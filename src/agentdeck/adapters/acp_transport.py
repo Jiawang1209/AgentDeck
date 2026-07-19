@@ -1,13 +1,10 @@
 """Lazy bounded stdio transport built on the official ACP Python SDK."""
-
 from __future__ import annotations
-
 import asyncio
 from collections.abc import AsyncIterator, Callable, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass
 from typing import Any, Final
-
 from acp import PROTOCOL_VERSION, spawn_agent_process
 from acp.helpers import embedded_text_resource, resource_block
 from acp.schema import (
@@ -17,7 +14,6 @@ from acp.schema import (
     RequestPermissionResponse, ResumeSessionResponse, TextContentBlock,
     TextResourceContents, ToolCallProgress, ToolCallStart, ToolCallUpdate,
 )
-
 from agentdeck.ports.transport import (
     TransportArtifact, TransportCapabilities, TransportDeadline, TransportFailure,
     TransportFailureCode, TransportPermissionDecision,
@@ -25,29 +21,21 @@ from agentdeck.ports.transport import (
     TransportSession, TransportUpdate, TransportUpdateKind,
     close_transport_awaitable, transport_argv, transport_byte_bound, transport_project_root, transport_timeout,
 )
-
 _DEFAULT_MAX_BYTES: Final = 1024 * 1024
 _DEFAULT_TIMEOUT_SECONDS: Final = 30.0
 _MAX_TOTAL_MULTIPLIER: Final = 8
 _SENTINEL: Final = object()
-ClientFactory = Callable[
-    [object, tuple[str, ...], str, int, float],
-    AbstractAsyncContextManager[object],
-]
-
+ClientFactory = Callable[[object, tuple[str, ...], str, int, float],
+                         AbstractAsyncContextManager[object]]
 @dataclass
 class _PendingPermission:
     request_id: str
     options: tuple[PermissionOption, ...]
     future: asyncio.Future[RequestPermissionResponse]
-
 @asynccontextmanager
 async def _spawn_client(
-    callback: object,
-    command: tuple[str, ...],
-    project_root: str,
-    max_bytes: int,
-    timeout_seconds: float,
+    callback: object, command: tuple[str, ...], project_root: str,
+    max_bytes: int, timeout_seconds: float,
 ) -> AsyncIterator[object]:
     transport_kwargs = {
         "limit": max_bytes,
@@ -64,11 +52,9 @@ async def _spawn_client(
         observers=[getattr(callback, "observe")],
     ) as (connection, _process):
         yield connection
-
 class _ACPClient:
     def __init__(self, owner: "ACPStdioTransport") -> None:
         self._owner = owner
-
     async def session_update(
         self, session_id: str, update: object, **_kwargs: Any
     ) -> None:
@@ -76,7 +62,6 @@ class _ACPClient:
             self._owner._accept_update(session_id, update)
         finally:
             self._owner._handled_update()
-
     async def request_permission(
         self,
         session_id: str,
@@ -85,7 +70,6 @@ class _ACPClient:
         **_kwargs: Any,
     ) -> RequestPermissionResponse:
         return await self._owner._accept_permission(session_id, tool_call, options)
-
     def observe(self, event: object) -> None:
         direction = getattr(getattr(event, "direction", None), "value", None)
         if direction != "incoming":
@@ -100,7 +84,6 @@ class _ACPClient:
             self._owner._set_failure(TransportFailureCode.PROTOCOL_MISMATCH)
             return
         self._owner._consume(size)
-
 class ACPStdioTransport:
     """One lazy ACP process connection and one independent Agent session."""
     def __init__(
@@ -181,7 +164,8 @@ class ACPStdioTransport:
         if type(response) is not NewSessionResponse:
             raise TransportFailure(TransportFailureCode.PROTOCOL_MISMATCH)
         try:
-            self._session = TransportSession(response.session_id)
+            model, version = _session_provenance(response.field_meta)
+            self._session = TransportSession(response.session_id, model, version)
         except (TypeError, ValueError):
             raise TransportFailure(TransportFailureCode.PROTOCOL_MISMATCH) from None
         return self._session
@@ -497,4 +481,17 @@ class ACPStdioTransport:
         if type(session) is not TransportSession or session != self._session:
             raise ValueError("ACP transport session is invalid")
         return session
+def _session_provenance(metadata: object) -> tuple[str | None, str | None]:
+    if metadata is None:
+        return None, None
+    if type(metadata) is not dict:
+        raise ValueError("ACP session provenance is invalid")
+    value = metadata.get("agentdeck")
+    if value is None:
+        return None, None
+    if type(value) is not dict or set(value) != {"resolved_model", "server_version"}:
+        raise ValueError("ACP session provenance is invalid")
+    model, version = value["resolved_model"], value["server_version"]
+    TransportSession("provenance", model, version)
+    return model, version
 __all__ = ["ACPStdioTransport"]

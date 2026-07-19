@@ -25,7 +25,7 @@ from acp.schema import (
     ToolCallUpdate,
 )
 
-from agentdeck.adapters.acp_transport import ACPStdioTransport
+from agentdeck.adapters.acp_transport import ACPStdioTransport, _session_provenance
 from agentdeck.ports.transport import (
     TransportFailure,
     TransportFailureCode,
@@ -72,6 +72,15 @@ def _sync_test(function):
     def run(*args, **kwargs):
         return asyncio.run(function(*args, **kwargs))
     return run
+
+
+def test_session_provenance_is_bounded_explicit_and_concrete() -> None:
+    actual = {"agentdeck": {"resolved_model": "gpt-5.5", "server_version": "0.131.0"}}
+    assert _session_provenance(None) == (None, None)
+    assert _session_provenance(actual) == ("gpt-5.5", "0.131.0")
+    for invalid in ({"agentdeck": {}}, {"agentdeck": {"resolved_model": "native-default", "server_version": "0.131.0"}}):
+        with pytest.raises(ValueError, match="provenance"):
+            _session_provenance(invalid)
 
 
 @_sync_test

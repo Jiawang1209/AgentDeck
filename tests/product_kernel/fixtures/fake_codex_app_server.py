@@ -6,11 +6,16 @@ import argparse
 import asyncio
 from hashlib import sha256
 import json
+import os
 from pathlib import Path
+import subprocess
 import sys
+import time
 
 
 FAKE_VERSION = "codex-cli 0.131.0"
+FAKE_SERVER_VERSION = "0.131.0"
+FAKE_USER_AGENT = f"Codex Desktop/{FAKE_SERVER_VERSION} (fake)"
 SCHEMA_BYTES = b'{"protocol":"codex-app-server-v2","stable":true}\n'
 SCHEMA_DIGEST = sha256(
     b'{"protocol":"codex-app-server-v2","stable":true}'
@@ -72,7 +77,11 @@ class FakeCodexAppServer:
             return
         if method == "initialize":
             self._respond(request_id, {
-                "userAgent": FAKE_VERSION,
+                "userAgent": (
+                    "Codex Desktop/9.9.9 (fake)"
+                    if self.mode == "initialize_version_mismatch"
+                    else FAKE_USER_AGENT
+                ),
                 "codexHome": "/tmp/fake-codex-home",
                 "platformFamily": "unix",
                 "platformOs": "macos",
@@ -81,9 +90,14 @@ class FakeCodexAppServer:
             params = message.get("params", {})
             if method == "thread/resume":
                 self.thread_id = params["threadId"]
+            requested_model = params.get("model", "gpt-5.5")
+            actual_model = (
+                "unexpected-model"
+                if self.mode == "thread_model_mismatch" else requested_model
+            )
             self._respond(request_id, {
                 "thread": {"id": self.thread_id, "preview": "", "modelProvider": "openai", "createdAt": 0, "updatedAt": 0, "status": {"type": "idle"}, "path": "/tmp/thread", "cwd": "/tmp/project", "cliVersion": "0.131.0", "source": "appServer", "name": None, "turns": []},
-                "model": "native-default", "modelProvider": "openai",
+                "model": actual_model, "modelProvider": "openai",
                 "cwd": "/tmp/project", "approvalPolicy": "on-request",
                 "sandbox": {"type": "workspaceWrite", "writableRoots": [], "networkAccess": False, "excludeTmpdirEnvVar": False, "excludeSlashTmp": False},
                 "approvalsReviewer": "user",
@@ -105,6 +119,49 @@ class FakeCodexAppServer:
         self._notify("turn/started", {
             "threadId": self.thread_id, "turn": self._turn("inProgress")
         })
+        if self.mode == "error_notification":
+            self._notify("error", {
+                "threadId": self.thread_id, "turnId": self.turn_id,
+                "error": {"message": "RAW-TURN-FAILURE"}, "willRetry": False,
+            })
+            return
+        if self.mode == "stable_notifications":
+            for method, params in (
+                ("warning", {"message": "bounded warning"}),
+                ("serverRequest/resolved", {
+                    "threadId": self.thread_id, "requestId": "perm_old",
+                }),
+                ("hook/started", {
+                    "threadId": self.thread_id, "turnId": self.turn_id,
+                    "run": {"id": "hook_1", "status": "running"},
+                }),
+                ("hook/completed", {
+                    "threadId": self.thread_id, "turnId": self.turn_id,
+                    "run": {"id": "hook_1", "status": "completed"},
+                }),
+                ("model/rerouted", {
+                    "threadId": self.thread_id, "turnId": self.turn_id,
+                    "fromModel": "gpt-5.5", "toModel": "gpt-5.5",
+                    "reason": "highRiskCyberActivity",
+                }),
+            ):
+                self._notify(method, params)
+        if self.mode == "model_rerouted_drift":
+            self._notify("model/rerouted", {
+                "threadId": self.thread_id, "turnId": self.turn_id,
+                "fromModel": "gpt-5.5", "toModel": "gpt-5.4",
+                "reason": "highRiskCyberActivity",
+            })
+            self._notify("item/agentMessage/delta", {
+                "threadId": self.thread_id, "turnId": self.turn_id,
+                "itemId": "msg_after_drift", "delta": "RAW-AFTER-MODEL-DRIFT",
+            })
+            self._notify("turn/completed", {
+                "threadId": self.thread_id, "turn": self._turn("completed"),
+            })
+            return
+        if self.mode == "unknown_notification":
+            self._notify("future/unknown", {"opaque": "RAW-UNKNOWN-SECRET"})
         if self.mode == "leader":
             assert self.proposal_path is not None
             self._notify("item/agentMessage/delta", {
@@ -136,8 +193,28 @@ class FakeCodexAppServer:
                 "itemId": "item_42", "command": "token=RAW-COMMAND-SECRET",
                 "cwd": "/tmp/project", "startedAtMs": 1,
             })
+            if self.mode == "duplicate_permission_concurrent":
+                self._request("perm_42", "item/commandExecution/requestApproval", {
+                    "threadId": self.thread_id, "turnId": self.turn_id,
+                    "itemId": "item_duplicate", "command": "duplicate",
+                    "cwd": "/tmp/project", "startedAtMs": 1,
+                })
+            if self.mode == "permission_id_flood":
+                for index in range(2, 70):
+                    self._request(f"perm_{index}", "item/commandExecution/requestApproval", {
+                        "threadId": self.thread_id, "turnId": self.turn_id,
+                        "itemId": f"item_{index}", "command": "bounded",
+                        "cwd": "/tmp/project", "startedAtMs": 1,
+                    })
             response = await self.permission_result
             self._record("permission_response", message=response)
+            if self.mode == "duplicate_permission_sequential":
+                self._request("perm_42", "item/commandExecution/requestApproval", {
+                    "threadId": self.thread_id, "turnId": self.turn_id,
+                    "itemId": "item_duplicate", "command": "duplicate",
+                    "cwd": "/tmp/project", "startedAtMs": 1,
+                })
+                await asyncio.sleep(0.05)
         self._notify("item/agentMessage/delta", {
             "threadId": self.thread_id, "turnId": self.turn_id,
             "itemId": "msg_42", "delta": "bounded result",
@@ -207,8 +284,30 @@ def _args() -> argparse.Namespace:
     return args
 
 
-def _generate_schema(out: Path, mode: str) -> None:
+def _probe_record(path: Path, **values: object) -> None:
+    with path.open("a", encoding="utf-8") as stream:
+        stream.write(json.dumps(values, separators=(",", ":")) + "\n")
+
+
+def _generate_schema(out: Path, mode: str, log: Path) -> None:
     out.mkdir(parents=True, exist_ok=True)
+    if mode == "schema_one_shot_oversize":
+        target = out / "codex_app_server_protocol.v2.schemas.json"
+        _probe_record(log, probe="schema", pid=os.getpid(), phase="started")
+        with target.open("wb", buffering=0) as stream:
+            os.write(stream.fileno(), b"x" * (16 * 1024 * 1024))
+        _probe_record(log, probe="schema", stored_bytes=target.stat().st_size)
+        return
+    if mode == "schema_stream_oversize":
+        target = out / "codex_app_server_protocol.v2.schemas.json"
+        _probe_record(log, probe="schema", pid=os.getpid(), phase="started")
+        with target.open("wb") as stream:
+            for index in range(32):
+                stream.write(b"x" * (1024 * 1024))
+                stream.flush()
+                _probe_record(log, probe="schema", chunk=index + 1)
+                time.sleep(0.05)
+        return
     if mode == "schema_drift":
         payload = b'{"drift":true}\n'
     elif mode == "schema_reordered":
@@ -222,10 +321,37 @@ def main() -> None:
     args = _args()
     rest = args.rest
     if args.version:
+        if args.mode == "version_orphan_oversize":
+            ready = Path(f"{args.log}.grandchild-ready")
+            child = subprocess.Popen((
+                sys.executable, "-c",
+                "import pathlib,signal,sys,time;"
+                "signal.signal(signal.SIGTERM,signal.SIG_IGN);"
+                "pathlib.Path(sys.argv[1]).write_text('ready');time.sleep(30)",
+                str(ready),
+            ))
+            while not ready.exists():
+                time.sleep(0.005)
+            _probe_record(args.log, probe="stdout", pid=os.getpid(),
+                          grandchild_pid=child.pid, phase="started")
+            os.write(sys.stdout.fileno(), b"x" * 4097)
+            return
+        if args.mode == "version_one_shot_oversize":
+            _probe_record(args.log, probe="stdout", pid=os.getpid(), phase="started")
+            os.write(sys.stdout.fileno(), b"x" * (16 * 1024 * 1024))
+            return
+        if args.mode == "version_stream_oversize":
+            _probe_record(args.log, probe="stdout", pid=os.getpid(), phase="started")
+            for index in range(32):
+                sys.stdout.buffer.write(b"x" * 1024)
+                sys.stdout.buffer.flush()
+                _probe_record(args.log, probe="stdout", chunk=index + 1)
+                time.sleep(0.05)
+            return
         print("codex-cli 9.9.9" if args.mode == "version_drift" else FAKE_VERSION)
         return
     if len(rest) == 4 and rest[:2] == ["app-server", "generate-json-schema"] and rest[2] == "--out":
-        _generate_schema(Path(rest[3]), args.mode)
+        _generate_schema(Path(rest[3]), args.mode, args.log)
         return
     if rest == ["app-server"]:
         asyncio.run(FakeCodexAppServer(args.log, args.mode, args.proposal).run())
