@@ -3746,10 +3746,15 @@ git commit -m "feat: enforce evidence backed execution semantics"
 - Create: src/agentdeck/adapters/codex_app_server_probe.py
 - Create: src/agentdeck/adapters/codex_acp_server.py
 - Modify: src/agentdeck/adapters/acp.py
+- Modify: src/agentdeck/ports/transport.py
+- Modify: src/agentdeck/adapters/acp_transport.py
+- Modify: src/agentdeck/adapters/acp_leader.py
 - Create: tests/product_kernel/fixtures/fake_codex_app_server.py
 - Create: tests/product_kernel/test_codex_app_server.py
 - Create: tests/product_kernel/test_codex_acp_bridge.py
 - Modify: tests/product_kernel/test_acp_worker_contract.py
+- Modify: tests/product_kernel/test_acp_transport.py
+- Modify: tests/product_kernel/test_acp_leader.py
 - Modify: pyproject.toml
 - Modify: HISTORY.md
 
@@ -3778,6 +3783,19 @@ thread/turn facts still fail closed. Probe/process responsibility is extracted
 to `codex_app_server_probe.py` so the protocol client remains at most 500
 lines. Parameterized tests use the real `ACPWorker`, not only a recording ACP
 client, to prove native permission lineage end to end.
+
+**Post-review native-default resolution closure (2026-07-19):**
+`native-default` is a pre-session selection sentinel, never the final Mission
+model provenance. The Codex bridge resolves it exactly once from the official
+`thread/start` response, exposes bounded actual model/version facts in the ACP
+new-session response, and the shared Transport Port validates and carries those
+facts as typed session provenance. `ACPLeader` then constructs and decodes the
+embedded request against a normalized actual `LeaderRequest`, so the Mission
+Preview freezes the concrete server-reported model and version. Explicit model
+selection remains exact-match and drift-blocking. Fake-only tests that prefill
+the concrete model do not satisfy this rule; an unchanged product-default
+`native-default` ACPLeader end-to-end test must finish with concrete Mission
+provenance before Task 26 may compose the bridge.
 
 - [ ] **Step 1: Write RED bridge tests**
 
@@ -3828,10 +3846,15 @@ git add src/agentdeck/adapters/codex_app_server.py \
   src/agentdeck/adapters/codex_app_server_probe.py \
   src/agentdeck/adapters/codex_acp_server.py \
   src/agentdeck/adapters/acp.py \
+  src/agentdeck/ports/transport.py \
+  src/agentdeck/adapters/acp_transport.py \
+  src/agentdeck/adapters/acp_leader.py \
   tests/product_kernel/fixtures/fake_codex_app_server.py \
   tests/product_kernel/test_codex_app_server.py \
   tests/product_kernel/test_codex_acp_bridge.py \
-  tests/product_kernel/test_acp_worker_contract.py pyproject.toml HISTORY.md
+  tests/product_kernel/test_acp_worker_contract.py \
+  tests/product_kernel/test_acp_transport.py \
+  tests/product_kernel/test_acp_leader.py pyproject.toml HISTORY.md
 git commit -m "feat: bridge codex app server through acp"
 ```
 
