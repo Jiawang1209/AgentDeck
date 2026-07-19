@@ -3613,12 +3613,14 @@ git commit -m "feat: coordinate the four stage coding mission"
 - Create: src/agentdeck/kernel/execution_semantics.py
 - Modify: src/agentdeck/application/execution_service.py
 - Create: src/agentdeck/application/execution_records.py
+- Create: src/agentdeck/application/execution_authority.py
 - Modify: src/agentdeck/adapters/sqlite.py
 - Modify: src/agentdeck/adapters/sqlite_execution.py
 - Create: tests/product_kernel/test_review_revision_semantics.py
 - Create: tests/product_kernel/test_execution_budgets.py
 - Modify: tests/product_kernel/test_execution_coordinator.py
 - Modify: tests/product_kernel/test_sqlite_execution.py
+- Create: tests/product_kernel/test_execution_command_authority.py
 - Modify: HISTORY.md
 
 `execution.py` and `execution_service.py` enter Task 24 at the 500-line gate.
@@ -3647,6 +3649,21 @@ facts stop before the next Worker. This is a read-side completion of Task 23's
 existing execution tables, not a relaxation of Task 24 validation. The helper
 belongs in `sqlite_execution.py`, with thin `sqlite.py` delegation and a real
 SQLite integration RED/GREEN test so MemoryStore cannot mask adapter drift.
+
+**Post-quality cross-command authority closure (2026-07-19):** every
+`execute_once` boundary in the Execution Coordinator must be classified by
+whether its replay can advance execution or trigger external I/O. A replayed
+start command remains non-advancing and stops before Worker I/O. Replayed ACP
+session binding, stopped-Attempt, and terminal-bundle commands may advance only
+after a closed command result and exact Store readback validate the expected
+Mission/version/Task/Attempt/session and canonical aggregate facts. A local
+callback flag or command existence is never durable authority. Shared pure
+Attempt-command result/readback validation belongs in
+`execution_authority.py`; `execution_service.py` remains sequencing-only.
+MemoryStore and real SQLite parameterized tests must cover missing, legacy,
+mismatched, and exact replay facts for every advancing command boundary. This
+cross-command inventory closes the architectural pattern rather than adding
+another one-off bind check.
 
 **Forbidden legacy imports:** M2c semantic validators and live harness.
 
@@ -3709,12 +3726,14 @@ git add src/agentdeck/kernel/execution.py \
   src/agentdeck/kernel/execution_semantics.py \
   src/agentdeck/application/execution_service.py \
   src/agentdeck/application/execution_records.py \
+  src/agentdeck/application/execution_authority.py \
   src/agentdeck/adapters/sqlite.py \
   src/agentdeck/adapters/sqlite_execution.py \
   tests/product_kernel/test_review_revision_semantics.py \
   tests/product_kernel/test_execution_budgets.py \
   tests/product_kernel/test_execution_coordinator.py \
-  tests/product_kernel/test_sqlite_execution.py HISTORY.md
+  tests/product_kernel/test_sqlite_execution.py \
+  tests/product_kernel/test_execution_command_authority.py HISTORY.md
 git commit -m "feat: enforce evidence backed execution semantics"
 ```
 
