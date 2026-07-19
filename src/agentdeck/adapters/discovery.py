@@ -24,6 +24,9 @@ from agentdeck.adapters.discovery_process import (
     executable_signature,
 )
 from agentdeck.adapters.input_snapshot import snapshot_mapping
+from agentdeck.adapters.codex_app_server_probe import (
+    FROZEN_CODEX_VERSION, FROZEN_SERVER_VERSION, FROZEN_STABLE_SCHEMA_DIGEST,
+)
 
 
 VersionRunner = Callable[[str], str | bytes]
@@ -39,20 +42,12 @@ _VERSION_PREFIX = re.compile(
     r"(?=$|[ \t\r\n(])"
 )
 _DEFAULT_VERSION_ARGUMENTS = ("--version",)
-_TOOL_VERSION_ARGUMENTS = MappingProxyType(
-    {
-        "codex": ("--version",),
-        "claude": ("--version",),
-    }
-)
-
-_DEFAULT_TOOLS = MappingProxyType(
-    {
-        "codex": "codex",
-        "claude": "claude",
-        "tmux": "tmux",
-    }
-)
+_TOOL_VERSION_ARGUMENTS = MappingProxyType({
+    "codex": ("--version",), "claude": ("--version",),
+})
+_DEFAULT_TOOLS = MappingProxyType({
+    "codex": "codex", "claude": "claude", "tmux": "tmux",
+})
 _DEFAULT_CAPABILITIES = MappingProxyType(
     {
         "codex": ("manual_cli", "leader", "worker", "acp"),
@@ -61,14 +56,12 @@ _DEFAULT_CAPABILITIES = MappingProxyType(
     }
 )
 
-
 class ReadinessState(StrEnum):
     MISSING = "missing"
     DISCOVERED = "discovered"
     AUTHENTICATED = "authenticated"
     ACP_AVAILABLE = "acp_available"
     READY = "ready"
-
 
 @dataclass(frozen=True)
 class ToolDiscovery:
@@ -81,6 +74,82 @@ class ToolDiscovery:
     readiness: ReadinessState
     capabilities: tuple[str, ...]
     diagnostics: tuple[str, ...] = ()
+
+@dataclass(frozen=True)
+class CodexAdapterFacts:
+    cli_path: str | None; cli_version: str | None
+    app_server_available: bool; app_server_version: str | None
+    bridge_path: str | None; schema_digest: str | None
+@dataclass(frozen=True)
+class ClaudeAdapterFacts:
+    cli_path: str | None; cli_version: str | None; authenticated: bool
+    adapter_path: str | None; adapter_version: str | None
+@dataclass(frozen=True)
+class AdapterDiagnostic:
+    code: str
+@dataclass(frozen=True)
+class AdapterReadiness:
+    backend_id: str; ready: bool; command: tuple[str, ...] | None
+    version: str | None; diagnostic: AdapterDiagnostic | None
+    fallbacks: tuple[str, ...] = ()
+
+
+def _adapter_blocked(backend_id: str, code: str) -> AdapterReadiness:
+    return AdapterReadiness(backend_id, False, None, None, AdapterDiagnostic(code))
+
+def _named(path: object, name: str) -> bool:
+    return (_public_text(path, maximum=_MAX_PATH_BYTES, trimmed=False)
+            and Path(path).is_absolute() and Path(path).name == name)
+
+def _public_text(value: object, *, maximum: int, trimmed: bool) -> bool:
+    if type(value) is not str or not value or trimmed and value != value.strip():
+        return False
+    try:
+        encoded = value.encode("utf-8", errors="strict")
+    except UnicodeEncodeError:
+        return False
+    return len(encoded) <= maximum and all(char.isprintable() for char in value)
+
+def _canonical_version(value: object, name: str) -> bool:
+    return (_public_text(value, maximum=MAX_VERSION_BYTES, trimmed=True)
+            and re.fullmatch(rf"{re.escape(name)} [0-9]{{1,6}}(?:\.[0-9]{{1,6}}){{1,3}}", value) is not None)
+
+def canonical_adapter_version(backend_id: object, value: object) -> bool:
+    if backend_id == "codex-cli":
+        return type(backend_id) is str and type(value) is str and value == FROZEN_SERVER_VERSION
+    return backend_id == "claude-cli" and _canonical_version(value, "claude-cli")
+
+def classify_codex(facts: CodexAdapterFacts) -> AdapterReadiness:
+    """Classify injected passive facts; never probe or start the adapter."""
+    if type(facts) is not CodexAdapterFacts or not _named(facts.cli_path, "codex"):
+        return _adapter_blocked("codex-cli", "codex_cli_missing")
+    if facts.app_server_available is not True:
+        return _adapter_blocked("codex-cli", "codex_app_server_missing")
+    if not _named(facts.bridge_path, "agentdeck-codex-acp"):
+        return _adapter_blocked("codex-cli", "codex_acp_bridge_missing")
+    if type(facts.cli_version) is not str or facts.cli_version != FROZEN_CODEX_VERSION or not canonical_adapter_version("codex-cli", facts.app_server_version):
+        return _adapter_blocked("codex-cli", "codex_app_server_version_drift")
+    if type(facts.schema_digest) is not str or facts.schema_digest != FROZEN_STABLE_SCHEMA_DIGEST:
+        return _adapter_blocked("codex-cli", "codex_app_server_schema_drift")
+    return AdapterReadiness(
+        "codex-cli", True, ("agentdeck-codex-acp",), FROZEN_SERVER_VERSION, None,
+    )
+
+
+def classify_claude(facts: ClaudeAdapterFacts) -> AdapterReadiness:
+    """Classify explicit CLI login and adapter facts without authentication I/O."""
+    if type(facts) is not ClaudeAdapterFacts or not _named(facts.cli_path, "claude"):
+        return _adapter_blocked("claude-cli", "claude_cli_missing")
+    if facts.authenticated is not True:
+        return _adapter_blocked("claude-cli", "claude_authentication_missing")
+    if (not _named(facts.adapter_path, "claude-agent-acp")
+            or not _canonical_version(facts.adapter_version, "claude-agent-acp")):
+        return _adapter_blocked("claude-cli", "claude_acp_missing")
+    if not canonical_adapter_version("claude-cli", facts.cli_version):
+        return _adapter_blocked("claude-cli", "claude_cli_missing")
+    return AdapterReadiness(
+        "claude-cli", True, ("claude-agent-acp",), facts.cli_version, None,
+    )
 
 
 def discover_tools(

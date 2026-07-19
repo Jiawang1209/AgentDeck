@@ -4,6 +4,44 @@
 
 ## 2026-07-20
 
+### Bind passive Codex and Claude ACP readiness
+
+- Added closed, injected readiness facts for the two MVP CLI backends. Codex is
+  ready only when the CLI, official app-server capability, Task 25
+  `agentdeck-codex-acp` bridge, frozen `0.131.0` version, and frozen stable
+  schema digest all agree. Claude is ready only when the CLI, explicit
+  authenticated fact, and verified `claude-agent-acp` identity/version are all
+  present. Every blocker is a fixed content-free diagnostic and neither backend
+  offers PTY, legacy ACP, or prompt-injection fallback.
+- Added the Product composition root for exact ACP adapters. Readiness and
+  composition construction invoke no transport or process. Leader creation
+  returns the existing `ACPLeader` with lazy `ACPStdioTransport`; each explicit
+  Worker creation returns a distinct existing `ACPWorker` and obtains one fresh
+  Agent connection from the injected per-instance process factory. Codex uses
+  only `agentdeck-codex-acp`; Claude uses only `claude-agent-acp`.
+- Reviewed and rejected the legacy `runtime/acp.py`, `acp_client.py`, and
+  `acp_mapping.py` boundaries in the reuse register because their coupled state,
+  model, and event ownership would violate the new Port/Adapter authority. No
+  legacy ACP code is admitted.
+- Strict RED produced 16 expected missing-contract failures before production
+  changes. A second hardening RED exposed six accepted relative, non-boolean,
+  unbounded, or forged-fallback facts. Focused GREEN passes all 22
+  readiness/composition tests without a real provider, adapter process,
+  authentication mutation, install, tmux, or global-configuration change.
+- Fresh final verification covers all 57 Product Kernel modules in four
+  non-overlapping process-safe partitions (`338 + 53 + 657 + 501 = 1549`
+  passed), the complete legacy suite (`4461` passed, `3` explicit opt-in
+  skips), architecture plus focused readiness (`65` passed), compileall, line
+  limits, and diff checks.
+- Spec-review closure hardened every injected executable path to strict bounded
+  UTF-8 with an absolute exact basename and no NUL, control, DEL, or oversize
+  content. Claude CLI and adapter versions now use closed canonical numeric
+  forms with no leading/trailing whitespace or control data. The composition
+  root requires exact bool readiness, exact empty tuple fallbacks, exact null
+  diagnostic, exact argv, and backend-specific canonical version before any
+  factory call. The added adversarial RED exposed 27 accepted path/version/value
+  counterexamples; focused GREEN passes all 51 cases with zero process starts.
+
 ### Bridge Codex app-server through official ACP
 
 - Added a bounded JSONL protocol-v2 client for the installed Codex app-server
