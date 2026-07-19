@@ -11,7 +11,10 @@
   persists the decision before the matching ACP response, and replays the first
   durable outcome without calling a reviewer twice. Human, independent,
   automatic, narrowed-scope, full-access, reviewer-failure, and self-review
-  paths all fail closed or proceed according to the confirmed profile.
+  paths all fail closed or proceed according to the confirmed profile. Human
+  and independent reviewer identities are validated and frozen before external
+  review I/O, so miswiring, hostile properties, or identity drift cannot grant
+  authority or alter the durable reviewer lineage.
 - Added conservative ACP tool-kind effect/risk classification. Read/search/think
   remain read-only; project writes, commands, network, deletion, and unknown
   kinds receive explicit bounded facts. Unknown kinds remain denied even under
@@ -20,9 +23,10 @@
   existing schema, with immutable lineage and terminal-decision drift guards.
   The permission bridge processes a finite ordered sequence and never authorizes
   the next Task before a validated terminal result and future Handoff commit.
-- TDD RED first failed collection for the absent Port and service. Focused
-  GREEN reached `12` cases; the final SQLite, ACP Worker, permission, bridge,
-  and architecture regression gate passed all `344` cases.
+- TDD RED first failed collection for the absent Port and service. The focused
+  Approval Service gate now passes `14` cases; the formal Task 22 gate passes
+  `86` cases and the broader SQLite/ACP/approval/permission/architecture gate
+  passes `263` cases after the reviewer-identity hardening.
 
 ### Normalize every rejected ACP task construction
 

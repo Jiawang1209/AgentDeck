@@ -183,21 +183,29 @@ class ApprovalService:
         if policy.allowed:
             return self._decision("agentdeck", True, policy.reason), None
         if policy.requires_human:
+            reviewer_id, error = _reviewer_identity(self._human_reviewer)
+            if error is not None or (
+                reviewer_id is not None and reviewer_id != "human"
+            ):
+                code = "approval_reviewer_invalid"
+                return self._decision("agentdeck", False, code), code
             return await self._review(
-                request, self._human_reviewer, "human_approval_unavailable"
+                request, self._human_reviewer, "human_approval_unavailable",
+                reviewer_id,
             )
         if policy.requires_independent_reviewer:
             reviewer = self._independent_reviewer
-            try:
-                same_actor = reviewer is not None and reviewer.reviewer_id == request.agent_id
-            except Exception:
-                code = "approval_reviewer_failed"
+            reviewer_id, error = _reviewer_identity(reviewer)
+            if error is not None or (
+                reviewer_id is not None and not reviewer_id.startswith("agt_")
+            ):
+                code = "approval_reviewer_invalid"
                 return self._decision("agentdeck", False, code), code
-            if same_actor:
+            if reviewer_id == request.agent_id:
                 code = "approval_reviewer_not_independent"
                 return self._decision("agentdeck", False, code), code
             return await self._review(
-                request, reviewer, "independent_approval_unavailable"
+                request, reviewer, "independent_approval_unavailable", reviewer_id,
             )
         return self._decision("agentdeck", False, policy.reason), policy.reason
 
@@ -206,14 +214,15 @@ class ApprovalService:
         request: ApprovalRequest,
         reviewer: ApprovalReviewer | None,
         unavailable_code: str,
+        reviewer_id: str | None,
     ) -> tuple[ApprovalDecision, str | None]:
-        if reviewer is None:
+        if reviewer is None or reviewer_id is None:
             return self._decision("agentdeck", False, unavailable_code), unavailable_code
         try:
             verdict = await reviewer.review(request)
             if type(verdict) is not ReviewerVerdict:
                 raise TypeError
-            decision = self._decision(reviewer.reviewer_id, verdict.allowed, verdict.reason)
+            decision = self._decision(reviewer_id, verdict.allowed, verdict.reason)
         except Exception:
             code = "approval_reviewer_failed"
             return self._decision("agentdeck", False, code), code
@@ -294,6 +303,25 @@ class ApprovalService:
 def _approval_id(attempt_id: str, permission_id: str) -> str:
     digest = sha256(f"{attempt_id}\0{permission_id}".encode()).hexdigest()[:24]
     return f"apv_{digest}"
+
+
+def _reviewer_identity(
+    reviewer: ApprovalReviewer | None,
+) -> tuple[str | None, str | None]:
+    if reviewer is None:
+        return None, None
+    failed = False
+    try:
+        reviewer_id = reviewer.reviewer_id
+    except Exception:
+        failed = True
+        reviewer_id = None
+    if (
+        failed or type(reviewer_id) is not str or not reviewer_id.strip()
+        or any(character.isspace() for character in reviewer_id)
+    ):
+        return None, "approval_reviewer_invalid"
+    return reviewer_id, None
 
 
 def _request_command(approval_id: str) -> str:

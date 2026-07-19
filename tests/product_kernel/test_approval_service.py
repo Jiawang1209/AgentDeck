@@ -63,6 +63,29 @@ class FakeReviewer:
         return ReviewerVerdict(allowed=self.allowed, reason="reviewed")
 
 
+class DriftingReviewer(FakeReviewer):
+    def __init__(self) -> None:
+        self.allowed = True
+        self.fails = False
+        self.calls = []
+        self.identity_reads = 0
+
+    @property
+    def reviewer_id(self) -> str:
+        self.identity_reads += 1
+        return "agt_reviewer" if self.identity_reads == 1 else "agt_executor"
+
+
+class HostileIdentityReviewer(FakeReviewer):
+    @property
+    def reviewer_id(self) -> str:
+        raise RuntimeError("RAW-REVIEWER-IDENTITY-MARKER")
+
+    @reviewer_id.setter
+    def reviewer_id(self, value: str) -> None:
+        pass
+
+
 class PermissionWorker:
     def __init__(self, store: FakeStore) -> None:
         self.store = store
@@ -188,6 +211,77 @@ def test_executor_cannot_act_as_independent_approval_reviewer() -> None:
         assert worker.responses == [
             ("perm_1", False, "approval_reviewer_not_independent")
         ]
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize(
+    ("profile", "reviewer_id", "reviewer_slot"),
+    (
+        (PermissionProfile.ASK_FOR_APPROVAL, "agt_reviewer", "human"),
+        (PermissionProfile.APPROVE_FOR_ME, "human", "independent"),
+    ),
+)
+def test_miswired_reviewer_identity_fails_closed_without_invocation(
+    profile: PermissionProfile, reviewer_id: str, reviewer_slot: str,
+) -> None:
+    async def scenario() -> None:
+        store = FakeStore()
+        reviewer = FakeReviewer(reviewer_id, allowed=True)
+        kwargs = {f"{reviewer_slot}_reviewer": reviewer}
+        service = ApprovalService(store=store, clock=FrozenClock(NOW), **kwargs)
+        worker = PermissionWorker(store)
+        effect = Effect.WRITE_PROJECT if reviewer_slot == "human" else Effect.NETWORK
+
+        record = await service.handle_permission(
+            worker, handle(), event(effect), context(profile)
+        )
+
+        assert reviewer.calls == []
+        assert record.state == "denied"
+        assert record.diagnostic_code == "approval_reviewer_invalid"
+
+    asyncio.run(scenario())
+
+
+def test_independent_reviewer_identity_is_frozen_before_review() -> None:
+    async def scenario() -> None:
+        store = FakeStore()
+        reviewer = DriftingReviewer()
+        service = ApprovalService(
+            store=store, clock=FrozenClock(NOW), independent_reviewer=reviewer
+        )
+
+        record = await service.handle_permission(
+            PermissionWorker(store), handle(), event(Effect.NETWORK),
+            context(PermissionProfile.APPROVE_FOR_ME),
+        )
+
+        assert reviewer.identity_reads == 1
+        assert len(reviewer.calls) == 1
+        assert record.state == "approved"
+        assert record.decision.reviewer_id == "agt_reviewer"
+
+    asyncio.run(scenario())
+
+
+def test_hostile_reviewer_identity_is_content_free_and_denied() -> None:
+    async def scenario() -> None:
+        store = FakeStore()
+        reviewer = HostileIdentityReviewer("ignored", allowed=True)
+        service = ApprovalService(
+            store=store, clock=FrozenClock(NOW), independent_reviewer=reviewer
+        )
+
+        record = await service.handle_permission(
+            PermissionWorker(store), handle(), event(Effect.NETWORK),
+            context(PermissionProfile.APPROVE_FOR_ME),
+        )
+
+        assert reviewer.calls == []
+        assert record.diagnostic_code == "approval_reviewer_invalid"
+        assert "RAW-REVIEWER-IDENTITY-MARKER" not in repr(store.commands)
+        assert "RAW-REVIEWER-IDENTITY-MARKER" not in repr(store.events)
 
     asyncio.run(scenario())
 
