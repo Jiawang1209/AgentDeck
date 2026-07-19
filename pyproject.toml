@@ -13,6 +13,7 @@ dependencies = ["agent-client-protocol==0.11.0"]
 
 [project.scripts]
 agentdeck = "agentdeck.cli:main"
+agentdeck-codex-acp = "agentdeck.adapters.codex_acp_server:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

@@ -2,6 +2,43 @@
 
 本文件记录 AgentDeck 每一次开发内容。约束：每次新增功能、文档规则、项目骨架、运行环境或用户可见行为变化，都必须同步更新本文件，并在同一次 commit 中提交。
 
+## 2026-07-20
+
+### Bridge Codex app-server through official ACP
+
+- Added a bounded JSONL protocol-v2 client for the installed Codex app-server
+  stable protocol. It negotiates `initialize`/`initialized`, creates or resumes
+  exact threads, starts and interrupts exact turns, and fails closed on malformed,
+  oversized, disconnected, timed-out, or lineage-drifted traffic without exposing
+  raw protocol content.
+- Added the `agentdeck-codex-acp` official ACP Agent surface. ACP sessions map to
+  Codex threads, ACP prompts map to turns, decoded message/tool updates stream
+  outward, exact native permission request identity remains in bounded ACP
+  metadata, permission decisions map back to the corresponding native request,
+  and cancellation maps to `turn/interrupt`. No PTY, pane capture, prompt
+  injection, legacy ACP fallback, or experimental app-server capability is used.
+- Froze `codex-cli 0.131.0` and the stable v2 generated schema using canonical
+  sorted-key JSON SHA-256
+  `91fae2120975b74d2d02184de2d8fed5f90770ce5009f308bbcaeec02dedcc23`.
+  The passive probe generates only in temporary space and blocks version or
+  semantic schema drift. Canonicalization prevents the official generator's
+  nondeterministic object-key order from creating false drift.
+- Added deterministic app-server and full ACP-stdio bridge fixtures covering
+  stable initialization, thread start/resume, turn start/interrupt, streamed
+  events, exact permissions, version/schema drift, canonical schema ordering,
+  bounded malformed/oversized output, and child-process cleanup.
+- Corrected the wire contract against a real passive Codex 0.131.0 initialize:
+  official request/notification/response/error envelopes omit `jsonrpc` and are
+  now exact-shape validated. The real probe starts no model turn or task work.
+- Added the frozen structured Leader path. The bridge advertises embedded context,
+  accepts only the exact AgentDeck Mission request resource, maps its proposal
+  schema to Codex `turn/start.outputSchema`, and returns exactly one Mission
+  proposal resource while preserving the existing Worker text path.
+- Closed turn-level lineage in addition to thread lineage. Item updates and native
+  permission requests from a stale same-thread turn now fail closed before ACP
+  forwarding; deterministic tests cover malformed/extra Leader resources and the
+  full ACPLeader-to-console-bridge-to-app-server chain.
+
 ## 2026-07-19
 
 ### Bind execution evidence lineage
