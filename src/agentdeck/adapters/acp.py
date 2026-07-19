@@ -208,7 +208,12 @@ class ACPWorker:
     ) -> None:
         run = self._require_raw_session(session_id)
         if run.terminal:
-            raise self._error("acp_sequence_violation", True, run.request)
+            raise self._run_error("acp_sequence_violation", run)
+        if (
+            type(update) in {ToolCallStart, ToolCallProgress}
+            and update.kind not in _PROVEN_READ_ONLY_TOOL_KINDS
+        ) or (type(update) is ToolCallProgress and update.locations):
+            run.effect_may_have_occurred = True
         self._inspect_raw_update(run, update)
         try:
             if type(update) is AgentMessageChunk:
@@ -220,25 +225,20 @@ class ACPWorker:
                 )
                 self._emit("message", payload)
             elif type(update) is ToolCallStart:
-                if update.kind not in _PROVEN_READ_ONLY_TOOL_KINDS:
-                    run.effect_may_have_occurred = True
                 self._emit("tool_started", _tool_payload(update))
             elif type(update) is ToolCallProgress:
                 if update.status == "completed":
-                    if update.kind not in _PROVEN_READ_ONLY_TOOL_KINDS:
-                        run.effect_may_have_occurred = True
                     self._emit("tool_completed", _tool_payload(update))
                 else:
                     self._emit("progress", _tool_payload(update))
                 if update.locations:
-                    run.effect_may_have_occurred = True
                     self._emit("artifact_changed", {"artifact_count": len(update.locations)})
             else:
                 self._emit("progress", {"update_type": type(update).__name__})
         except ACPWorkerError:
             raise
         except (TypeError, ValueError):
-            raise self._error("acp_sensitive_output_redacted", True, run.request) from None
+            raise self._run_error("acp_sensitive_output_redacted", run) from None
 
     async def request_permission(
         self, session_id: str, tool_call: ToolCallUpdate,
@@ -246,11 +246,11 @@ class ACPWorker:
     ) -> RequestPermissionResponse:
         run = self._require_raw_session(session_id)
         if run.pending_permission is not None or run.terminal:
-            raise self._error("acp_sequence_violation", True, run.request)
+            raise self._run_error("acp_sequence_violation", run)
         if type(tool_call) is not ToolCallUpdate or type(options) is not list or not options:
-            raise self._error("acp_protocol_mismatch", True, run.request)
+            raise self._run_error("acp_protocol_mismatch", run)
         if any(type(option) is not PermissionOption for option in options):
-            raise self._error("acp_protocol_mismatch", True, run.request)
+            raise self._run_error("acp_protocol_mismatch", run)
         try:
             raw_size = len(tool_call.model_dump_json(by_alias=True).encode("utf-8"))
             raw_size += sum(
@@ -258,7 +258,7 @@ class ACPWorker:
                 for option in options
             )
         except Exception:
-            raise self._error("acp_protocol_mismatch", True, run.request) from None
+            raise self._run_error("acp_protocol_mismatch", run) from None
         self._consume_raw_size(run, raw_size)
         run.permission_count += 1
         permission_id = f"perm_{run.permission_count}"
@@ -274,7 +274,7 @@ class ACPWorker:
             })
         except (TypeError, ValueError):
             run.pending_permission = None
-            raise self._error("acp_sensitive_output_redacted", True, run.request) from None
+            raise self._run_error("acp_sensitive_output_redacted", run) from None
         return await future
 
     async def _run_prompt(self) -> None:
@@ -287,7 +287,15 @@ class ACPWorker:
             if run.cancellation_requested:
                 return
             if type(response) is not PromptResponse:
-                raise self._error("acp_protocol_mismatch", True, run.request)
+                raise self._run_error("acp_protocol_mismatch", run)
+            if run.pending_permission is not None:
+                try:
+                    await self._agent.cancel(run.raw_session_id)
+                    error = self._run_error("acp_sequence_violation", run)
+                except Exception:
+                    error = self._error("acp_cancel_failed", False, run.request)
+                self._fail(error)
+                return
             if response.stop_reason == "end_turn":
                 self._finish("completed", {"stop_reason": "end_turn"})
             elif response.stop_reason == "cancelled":
@@ -325,11 +333,11 @@ class ACPWorker:
     def _inspect_raw_update(self, run: _Run, update: object) -> None:
         serializer = getattr(update, "model_dump_json", None)
         if not callable(serializer):
-            raise self._error("acp_protocol_mismatch", True, run.request)
+            raise self._run_error("acp_protocol_mismatch", run)
         try:
             size = len(serializer(by_alias=True).encode("utf-8", "strict"))
         except Exception:
-            raise self._error("acp_protocol_mismatch", True, run.request) from None
+            raise self._run_error("acp_protocol_mismatch", run) from None
         self._consume_raw_size(run, size)
         metadata = getattr(update, "field_meta", None)
         if not isinstance(metadata, dict):
@@ -338,22 +346,22 @@ class ACPWorker:
         sequence = metadata.get("sequence")
         if event_id is not None:
             if type(event_id) is not str or event_id in run.raw_event_ids:
-                raise self._error("acp_duplicate_event", True, run.request)
+                raise self._run_error("acp_duplicate_event", run)
             run.raw_event_ids.add(event_id)
         if sequence is not None:
             if type(sequence) is not int or sequence <= run.raw_sequence:
-                raise self._error("acp_sequence_violation", True, run.request)
+                raise self._run_error("acp_sequence_violation", run)
             run.raw_sequence = sequence
 
     def _consume_raw_size(self, run: _Run, size: int) -> None:
         run.raw_total_bytes += size
         if size > self._max_update_bytes or run.raw_total_bytes > self._max_total_bytes:
-            raise self._error("acp_output_oversize", True, run.request)
+            raise self._run_error("acp_output_oversize", run)
 
     def _emit(self, kind: str, payload: dict[str, object]) -> None:
         run = self._current()
         if run.terminal:
-            raise self._error("acp_sequence_violation", True, run.request)
+            raise self._run_error("acp_sequence_violation", run)
         run.sequence += 1
         digest = sha256(
             f"{run.handle.session_id}:{run.sequence}:{kind}".encode()
@@ -367,13 +375,14 @@ class ACPWorker:
                 payload=payload,
             )
         except (TypeError, ValueError):
-            raise self._error("acp_sensitive_output_redacted", True, run.request) from None
+            raise self._run_error("acp_sensitive_output_redacted", run) from None
         run.queue.put_nowait(event)
 
     def _finish(self, status: str, payload: dict[str, object]) -> None:
         run = self._current()
         if run.terminal:
             return
+        self._cancel_pending_permission(run)
         self._emit(status, payload)
         run.terminal = True
         run.result = WorkerResult(
@@ -387,6 +396,7 @@ class ACPWorker:
         run = self._current()
         if run.terminal:
             return
+        self._cancel_pending_permission(run)
         self._emit("failed", {
             "diagnostic_code": error.diagnostic.code,
             "outcome_known": error.diagnostic.outcome_known,
@@ -411,8 +421,15 @@ class ACPWorker:
     def _require_raw_session(self, session_id: str) -> _Run:
         run = self._current()
         if type(session_id) is not str or session_id != run.raw_session_id:
-            raise self._error("acp_protocol_mismatch", True, run.request)
+            raise self._run_error("acp_protocol_mismatch", run)
         return run
+
+    @staticmethod
+    def _cancel_pending_permission(run: _Run) -> None:
+        waiter = run.pending_permission
+        run.pending_permission = None
+        if waiter is not None and not waiter.future.done():
+            waiter.future.cancel()
 
     def _current(self) -> _Run:
         if self._run is None:
@@ -434,6 +451,9 @@ class ACPWorker:
             occurred_at=self._now(), task_id=request.task_id,
             attempt_id=request.attempt_id,
         ))
+
+    def _run_error(self, code: str, run: _Run) -> ACPWorkerError:
+        return self._error(code, not run.effect_may_have_occurred, run.request)
 
     def _now(self) -> str:
         try:

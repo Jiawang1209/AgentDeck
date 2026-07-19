@@ -53,9 +53,25 @@ async def run_failure(scenario: str) -> ACPWorkerError:
     ("out_of_order", "acp_sequence_violation", True, False),
     ("oversize", "acp_output_oversize", True, False),
     ("total_oversize", "acp_output_oversize", True, False),
-    ("permission_oversize", "acp_output_oversize", True, False),
+    ("permission_oversize", "acp_output_oversize", False, False),
     ("secret_output", "acp_sensitive_output_redacted", True, False),
-    ("invalid_result", "acp_protocol_mismatch", True, False),
+    ("invalid_result", "acp_protocol_mismatch", False, False),
+    ("effect_sensitive", "acp_sensitive_output_redacted", False, False),
+    ("read_sensitive", "acp_sensitive_output_redacted", True, False),
+    ("effect_oversize", "acp_output_oversize", False, False),
+    ("read_oversize", "acp_output_oversize", True, False),
+    ("effect_sequence", "acp_sequence_violation", False, False),
+    ("read_sequence", "acp_sequence_violation", True, False),
+    ("effect_invalid_result", "acp_protocol_mismatch", False, False),
+    ("read_invalid_result", "acp_protocol_mismatch", True, False),
+    ("effect_progress_sensitive", "acp_sensitive_output_redacted", False, False),
+    ("read_progress_sensitive", "acp_sensitive_output_redacted", True, False),
+    ("effect_progress_oversize", "acp_output_oversize", False, False),
+    ("read_progress_oversize", "acp_output_oversize", True, False),
+    ("effect_progress_sequence", "acp_sequence_violation", False, False),
+    ("read_progress_sequence", "acp_sequence_violation", True, False),
+    ("effect_progress_invalid_result", "acp_protocol_mismatch", False, False),
+    ("read_progress_invalid_result", "acp_protocol_mismatch", True, False),
 ])
 def test_adversarial_acp_scenarios_are_typed(
     scenario: str, code: str, outcome_known: bool, retryable: bool,
@@ -148,5 +164,42 @@ def test_cancel_failure_has_one_typed_authoritative_terminal() -> None:
         assert [event.kind for event in events] == ["failed"]
         with pytest.raises(ACPWorkerError, match="acp_cancel_failed"):
             await worker.collect_result(handle)
+
+    asyncio.run(scenario())
+
+
+def test_end_turn_cannot_complete_while_permission_is_pending() -> None:
+    async def scenario() -> None:
+        worker = worker_factory("terminal_with_pending_permission")()
+        agent = worker._agent
+        handle = await worker.start_task(task_request())
+        events = [event async for event in worker.stream_events(handle)]
+
+        terminals = [
+            event for event in events
+            if event.kind in {"completed", "failed", "cancelled"}
+        ]
+        assert [event.kind for event in terminals] == ["failed"]
+        assert terminals[0].payload == {
+            "diagnostic_code": "acp_sequence_violation",
+            "outcome_known": False,
+        }
+        assert agent.cancelled is True
+        assert agent.permission_outcomes == []
+        assert agent.pending_permission_task is not None
+        await asyncio.sleep(0)
+        assert agent.pending_permission_task.cancelled()
+        with pytest.raises(ACPWorkerError) as raised:
+            await worker.collect_result(handle)
+        assert raised.value.diagnostic.code == "acp_sequence_violation"
+        assert raised.value.diagnostic.outcome_known is False
+        assert raised.value.diagnostic.retryable is False
+        rendered = repr(raised.value.diagnostic) + str(raised.value)
+        assert "RAW-PENDING-PERMISSION-BODY" not in rendered
+        with pytest.raises(ValueError, match="terminal"):
+            await worker.respond_permission(
+                handle, permission_request_id="perm_1", allowed=True,
+                reason="late approval must not cross terminal authority",
+            )
 
     asyncio.run(scenario())

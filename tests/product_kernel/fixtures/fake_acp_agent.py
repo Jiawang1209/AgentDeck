@@ -28,6 +28,7 @@ class FakeACPAgent:
         self.cancelled = False
         self.cancel_gate = asyncio.Event()
         self.permission_outcomes: list[str] = []
+        self.pending_permission_task: asyncio.Task[Any] | None = None
 
     def on_connect(self, client: object) -> None:
         self.client = client
@@ -78,6 +79,95 @@ class FakeACPAgent:
                 session_id, "second", sequence=second_sequence,
                 event_id="acp_evt_1" if self.scenario == "duplicate_event" else "acp_evt_2",
             )
+            return PromptResponse(stop_reason="end_turn")
+
+        if self.scenario == "terminal_with_pending_permission":
+            await self.client.session_update(
+                session_id,
+                ToolCallStart(
+                    session_update="tool_call", tool_call_id="call_pending",
+                    title="Edit project", kind="edit", status="in_progress",
+                ),
+            )
+            self.pending_permission_task = asyncio.create_task(
+                self.client.request_permission(
+                    session_id,
+                    ToolCallUpdate(
+                        tool_call_id="call_pending", kind="edit",
+                        title="Edit project",
+                        raw_input={"note": "RAW-PENDING-PERMISSION-BODY"},
+                    ),
+                    [
+                        PermissionOption(
+                            option_id="allow_pending", name="Allow once",
+                            kind="allow_once",
+                        ),
+                        PermissionOption(
+                            option_id="reject_pending", name="Reject",
+                            kind="reject_once",
+                        ),
+                    ],
+                )
+            )
+            await asyncio.sleep(0)
+            return PromptResponse(stop_reason="end_turn")
+
+        authority_failures = {
+            "effect_sensitive": ("edit", "sensitive"),
+            "read_sensitive": ("read", "sensitive"),
+            "effect_oversize": ("edit", "oversize"),
+            "read_oversize": ("read", "oversize"),
+            "effect_sequence": ("edit", "sequence"),
+            "read_sequence": ("read", "sequence"),
+            "effect_invalid_result": ("edit", "invalid_result"),
+            "read_invalid_result": ("read", "invalid_result"),
+        }
+        if self.scenario in authority_failures:
+            tool_kind, failure = authority_failures[self.scenario]
+            title = {
+                "sensitive": "token=secret-token",
+                "oversize": "x" * 70_000,
+            }.get(failure, "Inspect project")
+            metadata = {"sequence": 0} if failure == "sequence" else None
+            await self.client.session_update(
+                session_id,
+                ToolCallStart(
+                    session_update="tool_call", tool_call_id="call_authority",
+                    title=title, kind=tool_kind, status="in_progress",
+                    field_meta=metadata,
+                ),
+            )
+            if failure == "invalid_result":
+                return {"stop_reason": "end_turn", "raw": "RAW-RESULT"}  # type: ignore[return-value]
+            return PromptResponse(stop_reason="end_turn")
+
+        progress_failures = {
+            "effect_progress_sensitive": ("edit", "sensitive"),
+            "read_progress_sensitive": ("read", "sensitive"),
+            "effect_progress_oversize": ("edit", "oversize"),
+            "read_progress_oversize": ("read", "oversize"),
+            "effect_progress_sequence": ("edit", "sequence"),
+            "read_progress_sequence": ("read", "sequence"),
+            "effect_progress_invalid_result": ("edit", "invalid_result"),
+            "read_progress_invalid_result": ("read", "invalid_result"),
+        }
+        if self.scenario in progress_failures:
+            tool_kind, failure = progress_failures[self.scenario]
+            title = {
+                "sensitive": "token=secret-token",
+                "oversize": "x" * 70_000,
+            }.get(failure, "Inspect project")
+            metadata = {"sequence": 0} if failure == "sequence" else None
+            await self.client.session_update(
+                session_id,
+                ToolCallProgress(
+                    session_update="tool_call_update", tool_call_id="call_progress",
+                    title=title, kind=tool_kind, status="in_progress",
+                    field_meta=metadata,
+                ),
+            )
+            if failure == "invalid_result":
+                return {"stop_reason": "end_turn", "raw": "RAW-RESULT"}  # type: ignore[return-value]
             return PromptResponse(stop_reason="end_turn")
 
         tool_kind = {

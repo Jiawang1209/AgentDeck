@@ -38,6 +38,22 @@
   remain transient. TDD RED produced `13 failed, 40 passed`; focused GREEN
   passed all `53` adapter cases.
 
+### Preserve ACP Worker terminal authority
+
+- Rejected every ACP prompt terminal received while a permission request is
+  still pending. The adapter now cancels the remote session, cancels and drops
+  the local permission waiter, and emits one content-free failed terminal
+  instead of accepting an unapproved `end_turn` as completion.
+- Froze side-effect authority before decoding effectful or ambiguous tool start
+  and progress updates. Sensitive, oversized, duplicate/sequence, protocol,
+  and payload failures now derive `outcome_known` from that frozen authority;
+  only proven read/search/think traffic retains known pre-effect semantics, and
+  none of these deterministic failures is retryable.
+- Initial authority RED produced `5 failed, 26 passed`; the direct-progress RED
+  produced `4 failed, 35 passed`. Focused GREEN passed all `39` ACP Worker
+  failure cases with one terminal and no permission waiter crossing terminal
+  lineage.
+
 ### Fail closed on ambiguous ACP tool starts
 
 - Restricted proven pre-effect tool starts to the explicit ACP read/search/think
