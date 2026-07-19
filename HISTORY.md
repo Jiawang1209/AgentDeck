@@ -4,6 +4,16 @@
 
 ## 2026-07-19
 
+### Normalize every rejected ACP task construction
+
+- Extended the task-construction boundary to catch synchronous cancellation-
+  class failures and moved awaitable cleanup to the shared failure branch.
+  Both an exception and a `None` task result now close the input exactly once
+  before returning the same content-free typed transport failure.
+- Two exact RED cases reproduced the escaped `CancelledError` and the
+  hostile-named coroutine warning after a `None` result. Focused GREEN passed
+  all `46` Task 18 transport and Leader cases without warning output.
+
 ### Close failed ACP awaitables without warnings
 
 - Added deterministic best-effort cleanup when an ACP awaitable cannot be

@@ -320,11 +320,11 @@ class ACPStdioTransport:
         task_failed = False
         try:
             task = asyncio.ensure_future(awaitable)
-        except Exception:
+        except BaseException:
             task_failed = True
             task = None
-            close_transport_awaitable(awaitable)
         if task_failed or task is None:
+            close_transport_awaitable(awaitable)
             raise TransportFailure(code)
         try:
             done, _pending = await asyncio.wait((task,), timeout=self._budget())

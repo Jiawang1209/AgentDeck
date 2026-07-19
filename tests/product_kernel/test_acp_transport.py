@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 import asyncio
-from contextlib import asynccontextmanager, suppress
+from contextlib import asynccontextmanager, redirect_stderr, suppress
 from functools import wraps
+import gc
+import io
 import json
 import os
 from pathlib import Path
 import traceback
 from types import SimpleNamespace
+import warnings
 
 import pytest
 from acp import PROTOCOL_VERSION
@@ -436,3 +439,53 @@ async def test_cancel_always_clears_pending_permission_waiter(
             )
         with suppress(asyncio.CancelledError, TransportFailure):
             await asyncio.wait_for(prompt, timeout=0.1)
+
+
+async def _rejected_coroutine_result(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, ensure_future,
+) -> tuple[TransportFailure, bool, str]:
+    async def hostile_none_coroutine_qualname_marker() -> None:
+        return None
+
+    coroutine = hostile_none_coroutine_qualname_marker()
+    stderr = io.StringIO()
+    with warnings.catch_warnings(record=True) as caught_warnings, redirect_stderr(stderr):
+        warnings.simplefilter("always")
+        async with ACPStdioTransport(("unused",), project_root=str(tmp_path)) as transport:
+            with monkeypatch.context() as patch:
+                patch.setattr(asyncio, "ensure_future", ensure_future)
+                with pytest.raises(TransportFailure, match="session_failed") as caught:
+                    await transport._invoke(
+                        coroutine, TransportFailureCode.SESSION_FAILED)
+        closed = coroutine.cr_frame is None
+        del coroutine
+        gc.collect()
+    rendered = stderr.getvalue() + "\n".join(
+        str(item.message) for item in caught_warnings)
+    return caught.value, closed, rendered
+
+
+@_sync_test
+async def test_ensure_future_cancelled_error_closes_coroutine_content_free(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    marker = "secret-ensure-future-cancelled"
+
+    def cancelled(_awaitable):
+        raise asyncio.CancelledError(marker)
+
+    error, closed, rendered = await _rejected_coroutine_result(
+        tmp_path, monkeypatch, cancelled)
+    assert closed and marker not in _exception_text(error) + rendered
+    assert "never awaited" not in rendered
+
+
+@_sync_test
+async def test_ensure_future_none_closes_hostile_named_coroutine_without_warning(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    error, closed, rendered = await _rejected_coroutine_result(
+        tmp_path, monkeypatch, lambda _awaitable: None)
+    assert closed and "hostile_none_coroutine_qualname_marker" not in rendered
+    assert "never awaited" not in rendered
+    assert error.__cause__ is None and error.__context__ is None
