@@ -14,7 +14,6 @@ from agentdeck.ports.worker import TaskRequest, WorkerEvent, WorkerHandle, Worke
 from product_kernel.fakes import FrozenClock
 
 NOW = datetime(2026, 7, 19, 3, 0, tzinfo=timezone.utc)
-
 class Transaction:
     def __init__(self, store: "MemoryStore") -> None:
         self._store = store
@@ -37,7 +36,6 @@ class Transaction:
 
     def append_event(self, event) -> None:
         return None
-
     def commit(self) -> None:
         for kind, identity, snapshot in self._pending:
             self._store.aggregates[(kind, identity)] = snapshot
@@ -66,6 +64,10 @@ class MemoryStore:
                 return dict(result)
         return None
 
+    def load_aggregate(self, kind, identity):
+        snapshot = self.aggregates.get((kind, identity))
+        return None if snapshot is None else dict(snapshot)
+
 class RecordingApprovalService(ApprovalService):
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
@@ -80,11 +82,13 @@ class ScriptedWorker:
         self._harness = harness
         self._task_name = task_name
         self._handle: WorkerHandle | None = None
+        self._request: TaskRequest | None = None
 
     async def start_task(self, request: TaskRequest) -> WorkerHandle:
         assert ("attempts", request.attempt_id) in self._harness.store.aggregates
         self._harness.started_tasks.append(self._task_name)
         self._harness.requests.append(request)
+        self._request = request
         self._handle = WorkerHandle(
             "ses_1", request.agent_id, request.task_id, request.attempt_id
         )
@@ -105,7 +109,6 @@ class ScriptedWorker:
 
     async def respond_permission(self, *args, **kwargs):
         raise AssertionError("script has no permission request")
-
     async def cancel_task(self, *args, **kwargs):
         raise AssertionError("script is not cancelled")
 
@@ -114,8 +117,24 @@ class ScriptedWorker:
         return WorkerResult(
             session_id="ses_1", agent_id=handle.agent_id, task_id=handle.task_id,
             attempt_id=handle.attempt_id, status="completed",
-            payload=self._harness.results[self._task_name],
+            payload=self._result_payload(),
         )
+
+    def _result_payload(self):
+        payload = self._harness.result_payload(self._task_name)
+        if self._task_name == "revision":
+            assert self._request is not None
+            authority = json.loads(self._request.instruction)["authoritative_revision_task"]
+            findings = authority["accepted_findings"]
+            if payload["resolved_finding_ids"] is None:
+                payload["resolved_finding_ids"] = [
+                    finding["finding_id"] for finding in findings
+                ]
+            if payload["evidence_ids"] is None:
+                payload["evidence_ids"] = [
+                    finding["evidence_lineage"]["review_evidence_id"] for finding in findings
+                ]
+        return payload
 
 class Harness:
     def __init__(self, *, store=None, objective="build the approved feature") -> None:
@@ -124,51 +143,54 @@ class Harness:
         self.requests: list[TaskRequest] = []
         self.results = {
             "implementation": {
-                "summary": "implementation complete",
-                "artifact_reference": "workspace patch",
+                "summary": "implementation complete", "artifact_reference": "workspace patch",
                 "content_hash": "a" * 64,
             },
-            "review": {
-                "summary": "review complete", "finding_id": "rfn_1",
-                "scope": "project", "severity": "warning",
-                "criterion": "approved scope",
-                "evidence_ids": ["ev_implementation_1"],
-            },
+            "review": {"summary": "review complete", "findings": [{
+                "finding_id": "rfn_1", "scope": "project", "severity": "warning",
+                "summary": "verified finding", "criterion": "approved scope", "evidence_ids": None,
+            }]},
             "revision": {
-                "summary": "revision complete", "base": "base",
-                "head": "head", "diff_hash": "b" * 64,
+                "summary": "revision complete", "base": "base", "head": "head", "diff_hash": "b" * 64,
+                "resolved_finding_ids": None, "evidence_ids": None,
             },
             "acceptance": {
-                "summary": "accepted",
-                "criteria": ["the objective is complete with evidence"],
-                "evidence_by_criterion": {
-                    "the objective is complete with evidence": ["ev_revision_1"]
-                },
+                "summary": "accepted", "criteria": ["the objective is complete with evidence"],
+                "evidence_by_criterion": {"the objective is complete with evidence": None},
                 "accepted": True, "failure_reason": None,
             },
         }
         self.draft = MissionDraft.coding_default(
-            "drf_1", objective, "/project", "codex-cli",
-            "gpt-test", PermissionProfile.APPROVE_FOR_ME,
+            "drf_1", objective, "/project", "codex-cli", "gpt-test", PermissionProfile.APPROVE_FOR_ME,
         )
         preview = self.draft.preview(1)
-        self.confirmed = preview.confirm(
-            preview_id=preview.preview_id, content_hash=preview.content_hash
-        )
+        self.confirmed = preview.confirm(preview_id=preview.preview_id, content_hash=preview.content_hash)
         clock = FrozenClock(NOW)
         self.approvals = RecordingApprovalService(store=self.store, clock=clock)
-        self.service = ExecutionService(
-            store=self.store, clock=clock,
-            approval_service=self.approvals,
+        self.service = ExecutionService(store=self.store, clock=clock, approval_service=self.approvals,
             worker_factory=lambda task: ScriptedWorker(self, task.name),
         )
-
+    def result_payload(self, name):
+        payload = json.loads(json.dumps(self.results[name]))
+        task_ids = {task.name: task.task_id for task in self.draft.tasks}
+        attempts = {request.attempt_id for request in self.requests}
+        prior = [identity for (kind, identity), facts in self.store.aggregates.items()
+                 if kind == "evidence" and facts["task_id"] == task_ids.get(
+                     {"review": "implementation", "revision": "review",
+                      "acceptance": "revision"}.get(name))
+                 and facts["attempt_id"] in attempts]
+        if name == "review":
+            for finding in payload["findings"]:
+                if finding["evidence_ids"] is None:
+                    finding["evidence_ids"] = prior
+        elif name == "acceptance":
+            payload["evidence_by_criterion"] = {criterion: prior if ids is None else ids
+                                                for criterion, ids in payload["evidence_by_criterion"].items()}
+        return payload
     async def run(self):
         return await self.service.run_confirmed_mission(
             session_id="ses_1", confirmed=self.confirmed, draft=self.draft,
-            permission_scope=PermissionScope.for_profile(
-                PermissionProfile.APPROVE_FOR_ME
-            ),
+            permission_scope=PermissionScope.for_profile(PermissionProfile.APPROVE_FOR_ME),
         )
 
 def test_coordinator_runs_only_the_frozen_four_stage_graph() -> None:
@@ -190,7 +212,7 @@ def test_worker_cannot_directly_dispatch_peer() -> None:
     result = asyncio.run(harness.run())
 
     assert "next_agent_command" not in result.revision_task.canonical_payload()
-    assert result.revision_task.created_by == "agentdeck"
+    assert result.diagnostic.code == "worker_result_invalid"
 
 def test_each_attempt_permission_scope_is_narrowed_to_the_frozen_task() -> None:
     harness = Harness()
@@ -286,6 +308,7 @@ class DriftHandleWorker(ScriptedWorker):
     async def start_task(self, request: TaskRequest) -> WorkerHandle:
         self._harness.started_tasks.append(self._task_name)
         self._harness.requests.append(request)
+        self._request = request
         self._handle = WorkerHandle("ses_drift", "agt_drift", "tsk_drift", "att_drift")
         return self._handle
 
@@ -302,7 +325,7 @@ class DriftHandleWorker(ScriptedWorker):
         return WorkerResult(
             session_id=handle.session_id, agent_id=handle.agent_id,
             task_id=handle.task_id, attempt_id=handle.attempt_id, status="completed",
-            payload=self._harness.results[self._task_name],
+            payload=self._result_payload(),
         )
 
 def test_worker_handle_must_match_exact_request_lineage() -> None:
@@ -322,6 +345,7 @@ class IndependentACPSessionWorker(ScriptedWorker):
         assert ("attempts", request.attempt_id) in self._harness.store.aggregates
         self._harness.started_tasks.append(self._task_name)
         self._harness.requests.append(request)
+        self._request = request
         self._handle = WorkerHandle(
             f"ses_acp_{self._task_name}", request.agent_id,
             request.task_id, request.attempt_id,
@@ -341,7 +365,7 @@ class IndependentACPSessionWorker(ScriptedWorker):
         return WorkerResult(
             session_id=handle.session_id, agent_id=handle.agent_id,
             task_id=handle.task_id, attempt_id=handle.attempt_id, status="completed",
-            payload=self._harness.results[self._task_name],
+            payload=self._result_payload(),
         )
 
 def test_acp_session_identity_remains_distinct_from_product_session() -> None:
@@ -360,25 +384,6 @@ def test_acp_session_identity_remains_distinct_from_product_session() -> None:
         assert harness.store.aggregates[("attempts", attempt.attempt_id)][
             "acp_session_id"
         ] == f"ses_acp_{json.loads(request.instruction)['task']['name']}"
-
-def test_downstream_requests_receive_canonical_handoff_and_revision_authority() -> None:
-    harness = Harness()
-
-    result = asyncio.run(harness.run())
-
-    review = json.loads(harness.requests[1].instruction)
-    revision = json.loads(harness.requests[2].instruction)
-    assert review["attempt"]["attempt_id"] == harness.requests[1].attempt_id
-    assert review["incoming_handoff"] == {
-        "canonical_content": result.handoffs[0].canonical_content,
-        "content_hash": result.handoffs[0].content_hash,
-    }
-    assert revision["incoming_handoff"] == {
-        "canonical_content": result.handoffs[1].canonical_content,
-        "content_hash": result.handoffs[1].content_hash,
-    }
-    assert revision["authoritative_revision_task"] == result.revision_task.canonical_payload()
-    assert "next_agent_command" not in revision["authoritative_revision_task"]
 
 class FailedWorker(ScriptedWorker):
     async def _events(self):

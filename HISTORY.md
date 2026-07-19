@@ -4,6 +4,52 @@
 
 ## 2026-07-19
 
+### Bind execution evidence lineage
+
+- Replaced placeholder Worker references with exact committed Evidence authority.
+  Review, revision and acceptance references now resolve only against Evidence
+  committed earlier in the same Mission, by the expected preceding Task and a
+  completed source Attempt; nonexistent, future, wrong-Mission, wrong-Task and
+  wrong-Attempt identities stop content-free before downstream execution.
+- Integrated the actual closed multi-finding Review Result without flattening or
+  synthesizing a singleton. Every finding becomes immutable typed Evidence,
+  duplicate or extended payloads fail closed, mixed accepted/rejected findings
+  remain durable, and only all accepted in-scope finding IDs materialize the
+  AgentDeck-owned authoritative Revision Task.
+- Added a closed Revision Result carrying resolved finding IDs and typed Evidence
+  references. Resolved IDs must exactly equal the authoritative accepted IDs;
+  its Evidence IDs must likewise exactly equal the ordered authoritative accepted
+  review Evidence tuple before durable lineage validation. Missing, subset,
+  reordered, duplicate, extra, rejected or otherwise mismatched authority stops
+  before acceptance. Acceptance also requires its exact closed outer shape.
+- Migrated the shared Task 23 Harness to derive review, revision and acceptance
+  references dynamically from the actual preceding committed bundle, preserving
+  the one-start `outcome_unknown` behavior and retry budgets without a production
+  compatibility path for invented fixture identities.
+- Closed terminal-command replay authority. `execution_stage_committed` now
+  returns exact Mission/version, Task, Attempt, ordered complete Evidence IDs and
+  nullable Handoff ID. Both callback and replay results must resolve every
+  referenced Store aggregate and match the complete expected snapshots before
+  loaded Attempt/Evidence/Handoff values become downstream authority. Missing,
+  partial, reordered, extra, drifted or legacy bundles stop content-free before
+  the next Worker; a complete durable replay remains idempotent.
+- Made every accepted finding actionable in the authoritative Revision Task and
+  actual Worker instruction through a closed immutable projection of scope,
+  severity, summary, criterion and finding-to-Evidence lineage. Rejected findings
+  remain durable review Evidence but are excluded from both revision authority
+  and its incoming handoff; the scripted reviser now derives resolved IDs and
+  evidence references from that complete instruction rather than a fixture copy.
+- Strict RED first stopped after the exact `{summary,findings}` review payload and
+  separately rejected the absent `RevisionResult`. The revision-authority RED
+  then failed on missing `accepted_findings` and exposed rejected Evidence in the
+  revision handoff; the revision authority RED showed exact resolved IDs could
+  still cite rejected, missing, reordered or extra review Evidence. The terminal
+  replay RED then produced 10 failures while its exact durable-bundle control
+  passed; GREEN passes all 11 replay cases. Focused GREEN covers 103 Task24/Task23
+  tests; expanded execution, Kernel, ACP, SQLite and Leader coverage passes 759,
+  architecture/firewall passes 50, the full Product Kernel passes 1,393, and the
+  approved legacy substitute passes 4,461 with 3 skipped.
+
 ### Enforce evidence-backed execution semantics
 
 - Added closed, frozen and bounded review/acceptance validators plus a pure

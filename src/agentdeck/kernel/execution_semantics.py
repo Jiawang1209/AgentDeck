@@ -16,6 +16,9 @@ _SQLITE_MAX_INTEGER = 2**63 - 1
 _FINDING_FIELDS = {
     "finding_id", "scope", "severity", "summary", "criterion", "evidence_ids"
 }
+_REVISION_FIELDS = {
+    "summary", "base", "head", "diff_hash", "resolved_finding_ids", "evidence_ids"
+}
 _RETRY_CONDITIONS = frozenset({
     "transport_before_effect", "worker_schema_invalid", "known_test_failure",
     "permission_denied", "outcome_unknown", "project_drift",
@@ -119,6 +122,53 @@ class ReviewResult:
             return cls(value["summary"], tuple(findings))
         except (KeyError, TypeError, ValueError, ResultError):
             raise ResultError("review result is invalid") from None
+
+
+@dataclass(frozen=True)
+class RevisionResult:
+    summary: str
+    base: str
+    head: str
+    diff_hash: str
+    resolved_finding_ids: tuple[str, ...]
+    evidence_ids: tuple[str, ...]
+
+    @classmethod
+    def from_mapping(
+        cls, value: object, *, accepted_finding_ids: object,
+        expected_evidence_ids: object,
+    ) -> "RevisionResult":
+        try:
+            if type(value) is not dict or set(value) != _REVISION_FIELDS:
+                raise ResultError
+            expected = _strings(
+                accepted_finding_ids, "accepted_finding_ids", nonempty=True,
+                prefix="rfn_",
+            )
+            resolved = _strings(
+                value["resolved_finding_ids"], "resolved_finding_ids",
+                nonempty=True, prefix="rfn_",
+            )
+            evidence = _strings(
+                value["evidence_ids"], "evidence_ids", nonempty=True,
+                prefix="ev_",
+            )
+            expected_evidence = _strings(
+                expected_evidence_ids, "expected_evidence_ids", nonempty=True,
+                prefix="ev_",
+            )
+            diff_hash = _text(value["diff_hash"], "diff_hash")
+            if len(diff_hash) != 64 or any(
+                character not in "0123456789abcdef" for character in diff_hash
+            ) or resolved != expected or evidence != expected_evidence:
+                raise ResultError
+            return cls(
+                _text(value["summary"], "summary"),
+                _text(value["base"], "base"), _text(value["head"], "head"),
+                diff_hash, resolved, evidence,
+            )
+        except (KeyError, TypeError, ValueError, ResultError):
+            raise ResultError("revision result is invalid") from None
 
 
 @dataclass(frozen=True)
@@ -253,6 +303,6 @@ class RetryPolicy:
 
 
 __all__ = [
-    "RejectedFinding", "RetryDecision", "RetryPolicy", "ReviewResult",
+    "RejectedFinding", "RetryDecision", "RetryPolicy", "ReviewResult", "RevisionResult",
     "RevisionMaterialization", "materialize_revision", "validate_acceptance",
 ]

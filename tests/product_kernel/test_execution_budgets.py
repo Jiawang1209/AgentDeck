@@ -5,6 +5,7 @@ import asyncio
 import pytest
 
 from agentdeck.application.leader_service import LeaderService
+from agentdeck.application.execution_records import stage_id
 from agentdeck.kernel.diagnostics import Diagnostic, Severity
 from agentdeck.kernel.execution import AttemptState, ResultError
 from agentdeck.kernel.execution_semantics import RetryPolicy
@@ -94,7 +95,7 @@ class SchemaWorker(ScriptedWorker):
         return await super().start_task(request)
 
     async def collect_result(self, handle: WorkerHandle) -> WorkerResult:
-        payload = dict(self._harness.results[self._task_name])
+        payload = self._result_payload()
         if self._task_name == "acceptance":
             count = self._harness.schema_calls.get(self._task_name, 0) + 1
             self._harness.schema_calls[self._task_name] = count
@@ -326,3 +327,152 @@ def test_revision_cycle_is_hard_capped_at_one() -> None:
 
     assert result.diagnostic is None
     assert harness.started_tasks.count("revision") == 1
+
+
+def review_finding(
+    finding_id: str, *, scope: str = "project", evidence_ids=None,
+) -> dict[str, object]:
+    return {
+        "finding_id": finding_id, "scope": scope, "severity": "warning",
+        "summary": f"finding {finding_id}", "criterion": "approved scope",
+        "evidence_ids": evidence_ids,
+    }
+
+
+def evidence_for(harness: Harness, task_name: str) -> list[str]:
+    task_id = next(task.task_id for task in harness.draft.tasks if task.name == task_name)
+    return [identity for (kind, identity), facts in harness.store.aggregates.items()
+            if kind == "evidence" and facts["task_id"] == task_id]
+
+
+def redirect_stage_evidence(harness: Harness, stage: str, source: str) -> None:
+    original = harness.result_payload
+
+    def redirected(name):
+        payload = original(name)
+        if name == stage:
+            ids = evidence_for(harness, source)
+            if stage == "review":
+                payload["findings"][0]["evidence_ids"] = ids
+            elif stage == "revision":
+                payload["evidence_ids"] = ids
+            else:
+                payload["evidence_by_criterion"] = {
+                    criterion: ids for criterion in payload["evidence_by_criterion"]
+                }
+        return payload
+
+    harness.result_payload = redirected
+
+
+@pytest.mark.parametrize("reference", ["ev_invented", "future"])
+def test_review_rejects_nonexistent_or_future_evidence_content_free(reference) -> None:
+    harness = Harness()
+    if reference == "future":
+        task = next(task for task in harness.draft.tasks if task.name == "revision")
+        reference = stage_id("ev_", harness.confirmed, task, "1")
+    harness.results["review"]["findings"][0]["evidence_ids"] = [reference]
+
+    result = asyncio.run(harness.run())
+
+    assert result.diagnostic.code == "evidence_lineage_invalid"
+    assert harness.started_tasks == ["implementation", "review"]
+    assert reference not in result.diagnostic.cause
+
+
+def test_review_uses_all_findings_and_materializes_only_accepted_ids() -> None:
+    harness = Harness()
+    harness.results["review"]["findings"] = [
+        review_finding("rfn_one"),
+        review_finding("rfn_outside", scope="outside"),
+        review_finding("rfn_two"),
+    ]
+
+    result = asyncio.run(harness.run())
+
+    assert result.diagnostic is None
+    assert result.revision_task.accepted_finding_ids == ("rfn_one", "rfn_two")
+    review_evidence = [item for item in result.evidence
+                       if item.kind.value == "review_finding"]
+    assert len(review_evidence) == 3
+
+
+@pytest.mark.parametrize("mutation", ["unexpected", "duplicate"])
+def test_review_closed_shape_rejects_outer_extensions_and_duplicates(mutation) -> None:
+    harness = Harness()
+    if mutation == "unexpected":
+        harness.results["review"]["raw_worker_extension"] = "hostile-marker"
+    else:
+        harness.results["review"]["findings"].append(
+            review_finding("rfn_1")
+        )
+
+    result = asyncio.run(harness.run())
+
+    assert result.diagnostic.code == "worker_result_invalid"
+    assert harness.started_tasks == ["implementation", "review"]
+    assert "hostile-marker" not in result.diagnostic.cause
+
+
+@pytest.mark.parametrize("resolved", [[], ["rfn_1", "rfn_1"],
+                                        ["rfn_1", "rfn_extra"], ["rfn_other"]])
+def test_revision_resolved_ids_must_exactly_match_authoritative_task(resolved) -> None:
+    harness = Harness()
+    harness.results["revision"]["resolved_finding_ids"] = resolved
+
+    result = asyncio.run(harness.run())
+
+    assert result.diagnostic.code == "worker_result_invalid"
+    assert harness.started_tasks == ["implementation", "review", "revision"]
+    assert "acceptance" not in harness.started_tasks
+
+
+def test_revision_requires_closed_typed_evidence_references() -> None:
+    harness = Harness()
+    harness.results["revision"]["evidence_ids"] = []
+
+    result = asyncio.run(harness.run())
+
+    assert result.diagnostic.code == "worker_result_invalid"
+    assert harness.started_tasks == ["implementation", "review", "revision"]
+
+
+@pytest.mark.parametrize(("stage", "source", "code"), [
+    ("revision", "implementation", "worker_result_invalid"),
+    ("acceptance", "implementation", "evidence_lineage_invalid"),
+])
+def test_later_stages_reject_evidence_from_the_wrong_prior_task(
+    stage, source, code,
+) -> None:
+    harness = Harness()
+    redirect_stage_evidence(harness, stage, source)
+
+    result = asyncio.run(harness.run())
+
+    assert result.diagnostic.code == code
+    assert harness.started_tasks[-1] == stage
+
+
+def test_review_rejects_durable_evidence_from_another_mission() -> None:
+    shared_store = Harness().store
+    other = Harness(store=shared_store, objective="another mission")
+    assert asyncio.run(other.run()).diagnostic is None
+    other_id = evidence_for(other, "implementation")[0]
+    harness = Harness(store=shared_store)
+    harness.results["review"]["findings"][0]["evidence_ids"] = [other_id]
+
+    result = asyncio.run(harness.run())
+
+    assert result.diagnostic.code == "evidence_lineage_invalid"
+    assert harness.started_tasks == ["implementation", "review"]
+
+
+def test_real_implementation_and_revision_evidence_reaches_acceptance() -> None:
+    harness = Harness()
+
+    result = asyncio.run(harness.run())
+
+    assert result.diagnostic is None
+    assert harness.started_tasks == [
+        "implementation", "review", "revision", "acceptance",
+    ]
