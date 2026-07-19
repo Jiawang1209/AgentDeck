@@ -93,6 +93,49 @@ def test_sqlite_rejects_decision_drift_and_rolls_back_event(tmp_path) -> None:
         store.close()
 
 
+def test_sqlite_rejects_cross_mission_attempt_lineage(tmp_path) -> None:
+    store = SQLiteStore.open(tmp_path, clock=FrozenClock(NOW))
+    try:
+        seed_lineage(store)
+        connection = store._writer
+        connection.execute(
+            "INSERT INTO missions VALUES (?,?,?,?,?,?)",
+            ("msn_2", "ses_1", "running", 1, NOW.isoformat(), NOW.isoformat()),
+        )
+        connection.execute(
+            "INSERT INTO mission_versions VALUES (?,?,?,?,?,?)",
+            ("msn_2", 1, "prv_2", "j" * 64, "{}", NOW.isoformat()),
+        )
+        connection.execute(
+            "INSERT INTO tasks VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            ("tsk_2", "msn_2", 1, 1, "implementation", "implementer",
+             "codex", "agt_1", "acp", "running", "{}", NOW.isoformat(),
+             NOW.isoformat()),
+        )
+        connection.execute(
+            "INSERT INTO attempts VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+            ("att_2", "tsk_2", "agt_1", 1, "running", None, None, 0,
+             "ses_acp", 0, NOW.isoformat(), NOW.isoformat()),
+        )
+        value = json.loads(json.dumps(snapshot("pending")))
+        value["attempt_id"] = "att_2"
+        value["request"]["attempt_id"] = "att_2"
+        value["request"]["task_id"] = "tsk_2"
+
+        with pytest.raises(
+            StoreSerializationError,
+            match="approval durable lineage is inconsistent",
+        ):
+            store.execute_once(
+                "cmd_cross_mission", "approval_request",
+                lambda tx: _save(tx, value),
+            )
+        assert store.count("approvals") == 0
+        assert store.count("events") == 0
+    finally:
+        store.close()
+
+
 def _save(transaction, value):
     transaction.save_aggregate("approvals", "apv_1", value)
     transaction.append_event({

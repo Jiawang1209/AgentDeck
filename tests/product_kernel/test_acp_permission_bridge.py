@@ -3,8 +3,11 @@ from __future__ import annotations
 import asyncio
 from datetime import datetime, timezone
 
+import pytest
+
 from agentdeck.application.approval_service import ApprovalContext, ApprovalService
 from agentdeck.kernel.permissions import PermissionProfile, PermissionScope
+from agentdeck.ports.approval import ReviewerVerdict
 from agentdeck.ports.worker import TaskRequest, WorkerEvent, WorkerHandle, WorkerResult
 from product_kernel.fakes import FrozenClock
 from product_kernel.test_approval_service import FakeReviewer, FakeStore
@@ -183,3 +186,90 @@ def test_executor_cannot_review_itself_and_attempt_stops() -> None:
         assert worker.started_tasks == ["tsk_implementation"]
 
     asyncio.run(scenario())
+
+
+def test_concurrent_permission_replay_uses_one_durable_reviewer_outcome() -> None:
+    class ConcurrentReviewer:
+        reviewer_id = "human"
+
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def review(self, request):
+            self.calls += 1
+            ordinal = self.calls
+            await asyncio.sleep(0)
+            return ReviewerVerdict(ordinal == 1, f"decision-{ordinal}")
+
+    async def scenario() -> None:
+        store = FakeStore()
+        reviewer = ConcurrentReviewer()
+        service = ApprovalService(
+            store=store, clock=FrozenClock(NOW), human_reviewer=reviewer
+        )
+        workers = [SequentialPermissionWorker(), SequentialPermissionWorker()]
+        replay_handle = WorkerHandle(
+            "ses_1", "agt_executor", "tsk_implementation", "att_1"
+        )
+        for worker in workers:
+            worker.handle = replay_handle
+            worker._pending = "perm_1"
+        workers[0]._cursor = 1
+        permission_event = workers[0]._event("permission_requested", {
+            "permission_request_id": "perm_1", "tool_call_id": "call_1",
+            "option_count": 2, "effect": "write_project", "risk": "bounded risk",
+        })
+        records = await asyncio.gather(*(
+            service.handle_permission(
+                worker,
+                replay_handle,
+                permission_event,
+                ApprovalContext(
+                    "msn_1", 1,
+                    PermissionScope.for_profile(PermissionProfile.ASK_FOR_APPROVAL),
+                    "a" * 64,
+                ),
+            )
+            for worker in workers
+        ))
+
+        assert reviewer.calls == 1
+        assert records[0] == records[1]
+        assert workers[0].responses == workers[1].responses
+
+    asyncio.run(scenario())
+
+
+def test_terminal_result_requires_exact_handle_lineage() -> None:
+    class WrongResultWorker(SequentialPermissionWorker):
+        async def collect_result(self, handle):
+            result = await super().collect_result(handle)
+            return WorkerResult(
+                session_id=result.session_id, agent_id="agt_other",
+                task_id=result.task_id, attempt_id=result.attempt_id,
+                status=result.status, payload=result.payload,
+            )
+
+    async def scenario() -> None:
+        worker = WrongResultWorker(())
+        handle = await worker.start_task(TaskRequest(
+            agent_id="agt_executor", task_id="tsk_implementation",
+            attempt_id="att_1", instruction="Implement the confirmed task.",
+        ))
+        service = ApprovalService(store=FakeStore(), clock=FrozenClock(NOW))
+        with pytest.raises(
+            ValueError, match="worker terminal event and result disagree"
+        ):
+            await service.bridge_attempt(
+                worker, handle,
+                ApprovalContext(
+                    "msn_1", 1, PermissionScope.for_profile(), "a" * 64
+                ),
+            )
+
+    asyncio.run(scenario())
+
+
+def test_reviewer_verdict_rejects_terminal_control_text() -> None:
+    with pytest.raises(ValueError, match="reason must be bounded text"):
+        ReviewerVerdict(True, "approved\x1b[31m")

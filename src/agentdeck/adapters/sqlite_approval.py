@@ -76,6 +76,7 @@ def _approval_record(snapshot: Mapping[str, object], now: str) -> dict[str, obje
         "approval_id": approval_id, "mission_id": mission_id,
         "mission_version": version, "attempt_id": attempt_id, "effect": effect,
         "state": state, "scope_hash": scope_hash, "request_text": request_text,
+        "request": request,
         "decision_text": decision_text, "requested_at": requested_at,
         "decided_at": decided_at,
     }
@@ -111,6 +112,7 @@ def _save_approval(
     connection: sqlite3.Connection, snapshot: Mapping[str, object], now: str
 ) -> None:
     record = _approval_record(snapshot, now)
+    _validate_durable_lineage(connection, record)
     identity = record["approval_id"]
     existing = connection.execute(
         """SELECT mission_id,mission_version,attempt_id,effect,state,scope_hash,
@@ -152,6 +154,25 @@ def _save_approval(
            WHERE approval_id=? AND state='pending'""",
         (record["state"], record["decision_text"], record["decided_at"], identity),
     )
+
+
+def _validate_durable_lineage(
+    connection: sqlite3.Connection, record: dict[str, object]
+) -> None:
+    request = record["request"]
+    row = connection.execute(
+        """SELECT a.task_id,a.agent_instance_id,t.mission_id,t.mission_version,
+                  t.planned_agent_instance_id
+           FROM attempts a JOIN tasks t ON t.task_id=a.task_id
+           WHERE a.attempt_id=?""",
+        (record["attempt_id"],),
+    ).fetchone()
+    expected = (
+        request["task_id"], request["agent_id"], record["mission_id"],
+        record["mission_version"], request["agent_id"],
+    )
+    if row is None or tuple(row) != expected:
+        raise StoreSerializationError("approval durable lineage is inconsistent")
 
 
 __all__ = ["_save_approval"]

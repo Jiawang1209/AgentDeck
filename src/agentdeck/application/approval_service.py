@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from datetime import datetime
 from hashlib import sha256
@@ -82,6 +83,7 @@ class ApprovalService:
         self._clock = clock
         self._human_reviewer = human_reviewer
         self._independent_reviewer = independent_reviewer
+        self._decision_lock = asyncio.Lock()
 
     async def handle_permission(
         self,
@@ -110,20 +112,23 @@ class ApprovalService:
             requested_at=requested_at,
         )
         request = self._persist_request(request)
-        replay = self._store.lookup_command(
-            _decision_command(approval_id), "approval_decision"
-        )
-        if replay is None:
-            decision, diagnostic = await self._decide(request, context.permission_scope)
-            record = ApprovalRecord(
-                request=request,
-                state="approved" if decision.allowed else "denied",
-                decision=decision,
-                diagnostic_code=diagnostic,
+        async with self._decision_lock:
+            replay = self._store.lookup_command(
+                _decision_command(approval_id), "approval_decision"
             )
-            self._persist_decision(record)
-        else:
-            record = _record_from_result(request, replay)
+            if replay is None:
+                decision, diagnostic = await self._decide(
+                    request, context.permission_scope
+                )
+                record = ApprovalRecord(
+                    request=request,
+                    state="approved" if decision.allowed else "denied",
+                    decision=decision,
+                    diagnostic_code=diagnostic,
+                )
+                record = self._persist_decision(record)
+            else:
+                record = _record_from_result(request, replay)
         response_failed = False
         try:
             await worker.respond_permission(
@@ -157,7 +162,13 @@ class ApprovalService:
         if terminal_kind is None:
             raise ValueError("worker stream ended without a terminal event")
         result = await worker.collect_result(handle)
-        if result.status != terminal_kind:
+        result_lineage = (
+            result.session_id, result.agent_id, result.task_id, result.attempt_id
+        )
+        handle_lineage = (
+            handle.session_id, handle.agent_id, handle.task_id, handle.attempt_id
+        )
+        if result_lineage != handle_lineage or result.status != terminal_kind:
             raise ValueError("worker terminal event and result disagree")
         diagnostic_code = next(
             (item.diagnostic_code for item in approvals if item.diagnostic_code), None
@@ -268,7 +279,7 @@ class ApprovalService:
             raise ValueError("permission request replay drifted")
         return durable
 
-    def _persist_decision(self, record: ApprovalRecord) -> None:
+    def _persist_decision(self, record: ApprovalRecord) -> ApprovalRecord:
         snapshot = _snapshot(record.request, record.state, record.decision)
 
         def save(transaction):
@@ -278,9 +289,10 @@ class ApprovalService:
             )
             return _record_result(record)
 
-        self._store.execute_once(
+        result = self._store.execute_once(
             _decision_command(record.request.approval_id), "approval_decision", save
         )
+        return _record_from_result(record.request, result)
 
     def _now(self) -> str:
         value = self._clock.now()
@@ -299,11 +311,9 @@ class ApprovalService:
         if actual != expected or event.transport != handle.transport:
             raise ValueError("worker handle or event lineage is invalid")
 
-
 def _approval_id(attempt_id: str, permission_id: str) -> str:
     digest = sha256(f"{attempt_id}\0{permission_id}".encode()).hexdigest()[:24]
     return f"apv_{digest}"
-
 
 def _reviewer_identity(
     reviewer: ApprovalReviewer | None,
@@ -323,10 +333,8 @@ def _reviewer_identity(
         return None, "approval_reviewer_invalid"
     return reviewer_id, None
 
-
 def _request_command(approval_id: str) -> str:
     return f"cmd_{approval_id}_request"
-
 
 def _decision_command(approval_id: str) -> str:
     return f"cmd_{approval_id}_decision"

@@ -18,15 +18,22 @@
 - Added conservative ACP tool-kind effect/risk classification. Read/search/think
   remain read-only; project writes, commands, network, deletion, and unknown
   kinds receive explicit bounded facts. Unknown kinds remain denied even under
-  full access, and raw tool input never enters approval authority.
+  full access, and raw tool input never enters approval authority. Edit, move,
+  and execute requests become routine project effects only when the Adapter has
+  explicit project-boundary enforcement; otherwise they require stronger
+  authority and cannot be auto-approved by the default profile.
 - Added command-atomic SQLite approval request/decision persistence over the
   existing schema, with immutable lineage and terminal-decision drift guards.
+  SQLite now joins Attempt, Task, Mission version, and Agent lineage before any
+  approval row can commit. Concurrent local requests share one reviewer call,
+  every response uses the first durable decision, and terminal Worker results
+  must match the exact handle lineage rather than status alone.
   The permission bridge processes a finite ordered sequence and never authorizes
   the next Task before a validated terminal result and future Handoff commit.
 - TDD RED first failed collection for the absent Port and service. The focused
-  Approval Service gate now passes `14` cases; the formal Task 22 gate passes
-  `86` cases and the broader SQLite/ACP/approval/permission/architecture gate
-  passes `263` cases after the reviewer-identity hardening.
+  Approval Service gate passes `14` cases; the formal Task 22 gate passes `90`
+  cases and the broader SQLite/ACP/approval/permission/architecture gate passes
+  `267` cases after reviewer, concurrency, boundary, and lineage hardening.
 
 ### Normalize every rejected ACP task construction
 

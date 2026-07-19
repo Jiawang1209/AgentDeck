@@ -4,6 +4,7 @@ import asyncio
 from datetime import datetime, timezone
 
 from agentdeck.adapters.acp import ACPWorker, _permission_effect
+from agentdeck.kernel.permissions import Effect, PermissionProfile, PermissionScope
 from product_kernel.fakes import FrozenClock
 from product_kernel.fixtures.fake_acp_agent import FakeACPAgent
 from product_kernel.worker_contract import assert_worker_contract, task_request
@@ -17,7 +18,7 @@ def worker_factory(scenario: str = "success"):
         kwargs = {"max_total_bytes": 64 * 1024} if scenario == "total_oversize" else {}
         return ACPWorker(
             agent=FakeACPAgent(scenario), project_root="/tmp/project",
-            clock=FrozenClock(NOW), **kwargs,
+            clock=FrozenClock(NOW), project_boundary_enforced=True, **kwargs,
         )
 
     return create
@@ -37,7 +38,23 @@ def test_permission_effect_mapping_is_conservative_and_bounded() -> None:
         "fetch": ("network", "network_access"),
         "delete": ("destructive", "project_deletion"),
     }
-    assert {kind: _permission_effect(kind) for kind in expected} == expected
+    assert {
+        kind: _permission_effect(kind, project_boundary_enforced=True)
+        for kind in expected
+    } == expected
+    unproven = {
+        kind: _permission_effect(kind) for kind in ("edit", "move", "execute")
+    }
+    assert unproven == {
+        "edit": ("write_external", "project_boundary_unproven"),
+        "move": ("write_external", "project_boundary_unproven"),
+        "execute": ("destructive", "project_boundary_unproven"),
+    }
+    default_scope = PermissionScope.for_profile(PermissionProfile.APPROVE_FOR_ME)
+    assert all(
+        not default_scope.decide(Effect(effect), actor="agt_executor").allowed
+        for effect, _ in unproven.values()
+    )
     for unknown in ("other", "switch_mode", "future_kind", None, []):
         assert _permission_effect(unknown) == (
             "destructive", "unclassified_tool_effect",

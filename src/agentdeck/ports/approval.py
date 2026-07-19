@@ -22,7 +22,10 @@ def _text(value: object, field: str) -> str:
     except UnicodeEncodeError:
         invalid_utf8 = True
         encoded = b""
-    if invalid_utf8 or not value.strip() or len(encoded) > _MAX_TEXT_BYTES:
+    if (
+        invalid_utf8 or not value.strip() or len(encoded) > _MAX_TEXT_BYTES
+        or any(not character.isprintable() for character in value)
+    ):
         raise ValueError(f"{field} must be bounded text")
     return value
 
@@ -61,7 +64,9 @@ class ReviewerVerdict:
     def __post_init__(self) -> None:
         if type(self.allowed) is not bool:
             raise TypeError("allowed must be a bool")
-        object.__setattr__(self, "reason", validate_worker_reason(self.reason))
+        object.__setattr__(
+            self, "reason", validate_worker_reason(_text(self.reason, "reason"))
+        )
 
 
 class ApprovalReviewer(Protocol):
@@ -113,7 +118,9 @@ class ApprovalDecision:
             _identity(reviewer, "reviewer_id", "agt_")
         if type(self.allowed) is not bool:
             raise TypeError("allowed must be a bool")
-        object.__setattr__(self, "reason", validate_worker_reason(self.reason))
+        object.__setattr__(
+            self, "reason", validate_worker_reason(_text(self.reason, "reason"))
+        )
         object.__setattr__(self, "decided_at", _timestamp(self.decided_at, "decided_at"))
 
 

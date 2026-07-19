@@ -7,42 +7,27 @@ from hashlib import sha256
 from typing import Any, Final
 from acp import PROTOCOL_VERSION
 from acp.schema import (
-    AgentMessageChunk,
-    AllowedOutcome,
-    DeniedOutcome,
-    InitializeResponse,
-    NewSessionResponse,
-    PermissionOption,
-    PromptResponse,
-    RequestPermissionResponse,
-    TextContentBlock,
-    ToolCallProgress,
-    ToolCallStart,
-    ToolCallUpdate,
+    AgentMessageChunk, AllowedOutcome, DeniedOutcome, InitializeResponse,
+    NewSessionResponse, PermissionOption, PromptResponse,
+    RequestPermissionResponse, TextContentBlock, ToolCallProgress,
+    ToolCallStart, ToolCallUpdate,
 )
 
 from agentdeck.kernel.diagnostics import Diagnostic, Severity
 from agentdeck.kernel.events import normalize_occurred_at
 from agentdeck.ports.clock import Clock
 from agentdeck.ports.worker import (
-    TaskRequest,
-    WorkerEvent,
-    WorkerHandle,
-    WorkerResult,
-    validate_worker_reason,
+    TaskRequest, WorkerEvent, WorkerHandle, WorkerResult, validate_worker_reason,
 )
-
 
 _MAX_ACP_UPDATE_BYTES: Final = 64 * 1024
 _MAX_ACP_TOTAL_BYTES: Final = 1024 * 1024
 _PROVEN_READ_ONLY_TOOL_KINDS: Final = frozenset({"read", "search", "think"})
 _PERMISSION_EFFECTS: Final = {
     "read": ("read", "read_only"), "search": ("read", "read_only"),
-    "think": ("read", "read_only"), "edit": ("write_project", "project_mutation"),
-    "move": ("write_project", "project_mutation"), "fetch": ("network", "network_access"),
-    "execute": ("command_project", "project_command"), "delete": ("destructive", "project_deletion"),
+    "think": ("read", "read_only"), "fetch": ("network", "network_access"),
+    "delete": ("destructive", "project_deletion"),
 }
-
 
 class ACPWorkerError(RuntimeError):
     """Content-free typed failure at the ACP Worker boundary."""
@@ -51,13 +36,11 @@ class ACPWorkerError(RuntimeError):
         super().__init__(f"ACP Worker failed: {diagnostic.code}")
         self.diagnostic = diagnostic
 
-
 @dataclass
 class _PermissionWaiter:
     permission_id: str
     options: tuple[PermissionOption, ...]
     future: asyncio.Future[RequestPermissionResponse]
-
 
 @dataclass
 class _Run:
@@ -79,7 +62,6 @@ class _Run:
     stream_started: bool = False
     terminal: bool = False
 
-
 class ACPWorker:
     """One-task ACP Worker adapter; Task 26 supplies the real connection."""
 
@@ -87,6 +69,7 @@ class ACPWorker:
         self, *, agent: object, project_root: str, clock: Clock,
         max_update_bytes: int = _MAX_ACP_UPDATE_BYTES,
         max_total_bytes: int = _MAX_ACP_TOTAL_BYTES,
+        project_boundary_enforced: bool = False,
     ) -> None:
         if not all(callable(getattr(agent, name, None)) for name in (
             "initialize", "new_session", "prompt", "cancel",
@@ -103,11 +86,14 @@ class ACPWorker:
             or not max_update_bytes <= max_total_bytes <= _MAX_ACP_TOTAL_BYTES
         ):
             raise ValueError("max_total_bytes is invalid")
+        if type(project_boundary_enforced) is not bool:
+            raise TypeError("project_boundary_enforced must be a bool")
         self._agent = agent
         self._project_root = project_root
         self._clock = clock
         self._max_update_bytes = max_update_bytes
         self._max_total_bytes = max_total_bytes
+        self._project_boundary_enforced = project_boundary_enforced
         self._run: _Run | None = None
         connector = getattr(agent, "on_connect", None)
         if callable(connector):
@@ -269,7 +255,10 @@ class ACPWorker:
         run.pending_permission = _PermissionWaiter(
             permission_id, tuple(options), future,
         )
-        effect, risk = _permission_effect(tool_call.kind)
+        effect, risk = _permission_effect(
+            tool_call.kind,
+            project_boundary_enforced=self._project_boundary_enforced,
+        )
         try:
             self._emit("permission_requested", {
                 "permission_request_id": permission_id,
@@ -466,7 +455,6 @@ class ACPWorker:
         except Exception:
             raise RuntimeError("clock did not provide a canonical aware time") from None
 
-
 def _permission_id(value: object) -> str:
     if type(value) is not str or not value.startswith("perm_") or not value[5:]:
         raise ValueError("permission_request_id must be typed and bounded")
@@ -478,9 +466,21 @@ def _permission_id(value: object) -> str:
     return value
 
 
-def _permission_effect(kind: object) -> tuple[str, str]:
+def _permission_effect(
+    kind: object, *, project_boundary_enforced: bool = False,
+) -> tuple[str, str]:
     if type(kind) is not str:
         return "destructive", "unclassified_tool_effect"
+    if kind in {"edit", "move"}:
+        local = ("write_project", "project_mutation")
+        return local if project_boundary_enforced else (
+            "write_external", "project_boundary_unproven"
+        )
+    if kind == "execute":
+        local = ("command_project", "project_command")
+        return local if project_boundary_enforced else (
+            "destructive", "project_boundary_unproven"
+        )
     return _PERMISSION_EFFECTS.get(kind, ("destructive", "unclassified_tool_effect"))
 
 
