@@ -245,7 +245,7 @@ class ExecutionResumeFacts:
 
     def __post_init__(self) -> None:
         _identity(self.session_id, "ses_")
-        if self.session_state != "paused":
+        if type(self.session_state) is not str or self.session_state != "paused":
             _malformed()
         _identity(self.mission_id, "msn_")
         _integer(self.mission_version)

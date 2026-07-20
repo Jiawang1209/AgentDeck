@@ -4,6 +4,24 @@
 
 ## 2026-07-20
 
+### Close resume projection lineage gaps after review
+
+- Corrected review resume authority to retain every committed review Evidence
+  while deriving Handoff and revision authority only from findings accepted by
+  the existing confirmed-scope `materialize_revision` semantics. Rejected or
+  outside-scope findings remain auditable but cannot be elevated into a
+  revision task.
+- Restricted review and acceptance Evidence references to the immediately
+  preceding frozen Task, moved complete-Mission classification after full
+  Mission/history/terminal-bundle validation, and added bounded exact coverage
+  checks so orphan current-Mission `execution_stage_committed` commands cannot
+  disappear from the resume hash.
+- Tightened paused session facts to an exact `str`, normalized malformed stored
+  command state through the content-free projection error, and retained
+  read-only SQLite/schema behavior. Review RED produced `5 failed, 10 passed`;
+  a command-state hardening RED produced `1 failed, 24 passed`; final focused
+  GREEN passes `166` tests.
+
 ### Add the durable project resume projection
 
 - Added a no-new-schema, read-only SQLite v2 resume authority that validates

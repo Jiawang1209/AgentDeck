@@ -16,6 +16,7 @@ from agentdeck.kernel.execution import (
     Handoff,
     ReviewFinding,
 )
+from agentdeck.kernel.execution_semantics import materialize_revision
 from agentdeck.kernel.mission import (
     ConfirmedMissionVersion,
     MissionDraft,
@@ -219,12 +220,30 @@ def _cross_stage_reference_ids(evidence: Evidence) -> tuple[str, ...]:
     return ()
 
 
+def _accepted_review_findings(
+    evidence: tuple[Evidence, ...], draft: MissionDraft,
+) -> tuple[tuple[ReviewFinding, ...], tuple[str, ...]]:
+    findings = tuple(_review_finding(item) for item in evidence)
+    materialized = materialize_revision(
+        findings=findings, confirmed_scope=(draft.scope,)
+    )
+    indexed = dict(zip(
+        (finding.finding_id for finding in findings),
+        (item.evidence_id for item in evidence), strict=True,
+    ))
+    identities = tuple(indexed[item.finding_id] for item in materialized.findings)
+    if not identities:
+        _fail()
+    return materialized.findings, identities
+
+
 def _rebuild_execution_history(
     snapshot: ExecutionResumeSnapshot, draft: MissionDraft,
 ) -> _ExecutionHistory:
     attempts: list[Attempt] = []
     evidence: list[Evidence] = []
     handoffs: list[Handoff] = []
+    preceding_evidence_ids: set[str] = set()
     for index, (stage, task) in enumerate(zip(
         snapshot.facts.stages, draft.tasks, strict=True
     )):
@@ -246,12 +265,10 @@ def _rebuild_execution_history(
             rebuilt_evidence = tuple(
                 _rebuild_evidence(item, stage) for item in stage.evidence
             )
-            committed_ids = {item.evidence_id for item in evidence}
             for item in rebuilt_evidence:
                 references = _cross_stage_reference_ids(item)
                 if references and (
-                    len(references) != len(set(references))
-                    or not set(references) <= committed_ids
+                    not set(references) <= preceding_evidence_ids
                 ):
                     _fail()
             evidence.extend(rebuilt_evidence)
@@ -264,6 +281,13 @@ def _rebuild_execution_history(
                 draft.tasks[index + 1]
                 if index + 1 < len(draft.tasks) else None
             )
+            expected_handoff_ids = tuple(
+                item.evidence_id for item in rebuilt_evidence
+            )
+            if task.name == "review":
+                _, expected_handoff_ids = _accepted_review_findings(
+                    rebuilt_evidence, draft
+                )
             if (
                 terminal.state is not AttemptState.COMPLETED
                 or stage.terminal_attempt_id != terminal.attempt_id
@@ -277,7 +301,7 @@ def _rebuild_execution_history(
                         rebuilt_handoff.target_task_id != next_task.task_id
                         or rebuilt_handoff.result_summary != terminal.result_summary
                         or rebuilt_handoff.verification_evidence_ids
-                        != tuple(item.evidence_id for item in rebuilt_evidence)
+                        != expected_handoff_ids
                     )
                 )
             ):
@@ -296,6 +320,9 @@ def _rebuild_execution_history(
                 stage.terminal_command_hash
             ):
                 _fail()
+            preceding_evidence_ids = {
+                item.evidence_id for item in rebuilt_evidence
+            }
     review_evidence = tuple(
         item for item in evidence if item.kind is EvidenceKind.REVIEW_FINDING
     )
@@ -303,7 +330,7 @@ def _rebuild_execution_history(
         task.task_id for task in draft.tasks if task.name == "revision"
     )
     if review_evidence:
-        findings = tuple(_review_finding(item) for item in review_evidence)
+        findings, _ = _accepted_review_findings(review_evidence, draft)
         revision_task = AuthoritativeRevisionTask.from_review(
             revision_task_id, draft.scope, findings, review_evidence
         )
@@ -324,12 +351,12 @@ class ExecutionResumePlanner:
             raise TypeError("resume planner requires ExecutionResumeSnapshot")
         try:
             snapshot.validate_hash()
+            draft, confirmed = _rebuild_confirmed_mission(snapshot.facts)
+            prior = _rebuild_execution_history(snapshot, draft)
             if snapshot.first_unclosed_task_id is None:
                 raise ExecutionResumeProjectionError(
                     code="resume_mission_complete"
                 )
-            draft, confirmed = _rebuild_confirmed_mission(snapshot.facts)
-            prior = _rebuild_execution_history(snapshot, draft)
             remaining = draft.tasks[snapshot.closed_stage_count:]
             if (
                 not remaining

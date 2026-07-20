@@ -8,6 +8,7 @@ from hmac import compare_digest
 import json
 import sqlite3
 
+from agentdeck.adapters.sqlite_schema import StoreCommandStateError
 from agentdeck.adapters.sqlite_validation import (
     _attempt_fingerprint,
     _attempt_from_row,
@@ -20,8 +21,11 @@ from agentdeck.kernel.execution import (
     AttemptState,
     Evidence,
     EvidenceKind,
+    FindingSeverity,
     Handoff,
+    ReviewFinding,
 )
+from agentdeck.kernel.execution_semantics import materialize_revision
 from agentdeck.kernel.mission import (
     ConfirmedMissionVersion,
     MissionDraft,
@@ -63,12 +67,8 @@ _ATTEMPT_QUERY = """SELECT a.attempt_id,a.task_id,a.agent_instance_id,a.ordinal,
   FROM attempts AS a JOIN tasks AS t ON t.task_id=a.task_id
  WHERE t.mission_id=? AND t.mission_version=?
  ORDER BY t.ordinal,a.ordinal"""
-
-
 def _fail(code: str = "resume_projection_malformed") -> None:
     raise ExecutionResumeProjectionError(code=code)
-
-
 def _typed_session_id(value: object) -> str:
     if type(value) is not str:
         _fail()
@@ -82,8 +82,6 @@ def _typed_session_id(value: object) -> str:
     ):
         _fail()
     return value
-
-
 def _canonical(value: object) -> str:
     try:
         return json.dumps(
@@ -92,16 +90,12 @@ def _canonical(value: object) -> str:
         )
     except (TypeError, ValueError):
         _fail()
-
-
 def _load_session(connection: sqlite3.Connection, session_id: str) -> None:
     row = connection.execute(_SESSION_QUERY, (session_id,)).fetchone()
     if row is None or row[0] != "paused":
         _fail("resume_session_not_paused")
     if any(value is not None for value in row[1:]):
         _fail("resume_pending_exit")
-
-
 def _load_mission(
     connection: sqlite3.Connection, session_id: str,
 ) -> tuple[ConfirmedMissionVersion, MissionDraft]:
@@ -121,8 +115,6 @@ def _load_mission(
     if len(draft.tasks) != 4:
         _fail()
     return confirmed, draft
-
-
 def _load_tasks(
     connection: sqlite3.Connection,
     session_id: str,
@@ -156,8 +148,6 @@ def _load_tasks(
     if len(agent_ids) != 4:
         _fail()
     return tuple(rows)
-
-
 def _load_attempts(
     connection: sqlite3.Connection,
     confirmed: ConfirmedMissionVersion,
@@ -201,8 +191,6 @@ def _load_attempts(
             _fail()
         grouped[task_id] = attempts
     return {key: tuple(value) for key, value in grouped.items()}
-
-
 def _command_id(
     confirmed: ConfirmedMissionVersion, task: TaskDefinition, ordinal: int,
 ) -> str:
@@ -212,8 +200,6 @@ def _command_id(
     )
     canonical = json.dumps(parts, ensure_ascii=False, separators=(",", ":"))
     return "cmd_" + sha256(canonical.encode("utf-8")).hexdigest()[:24]
-
-
 def _load_terminal_command(
     connection: sqlite3.Connection,
     confirmed: ConfirmedMissionVersion,
@@ -249,8 +235,6 @@ def _load_terminal_command(
         _fail()
     canonical_result = row[2]
     return identity, sha256(canonical_result.encode("utf-8")).hexdigest(), result
-
-
 def _load_evidence(
     connection: sqlite3.Connection,
     task: TaskDefinition,
@@ -284,10 +268,9 @@ def _load_evidence(
             _fail()
         facts.append(ResumeEvidenceFacts(*row))
     return tuple(facts)
-
-
 def _load_handoff(
     connection: sqlite3.Connection,
+    draft: MissionDraft,
     task: TaskDefinition,
     next_task: TaskDefinition | None,
     attempt: Attempt,
@@ -317,17 +300,37 @@ def _load_handoff(
         )
     except (KeyError, TypeError, ValueError, json.JSONDecodeError):
         _fail()
+    expected_evidence_ids = tuple(item.evidence_id for item in evidence)
+    if task.name == "review":
+        findings = tuple(_review_finding(item) for item in evidence)
+        materialized = materialize_revision(
+            findings=findings, confirmed_scope=(draft.scope,)
+        )
+        indexed = {
+            finding.finding_id: item.evidence_id
+            for finding, item in zip(findings, evidence, strict=True)
+        }
+        expected_evidence_ids = tuple(
+            indexed[finding.finding_id] for finding in materialized.findings
+        )
+        if not expected_evidence_ids:
+            _fail()
     if (
         handoff.source_attempt_id != attempt.attempt_id
         or handoff.target_task_id != next_task.task_id
         or handoff.result_summary != attempt.result_summary
-        or handoff.verification_evidence_ids
-        != tuple(item.evidence_id for item in evidence)
+        or handoff.verification_evidence_ids != expected_evidence_ids
     ):
         _fail()
     return ResumeHandoffFacts(*row)
-
-
+def _review_finding(item: ResumeEvidenceFacts) -> ReviewFinding:
+    if item.kind != EvidenceKind.REVIEW_FINDING.value:
+        _fail()
+    payload = json.loads(item.canonical_evidence_facts)
+    return ReviewFinding(
+        payload["finding_id"], payload["scope"], FindingSeverity(payload["severity"]),
+        payload["summary"], payload["criterion"], tuple(payload["evidence_ids"]),
+    )
 def _validate_acceptance(
     draft: MissionDraft,
     task: TaskDefinition,
@@ -344,8 +347,6 @@ def _validate_acceptance(
     )
     if not result.accepted or result.criteria != draft.acceptance_criteria:
         _fail()
-
-
 def _cross_stage_reference_ids(
     evidence: ResumeEvidenceFacts,
 ) -> tuple[str, ...]:
@@ -359,8 +360,6 @@ def _cross_stage_reference_ids(
             for identity in identities
         )
     return ()
-
-
 def _attempt_facts(
     attempts: tuple[tuple[Attempt, dict[str, object]], ...],
 ) -> tuple[ResumeAttemptFacts, ...]:
@@ -370,8 +369,6 @@ def _attempt_facts(
         attempt.result_summary, attempt.retryable, values["acp_session_id"],
         bool(values["effect_observed"]), _attempt_fingerprint(values),
     ) for attempt, values in attempts)
-
-
 def _stage_facts(
     connection: sqlite3.Connection,
     confirmed: ConfirmedMissionVersion,
@@ -380,7 +377,7 @@ def _stage_facts(
     attempts_by_task: dict[str, tuple[tuple[Attempt, dict[str, object]], ...]],
 ) -> tuple[ResumeStageFacts, ...]:
     stages: list[ResumeStageFacts] = []
-    committed_evidence_ids: set[str] = set()
+    preceding_evidence_ids: set[str] = set()
     for index, (row, task) in enumerate(zip(rows, draft.tasks, strict=True)):
         attempts = attempts_by_task.get(task.task_id, ())
         command_id = command_hash = terminal_attempt_id = None
@@ -398,17 +395,16 @@ def _stage_facts(
             for item in evidence:
                 references = _cross_stage_reference_ids(item)
                 if references and (
-                    len(references) != len(set(references))
-                    or not set(references) <= committed_evidence_ids
+                    not set(references) <= preceding_evidence_ids
                 ):
                     _fail()
             next_task = draft.tasks[index + 1] if index + 1 < len(draft.tasks) else None
             handoff = _load_handoff(
-                connection, task, next_task, terminal, evidence,
+                connection, draft, task, next_task, terminal, evidence,
                 result["handoff_id"],
             )
             _validate_acceptance(draft, task, evidence)
-            committed_evidence_ids.update(item.evidence_id for item in evidence)
+            preceding_evidence_ids = {item.evidence_id for item in evidence}
         elif attempts and attempts[-1][0].state is not AttemptState.INTERRUPTED:
             _fail("resume_stage_not_retryable")
         stages.append(ResumeStageFacts(
@@ -417,8 +413,46 @@ def _stage_facts(
             terminal_attempt_id, evidence, handoff,
         ))
     return tuple(stages)
-
-
+def _validate_command_coverage(
+    connection: sqlite3.Connection, confirmed: ConfirmedMissionVersion,
+    draft: MissionDraft, stages: tuple[ResumeStageFacts, ...],
+) -> None:
+    rows = connection.execute(
+        """SELECT command_id,command_kind,state,canonical_result_facts,
+                  created_at,completed_at FROM commands
+             WHERE command_kind='execution_stage_committed'
+               AND instr(canonical_result_facts, ?) > 0
+             ORDER BY command_id LIMIT 33""",
+        (f'"mission_id":"{confirmed.mission_id}"',),
+    ).fetchall()
+    if len(rows) > 32:
+        _fail()
+    represented = {
+        stage.terminal_command_id: stage for stage in stages
+        if stage.terminal_command_id is not None
+    }
+    seen: set[str] = set()
+    task_ids = {task.task_id for task in draft.tasks}
+    for row in rows:
+        result = _validate_command_row(row[1:])
+        if result.get("mission_id") != confirmed.mission_id:
+            continue
+        if result.get("mission_version") != confirmed.version or result.get("task_id") not in task_ids:
+            _fail()
+        stage = represented.get(row[0])
+        if stage is None or sha256(row[3].encode("utf-8")).hexdigest() != stage.terminal_command_hash:
+            _fail()
+        expected = {
+            "mission_id": confirmed.mission_id, "mission_version": confirmed.version,
+            "task_id": stage.task_id, "attempt_id": stage.terminal_attempt_id,
+            "evidence_ids": [item.evidence_id for item in stage.evidence],
+            "handoff_id": None if stage.handoff is None else stage.handoff.handoff_id,
+        }
+        if result != expected:
+            _fail()
+        seen.add(row[0])
+    if seen != set(represented):
+        _fail()
 def load_execution_resume(
     connection: sqlite3.Connection, session_id: str,
 ) -> ExecutionResumeSnapshot:
@@ -437,6 +471,7 @@ def load_execution_resume(
         stages = _stage_facts(
             connection, confirmed, draft, task_rows, attempts
         )
+        _validate_command_coverage(connection, confirmed, draft, stages)
         facts = ExecutionResumeFacts(
             checked_session_id, "paused", confirmed.mission_id,
             confirmed.version, confirmed.content_hash,
@@ -445,7 +480,7 @@ def load_execution_resume(
         return ExecutionResumeSnapshot.create(facts)
     except ExecutionResumeProjectionError:
         raise
-    except (KeyError, TypeError, ValueError, sqlite3.Error):
+    except (KeyError, TypeError, ValueError, StoreCommandStateError, sqlite3.Error):
         _fail()
 
 

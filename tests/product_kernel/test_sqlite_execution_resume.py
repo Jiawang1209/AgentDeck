@@ -26,6 +26,7 @@ MUTATIONS = (
     "task_only_completed",
     "orphan_completed_attempt",
     "terminal_command_wrong_kind",
+    "terminal_command_failed_state",
     "terminal_command_wrong_attempt",
     "terminal_command_extra_field",
     "missing_evidence",
@@ -257,7 +258,8 @@ def _mutate(store: SQLiteStore, kind: str) -> None:
         _insert_attempt(store, Attempt.pending(
             "att_implementation_1", task.task_id, 1
         ).start().complete("orphan"))
-    elif kind in {"terminal_command_wrong_kind", "terminal_command_wrong_attempt",
+    elif kind in {"terminal_command_wrong_kind", "terminal_command_failed_state",
+                  "terminal_command_wrong_attempt",
                   "terminal_command_extra_field", "missing_evidence",
                   "unreferenced_extra_evidence", "evidence_hash_drift",
                   "handoff_hash_drift", "handoff_wrong_target",
@@ -265,6 +267,8 @@ def _mutate(store: SQLiteStore, kind: str) -> None:
         seed_closed_stage(store, "implementation")
         if kind == "terminal_command_wrong_kind":
             connection.execute("UPDATE commands SET command_kind='wrong_kind'")
+        elif kind == "terminal_command_failed_state":
+            connection.execute("UPDATE commands SET state='failed'")
         elif kind == "terminal_command_wrong_attempt":
             _rewrite_command_result(store, "implementation", lambda value: value.update(
                 attempt_id="att_hostile"
