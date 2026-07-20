@@ -4,6 +4,28 @@
 
 ## 2026-07-20
 
+### Harden Task 28 Observer delivery and hostile-boundary handling
+
+- Made an observation sink mandatory and bound sink/cursor capabilities exactly
+  once before loading cursor state. Accepted records now follow the irreversible
+  order render, emit, acknowledge, then local cursor advancement, so an iterator
+  failure after a yielded event cannot erase an already delivered observation.
+- Reused the Kernel event timestamp normalizer before rendering and
+  fingerprinting, making equivalent offsets exact replays. Hostile capability
+  getters and event getters now fail with stable content-free Observer errors,
+  and arbitrary Mapping implementations are rejected without enumerating them.
+- Tightened redaction to exact sensitive words and explicit key families. This
+  catches environment-style assignments and nested `api_key` values while
+  preserving ordinary `secretary` and `tokenizer` fields. Because the frozen
+  Worker Event port already rejects the DATABASE_PASSWORD,
+  AWS_SECRET_ACCESS_KEY, and nested api_key fixtures, those three defense-in-depth
+  checks use immutable structural event-shaped values; the Slack token case and
+  harmless-key cases continue through real Worker Events.
+- Quality-review TDD evidence: the expanded focused RED produced `13 failed, 47
+  passed`; a final family-substring self-review RED produced `1 failed, 30
+  deselected`; focused GREEN passes all 60 Observer fidelity/redaction cases.
+  The Product Observer and both focused test modules remain below 500 lines.
+
 ### Close Task 28 subscription-cursor and redaction review gaps
 
 - Bound every Observer stream to one immutable expected read-only subscription

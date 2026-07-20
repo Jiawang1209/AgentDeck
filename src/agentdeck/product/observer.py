@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable
 from dataclasses import dataclass
-from datetime import datetime
 import hashlib
 import json
 import re
+from types import MappingProxyType
 from typing import Protocol
+
+from agentdeck.kernel.events import normalize_occurred_at
 
 
 _EVENT_FIELDS = (
@@ -38,9 +40,15 @@ _FORBIDDEN_FIELD_SHAPES = (
     "hiddenreasoning", "chainofthought", "rawacp", "rawprotocol", "rawframe",
     "fullprompt", "stderr",
 )
-_SENSITIVE_KEY_SHAPES = (
-    "token", "credential", "authorization", "password", "secret",
-    "privatekey", "sshkey", "cookie",
+_SENSITIVE_WORDS = frozenset(
+    "apikey auth authorization cookie credential credentials environment password "
+    "privatekey secret sshkey token".split()
+)
+_SENSITIVE_FAMILIES = (
+    ("api", "key"), ("private", "key"), ("ssh", "key"),
+)
+_ASSIGNMENT = re.compile(
+    r'''(?<![A-Za-z0-9])(["']?)([A-Za-z][A-Za-z0-9_.-]{0,127})\1[ \t]*[:=][ \t]*(?=\S)'''
 )
 _SECRET_RELATION = re.compile(
     r"(?i)\b(?:token|credentials?|authorization|password|secret|"
@@ -104,11 +112,6 @@ class ObserverSubscription:
         except Exception:
             raise ObserverError("observer_subscription_invalid") from None
 
-    @property
-    def lineage(self) -> tuple[str, str, str, str, str]:
-        return self.session_id, self.agent_id, self.task_id, self.attempt_id, self.transport
-
-
 @dataclass(frozen=True)
 class ObserverCursor:
     """Last acknowledged immutable event identity and exact fingerprint."""
@@ -135,23 +138,12 @@ class ObserverCursor:
         if type(self.fingerprint) is not str or not _HEX_64.fullmatch(self.fingerprint):
             raise ValueError("cursor fingerprint is invalid")
 
-    @property
-    def lineage(self) -> tuple[str, str, str, str, str]:
-        return (
-            self.session_id, self.agent_id, self.task_id, self.attempt_id, self.transport,
-        )
-
-
 class CursorStore(Protocol):
-    """Injected foreground-Application cursor reader/writer boundary."""
-
     def load(self) -> ObserverCursor | None: ...
     def acknowledge(self, cursor: ObserverCursor) -> None: ...
 
 
 class ObservationSink(Protocol):
-    """Injected terminal observation boundary."""
-
     def emit(self, record: str) -> None: ...
 
 
@@ -169,12 +161,6 @@ class _EventSnapshot:
     payload: dict[str, object]
     fingerprint: str
 
-    @property
-    def lineage(self) -> tuple[str, str, str, str, str]:
-        return (
-            self.session_id, self.agent_id, self.task_id, self.attempt_id, self.transport,
-        )
-
     def cursor(self) -> ObserverCursor:
         return ObserverCursor(
             session_id=self.session_id, agent_id=self.agent_id,
@@ -182,6 +168,10 @@ class _EventSnapshot:
             transport=self.transport, sequence=self.sequence,
             event_id=self.event_id, fingerprint=self.fingerprint,
         )
+
+
+def _lineage(value: ObserverSubscription | ObserverCursor | _EventSnapshot) -> tuple[str, ...]:
+    return value.session_id, value.agent_id, value.task_id, value.attempt_id, value.transport
 
 
 def _typed_identity(value: object, prefix: str) -> str:
@@ -214,6 +204,18 @@ def _text(value: object) -> str:
 def _json_payload(value: object) -> dict[str, object]:
     budget = [_MAX_ITEMS]
 
+    def entries(item: object) -> tuple[tuple[object, object], ...]:
+        if type(item) is dict:
+            return tuple(dict.items(item))
+        if type(item) is MappingProxyType:
+            result = []
+            for index, key in enumerate(item):
+                if index >= budget[0]:
+                    raise ValueError("payload size")
+                result.append((key, item[key]))
+            return tuple(result)
+        raise ValueError("unsupported payload mapping")
+
     def visit(item: object, depth: int) -> object:
         if depth > _MAX_DEPTH:
             raise ValueError("payload depth")
@@ -232,12 +234,12 @@ def _json_payload(value: object) -> dict[str, object]:
             return _text(item)
         if type(item) in {tuple, list}:
             return [visit(child, depth + 1) for child in item]
-        if isinstance(item, Mapping):
-            entries = tuple(item.items())
-            if len(entries) > budget[0]:
+        if type(item) in {dict, MappingProxyType}:
+            copied = entries(item)
+            if len(copied) > budget[0]:
                 raise ValueError("payload size")
             result: dict[str, object] = {}
-            for key, child in entries:
+            for key, child in copied:
                 key = _text(key)
                 if key in result:
                     raise ValueError("duplicate payload key")
@@ -266,10 +268,7 @@ def _snapshot_event(value: object) -> _EventSnapshot:
         kind = fields["kind"]
         if type(kind) is not str or kind not in _EVENT_KINDS:
             raise ValueError("invalid kind")
-        timestamp = _text(fields["timestamp"])
-        parsed = datetime.fromisoformat(timestamp)
-        if parsed.tzinfo is None or parsed.utcoffset() is None:
-            raise ValueError("invalid timestamp")
+        timestamp = normalize_occurred_at(_text(fields["timestamp"]))
         payload = _json_payload(fields["payload"])
         record = {
             "agent_id": agent_id, "attempt_id": attempt_id,
@@ -288,14 +287,8 @@ def _snapshot_event(value: object) -> _EventSnapshot:
             sequence=sequence, kind=kind, timestamp=timestamp, payload=payload,
             fingerprint=fingerprint,
         )
-    except ObserverError:
-        raise
     except Exception:
         raise ObserverError("observer_malformed_event") from None
-
-
-def _key_shape(value: str) -> str:
-    return "".join(_key_words(value))
 
 
 def _key_words(value: str) -> tuple[str, ...]:
@@ -304,7 +297,11 @@ def _key_words(value: str) -> tuple[str, ...]:
 
 def _is_sensitive_key(value: str) -> bool:
     words = _key_words(value)
-    return "auth" in words or any(marker in "".join(words) for marker in _SENSITIVE_KEY_SHAPES)
+    return bool(_SENSITIVE_WORDS.intersection(words) or any(
+        family == words[index:index + len(family)]
+        for family in _SENSITIVE_FAMILIES
+        for index in range(len(words) - len(family) + 1)
+    ))
 
 
 def _is_observability_metric(key: str, value: object) -> bool:
@@ -321,6 +318,8 @@ def _redact_text(value: str) -> str:
     redacted = _PRIVATE_KEY_BLOCK.sub("[REDACTED]", value)
     if _SECRET_RELATION.search(redacted):
         return "[REDACTED]"
+    if any(_is_sensitive_key(match.group(2)) for match in _ASSIGNMENT.finditer(redacted)):
+        return "[REDACTED]"
     redacted = _CREDENTIAL_SHAPE.sub("[REDACTED]", redacted)
     return redacted
 
@@ -333,7 +332,7 @@ def _redact(value: object) -> object:
     if type(value) is dict:
         result: dict[str, object] = {}
         for key, child in value.items():
-            shape = _key_shape(key)
+            shape = "".join(_key_words(key))
             if any(marker in shape for marker in _FORBIDDEN_FIELD_SHAPES):
                 continue
             if _is_sensitive_key(key) and not _is_observability_metric(key, child):
@@ -382,6 +381,16 @@ def render_system(message: str) -> str:
     return f"[AgentDeck] {safe}"
 
 
+def _capability(owner: object, name: str, code: str) -> object:
+    try:
+        bound = getattr(owner, name)
+    except Exception:
+        raise ObserverError(code) from None
+    if not callable(bound):
+        raise ObserverError(code)
+    return bound
+
+
 class ObserverStream:
     """Render one immutable event lineage and acknowledge accepted cursors."""
 
@@ -391,21 +400,18 @@ class ObserverStream:
     ) -> None:
         if type(subscription) is not ObserverSubscription:
             raise ObserverError("observer_subscription_invalid")
-        load = getattr(cursor_store, "load", None)
-        acknowledge = getattr(cursor_store, "acknowledge", None)
-        if not callable(load) or not callable(acknowledge):
-            raise TypeError("cursor_store must provide load and acknowledge")
-        if sink is not None and not callable(getattr(sink, "emit", None)):
-            raise TypeError("sink must provide emit")
-        self._cursor_store = cursor_store
-        self._sink = sink
+        self._emit = _capability(sink, "emit", "observer_sink_failed")
+        load = _capability(cursor_store, "load", "observer_cursor_load_failed")
+        self._acknowledge = _capability(
+            cursor_store, "acknowledge", "observer_cursor_write_failed",
+        )
         try:
             cursor = load()
         except Exception:
             raise ObserverError("observer_cursor_load_failed") from None
         if cursor is not None and type(cursor) is not ObserverCursor:
             raise ObserverError("observer_cursor_invalid")
-        if cursor is not None and cursor.lineage != subscription.lineage:
+        if cursor is not None and _lineage(cursor) != _lineage(subscription):
             raise ObserverError("observer_identity_mismatch")
         self._subscription = subscription
         self._cursor = cursor
@@ -425,7 +431,7 @@ class ObserverStream:
             except Exception:
                 raise ObserverError("observer_subscription_failed") from None
             event = _snapshot_event(value)
-            if event.lineage != self._subscription.lineage:
+            if _lineage(event) != _lineage(self._subscription):
                 raise ObserverError("observer_identity_mismatch")
             if self._replay_required:
                 self._validate_replay(event)
@@ -435,14 +441,13 @@ class ObserverStream:
                 continue
             self._validate_next(event)
             record = _render_snapshot(event)
-            if self._sink is not None:
-                try:
-                    self._sink.emit(record)
-                except Exception:
-                    raise ObserverError("observer_sink_failed") from None
+            try:
+                self._emit(record)
+            except Exception:
+                raise ObserverError("observer_sink_failed") from None
             cursor = event.cursor()
             try:
-                self._cursor_store.acknowledge(cursor)
+                self._acknowledge(cursor)
             except Exception:
                 raise ObserverError("observer_cursor_write_failed") from None
             self._cursor = cursor
@@ -466,7 +471,6 @@ class ObserverStream:
         cursor = self._cursor
         return bool(
             cursor is not None
-            and event.lineage == cursor.lineage
             and event.sequence == cursor.sequence
             and event.event_id == cursor.event_id
             and event.fingerprint == cursor.fingerprint
@@ -475,13 +479,9 @@ class ObserverStream:
     def _validate_next(self, event: _EventSnapshot) -> None:
         cursor = self._cursor
         if cursor is None:
-            if event.transport != "acp":
-                raise ObserverError("observer_malformed_event")
             if event.sequence != 1:
                 raise ObserverError("observer_sequence_gap")
             return
-        if event.lineage != cursor.lineage:
-            raise ObserverError("observer_identity_mismatch")
         if event.event_id == cursor.event_id and event.sequence != cursor.sequence:
             raise ObserverError("observer_cursor_conflict")
         if event.sequence < cursor.sequence:

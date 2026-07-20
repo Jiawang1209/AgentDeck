@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+from collections.abc import Iterator, Mapping
+from dataclasses import dataclass
 from datetime import datetime, timezone
 import importlib
+import json
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any
 
 import pytest
@@ -27,6 +31,47 @@ def message(payload: dict[str, object]) -> WorkerEvent:
         task_id="tsk_1", attempt_id="att_1", transport="acp", sequence=1,
         kind="message", timestamp=TIMESTAMP, payload=payload,
     )
+
+
+@dataclass(frozen=True)
+class EventShape:
+    event_id: str = "evt_1"; session_id: str = "ses_1"; agent_id: str = "agt_1"
+    task_id: str = "tsk_1"; attempt_id: str = "att_1"; transport: str = "acp"
+    sequence: int = 1
+    kind: str = "message"
+    timestamp: str = TIMESTAMP
+    payload: object = MappingProxyType({"text": "safe"})
+
+
+class CursorMemory:
+    def __init__(self, initial: object | None = None) -> None:
+        self.initial = initial
+        self.load_calls = 0
+        self.acknowledged: list[object] = []
+    def load(self) -> object | None:
+        self.load_calls += 1
+        return self.initial
+    def acknowledge(self, cursor: object) -> None:
+        self.acknowledged.append(cursor)
+        self.initial = cursor
+
+
+class RecordingSink:
+    def __init__(self) -> None:
+        self.records: list[str] = []
+    def emit(self, record: str) -> None:
+        self.records.append(record)
+
+
+def subscription(api: Any) -> object:
+    return api.ObserverSubscription(
+        session_id="ses_1", agent_id="agt_1", task_id="tsk_1", attempt_id="att_1",
+        transport="acp",
+    )
+
+
+def record_json(line: str) -> dict[str, object]:
+    return json.loads(line[line.index("{"):])
 
 
 def test_real_worker_event_is_redacted_again_at_observer_boundary() -> None:
@@ -101,6 +146,252 @@ def test_harmless_authentication_notes_key_is_preserved() -> None:
     output = api.render_event(message({"authentication_notes": prose}))
 
     assert prose in output
+
+
+def test_real_worker_event_redacts_slack_token_assignment() -> None:
+    api = observer_api()
+    secret = "xoxb-example-value"
+    output = api.render_event(message({"text": f"SLACK_BOT_TOKEN={secret}"}))
+    assert secret not in output
+    assert "[REDACTED]" in output
+
+
+def test_structural_boundary_redacts_values_worker_event_already_rejects() -> None:
+    api = observer_api()
+    secrets = ("hunter2", "plainsecret", "plain-secret-value")
+    source = EventShape(payload=MappingProxyType({
+        "text": "DATABASE_PASSWORD=hunter2 AWS_SECRET_ACCESS_KEY=plainsecret",
+        "nested": MappingProxyType({"api_key": "plain-secret-value"}),
+        "private_keyboard": "ergonomic", "apikeyboard": "layout",
+    }))
+    output = api.render_event(source)
+    assert all(secret not in output for secret in secrets)
+    assert "[REDACTED]" in output
+    assert "ergonomic" in output and "layout" in output
+
+
+def test_secretary_and_tokenizer_keys_remain_faithful() -> None:
+    api = observer_api()
+    payload = {"secretary": "meeting minutes", "tokenizer": "documentation"}
+    output = api.render_event(message(payload))
+    assert record_json(output)["payload"] == payload
+
+
+def test_stream_rejects_missing_sink_before_cursor_load() -> None:
+    api = observer_api()
+    cursor = CursorMemory()
+    with pytest.raises(api.ObserverError) as raised:
+        api.ObserverStream(subscription=subscription(api), cursor_store=cursor)
+    assert raised.value.code == "observer_sink_failed"
+    assert str(raised.value) == "observer_sink_failed: observation sink failed"
+    assert cursor.load_calls == 0
+    assert cursor.acknowledged == []
+
+
+def test_delivered_record_survives_later_subscription_failure() -> None:
+    api = observer_api()
+    cursor = CursorMemory()
+    sink = RecordingSink()
+
+    class YieldThenFail:
+        def __iter__(self) -> Iterator[WorkerEvent]:
+            yield message({"text": "delivered before failure"})
+            raise RuntimeError("HOSTILE ITERATOR secret-value")
+    stream = api.ObserverStream(
+        subscription=subscription(api), cursor_store=cursor, sink=sink,
+    )
+    with pytest.raises(api.ObserverError) as raised:
+        stream.render(YieldThenFail())
+
+    assert raised.value.code == "observer_subscription_failed"
+    assert "HOSTILE" not in str(raised.value)
+    assert len(sink.records) == 1
+    assert [item.sequence for item in cursor.acknowledged] == [1]
+
+
+class HostileMapping(Mapping[str, object]):
+    def __init__(self) -> None:
+        self.read_count = 0
+    def __getitem__(self, key: str) -> object:
+        raise KeyError(key)
+    def __iter__(self) -> Iterator[str]:
+        raise RuntimeError("HOSTILE ITERATION secret-value")
+    def __len__(self) -> int:
+        return 1000
+    def items(self) -> Iterator[tuple[str, object]]:
+        while self.read_count <= 300:
+            self.read_count += 1
+            if self.read_count > 300:
+                raise RuntimeError("HOSTILE ITEMS secret-value")
+            yield f"key_{self.read_count}", "safe"
+
+
+def test_hostile_mapping_is_rejected_without_unbounded_reads_or_effects() -> None:
+    api = observer_api()
+    payload = HostileMapping()
+    cursor = CursorMemory()
+    sink = RecordingSink()
+    stream = api.ObserverStream(
+        subscription=subscription(api), cursor_store=cursor, sink=sink,
+    )
+    with pytest.raises(api.ObserverError) as raised:
+        stream.render((EventShape(payload=payload),))
+    assert raised.value.code == "observer_malformed_event"
+    assert "HOSTILE" not in str(raised.value)
+    assert payload.read_count <= 1
+    assert sink.records == []
+    assert cursor.acknowledged == []
+
+
+def test_equivalent_offsets_render_one_normalized_timestamp() -> None:
+    api = observer_api()
+    plus_two = EventShape(timestamp="2026-07-20T10:00:00+02:00")
+    utc = EventShape(timestamp="2026-07-20T08:00:00+00:00")
+    rendered = tuple(record_json(api.render_event(item)) for item in (plus_two, utc))
+    assert [item["timestamp"] for item in rendered] == [
+        "2026-07-20T08:00:00+00:00", "2026-07-20T08:00:00+00:00",
+    ]
+
+
+def test_equivalent_offset_event_is_exact_cursor_replay() -> None:
+    api = observer_api()
+    cursor = CursorMemory()
+    first_sink = RecordingSink()
+    api.ObserverStream(
+        subscription=subscription(api), cursor_store=cursor, sink=first_sink,
+    ).render((EventShape(timestamp="2026-07-20T10:00:00+02:00"),))
+    replay_sink = RecordingSink()
+    output = api.ObserverStream(
+        subscription=subscription(api), cursor_store=cursor, sink=replay_sink,
+    ).render((EventShape(timestamp="2026-07-20T08:00:00+00:00"),))
+    assert output == ()
+    assert replay_sink.records == []
+    assert len(cursor.acknowledged) == 1
+
+
+class HostileCapabilityStore:
+    def __init__(self, hostile_name: str) -> None:
+        object.__setattr__(self, "hostile_name", hostile_name)
+        object.__setattr__(self, "load_calls", 0)
+    def __getattribute__(self, name: str) -> object:
+        if name == object.__getattribute__(self, "hostile_name"):
+            raise RuntimeError("HOSTILE CAPABILITY secret-value")
+        return object.__getattribute__(self, name)
+    def load(self) -> None:
+        object.__setattr__(self, "load_calls", self.load_calls + 1)
+        return None
+    def acknowledge(self, cursor: object) -> None:
+        return None
+
+
+@pytest.mark.parametrize(
+    ("hostile_name", "code"),
+    (("load", "observer_cursor_load_failed"),
+     ("acknowledge", "observer_cursor_write_failed")),
+)
+def test_cursor_capability_getter_failures_are_content_free_before_effects(
+    hostile_name: str, code: str,
+) -> None:
+    api = observer_api()
+    cursor = HostileCapabilityStore(hostile_name)
+    with pytest.raises(api.ObserverError) as raised:
+        api.ObserverStream(
+            subscription=subscription(api), cursor_store=cursor,
+            sink=RecordingSink(),
+        )
+    assert raised.value.code == code
+    assert "HOSTILE" not in str(raised.value)
+    assert cursor.load_calls == 0
+
+
+def test_sink_capability_getter_failure_precedes_cursor_effects() -> None:
+    api = observer_api()
+    cursor = CursorMemory()
+
+    class HostileSink:
+        @property
+        def emit(self) -> object:
+            raise RuntimeError("HOSTILE SINK GETTER secret-value")
+    with pytest.raises(api.ObserverError) as raised:
+        api.ObserverStream(
+            subscription=subscription(api), cursor_store=cursor, sink=HostileSink(),
+        )
+    assert raised.value.code == "observer_sink_failed"
+    assert "HOSTILE" not in str(raised.value)
+    assert cursor.load_calls == 0
+
+
+def test_sink_emit_callable_is_bound_once() -> None:
+    api = observer_api()
+    cursor = CursorMemory()
+
+    class OneShotSink:
+        def __init__(self) -> None:
+            self.getter_calls = 0
+            self.records: list[str] = []
+
+        @property
+        def emit(self) -> object:
+            self.getter_calls += 1
+            if self.getter_calls > 1:
+                raise RuntimeError("HOSTILE LATE SINK GETTER")
+            return self.records.append
+
+    sink = OneShotSink()
+    api.ObserverStream(
+        subscription=subscription(api), cursor_store=cursor, sink=sink,
+    ).render((message({"text": "safe"}),))
+
+    assert sink.getter_calls == 1
+    assert len(sink.records) == 1
+
+
+def test_cursor_acknowledge_callable_is_bound_once() -> None:
+    api = observer_api()
+
+    class OneShotCursor(CursorMemory):
+        def __init__(self) -> None:
+            super().__init__()
+            self.getter_calls = 0
+
+        def _ack(self, cursor: object) -> None:
+            super().acknowledge(cursor)
+
+        @property
+        def acknowledge(self) -> object:
+            self.getter_calls += 1
+            if self.getter_calls > 1:
+                raise RuntimeError("HOSTILE LATE CURSOR GETTER")
+            return self._ack
+
+    cursor = OneShotCursor()
+    api.ObserverStream(
+        subscription=subscription(api), cursor_store=cursor, sink=RecordingSink(),
+    ).render((message({"text": "safe"}),))
+
+    assert cursor.getter_calls == 1
+    assert len(cursor.acknowledged) == 1
+
+
+def test_external_observer_error_from_event_getter_is_malformed_and_content_free() -> None:
+    api = observer_api()
+    cursor = CursorMemory()
+    sink = RecordingSink()
+
+    class HostileEvent:
+        @property
+        def event_id(self) -> object:
+            raise api.ObserverError("observer_cursor_conflict")
+
+    stream = api.ObserverStream(
+        subscription=subscription(api), cursor_store=cursor, sink=sink,
+    )
+    with pytest.raises(api.ObserverError) as raised:
+        stream.render((HostileEvent(),))
+
+    assert raised.value.code == "observer_malformed_event"
+    assert sink.records == []
+    assert cursor.acknowledged == []
 
 
 def test_agent_and_agentdeck_labels_cannot_be_confused() -> None:

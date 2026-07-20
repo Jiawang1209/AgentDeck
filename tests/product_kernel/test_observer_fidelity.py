@@ -99,7 +99,7 @@ def test_all_real_worker_event_kinds_render_full_identity_and_payload() -> None:
     cursor = MemoryCursor()
 
     output = api.ObserverStream(
-        subscription=subscription(api), cursor_store=cursor,
+        subscription=subscription(api), cursor_store=cursor, sink=RecordingSink(),
     ).render(events)
 
     assert len(output) == len(kinds)
@@ -199,7 +199,7 @@ def test_structurally_hostile_transport_drift_fails_closed() -> None:
     api = observer_api()
     cursor = MemoryCursor()
     stream = api.ObserverStream(
-        subscription=subscription(api), cursor_store=cursor,
+        subscription=subscription(api), cursor_store=cursor, sink=RecordingSink(),
     )
     stream.render((event(1),))
     source = event(2)
@@ -257,7 +257,7 @@ def test_first_continuous_lineage_must_start_at_sequence_one() -> None:
 
     with pytest.raises(api.ObserverError) as raised:
         api.ObserverStream(
-            subscription=subscription(api), cursor_store=cursor,
+            subscription=subscription(api), cursor_store=cursor, sink=RecordingSink(),
         ).render((event(2),))
 
     assert raised.value.code == "observer_sequence_gap"
@@ -268,7 +268,9 @@ def test_foreign_and_stale_loaded_cursors_fail_closed() -> None:
     api = observer_api()
     source_store = MemoryCursor()
     expected = subscription(api)
-    api.ObserverStream(subscription=expected, cursor_store=source_store).render(
+    api.ObserverStream(
+        subscription=expected, cursor_store=source_store, sink=RecordingSink(),
+    ).render(
         (event(1),)
     )
     persisted = source_store.acknowledged[-1]
@@ -290,6 +292,7 @@ def test_foreign_and_stale_loaded_cursors_fail_closed() -> None:
     with pytest.raises(api.ObserverError) as stale_error:
         api.ObserverStream(
             subscription=expected, cursor_store=MemoryCursor(stale),
+            sink=RecordingSink(),
         ).render((event(4),))
     assert stale_error.value.code == "observer_sequence_rollback"
 
@@ -298,7 +301,9 @@ def test_loaded_cursor_requires_exact_replay_before_next_sequence() -> None:
     api = observer_api()
     expected = subscription(api)
     cursor = MemoryCursor()
-    api.ObserverStream(subscription=expected, cursor_store=cursor).render((event(1),))
+    api.ObserverStream(
+        subscription=expected, cursor_store=cursor, sink=RecordingSink(),
+    ).render((event(1),))
     sink = RecordingSink()
 
     with pytest.raises(api.ObserverError) as raised:
@@ -325,7 +330,9 @@ def test_loaded_cursor_replay_rejects_tampered_fingerprint_event_or_identity(
     api = observer_api()
     expected = subscription(api)
     original = MemoryCursor()
-    api.ObserverStream(subscription=expected, cursor_store=original).render((event(1),))
+    api.ObserverStream(
+        subscription=expected, cursor_store=original, sink=RecordingSink(),
+    ).render((event(1),))
     persisted = replace(original.acknowledged[-1], **cursor_change)
     reconnect_store = MemoryCursor(persisted)
     sink = RecordingSink()
@@ -345,13 +352,16 @@ def test_loaded_cursor_fingerprint_cannot_skip_replay_to_next_event() -> None:
     api = observer_api()
     expected = subscription(api)
     original = MemoryCursor()
-    api.ObserverStream(subscription=expected, cursor_store=original).render((event(1),))
+    api.ObserverStream(
+        subscription=expected, cursor_store=original, sink=RecordingSink(),
+    ).render((event(1),))
     fabricated = replace(original.acknowledged[-1], fingerprint="0" * 64)
     reconnect_store = MemoryCursor(fabricated)
 
     with pytest.raises(api.ObserverError) as raised:
         api.ObserverStream(
             subscription=expected, cursor_store=reconnect_store,
+            sink=RecordingSink(),
         ).render((event(2),))
 
     assert raised.value.code == "observer_replay_required"
@@ -403,7 +413,7 @@ def test_cursor_writer_failure_has_stable_error_and_does_not_advance_local_curso
     api = observer_api()
     cursor = MemoryCursor(fail="acknowledge")
     stream = api.ObserverStream(
-        subscription=subscription(api), cursor_store=cursor,
+        subscription=subscription(api), cursor_store=cursor, sink=RecordingSink(),
     )
 
     with pytest.raises(api.ObserverError) as raised:
@@ -453,6 +463,7 @@ def test_cursor_load_failure_and_malformed_value_are_content_free() -> None:
     with pytest.raises(api.ObserverError) as load_error:
         api.ObserverStream(
             subscription=subscription(api), cursor_store=MemoryCursor(fail="load"),
+            sink=RecordingSink(),
         )
     assert load_error.value.code == "observer_cursor_load_failed"
     assert "HOSTILE" not in str(load_error.value)
@@ -466,7 +477,7 @@ def test_cursor_load_failure_and_malformed_value_are_content_free() -> None:
     )
     with pytest.raises(api.ObserverError) as malformed:
         api.ObserverStream(
-            subscription=subscription(api), cursor_store=cursor,
+            subscription=subscription(api), cursor_store=cursor, sink=RecordingSink(),
         ).render((hostile,))
     assert malformed.value.code == "observer_malformed_event"
     assert "object" not in str(malformed.value)
