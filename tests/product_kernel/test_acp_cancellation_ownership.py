@@ -104,6 +104,34 @@ def _assert_error(
     assert error.__context__ is None
 
 
+def _timeout_after_claim_error(
+    monkeypatch: pytest.MonkeyPatch, connection: ACPWorkerConnection,
+    error: BaseException,
+) -> None:
+    claim_finished = asyncio.Event()
+    original_wait_for = asyncio.wait_for
+    wait_calls = 0
+
+    async def failing_claim():
+        claim_finished.set()
+        raise error
+
+    async def controlled_wait_for(awaitable, timeout):
+        nonlocal wait_calls
+        wait_calls += 1
+        if wait_calls == 1:
+            if isinstance(awaitable, asyncio.Future):
+                awaitable.add_done_callback(
+                    lambda future: None if future.cancelled() else future.exception()
+                )
+            await claim_finished.wait()
+            raise TimeoutError
+        return await original_wait_for(awaitable, timeout=timeout)
+
+    monkeypatch.setattr(connection, "_detach_cancel_owner", failing_claim)
+    monkeypatch.setattr(asyncio, "wait_for", controlled_wait_for)
+
+
 @pytest.mark.parametrize(
     ("missing", "code", "known", "notification_calls", "reap_calls"),
     [
@@ -258,6 +286,46 @@ async def test_claim_timeout_settles_completed_owner_pair_before_failure(
     with pytest.raises(WorkerCancellationError) as repeated:
         await connection.cancel("raw_session")
     _assert_error(repeated.value, "cancel_rejected", True)
+    assert owner.reap_calls == 1
+
+
+@_sync_test
+async def test_claim_timeout_authority_survives_settle_runtime_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    owner = _Owner(tmp_path)
+    connection = await owner.ready(timeout_seconds=0.01)
+    _timeout_after_claim_error(
+        monkeypatch, connection, RuntimeError("private settle body"),
+    )
+    with pytest.raises(WorkerCancellationError) as captured:
+        await connection.cancel("raw_session")
+    _assert_error(captured.value, "cancel_timeout", False)
+    assert owner.notification_calls == 0 and owner.reap_calls == 0
+    current = asyncio.current_task()
+    assert [
+        task for task in asyncio.all_tasks()
+        if task is not current and not task.done()
+    ] == []
+    await connection.aclose()
+    assert owner.reap_calls == 1
+
+
+@_sync_test
+async def test_claim_settle_memory_error_still_propagates(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    owner = _Owner(tmp_path)
+    connection = await owner.ready(timeout_seconds=0.01)
+    _timeout_after_claim_error(monkeypatch, connection, MemoryError())
+    with pytest.raises(MemoryError):
+        await connection.cancel("raw_session")
+    current = asyncio.current_task()
+    assert [
+        task for task in asyncio.all_tasks()
+        if task is not current and not task.done()
+    ] == []
+    await connection.aclose()
     assert owner.reap_calls == 1
 
 

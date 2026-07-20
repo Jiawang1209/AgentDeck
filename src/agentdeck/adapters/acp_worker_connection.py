@@ -195,10 +195,10 @@ class ACPWorkerConnection:
             else:
                 return connection, manager, failure
         if failure is not None:
-            connection, manager, settle_failure = await self._settle_cancel_claim(
+            connection, manager, _ = await self._settle_cancel_claim(
                 claim
             )
-            return connection, manager, settle_failure or failure
+            return connection, manager, failure
         return connection, manager, None
 
     async def _detach_cancel_owner(

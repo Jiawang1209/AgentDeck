@@ -4,6 +4,19 @@
 
 ## 2026-07-20
 
+### Preserve ACP claim-timeout authority
+
+- Preserved the first closed cancellation outcome across claim-task settling.
+  Once the bounded claim wait establishes `cancel_timeout/false`, a later
+  internal RuntimeError is drained without replacing that public authority;
+  any recovered owner pair still flows outward for bounded reap.
+- Kept MemoryError outside transport normalization and added deterministic
+  task-leak checks for both settle outcomes. Review RED produced the expected
+  `1 failed, 8 passed` when the internal settle error incorrectly became
+  `transport_disconnected`; GREEN passes all `9` ownership integrity cases,
+  `73` focused tests, and the corrected full ACP adapter gate of `154` tests
+  without a real provider or adapter.
+
 ### Reap the ACP owner across the claim-timeout race
 
 - Replaced claim-task drain with a settling boundary that returns any owner
