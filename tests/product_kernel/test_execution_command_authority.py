@@ -58,6 +58,8 @@ def test_start_replay_is_nonadvancing_before_worker_io(tmp_path, backend) -> Non
         tmp_path, clock=FrozenClock(NOW)
     )
     try:
+        if store is not None:
+            _seed_lineage(store)
         harness = Harness() if store is None else Harness(store=store)
         task = harness.draft.tasks[0]
         key = (command_id("start", harness.confirmed, task, 1),
@@ -77,6 +79,26 @@ def test_start_replay_is_nonadvancing_before_worker_io(tmp_path, backend) -> Non
     finally:
         if store is not None:
             store.close()
+
+
+def test_missing_session_blocks_even_with_closed_start_replay(tmp_path) -> None:
+    store = SQLiteStore.open(tmp_path, clock=FrozenClock(NOW))
+    try:
+        harness = Harness(store=store)
+        task = harness.draft.tasks[0]
+        identity = command_id("start", harness.confirmed, task, 1)
+        store.execute_once(
+            identity, "execution_attempt_started",
+            lambda transaction: {"legacy": "untrusted"},
+        )
+
+        result = asyncio.run(harness.run())
+
+        assert result.diagnostic.code == "project_dispatch_paused"
+        assert harness.started_tasks == []
+        assert result.attempts == ()
+    finally:
+        store.close()
 
 
 def _binding_result(harness, request, session_id):

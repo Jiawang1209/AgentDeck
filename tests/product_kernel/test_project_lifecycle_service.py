@@ -430,3 +430,47 @@ async def test_dispatch_lease_keeps_stop_out_until_worker_binding_is_visible():
     assert acquired.is_set() is True
     assert binding_visible.is_set() is True
     await running
+
+
+@async_test
+async def test_runtime_bind_failure_closes_later_attempt_without_ghost_running():
+    harness = Harness()
+    singleton = ScriptedWorker(harness, "implementation")
+    harness.service._worker_factory = lambda task: singleton
+
+    result = await harness.run()
+
+    assert result.diagnostic.code == "acp_session_binding_failed"
+    assert result.diagnostic.cause == (
+        "the validated ACP session did not bind durably"
+    )
+    assert [attempt.state for attempt in result.attempts] == [
+        AttemptState.COMPLETED, AttemptState.OUTCOME_UNKNOWN,
+    ]
+    assert harness.started_tasks == ["implementation", "implementation"]
+    persisted = harness.store.load_aggregate(
+        "attempts", result.attempts[-1].attempt_id
+    )
+    assert persisted["state"] == "outcome_unknown"
+    assert persisted["reason"] == "acp_session_binding_failed"
+
+
+@async_test
+async def test_runtime_bind_failure_terminal_write_failure_is_content_free():
+    harness = Harness()
+    singleton = ScriptedWorker(harness, "implementation")
+    harness.service._worker_factory = lambda task: singleton
+    original = harness.service._persist_terminal_attempt
+
+    def fail_runtime_terminal(attempt, *args, **kwargs):
+        if attempt.reason == "acp_session_binding_failed":
+            raise RuntimeError("hostile raw persistence marker")
+        return original(attempt, *args, **kwargs)
+
+    harness.service._persist_terminal_attempt = fail_runtime_terminal
+
+    result = await harness.run()
+
+    assert result.diagnostic.code == "terminal_attempt_persistence_failed"
+    assert "hostile raw persistence marker" not in result.diagnostic.cause
+    assert harness.started_tasks == ["implementation", "implementation"]

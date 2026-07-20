@@ -2,12 +2,11 @@
 from __future__ import annotations
 import asyncio
 from collections.abc import Callable
-from dataclasses import dataclass
 from agentdeck.application.approval_service import ApprovalContext, ApprovalService
 from agentdeck.application import execution_authority as _authority
 from agentdeck.application import execution_records as _records
 from agentdeck.application.execution_resume import (
-    ExecutionResumePlan, initial_execution_state, validate_execution_authority,
+    ExecutionResult, ExecutionResumePlan, initial_execution_state, validate_execution_authority,
 )
 from agentdeck.application.execution_records import AuthoritativeRevisionTask
 from agentdeck.application.execution_runtime import ActiveExecutionBinding, ForegroundExecutionRuntime
@@ -20,13 +19,6 @@ from agentdeck.kernel.permissions import PermissionScope
 from agentdeck.ports.clock import Clock
 from agentdeck.ports.store import Store
 from agentdeck.ports.worker import TaskRequest, Worker
-@dataclass(frozen=True)
-class ExecutionResult:
-    attempts: tuple[Attempt, ...]
-    evidence: tuple[Evidence, ...]
-    handoffs: tuple[Handoff, ...]
-    revision_task: AuthoritativeRevisionTask
-    diagnostic: Diagnostic | None = None
 class ExecutionService:
     def __init__(
         self, *, store: Store, clock: Clock, approval_service: ApprovalService,
@@ -107,10 +99,6 @@ class ExecutionService:
                             attempt = self._bind_acp_session(
                                 attempt, task, confirmed, handle.session_id
                             )
-                            attempts[-1] = attempt
-                            self._runtime.bind(ActiveExecutionBinding(
-                                attempt.attempt_id, task.task_id, task.agent_instance_id,
-                                handle.session_id, handle, worker))
                         except Exception:
                             failed = attempt.unknown_outcome("acp_session_binding_failed")
                             diagnostic = self._diagnostic(
@@ -118,6 +106,18 @@ class ExecutionService:
                                 "the validated ACP session did not bind durably")
                             return ExecutionResult(tuple(attempts), tuple(evidence),
                                 tuple(handoffs), revision_task, diagnostic)
+                        attempts[-1] = attempt
+                        try:
+                            self._runtime.bind(ActiveExecutionBinding(attempt.attempt_id,
+                                task.task_id, task.agent_instance_id, handle.session_id, handle, worker))
+                        except Exception:
+                            return self._stop_attempt(
+                                confirmed, attempts, evidence, handoffs, revision_task,
+                                task, attempt.unknown_outcome("acp_session_binding_failed"),
+                                "acp_session_binding_failed",
+                                "the validated ACP session did not bind durably",
+                                acp_session_id=handle.session_id,
+                            )
                 except ProjectDispatchBlocked:
                     if attempts and attempts[-1] == attempt:
                         stopped = self._persist_terminal_attempt(

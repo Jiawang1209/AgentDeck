@@ -8,11 +8,11 @@ import pytest
 
 from agentdeck.application.execution_runtime import ForegroundExecutionRuntime
 from agentdeck.application.execution_service import ExecutionService
-from agentdeck.application.execution_records import command_id
+from agentdeck.application.project_lifecycle_service import ProjectLifecycleService
 from agentdeck.kernel.mission import MissionDraft
 from agentdeck.kernel.permissions import Effect, PermissionProfile, PermissionScope
 from agentdeck.ports.worker import TaskRequest, WorkerEvent, WorkerHandle, WorkerResult
-from product_kernel.fakes import FrozenClock, HarnessLifecycle, RecordingApprovalService
+from product_kernel.fakes import FrozenClock, RecordingApprovalService
 
 NOW = datetime(2026, 7, 19, 3, 0, tzinfo=timezone.utc)
 class Transaction:
@@ -165,9 +165,8 @@ class Harness:
         clock = FrozenClock(NOW)
         self.approvals = RecordingApprovalService(store=self.store, clock=clock)
         self.runtime = ForegroundExecutionRuntime()
-        self.lifecycle = HarnessLifecycle(
-            store=self.store, clock=clock, session_id="ses_1",
-            replay_command_id=command_id("start", self.confirmed, self.draft.tasks[0], 1))
+        self.lifecycle = ProjectLifecycleService(
+            store=self.store, clock=clock, session_id="ses_1")
         self.service = ExecutionService(store=self.store, clock=clock, approval_service=self.approvals,
             worker_factory=lambda task: ScriptedWorker(self, task.name), runtime=self.runtime,
             lifecycle=self.lifecycle)

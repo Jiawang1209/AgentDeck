@@ -10,6 +10,7 @@ from agentdeck.application.execution_records import (
     AuthoritativeRevisionTask,
     CommittedEvidence,
 )
+from agentdeck.kernel.diagnostics import Diagnostic
 from agentdeck.kernel.execution import (
     Attempt,
     AttemptState,
@@ -87,6 +88,15 @@ class InitialExecutionState:
     handoffs: tuple[Handoff, ...]
     revision_task: AuthoritativeRevisionTask
     stages: tuple[tuple[TaskDefinition, int, int], ...]
+
+
+@dataclass(frozen=True)
+class ExecutionResult:
+    attempts: tuple[Attempt, ...]
+    evidence: tuple[Evidence, ...]
+    handoffs: tuple[Handoff, ...]
+    revision_task: AuthoritativeRevisionTask
+    diagnostic: Diagnostic | None = None
 
 
 def _fail() -> None:
@@ -482,6 +492,7 @@ def validate_execution_authority(
 
 
 __all__ = [
-    "ExecutionResumePlan", "ExecutionResumePlanner", "InitialExecutionState",
+    "ExecutionResult", "ExecutionResumePlan", "ExecutionResumePlanner",
+    "InitialExecutionState",
     "initial_execution_state", "validate_execution_authority",
 ]

@@ -6,6 +6,15 @@
 
 ### Resume execution from a committed handoff
 
+- Follow-up review removed the test-only missing-session dispatch bypass: even
+  an exact closed start-command replay now requires a legal running Project
+  Session, while seeded replay remains non-advancing with zero Worker I/O.
+  Runtime binding rejection after durable ACP binding now closes the Attempt as
+  content-free `outcome_unknown/acp_session_binding_failed`; terminal-write
+  failure returns `terminal_attempt_persistence_failed` without releasing a
+  binding that was never installed. Review RED produced the expected
+  `3 failed, 2 passed`; GREEN passes 202 execution/recovery tests and 14
+  architecture tests.
 - Added a mission-local foreground execution runtime that binds one exact ACP
   Worker and full handle lineage to one event loop, rejects attempt, Worker,
   handle, session, or loop reuse, and releases ownership only after a durable
