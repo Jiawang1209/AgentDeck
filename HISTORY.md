@@ -4,6 +4,19 @@
 
 ## 2026-07-20
 
+### Close Task 27 Observer Runtime and deterministic layout
+
+- Closed Task 27 after independent spec and code-quality approval. The
+  verified implementation HEAD is
+  `b0d4e9be74e05626873c8e2a296972ac06cbebd7`; development stops before Task 28
+  and no live tmux, provider, ACP Mission, or Golden Product run was performed.
+- Final evidence: Task 27 plus architecture/context `102 passed`, Product
+  Kernel `1839 passed`, legacy `4461 passed, 3 skipped`, with compile, diff,
+  500-line, legacy-authority, and Task 27 `asyncio.run` gates green.
+- Updated the current handoff with the immutable plan, takeover-binding,
+  pane-insertion, and safe compensation invariants. Task 28 remains the sole
+  next numerical task and requires a new explicit instruction.
+
 ### Close Observer takeover, cleanup, and value-boundary review gaps
 
 - Made takeover statelessly validate one exact project, role, session, and

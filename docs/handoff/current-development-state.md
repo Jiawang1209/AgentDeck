@@ -4,23 +4,26 @@ Updated: 2026-07-20
 
 ## Active goal
 
-R2 and the complete Task 15B pause/re-entry gate are closed. The only next
-development task is Task 27, **Define the Observer Runtime Port and
-deterministic tmux layout**, from the approved
+R2, Task 15B, and Task 27 are closed. Development is intentionally stopped
+before Task 28. The only next numerical task is Task 28, **Render faithful
+cursor-safe, redacted Agent streams**, from the approved
 [Product Kernel Rewrite TDD plan](../superpowers/plans/2026-07-18-agentdeck-product-kernel-rewrite.md).
 
 Do not reopen M2/M2c, daemon, ConversationSession, autonomous, Skill, Memory,
-GUI, or historical architecture plans as active authority. Do not begin Task 28
-or any real provider/tmux gate before Task 27 passes its own TDD and review.
+GUI, or historical architecture plans as active authority. Task 28 has not
+started, and this handoff does not authorize a real provider/tmux gate.
 
 ## Verified implementation state
 
-- Verified implementation HEAD: `ce94d126bd8eed58a5951615453f8403e1d37450`.
+- Verified Task 27 implementation HEAD: `b0d4e9be74e05626873c8e2a296972ac06cbebd7`.
 - Branch: `codex/product-kernel-rewrite`.
 - R2 exit: complete.
 - Task 15B.1 through Task 15B.5: complete.
+- Task 27 Observer Runtime Port and deterministic tmux layout: complete.
 - Final integrated spec review: `✅ Final Task 15B spec compliant`.
 - Final integrated quality review: `✅ Final Task 15B code quality approved`.
+- Task 27 spec review: `✅ Task 27 spec compliant`.
+- Task 27 quality review: `✅ Task 27 code quality approved`.
 - Immediately before this handoff-only edit, `git status --short` returned no
   output.
 - No push or merge was performed.
@@ -68,6 +71,43 @@ passed on isolated rerun, they are outside the Task 15B diff, and fresh final
 Product Kernel and legacy runs above are green. No failure was hidden with
 xfail, skip, fallback, or a relaxed timeout in Task 15B.
 
+## Task 27 evidence and boundary
+
+Task 27 adds an authority-free Runtime Port and deterministic tmux Observer
+Adapter. It defines project-namespaced `Overview` and `Workers` windows, with
+the exact Worker order `implementer`, `reviewer`, `reviser`, and
+`acceptance_reviewer`. Commands are bounded argv tuples that launch read-only
+Application-event subscriptions; tmux never sends work, infers completion, or
+writes Product authority.
+
+Review fixes established three additional invariants:
+
+- pane insertion is simulated using tmux target-after semantics, so declared
+  role/session/instance order cannot drift from final pane indices;
+- takeover matches one explicit current immutable plan by project, role,
+  session, and instance before runner I/O, while the Adapter caches no
+  ownership authority;
+- partial create compensates only after its own initial `new-session` succeeds,
+  so retry can recover without deleting a pre-existing session after an
+  ambiguous initial failure.
+
+Fresh final evidence at the verified Task 27 implementation HEAD:
+
+```text
+Task 27 + architecture + context:   102 passed
+Product Kernel full suite:         1839 passed in 79.23s
+Legacy suite:                       4461 passed, 3 skipped in 228.86s
+compileall:                         pass
+git diff --check:                   pass
+changed Python files <= 500 lines: pass
+legacy-authority scan:              pass
+Task 27 asyncio.run gate:           pass
+```
+
+No live tmux session, provider, ACP Mission, or Golden Product run occurred.
+Task 27 does not implement Task 28 stream rendering/cursors/redaction or Task
+29 validated return-control.
+
 ## Approved MVP direction
 
 - bare `agentdeck` continuous natural-language ProductSession;
@@ -105,15 +145,14 @@ requirements.
 
 ## Next gate
 
-1. Start Task 27 only: define the Observer Runtime Port and deterministic tmux
-   layout using RED tests first.
-2. Keep tmux observational: decoded, redacted Agent events may be displayed,
-   but tmux/PTY text must not become lifecycle, approval, result, or recovery
-   authority.
-3. Preserve the now-closed R2/Task 15B invariants and rerun their focused gates
-   when Task 27 touches shared runtime composition.
-4. Stop after Task 27 implementation, verification, and two-stage review before
-   advancing to Task 28.
+1. Do not start Task 28 without a new explicit `/goal` or user instruction.
+2. When authorized, Task 28 must consume the Task 27 Port and immutable plan;
+   it must not redesign workspace authority or add return-control.
+3. Task 28 owns cursor-safe faithful rendering, reconnect cursors, and
+   redaction. It must preserve the rule that tmux/PTY pixels are observation,
+   never lifecycle, approval, result, completion, or recovery authority.
+4. Preserve closed R2/Task 15B and Task 27 invariants and rerun their focused
+   gates when Task 28 touches shared Observer composition.
 5. Real provider, ACP/tmux, and Golden Product gates still require their exact
    later Task authorization; this handoff does not authorize them.
 
