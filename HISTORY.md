@@ -4,6 +4,35 @@
 
 ## 2026-07-20
 
+### Close the Task 15B exit replay gaps
+
+- Confirmation replay now maps bounded persistent-command lookup failures to
+  stable, content-free diagnostics. An exact retained cancellation fence
+  returns the original-time `exit_persistence_pending`; no matching fence
+  returns `exit_authority_invalid`. Neither path leaks Store exceptions or
+  performs a second Worker cancellation.
+- Decline command identity is now ProductSession-scoped, and every replay is
+  validated against that session's original canonical request, Attempt ID, and
+  Attempt hash. Two ProductSessions may safely use the same generated request
+  ID without consuming each other's pending decision.
+- Added callback, pre-COMMIT identity, and post-COMMIT hook failure coverage.
+  Pre-commit failures prove exact rollback; post-commit failure proves durable
+  replay. A real caller Task cancellation blocks inside `cancel_task`, observes
+  `CancelledError`, then retries the retained unknown transport outcome with
+  one total cancellation call.
+- Replaced the remaining synthetic terminal-win acceptance with public
+  `ExecutionService.run_confirmed_mission()`: a conforming blocking Worker lets
+  production terminal persistence atomically commit Attempt, Evidence, and
+  Handoff, then production runtime release wins the exit race. The pending exit
+  blocks the next Task, all canonical facts and hashes survive the later
+  between-stage pause, and no second cancellation is sent.
+- TDD evidence: lookup replay first failed 2 tests then passed 2; two-session
+  decline first failed 2 tests then passed with the 36-test ExitService group.
+  The isolated persistence/caller-cancellation matrix passes 6 tests, and the
+  public terminal race passes in five consecutive 10-test focused runs. Final
+  gates pass 144 Task 15B.4 tests, 215 Task 15B.3 R4 tests, and 39
+  architecture/SQLite transaction tests.
+
 ### Close the Task 15B exit cancellation gap design
 
 - Tightened the approved Task 15B.4 contract before behavior work: one

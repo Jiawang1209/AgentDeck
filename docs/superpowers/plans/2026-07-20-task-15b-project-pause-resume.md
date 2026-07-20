@@ -1320,6 +1320,8 @@ before changing production code.
 - Create: `tests/product_kernel/test_sqlite_exit_authority.py`
 - Create: `tests/product_kernel/test_product_exit_acp_integration.py`
 - Create: `tests/product_kernel/test_product_exit_terminal_race.py`
+- Create: `tests/product_kernel/test_product_exit_replay_failures.py`
+- Create: `tests/product_kernel/test_exit_decline_sessions.py`
 - Modify: `tests/product_kernel/test_exit_service.py`
 - Modify: `tests/product_kernel/test_product_reentry.py`
 - Modify: `tests/product_kernel/test_execution_runtime.py`
@@ -1498,6 +1500,8 @@ conda run -n agentdeck env PYTHONPATH="$PWD/src" pytest \
   tests/product_kernel/test_exit_service.py \
   tests/product_kernel/test_product_exit_acp_integration.py \
   tests/product_kernel/test_product_exit_terminal_race.py \
+  tests/product_kernel/test_product_exit_replay_failures.py \
+  tests/product_kernel/test_exit_decline_sessions.py \
   tests/product_kernel/test_product_reentry.py -q
 ```
 
@@ -1704,6 +1708,13 @@ barrier-controlled conforming Worker but may not manually update SQLite or call
 Handoff, canonical fact, and content hash is unchanged, the pending exit blocks
 the next Task, and a later between-stage `/exit` sends zero cancellation I/O.
 
+Final re-review also requires session-scoped decline commands validated against
+the original canonical request, stable content-free lookup failure replay from
+an exact cancellation fence, callback/pre-COMMIT/post-COMMIT persistence fault
+coverage, and cancellation of the real caller Task while `cancel_task` is
+blocked. These regressions live in the two focused recovery/session files above
+instead of pushing the primary integration file over the 500-line gate.
+
 - [ ] **Step 7: Run GREEN, race tests, and quality gates**
 
 Run:
@@ -1714,6 +1725,8 @@ conda run -n agentdeck env PYTHONPATH="$PWD/src" pytest \
   tests/product_kernel/test_exit_service.py \
   tests/product_kernel/test_product_exit_acp_integration.py \
   tests/product_kernel/test_product_exit_terminal_race.py \
+  tests/product_kernel/test_product_exit_replay_failures.py \
+  tests/product_kernel/test_exit_decline_sessions.py \
   tests/product_kernel/test_product_reentry.py \
   tests/product_kernel/test_project_lifecycle_service.py \
   tests/product_kernel/test_execution_runtime.py -q
@@ -1746,11 +1759,35 @@ git add HISTORY.md \
   src/agentdeck/application/project_lifecycle_service.py \
   tests/product_kernel/test_sqlite_exit_authority.py \
   tests/product_kernel/test_product_exit_acp_integration.py \
+  tests/product_kernel/test_product_exit_terminal_race.py \
   tests/product_kernel/test_exit_service.py \
   tests/product_kernel/test_product_reentry.py \
   tests/product_kernel/test_execution_runtime.py \
   tests/product_kernel/test_execution_coordinator.py
 git commit -m "fix: close task15b exit cancellation gap"
+```
+
+- [ ] **Step 9: Close final replay, decline, persistence, and terminal-race review gaps**
+
+Run the two-session decline RED, lookup-failure RED, three-boundary persistence
+matrix, real caller-Task cancellation, and public execution terminal race. The
+terminal test must invoke only `ExecutionService.run_confirmed_mission()`; a
+runtime subclass may observe the production `release()` call, but the test may
+not invoke runtime release or private execution persistence itself. Run the
+complete Task 15B.4 and Task 15B.3 R4 gates, the architecture/transaction gate,
+and five consecutive focused race runs. Then commit without amend:
+
+```bash
+git add HISTORY.md \
+  docs/superpowers/plans/2026-07-20-task-15b-project-pause-resume.md \
+  src/agentdeck/application/async_exit_coordinator.py \
+  src/agentdeck/application/exit_service.py \
+  tests/product_kernel/test_exit_service.py \
+  tests/product_kernel/test_product_exit_acp_integration.py \
+  tests/product_kernel/test_product_exit_terminal_race.py \
+  tests/product_kernel/test_product_exit_replay_failures.py \
+  tests/product_kernel/test_exit_decline_sessions.py
+git commit -m "fix: close task15b exit replay gaps"
 ```
 
 ---

@@ -270,18 +270,30 @@ class AsyncExitCoordinator:
     ) -> ExitResult | None:
         if not _valid_request_id(request_id) or not _valid_hash(attempt_hash):
             return exit_failure(self._clock, "exit_request_identity_mismatch")
-        result = self._store.lookup_command(
-            _confirm_command_id(self._session_id, request_id),
-            "confirm_product_exit",
-        )
-        if result is None:
-            return None
-        original = self._store.lookup_command(
-            exit_request_command_id(self._session_id, request_id),
-            "request_product_exit",
-        )
+        try:
+            result = self._store.lookup_command(
+                _confirm_command_id(self._session_id, request_id),
+                "confirm_product_exit",
+            )
+            if result is None:
+                return None
+            original = self._store.lookup_command(
+                exit_request_command_id(self._session_id, request_id),
+                "request_product_exit",
+            )
+        except (TypeError, ValueError, RuntimeError):
+            lease = self._runtime.matching_exit_cancellation(
+                request_id, attempt_hash
+            )
+            if lease is not None:
+                return exit_failure(
+                    self._clock, "exit_persistence_pending",
+                    outcome_known=False, attempt_id=lease.key.attempt_id,
+                    occurred_at=lease.key.requested_at,
+                )
+            return exit_failure(self._clock, "exit_authority_invalid")
         if original is None:
-            raise ValueError("stored exit request result is missing")
+            return exit_failure(self._clock, "exit_authority_invalid")
         try:
             request = exit_request_from_command_result(original, self._session_id)
         except (TypeError, ValueError):

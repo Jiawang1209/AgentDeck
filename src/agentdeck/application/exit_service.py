@@ -114,14 +114,24 @@ def _event(
         occurred_at=occurred_at,
     )
 
-def _decline_facts(result: CommandResult) -> tuple[str, str]:
-    if set(result) != {"attempt_hash", "mode", "request_id"} or (
+def _decline_facts(result: CommandResult) -> tuple[str, str, str]:
+    if set(result) != {
+        "attempt_hash", "attempt_id", "mode", "request_id",
+    } or (
         result["mode"] != "exit_declined"
         or not _valid_request_id(result["request_id"])
         or not _valid_lower_hex(result["attempt_hash"], 64)
+        or type(result["attempt_id"]) is not str
+        or not result["attempt_id"].startswith("att_")
     ):
         raise ValueError("stored exit decline result is malformed")
-    return result["request_id"], result["attempt_hash"]
+    return result["request_id"], result["attempt_hash"], result["attempt_id"]
+
+def exit_decline_command_id(session_id: str, request_id: str) -> str:
+    session_id = _session_identity(session_id)
+    if not _valid_request_id(request_id):
+        raise ValueError("request_id is invalid")
+    return f"exit:decline:{session_id}:{request_id}"
 
 def _session_write(
     session: Mapping[str, object], request: ExitRequest | None,
@@ -242,7 +252,9 @@ class ExitService:
         if isinstance(checked, ExitResult):
             return checked
         pending = checked
-        command_id = f"exit:decline:{pending.request_id}"
+        command_id = exit_decline_command_id(
+            self._session_id, pending.request_id
+        )
         decision_at = self._now()
 
         def persist(transaction: StoreTransaction) -> CommandResult:
@@ -256,6 +268,7 @@ class ExitService:
             ))
             return {
                 "attempt_hash": live.attempt_hash,
+                "attempt_id": live.attempt.attempt_id,
                 "mode": "exit_declined",
                 "request_id": live.request_id,
             }
@@ -267,10 +280,13 @@ class ExitService:
         except _ExitAbort as error:
             return self._failure(error.code, request=error.request)
         try:
-            stored_id, stored_hash = _decline_facts(result)
-            if stored_id != pending.request_id:
+            stored_id, stored_hash, stored_attempt = _decline_facts(result)
+            if (
+                stored_id != pending.request_id
+                or stored_attempt != pending.attempt.attempt_id
+                or not _compare_internal(stored_hash, pending.attempt_hash)
+            ):
                 raise ValueError
-            ExitRequest(stored_id, pending.attempt, stored_hash, pending.requested_at)
         except (TypeError, ValueError):
             raise ValueError("stored exit decline result is malformed") from None
         return ExitResult("exit_declined", False)
@@ -337,20 +353,31 @@ class ExitService:
     ) -> ExitResult | None:
         try:
             result = self._store.lookup_command(
-                f"exit:decline:{request_id}", "decline_product_exit"
+                exit_decline_command_id(self._session_id, request_id),
+                "decline_product_exit",
             )
         except (TypeError, ValueError, RuntimeError):
             return self._failure("exit_authority_invalid")
         if result is None:
             return None
         try:
-            stored_id, stored_hash = _decline_facts(result)
-        except (TypeError, ValueError):
+            original = self._store.lookup_command(
+                exit_request_command_id(self._session_id, request_id),
+                "request_product_exit",
+            )
+            if original is None:
+                raise ValueError
+            request = _request_from_result(original, self._session_id)
+            stored_id, stored_hash, stored_attempt = _decline_facts(result)
+        except (TypeError, ValueError, RuntimeError):
             return self._failure("exit_authority_invalid")
-        hash_matches = compare_digest(attempt_hash, stored_hash)
-        if stored_id != request_id:
+        if (
+            stored_id != request.request_id
+            or stored_attempt != request.attempt.attempt_id
+            or not _compare_internal(stored_hash, request.attempt_hash)
+        ):
             return self._failure("exit_authority_invalid")
-        if not hash_matches:
+        if not compare_digest(attempt_hash, request.attempt_hash):
             return self._failure("exit_request_identity_mismatch")
         return ExitResult("exit_declined", False)
 

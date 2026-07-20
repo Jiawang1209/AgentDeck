@@ -438,7 +438,7 @@ def test_conflicting_or_malformed_completed_decline_fails_closed(
 ) -> None:
     service, request = active_exit
     service.decline(request.request_id, request.attempt_hash)
-    command_id = f"exit:decline:{request.request_id}"
+    command_id = f"exit:decline:ses_1:{request.request_id}"
     if corruption == "kind":
         store._require_writer().execute(
             "UPDATE commands SET command_kind='conflicting' WHERE command_id=?",

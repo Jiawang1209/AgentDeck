@@ -333,16 +333,10 @@ async def test_malformed_closed_replay_never_retries_worker_io(tmp_path):
     harness = ExitHarness(tmp_path)
     try:
         harness.bind()
-        harness.worker.failure = asyncio.CancelledError()
-        with pytest.raises(asyncio.CancelledError):
-            await harness.coordinator.confirm(
-                harness.request.request_id, harness.request.attempt_hash
-            )
-        harness.worker.failure = None
-        replay = await harness.coordinator.confirm(
+        harness.worker.cancel_error("cancel_timeout", outcome_known=False)
+        await harness.coordinator.confirm(
             harness.request.request_id, harness.request.attempt_hash
         )
-        assert replay.diagnostic.code == "transport_disconnected"
         harness.store._require_writer().execute(
             "UPDATE commands SET canonical_result_facts='{}' WHERE command_id=?",
             (f"exit:confirm:ses_1:{harness.request.request_id}",),

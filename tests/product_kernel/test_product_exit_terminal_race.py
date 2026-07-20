@@ -1,176 +1,172 @@
 from __future__ import annotations
 
 import asyncio
-from types import SimpleNamespace
-
-import pytest
+from hashlib import sha256
+import json
 
 from agentdeck.adapters.sqlite import SQLiteStore
 from agentdeck.application.async_exit_coordinator import AsyncExitCoordinator
-from agentdeck.application.execution_runtime import (
-    ActiveExecutionBinding, ExecutionBindingError, ForegroundExecutionRuntime,
-)
+from agentdeck.application.execution_runtime import ForegroundExecutionRuntime
 from agentdeck.application.execution_service import ExecutionService
 from agentdeck.application.exit_service import ExitService
-from agentdeck.application.project_lifecycle_service import (
-    ProjectDispatchBlocked, ProjectLifecycleService,
-)
-from agentdeck.kernel.execution import Attempt, Evidence, EvidenceKind, Handoff
-from agentdeck.ports.worker import WorkerHandle
+from agentdeck.application.project_lifecycle_service import ProjectLifecycleService
+from agentdeck.kernel.permissions import PermissionProfile, PermissionScope
+from agentdeck.ports.worker import WorkerEvent, WorkerHandle, WorkerResult
 
 from .fakes import FrozenClock, RecordingApprovalService
-from .test_sqlite_execution import NOW, _attempt_snapshot, _seed_lineage
-from .test_product_exit_acp_integration import ExitHarness
+from .test_sqlite_execution_resume import NOW, _seed_base
 
 
-class TerminalWinWorker:
+class ObservedRuntime(ForegroundExecutionRuntime):
     def __init__(self) -> None:
-        self.cancel_count = 0
-        self.on_cancel = None
+        super().__init__()
+        self.release_observed = asyncio.Event()
 
-    async def start_task(self, request): raise AssertionError("unexpected start")
-    def stream_events(self, handle): raise AssertionError("unexpected stream")
-    async def respond_permission(self, handle, **kwargs): raise AssertionError("unexpected permission")
-    async def collect_result(self, handle): raise AssertionError("unexpected collect")
+    def release(self, attempt_id, worker_handle) -> None:
+        super().release(attempt_id, worker_handle)
+        self.release_observed.set()
+
+
+class BlockingTerminalWorker:
+    def __init__(self, runtime: ObservedRuntime) -> None:
+        self.runtime = runtime
+        self.handle = None
+        self.collect_entered = asyncio.Event()
+        self.result_allowed = asyncio.Event()
+        self.cancel_count = 0
+        self.started_count = 0
+
+    async def start_task(self, request):
+        self.started_count += 1
+        self.handle = WorkerHandle(
+            "ses_implementation", request.agent_id,
+            request.task_id, request.attempt_id,
+        )
+        return self.handle
+
+    async def _events(self):
+        assert self.handle is not None
+        yield WorkerEvent(
+            "evt_terminal", self.handle.session_id, self.handle.agent_id,
+            self.handle.task_id, self.handle.attempt_id, "acp", 1,
+            "completed", NOW.isoformat(), {"summary": "done"},
+        )
+
+    def stream_events(self, handle):
+        assert handle == self.handle
+        return self._events()
+
+    async def respond_permission(self, handle, **kwargs):
+        raise AssertionError("terminal race has no permission request")
+
+    async def collect_result(self, handle):
+        assert handle == self.handle
+        self.collect_entered.set()
+        await self.result_allowed.wait()
+        return WorkerResult(
+            handle.session_id, handle.agent_id, handle.task_id,
+            handle.attempt_id, "completed", {
+                "summary": "implementation complete",
+                "artifact_reference": "workspace patch",
+                "content_hash": "b" * 64,
+            },
+        )
 
     async def cancel_task(self, handle, *, reason):
-        self.cancel_count += 1
+        assert handle == self.handle
         assert reason == "product_exit_confirmed"
-        assert self.on_cancel is not None
-        self.on_cancel()
+        self.cancel_count += 1
+        self.result_allowed.set()
+        await self.runtime.release_observed.wait()
 
 
-def test_terminal_win_uses_production_bundle_and_release_without_artifact_loss(
-    tmp_path,
-):
+def _prepare_execution(store: SQLiteStore):
+    _seed_base(store)
+    store._require_writer().execute(
+        "UPDATE product_sessions SET state='running' WHERE session_id='ses_1'"
+    )
+    store._require_writer().execute(
+        "UPDATE tasks SET state='running' WHERE task_id='tsk_implementation'"
+    )
+    store._require_writer().execute(
+        "UPDATE agent_instances SET acp_session_id='ses_implementation' "
+        "WHERE instance_id='agt_implementation'"
+    )
+    return store._resume_draft, store._resume_confirmed
+
+
+def test_terminal_win_uses_public_execution_and_preserves_real_bundle(tmp_path):
     async def race() -> None:
-        store = SQLiteStore.open(tmp_path, clock=FrozenClock(NOW))
+        clock = FrozenClock(NOW)
+        store = SQLiteStore.open(tmp_path, clock=clock)
         try:
-            _seed_lineage(store)
-            connection = store._require_writer()
-            connection.execute(
-                "UPDATE agent_instances SET acp_session_id='ses_acp_1' "
-                "WHERE instance_id='agt_implementation'"
-            )
-            started = Attempt.pending(
-                "att_impl_1", "tsk_implementation", 1
-            ).start()
-            started_facts = _attempt_snapshot(started)
-            started_facts["acp_session_id"] = "ses_acp_1"
-            store.execute_once(
-                "cmd_started", "execution_attempt_started",
-                lambda transaction: transaction.save_aggregate(
-                    "attempts", started.attempt_id, started_facts
-                ) or {"attempt_id": started.attempt_id},
-            )
-            worker = TerminalWinWorker()
-            handle = WorkerHandle(
-                "ses_acp_1", "agt_implementation",
-                "tsk_implementation", "att_impl_1",
-            )
-            runtime = ForegroundExecutionRuntime()
-            runtime.bind(ActiveExecutionBinding(
-                "att_impl_1", "tsk_implementation", "agt_implementation",
-                "ses_acp_1", handle, worker,
-            ))
+            draft, confirmed = _prepare_execution(store)
+            runtime = ObservedRuntime()
+            worker = BlockingTerminalWorker(runtime)
             lifecycle = ProjectLifecycleService(
-                store=store, clock=FrozenClock(NOW), session_id="ses_1"
+                store=store, clock=clock, session_id="ses_1"
             )
             execution = ExecutionService(
-                store=store, clock=FrozenClock(NOW),
+                store=store, clock=clock,
                 approval_service=RecordingApprovalService(
-                    store=store, clock=FrozenClock(NOW)
+                    store=store, clock=clock
                 ),
                 worker_factory=lambda task: worker,
                 runtime=runtime, lifecycle=lifecycle,
             )
-            service = ExitService(
-                store=store, clock=FrozenClock(NOW), session_id="ses_1",
+            exit_service = ExitService(
+                store=store, clock=clock, session_id="ses_1",
                 request_id_factory=lambda: "xrt_" + "9" * 32,
             )
-            request = service.request_exit().request
-            assert request is not None
             coordinator = AsyncExitCoordinator(
-                exit_service=service, store=store, clock=FrozenClock(NOW),
+                exit_service=exit_service, store=store, clock=clock,
                 runtime=runtime, lifecycle=lifecycle, session_id="ses_1",
             )
-            terminal = started.complete("implementation complete")
-            evidence = Evidence.create(
-                "ev_terminal_win", EvidenceKind.ARTIFACT_HASH,
-                {"artifact_reference": "workspace patch", "content_hash": "b" * 64},
-            )
-            handoff = Handoff.create(
-                "hnd_terminal_win", terminal.attempt_id, "tsk_review",
-                terminal.result_summary, (evidence.evidence_id,),
-                artifact_references=("workspace patch",),
-            )
-            confirmed = SimpleNamespace(mission_id="msn_1", version=1)
-            task = SimpleNamespace(
-                task_id="tsk_implementation",
-                agent_instance_id="agt_implementation",
-            )
-            committed = {}
-
-            def terminal_win() -> None:
-                committed["bundle"] = execution._persist_terminal(
-                    terminal, task, (evidence,), handoff, confirmed, "ses_acp_1"
-                )
-                runtime.release(terminal.attempt_id, handle)
-
-            worker.on_cancel = terminal_win
+            mission = asyncio.create_task(execution.run_confirmed_mission(
+                session_id="ses_1", confirmed=confirmed, draft=draft,
+                permission_scope=PermissionScope.for_profile(
+                    PermissionProfile.APPROVE_FOR_ME
+                ),
+            ))
+            await worker.collect_entered.wait()
+            pending = await coordinator.request_exit()
+            assert pending.mode == "exit_confirmation_required"
+            request = pending.request
             result = await coordinator.confirm(
                 request.request_id, request.attempt_hash
             )
+            completed = await mission
             assert result.diagnostic.code == "exit_authority_changed_after_cancel"
-            with pytest.raises(ProjectDispatchBlocked):
-                lifecycle.require_dispatchable()
-            bundle = committed["bundle"]
-            preserved = (
+            assert completed.diagnostic.code == "project_dispatch_paused"
+            assert worker.started_count == worker.cancel_count == 1
+            assert runtime.release_observed.is_set()
+
+            attempt = completed.attempts[0]
+            evidence = completed.evidence[0]
+            handoff = completed.handoffs[0]
+            snapshots = (
+                store.load_aggregate("attempts", attempt.attempt_id),
                 store.load_aggregate("evidence", evidence.evidence_id),
                 store.load_aggregate("handoffs", handoff.handoff_id),
             )
-            assert bundle.attempt == terminal and bundle.evidence == (evidence,)
-            assert bundle.handoff == handoff
+            evidence_row = store._require_writer().execute(
+                "SELECT canonical_evidence_facts,content_hash FROM evidence "
+                "WHERE evidence_id=?", (evidence.evidence_id,),
+            ).fetchone()
+            assert snapshots[0]["state"] == "completed"
+            assert json.loads(evidence_row[0])["content_hash"] == "b" * 64
+            assert evidence_row[1] == sha256(evidence_row[0].encode()).hexdigest()
+            assert snapshots[2]["content_hash"] == handoff.content_hash
+
             paused = await coordinator.request_exit()
             assert paused.mode == "project_paused" and paused.should_exit is True
-            assert preserved == (
+            assert worker.cancel_count == 1
+            assert snapshots == (
+                store.load_aggregate("attempts", attempt.attempt_id),
                 store.load_aggregate("evidence", evidence.evidence_id),
                 store.load_aggregate("handoffs", handoff.handoff_id),
             )
-            assert worker.cancel_count == 1
         finally:
             store.close()
 
     asyncio.run(race())
-
-
-def test_durable_success_replay_retries_only_runtime_settlement(
-    tmp_path, monkeypatch,
-):
-    async def replay() -> None:
-        harness = ExitHarness(tmp_path)
-        try:
-            harness.bind()
-            original = harness.runtime.settle_exit_cancellation
-            monkeypatch.setattr(
-                harness.runtime, "settle_exit_cancellation",
-                lambda *args, **kwargs: (_ for _ in ()).throw(
-                    ExecutionBindingError("synthetic settlement drift")
-                ),
-            )
-            first = await harness.coordinator.confirm(
-                harness.request.request_id, harness.request.attempt_hash
-            )
-            assert first.diagnostic.code == "exit_runtime_convergence_failed"
-            monkeypatch.setattr(
-                harness.runtime, "settle_exit_cancellation", original
-            )
-            second = await harness.coordinator.confirm(
-                harness.request.request_id, harness.request.attempt_hash
-            )
-            assert second.mode == "project_paused" and second.should_exit is True
-            assert harness.worker.cancel_count == 1
-        finally:
-            harness.close()
-
-    asyncio.run(replay())
