@@ -4,6 +4,23 @@
 
 ## 2026-07-20
 
+### Serialize ACP cancellation ownership
+
+- Moved cancellation ownership claim and connection/manager detach into one
+  bounded short lock section before the cancel notification. Only one caller
+  can notify and reap; concurrent and repeated callers receive the closed
+  `cancel_rejected/true` result, while an inconsistent local owner pair fails
+  closed and still reaps any manager that was actually claimed.
+- Changed normal `aclose()` to detach under the lock and await manager shutdown
+  only after releasing it. Caller cancellation and lock contention now return
+  sanitized typed failures instead of leaking `CancelledError`, and a claimed
+  manager remains subject to the same bounded reap protocol.
+- Review RED reproduced `4 failed, 1 passed` across inconsistent ownership,
+  double notification, raw caller cancellation, and lock-held external reap.
+  GREEN passes all `5` integrity cases, `69` focused cancellation tests, and
+  the corrected full ACP adapter gate of `150` tests with no real provider or
+  adapter process.
+
 ### Correct the Task 15B.2 ACP regression gate filename
 
 - Replaced the nonexistent `test_acp_worker.py` entry in the authoritative
