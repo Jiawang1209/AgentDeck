@@ -4,6 +4,23 @@
 
 ## 2026-07-20
 
+### Reap the ACP owner across the claim-timeout race
+
+- Replaced claim-task drain with a settling boundary that returns any owner
+  pair detached just before timeout cancellation won the public result. The
+  outer cancellation path still skips notification and raises the original
+  content-free timeout, but now performs one bounded reap for the recovered
+  manager instead of losing its only reference.
+- A truly cancelled pre-detach claim returns no owner, while MemoryError still
+  propagates and any other closed internal task failure becomes content-free
+  transport facts. Every claim failure branch consumes the settled task result,
+  so no background task or exception is abandoned.
+- Deterministic review RED produced `1 failed, 6 passed` after forcing detach
+  completion immediately before a synthetic timeout; refs were closed but reap
+  count remained zero. GREEN passes all `7` ownership integrity cases, `71`
+  focused tests, and the corrected full ACP adapter gate of `152` tests without
+  a real provider or adapter.
+
 ### Finish ACP cleanup after caller cancellation
 
 - Shielded the short cancellation-owner claim from caller cancellation. A

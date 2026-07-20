@@ -214,6 +214,54 @@ async def test_claim_timeout_drains_task_and_preserves_explicit_close(
 
 
 @_sync_test
+async def test_claim_timeout_settles_completed_owner_pair_before_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    owner = _Owner(tmp_path)
+    connection = await owner.ready(timeout_seconds=0.01)
+    await connection._close_lock.acquire()
+    detached = asyncio.Event()
+    original_detach = connection._detach_cancel_owner
+    original_wait_for = asyncio.wait_for
+    wait_calls = 0
+
+    async def controlled_detach():
+        pair = await original_detach()
+        detached.set()
+        return pair
+
+    async def timeout_after_detach(awaitable, timeout):
+        nonlocal wait_calls
+        wait_calls += 1
+        if wait_calls == 1:
+            connection._close_lock.release()
+            await detached.wait()
+            raise TimeoutError
+        return await original_wait_for(awaitable, timeout=timeout)
+
+    monkeypatch.setattr(connection, "_detach_cancel_owner", controlled_detach)
+    monkeypatch.setattr(asyncio, "wait_for", timeout_after_detach)
+    with pytest.raises(WorkerCancellationError) as captured:
+        await connection.cancel("raw_session")
+    _assert_error(captured.value, "cancel_timeout", False)
+    assert owner.notification_calls == 0
+    assert connection.closed is True
+    assert connection._connection is None and connection._manager is None
+    assert owner.reap_calls == 1
+    current = asyncio.current_task()
+    assert [
+        task for task in asyncio.all_tasks()
+        if task is not current and not task.done()
+    ] == []
+    await connection.aclose()
+    await connection.aclose()
+    with pytest.raises(WorkerCancellationError) as repeated:
+        await connection.cancel("raw_session")
+    _assert_error(repeated.value, "cancel_rejected", True)
+    assert owner.reap_calls == 1
+
+
+@_sync_test
 async def test_aclose_releases_lock_before_owner_reap(tmp_path: Path) -> None:
     owner = _Owner(tmp_path)
     owner.reap_blocks = True

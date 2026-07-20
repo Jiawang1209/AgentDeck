@@ -187,16 +187,18 @@ class ACPWorkerConnection:
                     asyncio.shield(claim), timeout=self.timeout_seconds,
                 )
             except (TimeoutError, asyncio.CancelledError):
-                await self._cancel_and_drain_claim(claim)
-                return None, None, failure
+                pass
             except MemoryError:
                 raise
             except Exception:
-                return None, None, ("transport_disconnected", False)
-            return connection, manager, failure
+                failure = ("transport_disconnected", False)
+            else:
+                return connection, manager, failure
         if failure is not None:
-            await self._cancel_and_drain_claim(claim)
-            return None, None, failure
+            connection, manager, settle_failure = await self._settle_cancel_claim(
+                claim
+            )
+            return connection, manager, settle_failure or failure
         return connection, manager, None
 
     async def _detach_cancel_owner(
@@ -214,17 +216,23 @@ class ACPWorkerConnection:
         return connection, manager
 
     @staticmethod
-    async def _cancel_and_drain_claim(claim: asyncio.Task[object]) -> None:
+    async def _settle_cancel_claim(
+        claim: asyncio.Task[
+            tuple[object | None, AbstractAsyncContextManager[object] | None]
+        ],
+    ) -> tuple[object | None, AbstractAsyncContextManager[object] | None,
+               tuple[str, bool] | None]:
         if not claim.done():
             claim.cancel()
         try:
-            await claim
+            connection, manager = await claim
         except asyncio.CancelledError:
-            pass
+            return None, None, None
         except MemoryError:
             raise
         except Exception:
-            pass
+            return None, None, ("transport_disconnected", False)
+        return connection, manager, None
 
     async def _bounded_shutdown_facts(
         self, manager: AbstractAsyncContextManager[object] | None,
