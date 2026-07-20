@@ -11,12 +11,12 @@ recoverable historical evidence but cannot create requirements, dictate task
 order, or veto the rewrite.
 
 **Normative Task 15B correction:** The conversation-approved, written-review
-pending [Task 15B ACP Cancellation and Recovery Design](2026-07-20-task-15b-acp-cancellation-recovery-design.md)
-defines the exact foreground cancellation and restart-recovery semantics for
-sections 10.4 and 10.4.3. It narrows no product promise: it makes explicit that
-current ACP cancel is a bounded notification plus local owner shutdown, and
-that a fresh process without durable raw resume authority must recover
-conservatively rather than claim a fabricated ACP reconnection.
+pending [Task 15B Project Pause, ACP Cancellation, and Explicit Resume Design](2026-07-20-task-15b-acp-cancellation-recovery-design.md)
+defines the exact project-wide exit, foreground cancellation, explicit resume,
+and restart-recovery semantics for sections 5.2, 10.4, and 10.4.3. It narrows
+no product promise: current ACP cancel is a bounded notification plus local
+owner shutdown; a fresh process without durable raw resume authority recovers
+conservatively; and paused work starts again only after explicit `/resume`.
 
 **Branch:** `codex/product-kernel-rewrite`
 
@@ -187,13 +187,24 @@ Natural language is the primary interface. Deterministic slash commands are:
 /exit
 ```
 
-`/exit` safely persists the session. If a Worker is active, the foreground MVP
-creates an exact durable exit request, explains that exit will interrupt the
-Attempt, and requires `/exit confirm <request-id> <attempt-hash>` before
-stopping it. `/exit decline <request-id> <attempt-hash>` consumes the same
-request without stopping work. A stale identity, changed Attempt snapshot, or
-missing real cancellation capability fails closed. Re-entry reconstructs the
-latest nonterminal ProductSession for the current project only.
+`/exit` safely pauses the whole executing project, not merely one Worker. Its
+durable request closes the dispatch gate before another stage may start. If a
+Worker is active, the foreground MVP explains that project exit will interrupt
+the exact Attempt and requires `/exit confirm <request-id> <attempt-hash>`
+before stopping it. Successful confirmation cancels the exact Worker, records
+the Attempt interruption, and changes the ProductSession to `paused` in one
+command transaction. Between stages, `/exit` pauses without sending ACP.
+`/exit decline <request-id> <attempt-hash>` consumes the same request without
+stopping work. A stale identity, changed Attempt snapshot, or missing real
+cancellation capability fails closed.
+
+Re-entry reconstructs the latest nonterminal ProductSession for the current
+project only and never starts paused work. Explicit `/resume` derives the first
+unclosed stage from committed Mission, Attempt, Handoff, and Evidence facts,
+then creates a higher-ordinal Attempt for that stage. Closed stages never run
+again, and `outcome_unknown` blocks resume. Setup, drafting, and
+awaiting-confirmation sessions have no executing Worker and may close without a
+synthetic paused transition.
 
 ### 5.3 Mission Preview
 
@@ -537,10 +548,13 @@ On restart, any Attempt left `running` becomes `interrupted` unless the same ACP
 Session can be safely reconciled. In the MVP schema, a fresh process has no
 durable raw ACP resume authority, so an old running Attempt has no provable live
 binding: no observed effect becomes `interrupted`, while any observed effect
-becomes `outcome_unknown`. AgentDeck never treats a surviving tmux pane,
-backend name, role, process, or latest Worker as reconciliation evidence. An
-uncertain disconnect cannot be blindly retried. True cross-process ACP resume
-requires a later explicit schema-and-adapter design.
+becomes `outcome_unknown`. In either case the executing ProductSession converges
+to `paused`. AgentDeck never treats a surviving tmux pane, backend name, role,
+process, or latest Worker as reconciliation evidence. An uncertain disconnect
+cannot be blindly retried. A running session found without a live Attempt also
+converges to paused, including a crash after resume commit but before Worker
+start. True cross-process ACP resume requires a later explicit
+schema-and-adapter design.
 
 #### 10.4.1 Schema-v2 session authority and compatibility
 
@@ -639,13 +653,16 @@ for exit purposes. The foreground execution model permits at most one active
 Attempt. More than one is an authority inconsistency: `/exit` returns a
 diagnostic and creates no request.
 
-With no active Attempt, explicit `/exit` closes the writer and exits without a
-confirmation request. With one active Attempt, `/exit` command-atomically
-persists a typed request identity, the exact canonical Attempt snapshot, its
-hash, timestamp, and an audit event. Repeating `/exit` while that snapshot is
-unchanged returns the same request. If the durable Attempt changes, the old
-request cannot be confirmed; a later `/exit` creates a new request bound to the
-new snapshot.
+With no active Attempt and no executing confirmed Mission, explicit `/exit`
+closes the writer and exits without a confirmation request. With an executing
+Mission between stages, `/exit` atomically changes the ProductSession to
+`paused` without sending ACP. With one active Attempt, `/exit`
+command-atomically persists a typed request identity, the exact canonical
+Attempt snapshot, its hash, timestamp, and an audit event. That persisted group
+is also the durable project dispatch blocker. Repeating `/exit` while that
+snapshot is unchanged returns the same request. If the durable Attempt changes,
+the old request cannot cancel it and no next stage may start; a later `/exit`
+revalidates the new state and pauses the project.
 
 An exit request identity is `xrt_` plus 32 lowercase hexadecimal characters
 from an injectable cryptographic-random identity factory. An all-null pending
@@ -672,15 +689,27 @@ bounded local connection/process shutdown. ACP cancel is a notification, so
 this success does not claim a separate remote business acknowledgement or
 prove that no earlier effect occurred. Task 15B then executes one Store command
 transaction that compare-and-swaps the same request and snapshot, changes the
-Attempt to `interrupted`, clears all five pending fields, appends the Attempt
-and ProductSession audit events, and saves the completed command result. Any
-failure rolls back all of those database effects. Missing cancellation
+Attempt to `interrupted`, changes the ProductSession to `paused`, clears all
+five pending fields, appends the Attempt, project-pause, and ProductSession
+audit events, and saves the completed command result. Any failure rolls back
+all of those database effects. Missing cancellation
 capability, rejection, timeout, disconnect, shutdown uncertainty, changed
 lineage, or uncertain outcome leaves the request and Attempt authoritative,
 keeps an interactive foreground shell open when input remains available, and
 returns a content-free Diagnostic. That first failure or post-cancel authority
 drift is stored as a closed replay result so confirmation never sends a second
 cancel.
+
+`/resume` is the sole paused-to-running command. It first validates a read-only
+resume snapshot derived from existing SQLite Mission, ordered Task, Attempt,
+Handoff, Evidence, and completed-command facts; there is no cursor table or
+schema migration. The snapshot identifies the first stage without a closed
+terminal bundle and its next Attempt ordinal. One transaction revalidates its
+canonical hash, changes the ProductSession to `running`, records
+`project_resumed`, and closes the resume command. Only after commit may the
+same foreground loop create the Mission child task. Interrupted stages receive
+a new Attempt; closed stages are immutable context; unknown outcomes and
+lineage drift block with zero Worker I/O.
 
 Task 15A implements the durable request, validation, decline, re-entry, and
 fail-closed blocker but cannot claim Worker cancellation. Task 15B binds the

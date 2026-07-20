@@ -4,6 +4,28 @@
 
 ## 2026-07-20
 
+### Make Task 15B a project-wide pause and explicit resume boundary
+
+- Clarified that `/exit` stops the whole executing AgentDeck project rather
+  than targeting one Worker. Persisting the exact exit request closes the
+  dispatch gate; successful confirmation cancels the current exact Worker when
+  one exists and atomically changes the ProductSession to `paused`. Exiting
+  between stages pauses without sending ACP.
+- Required paused re-entry to remain observational until the user explicitly
+  enters `/resume`. Startup cannot call a Leader, create a Worker, send ACP, or
+  modify project files. A fresh process also reconverges a running session to
+  paused after a crash, including the gap after resume commit but before Worker
+  start.
+- Chose a no-new-schema resume authority. A strict read-only projection derives
+  the first unclosed stage and next Attempt ordinal from existing Mission,
+  Task, Attempt, Handoff, Evidence, and command facts. Closed stages never run
+  again, interrupted stages receive a new Attempt, and `outcome_unknown` blocks
+  resume.
+- Expanded the approved Task 15B boundary to the narrow Store projection,
+  resume planner, project lifecycle service, async ProductShell tests, and
+  execution gate needed to prove whole-project pause/resume without a hidden
+  cursor table or cross-process ACP-session claim.
+
 ### Approve honest foreground ACP cancellation and restart recovery
 
 - Corrected the Task 15B design after two independent read-only reviews proved
