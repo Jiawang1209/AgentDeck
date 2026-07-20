@@ -4,6 +4,18 @@
 
 ## 2026-07-20
 
+### Detect high-ordinal current-Mission resume commands
+
+- Added a hybrid command-coverage projection: deterministic candidate IDs are
+  still probed directly so `started` and `failed` rows without results cannot
+  hide, while all completed `execution_stage_committed` rows are streamed and
+  only parsed Mission/version matches enter authoritative bundle validation.
+- Removed any global-history bound from completed-row attribution. Unrelated
+  valid or un-attributable malformed history is ignored, while every relevant
+  completed row at any ordinal must be one of the four represented validated
+  closed-stage bundles. Focused RED produced the expected `1 failed`; GREEN
+  passes `171` focused tests and `16` architecture/schema authority checks.
+
 ### Scope resume command coverage to current execution authority
 
 - Replaced the global completed-command scan with exact deterministic command

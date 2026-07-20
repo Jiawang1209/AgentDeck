@@ -421,11 +421,24 @@ def _validate_command_coverage(
     connection: sqlite3.Connection, confirmed: ConfirmedMissionVersion,
     draft: MissionDraft, stages: tuple[ResumeStageFacts, ...],
 ) -> None:
-    represented = {
-        stage.terminal_command_id: stage for stage in stages
-        if stage.terminal_command_id is not None
-    }
+    represented = {stage.terminal_command_id: stage for stage in stages
+                   if stage.terminal_command_id is not None}
     seen: set[str] = set()
+    def validate(identity: str, row: tuple[object, ...]) -> None:
+        stage = represented.get(identity)
+        if stage is None or row[0] != "execution_stage_committed":
+            _fail()
+        result = _validate_command_row(row)
+        expected = {
+            "mission_id": confirmed.mission_id, "mission_version": confirmed.version,
+            "task_id": stage.task_id, "attempt_id": stage.terminal_attempt_id,
+            "evidence_ids": [item.evidence_id for item in stage.evidence],
+            "handoff_id": None if stage.handoff is None else stage.handoff.handoff_id}
+        if set(result) != set(expected) or result != expected or (
+            sha256(row[2].encode("utf-8")).hexdigest() != stage.terminal_command_hash
+        ):
+            _fail()
+        seen.add(identity)
     for task, stage in zip(draft.tasks, stages, strict=True):
         last = stage.attempts[-1].ordinal if stage.attempts else 0
         maximum = last + 1 if stage.terminal_command_id is None else last
@@ -439,27 +452,18 @@ def _validate_command_coverage(
             ).fetchone()
             if row is None:
                 continue
-            represented_stage = represented.get(identity)
-            if represented_stage is None or row[0] != "execution_stage_committed":
-                _fail()
-            result = _validate_command_row(row)
-            if set(result) != {
-                "mission_id", "mission_version", "task_id", "attempt_id",
-                "evidence_ids", "handoff_id",
-            }:
-                _fail()
-            if sha256(row[2].encode("utf-8")).hexdigest() != represented_stage.terminal_command_hash:
-                _fail()
-            expected = {
-                "mission_id": confirmed.mission_id, "mission_version": confirmed.version,
-                "task_id": represented_stage.task_id,
-                "attempt_id": represented_stage.terminal_attempt_id,
-                "evidence_ids": [item.evidence_id for item in represented_stage.evidence],
-                "handoff_id": None if represented_stage.handoff is None else represented_stage.handoff.handoff_id,
-            }
-            if result != expected:
-                _fail()
-            seen.add(identity)
+            validate(identity, row)
+    rows = connection.execute("""SELECT command_id,command_kind,state,canonical_result_facts,
+                  created_at,completed_at FROM commands
+             WHERE command_kind='execution_stage_committed' AND state='completed'""")
+    for identity, *row in rows:
+        try:
+            decoded = json.loads(row[2])
+        except (TypeError, ValueError, RecursionError):
+            continue
+        if type(decoded) is dict and (decoded.get("mission_id"),
+            decoded.get("mission_version")) == (confirmed.mission_id, confirmed.version):
+            validate(identity, tuple(row))
     if seen != set(represented):
         _fail()
 def load_execution_resume(

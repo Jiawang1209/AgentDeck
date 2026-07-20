@@ -296,6 +296,38 @@ def test_projection_rejects_orphan_later_terminal_command_read_only(store):
     assert _table_snapshot(store) == before
 
 
+def test_projection_rejects_high_ordinal_current_mission_command_read_only(store):
+    seed_closed_stage(store, "implementation")
+    task = next(
+        item for item in store._resume_draft.tasks if item.name == "revision"
+    )
+    result = json.dumps(
+        {
+            "attempt_id": "att_revision_2",
+            "evidence_ids": ["ev_orphan_2"],
+            "handoff_id": "hnd_orphan_2",
+            "mission_id": store._resume_confirmed.mission_id,
+            "mission_version": store._resume_confirmed.version,
+            "task_id": task.task_id,
+        },
+        sort_keys=True, separators=(",", ":"),
+    )
+    store._require_writer().execute(
+        "INSERT INTO commands VALUES (?,?,'completed',?,?,?)",
+        (
+            command_id("terminal", store._resume_confirmed, task, 2),
+            "execution_stage_committed", result,
+            NOW.isoformat(), NOW.isoformat(),
+        ),
+    )
+    before = _table_snapshot(store)
+
+    with pytest.raises(ExecutionResumeProjectionError, match="resume_projection_malformed"):
+        store.load_execution_resume("ses_1")
+
+    assert _table_snapshot(store) == before
+
+
 @pytest.mark.parametrize(
     ("task_name", "state"), (("review", "started"), ("revision", "failed"))
 )
