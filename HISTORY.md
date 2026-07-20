@@ -4,6 +4,30 @@
 
 ## 2026-07-20
 
+### Close Observer takeover, cleanup, and value-boundary review gaps
+
+- Made takeover statelessly validate one exact project, role, session, and
+  instance binding against an explicitly supplied current immutable workspace
+  plan before selecting a pane. The Adapter caches no lifecycle or ownership
+  authority and stale or mismatched bindings fail before runner I/O.
+- Added best-effort compensation for partial workspace creation. A successful
+  initial `new-session` establishes cleanup ownership; any later runner failure
+  issues the exact project-namespaced `kill-session` argv so retry can start
+  cleanly. An exception or nonzero initial create never kills a possibly
+  pre-existing session, and cleanup failure cannot replace or expose details
+  through the content-free `observer_create_failed` diagnostic.
+- Closed the exported Runtime value boundary with exact tuple-only nested
+  fields, bounded safe UTF-8 argv, typed observer bindings, deterministic
+  namespace/target checks, exact Overview/Workers hierarchy and role order,
+  and unique Worker instance/session bindings. Frozen values no longer retain
+  caller-owned mutable lists or admit inconsistent public plans.
+- TDD evidence: the first focused RED produced `19 failed, 32 passed` across
+  identity, compensation, mutable nesting, unsafe values, and hierarchy
+  checks. A supplemental stale-project RED then failed because takeover issued
+  runner I/O for `prj_stale`. GREEN passes all 52 focused Observer tests; test
+  runner fixtures were split into a 74-line support module to keep every
+  Python and test file comfortably below 500 lines.
+
 ### Preserve declared Worker order under tmux pane insertion
 
 - Corrected the deterministic split sequence to append each new Worker pane

@@ -2,11 +2,15 @@ from __future__ import annotations
 
 import ast
 from dataclasses import replace
-import importlib
 from pathlib import Path
 from typing import Any
 
 import pytest
+
+from .tmux_observer_support import (
+    ROLES, RecordingRunner, StatefulWorkspaceRunner, four_instances, observer,
+    runtime_api,
+)
 
 
 ROOT = Path(__file__).parents[2]
@@ -14,50 +18,6 @@ PRODUCTION_FILES = (
     ROOT / "src/agentdeck/ports/runtime.py",
     ROOT / "src/agentdeck/adapters/tmux_observer.py",
 )
-ROLES = ("implementer", "reviewer", "reviser", "acceptance_reviewer")
-
-
-def runtime_api() -> tuple[Any, Any]:
-    try:
-        port = importlib.import_module("agentdeck.ports.runtime")
-        adapter = importlib.import_module("agentdeck.adapters.tmux_observer")
-    except ModuleNotFoundError:
-        pytest.fail("Task 27 Observer Runtime modules are missing", pytrace=False)
-    return port, adapter
-
-
-def four_instances() -> tuple[Any, ...]:
-    port, _ = runtime_api()
-    return tuple(
-        port.ObserverInstance(
-            instance_id=f"agt_{role}",
-            session_id=f"ses_{role}",
-            role=role,
-        )
-        for role in ROLES
-    )
-
-
-class RecordingRunner:
-    def __init__(self, *, fail_at: int | None = None, returncode: int = 0) -> None:
-        self.calls: list[tuple[str, ...]] = []
-        self.fail_at = fail_at
-        self.returncode = returncode
-
-    def __call__(self, argv: tuple[str, ...]) -> object:
-        assert type(argv) is tuple
-        assert all(type(argument) is str for argument in argv)
-        self.calls.append(argv)
-        if self.fail_at == len(self.calls):
-            raise RuntimeError("secret task output")
-        return type("Result", (), {"returncode": self.returncode})()
-
-
-def observer(runner: RecordingRunner | None = None) -> Any:
-    _, adapter = runtime_api()
-    return adapter.TmuxObserver(runner=runner or RecordingRunner())
-
-
 def test_plan_has_exact_workspace_windows_roles_and_observer_argv() -> None:
     plan = observer().plan(project_id="prj_1", instances=four_instances())
 
@@ -159,7 +119,7 @@ def test_worker_role_shape_and_input_order_fail_closed(variant: str) -> None:
     if variant == "missing":
         instances.pop()
     elif variant == "extra":
-        instances.append(port.ObserverInstance("agt_leader", "ses_leader", "leader"))
+        instances.append(port.ObserverInstance("agt_extra", "ses_extra", "implementer"))
     elif variant == "wrong":
         instances[-1] = replace(instances[-1], role="reviewer")
     else:
@@ -226,7 +186,7 @@ def test_split_insertion_order_keeps_takeover_bound_to_exact_worker() -> None:
         for instance in instances
     }
 
-    adapter.create_workspace(project_id="prj_1", instances=instances)
+    plan = adapter.create_workspace(project_id="prj_1", instances=instances)
     pane_bindings: list[tuple[str, str, str]] = []
     for argv in runner.calls:
         if "new-window" not in argv and "split-window" not in argv:
@@ -245,7 +205,7 @@ def test_split_insertion_order_keeps_takeover_bound_to_exact_worker() -> None:
         adapter.take_ownership(port.TakeoverOwnership(
             project_id="prj_1", instance_id=instance.instance_id,
             session_id=instance.session_id, role=instance.role, owner_id="human",
-        ))
+        ), plan=plan)
         target = runner.calls[-1][runner.calls[-1].index("-t") + 1]
         selected_bindings.append(pane_bindings[int(target.rsplit(".", 1)[1])])
 
@@ -271,7 +231,9 @@ def test_select_close_and_takeover_use_exact_injected_tmux_argv() -> None:
     )
 
     adapter.select_workspace(project_id="prj_1")
-    adapter.take_ownership(ownership)
+    adapter.take_ownership(
+        ownership, plan=adapter.plan(project_id="prj_1", instances=four_instances()),
+    )
     adapter.close_workspace(project_id="prj_1")
 
     prefix = ("tmux", "-L", "agentdeck-prj_1")
@@ -280,6 +242,148 @@ def test_select_close_and_takeover_use_exact_injected_tmux_argv() -> None:
         (*prefix, "select-pane", "-t", "agentdeck-prj_1:Workers.1"),
         (*prefix, "kill-session", "-t", "agentdeck-prj_1"),
     ]
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    (("instance_id", "agt_stale"), ("session_id", "ses_stale")),
+)
+def test_takeover_rejects_stale_identity_before_runner(field: str, value: str) -> None:
+    port, _ = runtime_api()
+    instances = four_instances()
+    reviewer = instances[1]
+    ownership = port.TakeoverOwnership(
+        project_id="prj_1", instance_id=reviewer.instance_id,
+        session_id=reviewer.session_id, role=reviewer.role, owner_id="human",
+    )
+    runner = RecordingRunner()
+    adapter = observer(runner)
+    plan = adapter.plan(project_id="prj_1", instances=instances)
+
+    with pytest.raises(ValueError, match="current observer binding"):
+        adapter.take_ownership(
+            replace(ownership, **{field: value}), plan=plan,
+        )
+
+    assert runner.calls == []
+
+
+def test_takeover_rejects_stale_project_before_runner() -> None:
+    port, _ = runtime_api()
+    instances = four_instances()
+    reviewer = instances[1]
+    ownership = port.TakeoverOwnership(
+        project_id="prj_stale", instance_id=reviewer.instance_id,
+        session_id=reviewer.session_id, role=reviewer.role, owner_id="human",
+    )
+    runner = RecordingRunner()
+    adapter = observer(runner)
+    plan = adapter.plan(project_id="prj_1", instances=instances)
+
+    with pytest.raises(ValueError, match="current observer binding"):
+        adapter.take_ownership(ownership, plan=plan)
+
+    assert runner.calls == []
+
+
+def test_partial_create_is_compensated_and_retry_starts_cleanly() -> None:
+    _, adapter_module = runtime_api()
+    runner = StatefulWorkspaceRunner()
+    adapter = observer(runner)  # type: ignore[arg-type]
+
+    with pytest.raises(adapter_module.TmuxObserverFailure) as caught:
+        adapter.create_workspace(project_id="prj_1", instances=four_instances())
+
+    cleanup = ("tmux", "-L", "agentdeck-prj_1", "kill-session", "-t", "agentdeck-prj_1")
+    assert caught.value.code == "observer_create_failed"
+    assert runner.calls[-1] == cleanup
+    assert runner.exists is False
+    assert adapter.create_workspace(project_id="prj_1", instances=four_instances())
+    assert runner.exists is True
+
+
+@pytest.mark.parametrize("initial", ("raise", "nonzero"))
+def test_initial_create_failure_never_kills_preexisting_session(initial: str) -> None:
+    _, adapter_module = runtime_api()
+    runner = StatefulWorkspaceRunner(initial=initial)
+
+    with pytest.raises(adapter_module.TmuxObserverFailure):
+        observer(runner).create_workspace(  # type: ignore[arg-type]
+            project_id="prj_1", instances=four_instances(),
+        )
+
+    assert runner.exists is True
+    assert not any("kill-session" in argv for argv in runner.calls)
+
+
+def test_compensation_failure_keeps_original_content_free_diagnostic() -> None:
+    _, adapter_module = runtime_api()
+    runner = StatefulWorkspaceRunner(cleanup_fails=True)
+
+    with pytest.raises(adapter_module.TmuxObserverFailure) as caught:
+        observer(runner).create_workspace(  # type: ignore[arg-type]
+            project_id="prj_1", instances=four_instances(),
+        )
+
+    assert caught.value.code == "observer_create_failed"
+    assert "secret" not in str(caught.value)
+    assert "kill-session" in runner.calls[-1]
+
+
+@pytest.mark.parametrize("level", ("command", "panes", "windows"))
+def test_runtime_values_reject_mutable_nested_lists(level: str) -> None:
+    plan = observer().plan(project_id="prj_1", instances=four_instances())
+    if level == "command":
+        action = lambda: replace(plan.windows[1].panes[0], command=list(
+            plan.windows[1].panes[0].command))
+    elif level == "panes":
+        action = lambda: replace(plan.windows[1], panes=list(plan.windows[1].panes))
+    else:
+        action = lambda: replace(plan, windows=list(plan.windows))
+
+    with pytest.raises(TypeError):
+        action()
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    (
+        ("name", ""), ("target", "agentdeck-prj_1:Workers.0\x00"),
+        ("role", 1), ("instance_id", "agt_bad/path"), ("pane_id", "pane-1"),
+        ("command", ("agentdeck", "observer", "\ud800")),
+        ("command", ("agentdeck", "observer", "x" * 257)),
+        ("command", ("agentdeck", "observer", 1)),
+    ),
+)
+def test_observer_pane_rejects_unsafe_or_wrong_typed_values(
+    field: str, value: object,
+) -> None:
+    pane = observer().plan(project_id="prj_1", instances=four_instances()).windows[1].panes[0]
+
+    with pytest.raises((TypeError, ValueError)):
+        replace(pane, **{field: value})
+
+
+@pytest.mark.parametrize("variant", ("namespace", "window_order", "pane_order", "binding"))
+def test_workspace_plan_rejects_inconsistent_hierarchy(variant: str) -> None:
+    plan = observer().plan(project_id="prj_1", instances=four_instances())
+    if variant == "namespace":
+        action = lambda: replace(plan, socket_name="agentdeck-prj_other")
+    elif variant == "window_order":
+        action = lambda: replace(plan, windows=tuple(reversed(plan.windows)))
+    elif variant == "pane_order":
+        workers = plan.windows[1]
+        action = lambda: replace(workers, panes=tuple(reversed(workers.panes)))
+    else:
+        workers = plan.windows[1]
+        action = lambda: replace(workers, panes=(
+            workers.panes[0],
+            replace(workers.panes[1], instance_id=workers.panes[0].instance_id),
+            *workers.panes[2:],
+        ))
+
+    with pytest.raises(ValueError):
+        action()
 
 
 @pytest.mark.parametrize("mode", ("raise", "nonzero"))

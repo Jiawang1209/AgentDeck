@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Final
 
 from agentdeck.ports.runtime import (
     ObserverInstance,
@@ -17,9 +16,6 @@ from agentdeck.ports.runtime import (
 
 
 Runner = Callable[[tuple[str, ...]], object]
-_ROLE_PANE_INDEX: Final = {
-    role: index for index, role in enumerate(WORKER_OBSERVER_ROLES)
-}
 
 
 class TmuxObserverFailure(RuntimeError):
@@ -87,8 +83,17 @@ class TmuxObserver:
         self, *, project_id: str, instances: tuple[ObserverInstance, ...],
     ) -> ObserverWorkspacePlan:
         plan = self.plan(project_id=project_id, instances=instances)
-        for argv in self._create_argv(plan):
-            self._run(argv, "observer_create_failed")
+        commands = self._create_argv(plan)
+        self._run(commands[0], "observer_create_failed")
+        try:
+            for argv in commands[1:]:
+                self._run(argv, "observer_create_failed")
+        except TmuxObserverFailure:
+            try:
+                self._run(self._close_argv(plan.workspace_name), "observer_create_failed")
+            except TmuxObserverFailure:
+                pass
+            raise
         return plan
 
     def select_workspace(self, *, project_id: str) -> None:
@@ -105,14 +110,24 @@ class TmuxObserver:
             "observer_close_failed",
         )
 
-    def take_ownership(self, ownership: TakeoverOwnership) -> None:
+    def take_ownership(
+        self, ownership: TakeoverOwnership, *, plan: ObserverWorkspacePlan,
+    ) -> None:
         if type(ownership) is not TakeoverOwnership:
             raise TypeError("ownership must be a TakeoverOwnership")
-        namespace = self._namespace(ownership.project_id)
-        pane_index = _ROLE_PANE_INDEX[ownership.role]
+        if type(plan) is not ObserverWorkspacePlan:
+            raise TypeError("plan must be an ObserverWorkspacePlan")
+        matches = tuple(
+            pane for pane in plan.windows[1].panes
+            if (
+                ownership.project_id, ownership.role,
+                ownership.instance_id, ownership.session_id,
+            ) == (plan.project_id, pane.role, pane.instance_id, pane.session_id)
+        )
+        if len(matches) != 1:
+            raise ValueError("ownership does not match the current observer binding")
         self._run(
-            (*self._prefix(namespace), "select-pane", "-t",
-             f"{namespace}:Workers.{pane_index}"),
+            (*self._prefix(plan.socket_name), "select-pane", "-t", matches[0].target),
             "observer_takeover_failed",
         )
 
@@ -142,6 +157,10 @@ class TmuxObserver:
     @staticmethod
     def _prefix(namespace: str) -> tuple[str, ...]:
         return "tmux", "-L", namespace
+
+    @classmethod
+    def _close_argv(cls, namespace: str) -> tuple[str, ...]:
+        return (*cls._prefix(namespace), "kill-session", "-t", namespace)
 
     @classmethod
     def _create_argv(
