@@ -4,6 +4,38 @@
 
 ## 2026-07-20
 
+### Require explicit resume after Product re-entry
+
+- Made startup recovery mandatory before the first terminal read. A fresh
+  process now uses only the exact ProductSession-scoped SQLite authority:
+  abandoned Attempts converge to `interrupted` or `outcome_unknown`, running
+  sessions and stale complete exit requests converge to `paused` with a null
+  pending-exit group, and ambiguous, partial, drifted, or oversized authority
+  fails closed before Worker I/O or partial persistence.
+- Replaced the synchronous shell with one foreground asyncio loop shared by
+  terminal input, Mission execution, lifecycle resume, and project exit.
+  Paused re-entry is observational; only explicit `/resume` may revalidate the
+  retained snapshot, commit `project_resumed`, and create one same-loop Mission
+  child. Fresh confirmation uses the same singleton child guard, while SIGINT
+  and EOF route through the same awaited exit coordinator and the Store closes
+  only after the owned child settles.
+- Added exact resume-point rendering for the first unclosed Task, next Attempt
+  ordinal, and preceding Handoff identity without exposing Handoff/Evidence
+  content. Extracted only pure preview/input projection helpers to
+  `product/shell_projection.py` so the behavior-owning shell remains within the
+  500-line boundary, and recorded that approved boundary in both Task 15B
+  appendices.
+- TDD evidence: the recovery contract RED produced 18 failures and the async
+  shell RED produced 9 failures; final audit REDs independently caught one
+  oversized recovery command identity, one stale complete pending-exit group,
+  and replacement of a valid falsey injected async reader. The real SIGINT
+  callback and pipe-backed terminal reader regressions also pass without a
+  platform fallback. GREEN passes 114 focused Task 15B.5 tests, 476 integrated
+  Task 15B tests, 17 architecture/development-entry tests, and all 1766 Product
+  Kernel tests. Modified source/test files are at most 500 lines; Application,
+  Shell, and Worker paths contain zero `asyncio.run()` calls, while Product
+  bootstrap contains exactly one outer entrypoint call.
+
 ### Restore the Product Kernel documentation source of truth
 
 - Restored the Rewrite Context Firewall's single-authority rule: the

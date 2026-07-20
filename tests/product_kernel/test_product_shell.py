@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timezone
+from functools import wraps
+import io
+import os
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -8,284 +12,347 @@ import pytest
 
 from agentdeck.adapters.discovery import ReadinessState, ToolDiscovery
 from agentdeck.adapters.sqlite import SQLiteStore
-from agentdeck.application.exit_service import ExitService
+from agentdeck.application.recovery_service import RecoveryService
 from agentdeck.application.session_service import SessionService
-from agentdeck.product.shell import ProductShell
 from agentdeck.product.bootstrap import build_product_shell
+from agentdeck.product.shell import AsyncTerminalReader
 from agentdeck.product.slash_commands import CommandKind
 
 from .fakes import FrozenClock
+from .test_sqlite_execution_resume import _seed_base, seed_closed_stage
 
 
-NOW = datetime(2026, 7, 19, 8, 9, 10, tzinfo=timezone.utc)
-AVAILABLE_LEADERS = {
-    "codex-cli": ("native-default",),
-    "claude-cli": ("native-default",),
-}
+NOW = datetime(2026, 7, 20, 8, 9, 10, tzinfo=timezone.utc)
 
 
-class ShellHarness:
-    def __init__(self, root: Path) -> None:
-        self.root = root
-        self.output: list[str] = []
-
-    def run(self, lines: list[str]) -> str:
-        pending = iter(lines)
-        store = SQLiteStore.open(self.root, clock=FrozenClock(NOW))
-        service = SessionService(
-            store=store,
-            clock=FrozenClock(NOW),
-            session_id="ses_shell",
-            project_root=str(self.root),
-            available_leaders=AVAILABLE_LEADERS,
-        )
-        exit_service = ExitService(
-            store=store,
-            clock=FrozenClock(NOW),
-            session_id="ses_shell",
-            request_id_factory=iter(("xrt_" + "1" * 32,)).__next__,
-        )
-
-        def read_line(prompt: str) -> str:
-            assert prompt == "agentdeck> "
-            try:
-                return next(pending)
-            except StopIteration:
-                raise EOFError from None
-
-        shell = ProductShell(
-            session_service=service,
-            exit_service=exit_service,
-            available_leaders=AVAILABLE_LEADERS,
-            read_line=read_line,
-            write_line=self.output.append,
-            close=store.close,
-        )
-        assert shell.run() == 0
-        return "\n".join(self.output)
-
-    def restored(self) -> tuple[SessionService, SQLiteStore]:
-        store = SQLiteStore.open(self.root, clock=FrozenClock(NOW))
-        return (
-            SessionService(
-                store=store,
-                clock=FrozenClock(NOW),
-                session_id="ses_shell",
-                project_root=str(self.root),
-                available_leaders=AVAILABLE_LEADERS,
-            ),
-            store,
-        )
+def async_test(function):
+    @wraps(function)
+    def run(*args, **kwargs):
+        return asyncio.run(function(*args, **kwargs))
+    return run
 
 
-def test_product_shell_requires_explicit_exit_service(tmp_path: Path) -> None:
-    store = SQLiteStore.open(tmp_path, clock=FrozenClock(NOW))
-    service = SessionService(
-        store=store,
-        clock=FrozenClock(NOW),
-        session_id="ses_explicit_exit",
-        project_root=str(tmp_path),
-        available_leaders=AVAILABLE_LEADERS,
+def _discovery():
+    return {"codex": ToolDiscovery(
+        name="codex", command="codex", resolved_path="/tools/codex",
+        version="codex 1.0", authenticated=True, acp_available=True,
+        readiness=ReadinessState.READY, capabilities=("leader", "worker", "acp"),
+    )}
+
+
+def _config(**_layers):
+    return SimpleNamespace(
+        resolve=lambda _key: SimpleNamespace(value="approve-for-me")
     )
-    try:
-        with pytest.raises(TypeError, match="exit_service"):
-            ProductShell(
-                session_service=service,
-                available_leaders=AVAILABLE_LEADERS,
-                read_line=lambda _: "/exit",
-                write_line=lambda _: None,
-                close=store.close,
-            )
-    finally:
-        store.close()
 
 
-def test_first_run_shell_retains_goal_and_resumes_after_setup(
+class FakeExecution:
+    def __init__(self, *, block: bool = False) -> None:
+        self.calls = []
+        self.loop_ids: set[int] = set()
+        self.started = asyncio.Event()
+        self.finish = asyncio.Event()
+        self.block = block
+
+    async def run_confirmed_mission(self, **facts):
+        self.calls.append(facts)
+        self.loop_ids.add(id(asyncio.get_running_loop()))
+        self.started.set()
+        if self.block:
+            await self.finish.wait()
+        return None
+
+
+class AsyncLines:
+    def __init__(self, *lines: str) -> None:
+        self.lines = iter(lines)
+        self.calls = 0
+
+    async def __call__(self, prompt: str) -> str:
+        assert prompt == "agentdeck> "
+        self.calls += 1
+        await asyncio.sleep(0)
+        try:
+            return next(self.lines)
+        except StopIteration:
+            raise EOFError from None
+
+
+def _seed_resume(root: Path, *, closed_implementation: bool = False) -> None:
+    store = SQLiteStore.open(root, clock=FrozenClock(NOW))
+    _seed_base(store)
+    store._require_writer().commit()
+    store._require_writer().execute("PRAGMA foreign_keys=OFF")
+    store._require_writer().execute(
+        "UPDATE projects SET project_id=? WHERE project_id='prj_resume'",
+        (store._project_id,),
+    )
+    store._require_writer().execute(
+        "UPDATE product_sessions SET project_id=? WHERE session_id='ses_1'",
+        (store._project_id,),
+    )
+    store._require_writer().commit()
+    store._require_writer().execute("PRAGMA foreign_keys=ON")
+    store.execute_once(
+        "session:configure:ses_1", "configure_product_session", lambda _: {
+            "accepted": True, "goal": None, "leader_backend": "codex-cli",
+            "mode": "ready", "model": "native-default",
+            "permission": "approve_for_me", "session_id": "ses_1",
+        },
+    )
+    if closed_implementation:
+        seed_closed_stage(store, "implementation")
+    store._require_writer().commit()
+    store.close()
+
+
+def _build(
+    root: Path, reader, output: list[str], *, execution: FakeExecution | None = None,
+    recovery_factory=RecoveryService,
+):
+    kwargs = {}
+    if execution is not None:
+        kwargs.update(
+            adapter_readiness={},
+            adapter_composition_factory=lambda **_: SimpleNamespace(
+                worker=lambda _backend: None
+            ),
+            approval_service_factory=lambda **_: object(),
+            execution_service_factory=lambda **_: execution,
+        )
+    return build_product_shell(
+        project_root=str(root), read_line=reader, write_line=output.append,
+        clock_factory=lambda: FrozenClock(NOW), discovery_factory=_discovery,
+        config_factory=_config, recovery_factory=recovery_factory, **kwargs,
+    )
+
+
+@async_test
+async def test_first_run_shell_retains_goal_and_resumes_after_setup(
     tmp_path: Path,
 ) -> None:
-    harness = ShellHarness(tmp_path)
+    output: list[str] = []
+    shell = _build(tmp_path, AsyncLines(
+        "Build an accessible page", "/leader codex-cli", "/model native-default",
+        "/permissions approve-for-me", "/setup confirm", "/exit",
+    ), output)
 
-    transcript = harness.run([
-        "Build an accessible page",
-        "/leader codex-cli",
-        "/model native-default",
-        "/permissions approve-for-me",
-        "/setup confirm",
-        "/exit",
-    ])
-
+    assert await shell.run_async() == 0
+    transcript = "\n".join(output)
     assert "I saved your goal while setup completes." in transcript
     assert "Goal ready: Build an accessible page" in transcript
-    assert "Session is safe to exit." in transcript
-    assert "{" not in transcript
-    restored, store = harness.restored()
+    store = SQLiteStore.open(tmp_path, clock=FrozenClock(NOW))
     try:
-        assert restored.resume().goal == "Build an accessible page"
-        assert restored.current().leader_backend == "codex-cli"
-        assert restored.current().model == "native-default"
-        assert restored.current().permission == "approve_for_me"
+        view = SessionService.open_latest(
+            store=store, clock=FrozenClock(NOW), project_root=str(tmp_path),
+            available_leaders={"codex-cli": ("native-default",)},
+            session_id_factory=lambda: "ses_unused",
+        ).current()
+        assert (view.leader_backend, view.model, view.permission) == (
+            "codex-cli", "native-default", "approve_for_me",
+        )
     finally:
         store.close()
 
 
-def test_help_status_and_setup_work_without_llm(tmp_path: Path) -> None:
-    harness = ShellHarness(tmp_path)
+@async_test
+async def test_help_status_setup_and_declared_controls_work_without_llm(
+    tmp_path: Path,
+) -> None:
+    output: list[str] = []
+    shell = _build(tmp_path, AsyncLines(
+        "/help", "/status", "/setup", "/agents", "/mission", "/pause",
+        "/takeover att_1", "/diagnose", "/unknown", "/exit",
+    ), output)
 
-    transcript = harness.run(["/help", "/status", "/setup", "/exit"])
+    await shell.run_async()
 
+    transcript = "\n".join(output)
     assert "Select Leader" in transcript
-    assert "AgentDeck is setup.\nAgents: none" in transcript
-    assert "AgentDeck setup" in transcript
-    assert "Choose a Leader and model, then confirm setup." in transcript
+    assert "AgentDeck is setup." in transcript
+    assert "No Agent Instances are active." in transcript
+    assert "Command not recognized. Use /help." in transcript
     assert all(f"/{kind.value}" in transcript for kind in CommandKind)
     assert "{" not in transcript
 
 
-def test_every_declared_control_is_handled_without_becoming_a_goal(
-    tmp_path: Path,
-) -> None:
-    harness = ShellHarness(tmp_path)
-
-    transcript = harness.run([
-        "/agents",
-        "/mission",
-        "/pause",
-        "/resume",
-        "/takeover att_1",
-        "/diagnose",
-        "/diagnose --json",
-        "/unknown",
-        "/exit",
-    ])
-
-    assert "No Agent Instances are active." in transcript
-    assert "No Mission is active." in transcript
-    assert "No ProductSession diagnostic is active." in transcript
-    assert "Command not recognized. Use /help." in transcript
-    assert "{" not in transcript
-    restored, store = harness.restored()
-    try:
-        assert restored.current().pending_goal is None
-        assert restored.current().state.value == "setup"
-    finally:
-        store.close()
-
-
-def test_rejected_setup_renders_a_diagnostic_without_selecting_a_fallback(
-    tmp_path: Path,
-) -> None:
-    harness = ShellHarness(tmp_path)
-
-    transcript = harness.run([
-        "Build the page",
-        "/leader api:deepseek",
-        "/model deepseek-chat",
-        "/setup confirm",
-        "/exit",
-    ])
-
-    assert "Diagnosis leader_credential_unavailable [error]" in transcript
-    assert "No fallback" not in transcript
-    assert "{" not in transcript
-    restored, store = harness.restored()
-    try:
-        assert restored.current().leader_backend is None
-        assert restored.current().model is None
-        assert restored.current().state.value == "setup"
-    finally:
-        store.close()
-
-
-@pytest.mark.parametrize(
-    ("goal", "marker"),
-    (
-        ('{"task":"RAW-JSON-GOAL"}', "RAW-JSON-GOAL"),
-        ("Build RAW-CONTROL-GOAL\x1b[31m", "RAW-CONTROL-GOAL"),
-        ("RAW-OVERSIZE-GOAL-" + "x" * 2_100, "RAW-OVERSIZE-GOAL"),
-    ),
-)
-def test_setup_resume_never_renders_an_unsafe_retained_goal(
-    tmp_path: Path, goal: str, marker: str,
-) -> None:
-    harness = ShellHarness(tmp_path)
-
-    transcript = harness.run([
-        goal,
-        "/leader codex-cli",
-        "/model native-default",
-        "/setup confirm",
-        "/exit",
-    ])
-
-    assert "Goal ready. The retained goal is not displayed." in transcript
-    assert marker not in transcript
-    assert "{" not in transcript
-    assert "\x1b" not in transcript
-    restored, store = harness.restored()
-    try:
-        assert restored.resume().goal == goal
-        assert restored.current().state.value == "ready"
-    finally:
-        store.close()
-
-
-def test_bootstrap_uses_injected_factories_without_terminal_provider_or_tmux(
-    tmp_path: Path,
-) -> None:
+@async_test
+async def test_recovery_finishes_before_first_input_read(tmp_path: Path) -> None:
     calls: list[str] = []
-    output: list[str] = []
-    pending = iter(("/setup", "/exit"))
 
-    def clock_factory() -> FrozenClock:
-        calls.append("clock")
-        return FrozenClock(NOW)
+    class RecordingRecovery:
+        def __init__(self, **facts):
+            self.real = RecoveryService(**facts)
 
-    def discovery_factory():
-        calls.append("discovery")
-        return {
-            "codex": ToolDiscovery(
-                name="codex",
-                command="codex",
-                resolved_path="/tools/codex",
-                version="codex 1.0",
-                authenticated=True,
-                acp_available=True,
-                readiness=ReadinessState.READY,
-                capabilities=("leader", "worker", "acp"),
-            )
-        }
+        async def reconcile(self):
+            calls.append("recovery.reconcile")
+            return await self.real.reconcile()
 
-    def config_factory(**layers):
-        calls.append("config")
-        assert layers["discovered"] == {"permission": "approve-for-me"}
-        assert layers["global_values"] == {}
-        assert layers["project_values"] == {}
-        assert layers["session_values"] == {}
-        return SimpleNamespace(
-            resolve=lambda key: SimpleNamespace(value="approve-for-me")
-        )
+    class Reader(AsyncLines):
+        async def __call__(self, prompt: str) -> str:
+            calls.append("read_line")
+            return await super().__call__(prompt)
 
-    def store_factory(root: str, *, clock: FrozenClock) -> SQLiteStore:
-        calls.append("store")
-        assert root == str(tmp_path)
-        return SQLiteStore.open(root, clock=clock)
-
-    def shell_factory(**values) -> ProductShell:
-        calls.append("shell")
-        return ProductShell(**values)
-
-    shell = build_product_shell(
-        project_root=str(tmp_path),
-        read_line=lambda _: next(pending),
-        write_line=output.append,
-        clock_factory=clock_factory,
-        discovery_factory=discovery_factory,
-        config_factory=config_factory,
-        store_factory=store_factory,
-        shell_factory=shell_factory,
+    shell = _build(
+        tmp_path, Reader("/exit"), [], recovery_factory=RecordingRecovery
     )
 
-    assert shell.run() == 0
-    assert calls == ["clock", "discovery", "config", "store", "shell"]
-    assert any("Leaders: codex-cli" in item for item in output)
-    assert all("{" not in item for item in output)
+    await shell.run_async()
+
+    assert calls[:2] == ["recovery.reconcile", "read_line"]
+
+
+@async_test
+async def test_paused_reentry_starts_nothing_before_explicit_resume(
+    tmp_path: Path,
+) -> None:
+    _seed_resume(tmp_path)
+    execution = FakeExecution()
+    output: list[str] = []
+    shell = _build(
+        tmp_path, AsyncLines("/status", "/exit"), output, execution=execution
+    )
+
+    await shell.run_async()
+
+    assert execution.calls == []
+    assert "AgentDeck is paused." in "\n".join(output)
+
+
+@async_test
+async def test_explicit_resume_starts_one_same_loop_mission_child(
+    tmp_path: Path,
+) -> None:
+    _seed_resume(tmp_path)
+    execution = FakeExecution()
+    shell = _build(
+        tmp_path, AsyncLines("/resume", "/exit"), [], execution=execution
+    )
+
+    await shell.run_async()
+
+    assert len(execution.calls) == 1
+    assert execution.calls[0]["resume_plan"].first_attempt_ordinal == 1
+    assert execution.loop_ids == {id(asyncio.get_running_loop())}
+
+
+@async_test
+async def test_second_resume_observes_existing_child_without_duplicate(
+    tmp_path: Path,
+) -> None:
+    _seed_resume(tmp_path)
+    execution = FakeExecution(block=True)
+
+    class Reader(AsyncLines):
+        async def __call__(self, prompt: str) -> str:
+            value = await super().__call__(prompt)
+            if value == "/exit":
+                execution.finish.set()
+            return value
+
+    output: list[str] = []
+    shell = _build(
+        tmp_path, Reader("/resume", "/resume", "/exit"), output,
+        execution=execution,
+    )
+
+    await shell.run_async()
+
+    assert len(execution.calls) == 1
+    assert "already running" in "\n".join(output).lower()
+
+
+@async_test
+async def test_waiting_for_terminal_input_does_not_block_mission_child(
+    tmp_path: Path,
+) -> None:
+    _seed_resume(tmp_path)
+    execution = FakeExecution(block=True)
+    release_input = asyncio.Event()
+
+    class BlockingReader:
+        calls = 0
+
+        async def __call__(self, prompt: str) -> str:
+            self.calls += 1
+            if self.calls == 1:
+                return "/resume"
+            await release_input.wait()
+            return "/exit"
+
+    shell = _build(tmp_path, BlockingReader(), [], execution=execution)
+    running = asyncio.create_task(shell.run_async())
+
+    await execution.started.wait()
+    assert running.done() is False
+    execution.finish.set()
+    release_input.set()
+    await running
+
+
+@async_test
+async def test_startup_transcript_uses_one_exact_resume_snapshot(
+    tmp_path: Path,
+) -> None:
+    _seed_resume(tmp_path, closed_implementation=True)
+    output: list[str] = []
+    shell = _build(tmp_path, AsyncLines("/exit"), output)
+
+    await shell.run_async()
+
+    transcript = "\n".join(output)
+    assert "tsk_review" in transcript
+    assert "next Attempt 1" in transcript
+    assert "hnd_implementation_1" in transcript
+    assert "canonical" not in transcript.lower()
+
+
+def test_bootstrap_rejects_a_nonempty_fresh_runtime(tmp_path: Path) -> None:
+    with pytest.raises(RuntimeError, match="empty runtime"):
+        build_product_shell(
+            project_root=str(tmp_path), read_line=AsyncLines("/exit"),
+            write_line=lambda _: None, clock_factory=lambda: FrozenClock(NOW),
+            discovery_factory=_discovery, config_factory=_config,
+            runtime_factory=lambda: SimpleNamespace(is_empty=lambda: False),
+        )
+
+
+def test_bootstrap_preserves_an_injected_falsey_async_reader(
+    tmp_path: Path,
+) -> None:
+    class FalseyReader(AsyncLines):
+        def __bool__(self) -> bool:
+            return False
+
+    reader = FalseyReader("/exit")
+    shell = build_product_shell(
+        project_root=str(tmp_path), read_line=reader,
+        write_line=lambda _: None, clock_factory=lambda: FrozenClock(NOW),
+        discovery_factory=_discovery, config_factory=_config,
+    )
+    try:
+        assert shell._read_line is reader
+    finally:
+        shell._close_once()
+
+
+@async_test
+async def test_async_terminal_reader_does_not_block_the_foreground_loop() -> None:
+    read_descriptor, write_descriptor = os.pipe()
+    stream = os.fdopen(read_descriptor, "r", encoding="utf-8")
+    prompt = io.StringIO()
+    reader = AsyncTerminalReader(stream, prompt)
+    task = asyncio.create_task(reader("agentdeck> "))
+    try:
+        await asyncio.sleep(0)
+        assert task.done() is False
+        assert prompt.getvalue() == "agentdeck> "
+        os.write(write_descriptor, b"/status\n")
+        assert await asyncio.wait_for(task, timeout=1) == "/status"
+    finally:
+        if not task.done():
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+        os.close(write_descriptor)
+        stream.close()

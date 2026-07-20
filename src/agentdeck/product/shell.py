@@ -1,158 +1,216 @@
-"""Foreground, deterministic ProductSession conversation shell."""
+"""Single-loop foreground ProductSession conversation shell."""
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
-from typing import Final
+import asyncio
+from collections.abc import Awaitable, Callable, Mapping
+import signal
+from typing import Final, TextIO
 
-from agentdeck.application.exit_service import ExitResult, ExitService
-from agentdeck.application.session_service import SessionService, SessionServiceError
-from agentdeck.application.mission_service import (
-    MissionPreviewView,
-    MissionResult,
-    MissionService,
-    MissionServiceError,
+from agentdeck.application.async_exit_coordinator import AsyncExitCoordinator
+from agentdeck.application.execution_resume import (
+    ExecutionResumePlan, ExecutionResumePlanner,
+    ExecutionResumeProjectionError, ExecutionResumeSnapshot,
 )
+from agentdeck.application.execution_service import ExecutionService
+from agentdeck.application.exit_records import ExitResult
+from agentdeck.application.mission_service import (
+    MissionResult, MissionService, MissionServiceError,
+)
+from agentdeck.application.project_lifecycle_service import ProjectLifecycleService
+from agentdeck.application.recovery_service import RecoveryService
+from agentdeck.application.session_service import SessionService, SessionServiceError
+from agentdeck.kernel.permissions import PermissionScope
+from agentdeck.kernel.session import SessionState
 from agentdeck.product.presenter import (
-    DiagnosisPresentation,
-    ExitPresentation,
-    MissionPreviewPresentation,
-    SetupPresentation,
-    StatusPresentation,
+    DiagnosisPresentation, ExitPresentation, SetupPresentation, StatusPresentation,
 )
 from agentdeck.product.renderer import render
+from agentdeck.product.shell_projection import (
+    confirmation_authority,
+    copy_available_leaders,
+    preview_presentation,
+    validate_mission_preview,
+)
 from agentdeck.product.slash_commands import CommandKind, SlashCommand, parse_command
 
 
 _DEFAULT_PERMISSION: Final = "approve-for-me"
-_PERMISSIONS: Final = frozenset(
-    {"ask-for-approval", "approve-for-me", "full-access"}
-)
-_HELP = """AgentDeck commands
-/help
-/status
-/setup [confirm]
-Select Leader with /leader <name>.
-Select Model with /model <name>.
-/agents
-Select Permission with /permissions <profile>.
-/mission
-/pause
-/resume
-/takeover <attempt>
-/diagnose [--json]
-Exit safely with /exit."""
+_PERMISSIONS: Final = frozenset({
+    "ask-for-approval", "approve-for-me", "full-access",
+})
+_HELP = ("AgentDeck commands\n/help\n/status\n/setup [confirm]\n"
+         "Select Leader with /leader <name>.\nSelect Model with /model <name>.\n"
+         "/agents\nSelect Permission with /permissions <profile>.\n/mission\n"
+         "/pause\n/resume\n/takeover <attempt>\n/diagnose [--json]\n"
+         "Exit safely with /exit.")
+
+
+class AsyncTerminalReader:
+    def __init__(self, stream: TextIO, prompt_stream: TextIO) -> None:
+        self._stream, self._prompt_stream = stream, prompt_stream
+    async def __call__(self, prompt: str) -> str:
+        loop = asyncio.get_running_loop()
+        future: asyncio.Future[str] = loop.create_future()
+        descriptor = self._stream.fileno()
+        self._prompt_stream.write(prompt)
+        self._prompt_stream.flush()
+        def ready() -> None:
+            if future.done():
+                return
+            try:
+                line = self._stream.readline()
+                if line == "":
+                    future.set_exception(EOFError())
+                else:
+                    future.set_result(line.rstrip("\r\n"))
+            except BaseException as error:
+                future.set_exception(error)
+        loop.add_reader(descriptor, ready)
+        try:
+            return await future
+        finally:
+            loop.remove_reader(descriptor)
+
+
+async def _consume_cancelled(task: asyncio.Task) -> None:
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
 
 
 class ProductShell:
-    """Own foreground input/output while Application owns session mutations."""
+    """Own input and rendering; Application services own every mutation."""
 
     def __init__(
-        self,
-        *,
-        session_service: SessionService,
-        exit_service: ExitService,
+        self, *, session_service: SessionService,
+        exit_coordinator: AsyncExitCoordinator,
+        recovery_service: RecoveryService,
+        lifecycle: ProjectLifecycleService,
         available_leaders: Mapping[str, tuple[str, ...]],
-        read_line: Callable[[str], str],
-        write_line: Callable[[str], object],
-        close: Callable[[], object],
+        read_line: Callable[[str], Awaitable[str]],
+        write_line: Callable[[str], object], close: Callable[[], object],
         mission_service: MissionService | None = None,
-        restored_exit: ExitResult | None = None,
+        execution_service: ExecutionService | None = None,
+        resume_snapshot_loader: Callable[[], ExecutionResumeSnapshot] | None = None,
+        resume_planner: ExecutionResumePlanner | None = None,
         default_permission: str = _DEFAULT_PERMISSION,
         render_text: Callable[[object], str] = render,
     ) -> None:
-        for dependency, method, label in (
-            (session_service, "accept_text", "session_service"),
-            (session_service, "configure", "session_service"),
-            (session_service, "resume", "session_service"),
-            (session_service, "current", "session_service"),
+        for dependency, methods, label in (
+            (session_service, ("accept_text", "configure", "resume", "current"),
+             "session_service"),
+            (exit_coordinator, ("request_exit", "decline", "confirm", "input_closed"),
+             "exit_coordinator"),
+            (recovery_service, ("reconcile",), "recovery_service"),
+            (lifecycle, ("resume",), "lifecycle"),
         ):
-            if not callable(getattr(dependency, method, None)):
+            if any(not callable(getattr(dependency, name, None)) for name in methods):
                 raise TypeError(f"{label} does not satisfy the Product Shell")
-        if any(
-            not callable(getattr(exit_service, method, None))
-            for method in ("request_exit", "decline", "confirm", "input_closed")
-        ):
-            raise TypeError("exit_service does not satisfy the Product Shell")
-        if restored_exit is not None and type(restored_exit) is not ExitResult:
-            raise TypeError("restored_exit must be an ExitResult or None")
+        if mission_service is not None and any(
+            not callable(getattr(mission_service, name, None))
+            for name in ("propose", "revise", "confirm", "current_preview")):
+            raise TypeError("mission_service does not satisfy the Product Shell")
+        if execution_service is not None and not callable(getattr(
+            execution_service, "run_confirmed_mission", None)):
+            raise TypeError("execution_service does not satisfy the Product Shell")
         for dependency, label in (
-            (read_line, "read_line"),
-            (write_line, "write_line"),
-            (close, "close"),
-            (render_text, "render_text"),
-        ):
+            (read_line, "read_line"), (write_line, "write_line"),
+            (close, "close"), (render_text, "render_text")):
             if not callable(dependency):
                 raise TypeError(f"{label} must be callable")
-        self._available_leaders = _copy_available_leaders(available_leaders)
+        if resume_snapshot_loader is not None and not callable(resume_snapshot_loader):
+            raise TypeError("resume_snapshot_loader must be callable or None")
         if default_permission not in _PERMISSIONS:
             raise ValueError("default_permission is unsupported")
-        self._service = session_service
-        self._exit = exit_service
-        self._restored_exit = restored_exit
-        if mission_service is not None and any(
-            not callable(getattr(mission_service, method, None))
-            for method in ("propose", "revise", "confirm", "current_preview")
-        ):
-            raise TypeError("mission_service does not satisfy the Product Shell")
-        self._mission = mission_service
-        self._read_line = read_line
-        self._write_line = write_line
-        self._close = close
-        self._render = render_text
+        self._service, self._exit = session_service, exit_coordinator
+        self._recovery, self._lifecycle = recovery_service, lifecycle
+        self._available_leaders = copy_available_leaders(available_leaders)
+        self._read_line, self._write_line = read_line, write_line
+        self._close, self._render = close, render_text
+        self._mission, self._execution = mission_service, execution_service
+        self._load_resume = resume_snapshot_loader
+        self._resume_planner = resume_planner or ExecutionResumePlanner()
         view = self._service.current()
-        self._leader = view.leader_backend
-        self._model = view.model
-        self._permission = (
-            view.permission.replace("_", "-")
-            if view.permission is not None
-            else default_permission
-        )
+        self._leader, self._model = view.leader_backend, view.model
+        self._permission = view.permission.replace(
+            "_", "-") if view.permission is not None else default_permission
+        self._resume_snapshot: ExecutionResumeSnapshot | None = None
+        self._resume_plan: ExecutionResumePlan | None = None
+        self._resume_blocker: str | None = None
+        self._mission_child: asyncio.Task | None = None
         self._closed = False
 
-    def run(self) -> int:
-        """Run until explicit exit or input EOF, then release the foreground Store."""
-
+    async def run_async(self) -> int:
+        await self._recovery.reconcile()
+        self._service.resume()
+        self._restore_resume_projection()
+        self._show_initial_state()
+        loop = asyncio.get_running_loop()
+        interrupted = asyncio.Event()
+        loop.add_signal_handler(signal.SIGINT, interrupted.set)
         try:
-            self._show_initial_state()
             while True:
-                try:
-                    text = self._read_line("agentdeck> ")
-                except KeyboardInterrupt:
-                    if self._show_exit_result(self._exit.request_exit()):
-                        break
+                read_task = asyncio.create_task(self._read_line("agentdeck> "))
+                signal_task = asyncio.create_task(interrupted.wait())
+                done, _ = await asyncio.wait(
+                    (read_task, signal_task), return_when=asyncio.FIRST_COMPLETED)
+                if signal_task in done:
+                    read_task.cancel()
+                    await _consume_cancelled(read_task)
+                    interrupted.clear()
+                    if await self._present_exit(await self._exit.request_exit()):
+                        await self._finish_child_for_exit()
+                        return 0
                     continue
+                signal_task.cancel()
+                await _consume_cancelled(signal_task)
+                try:
+                    line = read_task.result()
                 except EOFError:
-                    result = self._exit.input_closed()
-                    if result.diagnostic is not None:
-                        self._emit(self._render(DiagnosisPresentation(
-                            result.diagnostic
-                        )))
-                    break
-                if type(text) is not str:
+                    return await self._handle_input_closed()
+                if type(line) is not str:
                     self._emit("Input was not accepted. Use /help.")
                     continue
-                if self._accept_line(text):
-                    break
+                if await self._accept_line(line):
+                    await self._finish_child_for_exit()
+                    return 0
         finally:
+            loop.remove_signal_handler(signal.SIGINT)
+            await self._settle_owned_child()
             self._close_once()
-        return 0
 
-    def _accept_line(self, text: str) -> bool:
+    def _restore_resume_projection(self) -> None:
+        self._resume_snapshot = self._resume_plan = None
+        self._resume_blocker = None
+        if self._service.current().state is not SessionState.PAUSED:
+            return
+        if self._load_resume is None:
+            self._resume_blocker = "execution_adapter_unavailable"
+            return
+        try:
+            snapshot = self._load_resume()
+            plan = self._resume_planner.materialize(snapshot)
+        except ExecutionResumeProjectionError as error:
+            self._resume_blocker = error.code
+        except (TypeError, ValueError, RuntimeError):
+            self._resume_blocker = "resume_projection_malformed"
+        else:
+            self._resume_snapshot, self._resume_plan = snapshot, plan
+
+    async def _accept_line(self, text: str) -> bool:
         command = parse_command(text)
         if command is not None:
-            return self._accept_command(command)
+            return await self._accept_command(command)
         if text.lstrip().startswith("/"):
             self._emit("Command not recognized. Use /help.")
             return False
-        confirmation = _confirmation(text)
+        confirmation = confirmation_authority(text)
         if confirmation is not None:
-            if self._mission is None:
-                self._emit("No Mission Preview is available for confirmation.")
-            else:
-                self._show_mission_result(self._mission.confirm(*confirmation))
+            await self._confirm_mission(confirmation)
             return False
-        if self._mission is not None and self._service.current().state is not None:
+        if self._mission is not None:
             state = self._service.resume().mode
             if state in {"ready", "goal_ready", "awaiting_confirmation"}:
                 try:
@@ -170,23 +228,36 @@ class ProductShell:
         except (SessionServiceError, TypeError, ValueError):
             self._emit("The request could not be applied safely.")
             return False
-        if result.mode == "setup_required":
-            self._emit("I saved your goal while setup completes.")
-        else:
-            self._emit("The ProductSession cannot accept a new goal in this state.")
+        self._emit(
+            "I saved your goal while setup completes."
+            if result.mode == "setup_required"
+            else "The ProductSession cannot accept a new goal in this state."
+        )
         return False
 
-    def _accept_command(self, command: SlashCommand) -> bool:
+    async def _accept_command(self, command: SlashCommand) -> bool:
         kind = command.kind
+        if kind is CommandKind.EXIT:
+            if command.argument is None:
+                result = await self._exit.request_exit()
+            elif command.argument == "confirm":
+                result = await self._exit.confirm(
+                    command.request_id, command.content_hash
+                )
+            else:
+                result = await self._exit.decline(
+                    command.request_id, command.content_hash
+                )
+            return await self._present_exit(result)
+        if kind is CommandKind.RESUME:
+            await self._resume_project()
+            return False
         if kind is CommandKind.HELP:
             self._emit(_HELP)
         elif kind is CommandKind.STATUS:
             self._show_status()
         elif kind is CommandKind.SETUP:
-            if command.argument == "confirm":
-                self._confirm_setup()
-            else:
-                self._show_setup()
+            self._confirm_setup() if command.argument == "confirm" else self._show_setup()
         elif kind is CommandKind.LEADER:
             self._leader = command.argument
             self._emit("Leader selection staged.")
@@ -202,21 +273,128 @@ class ProductShell:
             self._emit("No Mission is active.")
         elif kind is CommandKind.DIAGNOSE:
             self._emit("No ProductSession diagnostic is active.")
-        elif kind is CommandKind.EXIT:
-            if command.argument is None:
-                result = self._exit.request_exit()
-            elif command.argument == "confirm":
-                result = self._exit.confirm(
-                    command.request_id, command.content_hash
-                )
-            else:
-                result = self._exit.decline(
-                    command.request_id, command.content_hash
-                )
-            return self._show_exit_result(result)
         else:
             self._emit("No active Mission can accept that command.")
         return False
+
+    async def _confirm_mission(self, authority: tuple[str, str]) -> None:
+        if self._mission is None:
+            self._emit("No Mission Preview is available for confirmation.")
+            return
+        preview = self._mission.current_preview()
+        result = self._mission.confirm(*authority)
+        self._show_mission_result(result)
+        confirmed = result.mission
+        if preview is None or confirmed is None or (
+            confirmed.version != preview.version
+            or confirmed.content_hash != preview.content_hash
+            or confirmed.canonical_content != preview.preview.canonical_content
+        ):
+            return
+        await self._start_mission_child(
+            confirmed, preview.draft,
+            PermissionScope.for_profile(preview.draft.permission_profile), None,
+        )
+
+    async def _resume_project(self) -> None:
+        view = self._service.resume()
+        child = self._mission_child
+        if view.mode == "running":
+            self._emit(
+                "The Mission is already running."
+                if child is not None and not child.done()
+                else "The project is already running without resumable authority."
+            )
+            return
+        if self._service.current().state is not SessionState.PAUSED:
+            self._emit("No paused Mission can be resumed.")
+            return
+        if self._resume_snapshot is None or self._resume_plan is None:
+            self._emit(f"Resume blocked: {self._resume_blocker or 'resume_projection_malformed'}.")
+            return
+        try:
+            result = await self._lifecycle.resume(self._resume_snapshot)
+        except (TypeError, ValueError, RuntimeError):
+            self._emit("Resume blocked: resume_authority_changed.")
+            return
+        if not result.should_start:
+            self._emit("Resume blocked: resume_authority_changed.")
+            return
+        self._service.resume()
+        plan = self._resume_plan
+        await self._start_mission_child(
+            plan.confirmed, plan.draft,
+            PermissionScope.for_profile(plan.draft.permission_profile), plan,
+        )
+
+    async def _start_mission_child(
+        self, confirmed, draft, permission_scope, resume_plan,
+    ) -> None:
+        if self._mission_child is not None and not self._mission_child.done():
+            self._emit("The Mission is already running.")
+            return
+        if self._execution is None:
+            self._emit("Execution adapter unavailable; no Worker was started.")
+            return
+        self._mission_child = asyncio.create_task(
+            self._execution.run_confirmed_mission(
+                session_id=self._service.current().session_id,
+                confirmed=confirmed, draft=draft,
+                permission_scope=permission_scope, resume_plan=resume_plan,
+            )
+        )
+
+    async def _handle_input_closed(self) -> int:
+        result = await self._exit.input_closed()
+        should_exit = await self._present_exit(result)
+        child = self._mission_child
+        if child is not None and not child.done():
+            await self._await_child(child)
+            if not should_exit:
+                await self._present_exit(await self._exit.input_closed())
+        return 0
+
+    async def _present_exit(self, result: ExitResult) -> bool:
+        if type(result) is not ExitResult:
+            raise TypeError("exit coordinator returned an invalid result")
+        if result.diagnostic is not None:
+            self._emit(self._render(DiagnosisPresentation(result.diagnostic)))
+            return False
+        if result.request is not None:
+            request = result.request
+            self._emit(self._render(ExitPresentation(
+                summary="The active Attempt must be interrupted before exit.",
+                active_attempts=(request.attempt.attempt_id,),
+                requires_confirmation=True, request_id=request.request_id,
+                attempt_hash=request.attempt_hash,
+            )))
+            return False
+        if result.mode == "exit_declined":
+            self._emit("Exit request declined. The active Attempt continues.")
+            return False
+        if result.mode in {"exit_ready", "project_paused"} and result.should_exit:
+            self._emit(self._render(ExitPresentation(
+                summary="The ProductSession is persisted.", active_attempts=(),
+                requires_confirmation=False,
+            )))
+            return True
+        raise ValueError("exit coordinator returned an unsupported result")
+
+    async def _finish_child_for_exit(self) -> None:
+        if self._mission_child is not None and not self._mission_child.done():
+            await self._await_child(self._mission_child)
+
+    async def _settle_owned_child(self) -> None:
+        if self._mission_child is not None:
+            await self._await_child(self._mission_child)
+
+    async def _await_child(self, child: asyncio.Task) -> None:
+        try:
+            await child
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            self._emit("Mission execution stopped with a safe diagnostic.")
 
     def _confirm_setup(self) -> None:
         if self._leader is None or self._model is None:
@@ -225,18 +403,18 @@ class ProductShell:
             return
         try:
             result = self._service.configure(
-                leader=self._leader,
-                model=self._model,
+                leader=self._leader, model=self._model,
                 permission=self._permission.replace("-", "_"),
             )
         except (SessionServiceError, TypeError, ValueError):
             self._emit("Setup could not be applied safely.")
             return
         if not result.accepted:
-            if result.diagnostic is None:
-                self._emit("Setup could not be applied safely.")
-            else:
-                self._emit(self._render(DiagnosisPresentation(result.diagnostic)))
+            self._emit(
+                "Setup could not be applied safely."
+                if result.diagnostic is None
+                else self._render(DiagnosisPresentation(result.diagnostic))
+            )
             return
         resumed = self._service.resume()
         if resumed.goal is None:
@@ -252,8 +430,7 @@ class ProductShell:
     def _show_resumed_goal(self, goal: str) -> None:
         try:
             self._render(SetupPresentation(
-                project=goal,
-                leaders=tuple(self._available_leaders),
+                project=goal, leaders=tuple(self._available_leaders),
                 permission=self._permission,
             ))
         except (TypeError, ValueError):
@@ -264,71 +441,41 @@ class ProductShell:
     def _show_initial_state(self) -> None:
         view = self._service.current()
         if view.reentry_diagnostic is not None:
-            self._emit(self._render(DiagnosisPresentation(
-                view.reentry_diagnostic
-            )))
-        if self._restored_exit is not None:
-            self._show_exit_result(self._restored_exit)
+            self._emit(self._render(DiagnosisPresentation(view.reentry_diagnostic)))
         preview = None if self._mission is None else self._mission.current_preview()
         if preview is not None:
-            self._emit(self._render(_preview_presentation(preview)))
-        elif view.state.value == "setup":
+            self._emit(self._render(preview_presentation(preview)))
+        elif view.state is SessionState.SETUP:
             self._show_setup()
         else:
             self._show_status()
-
-    def _show_exit_result(self, result: ExitResult) -> bool:
-        if type(result) is not ExitResult:
-            raise TypeError("ExitService returned an invalid result")
-        if result.diagnostic is not None:
-            self._emit(self._render(DiagnosisPresentation(result.diagnostic)))
-            return False
-        if result.request is not None:
-            request = result.request
-            self._emit(self._render(ExitPresentation(
-                summary="The active Attempt must be interrupted before exit.",
-                active_attempts=(request.attempt.attempt_id,),
-                requires_confirmation=True,
-                request_id=request.request_id,
-                attempt_hash=request.attempt_hash,
-            )))
-            return False
-        if result.mode == "exit_declined":
-            self._emit("Exit request declined. The active Attempt continues.")
-            return False
-        if result.mode == "exit_ready" and result.should_exit:
-            self._emit(self._render(ExitPresentation(
-                summary="The ProductSession is persisted.",
-                active_attempts=(),
-                requires_confirmation=False,
-            )))
-            return True
-        raise ValueError("ExitService returned an unsupported result")
+        if self._resume_snapshot is not None and self._resume_plan is not None:
+            task = self._resume_plan.remaining_tasks[0]
+            preceding = self._resume_snapshot.preceding_handoff_id or "none"
+            self._emit(
+                f"Resume point: {task.name} ({task.task_id}), next Attempt "
+                f"{self._resume_snapshot.next_attempt_ordinal}, preceding Handoff {preceding}."
+            )
+        elif self._resume_blocker is not None:
+            self._emit(f"Resume blocked: {self._resume_blocker}.")
 
     def _show_setup(self) -> None:
         view = self._service.current()
         self._emit(self._render(SetupPresentation(
-            project=view.project_root,
-            leaders=tuple(self._available_leaders),
+            project=view.project_root, leaders=tuple(self._available_leaders),
             permission=self._permission,
         )))
 
     def _show_status(self) -> None:
         view = self._service.current()
         self._emit(self._render(StatusPresentation(
-            state=view.state.value,
-            agents=(),
+            state=view.state.value, agents=(),
         )))
-
-    def _emit(self, text: str) -> None:
-        if type(text) is not str:
-            raise TypeError("Product Shell output must be text")
-        self._write_line(text)
 
     def _show_mission_result(self, result: MissionResult) -> None:
         self._service.resume()
         if result.preview is not None:
-            self._emit(self._render(_preview_presentation(result.preview)))
+            self._emit(self._render(preview_presentation(result.preview)))
         elif result.mission is not None:
             self._emit(
                 f"Mission confirmed: {result.mission.mission_id} "
@@ -339,81 +486,15 @@ class ProductShell:
         else:
             self._emit("The Mission request could not be applied safely.")
 
+    def _emit(self, text: str) -> None:
+        if type(text) is not str:
+            raise TypeError("Product Shell output must be text")
+        self._write_line(text)
+
     def _close_once(self) -> None:
         if not self._closed:
             self._closed = True
             self._close()
 
 
-def _copy_available_leaders(
-    value: Mapping[str, tuple[str, ...]],
-) -> dict[str, tuple[str, ...]]:
-    if type(value) is not dict:
-        raise TypeError("available_leaders must be a plain mapping")
-    copied: dict[str, tuple[str, ...]] = {}
-    for leader, models in value.items():
-        if (
-            type(leader) is not str
-            or not leader.strip()
-            or type(models) is not tuple
-            or not models
-            or any(type(model) is not str or not model.strip() for model in models)
-        ):
-            raise ValueError("available_leaders is invalid")
-        copied[leader] = tuple(models)
-    return dict(sorted(copied.items()))
-
-
-def _confirmation(text: str) -> tuple[str, str] | None:
-    if type(text) is not str:
-        return None
-    parts = text.strip().split()
-    if len(parts) == 3 and parts[0].casefold() == "confirm":
-        return parts[1], parts[2]
-    return None
-
-
-def _preview_presentation(value: MissionPreviewView) -> MissionPreviewPresentation:
-    draft, preview = value.draft, value.preview
-    budgets = dict(draft.budgets)
-    return MissionPreviewPresentation(
-        objective=draft.objective, scope=draft.scope,
-        leader_backend=draft.leader_backend, leader_model=draft.leader_model,
-        workers=tuple(
-            f"{task.agent_instance_id}: {task.role.value} via {task.backend}"
-            for task in draft.tasks
-        ),
-        tasks=tuple(task.name for task in draft.tasks),
-        task_dependencies=tuple(
-            f"{task.name}: {', '.join(task.dependencies) if task.dependencies else 'none'}"
-            for task in draft.tasks
-        ),
-        acp_routes=tuple(task.acp_route for task in draft.tasks),
-        permission=draft.permission_profile.value.replace("_", "-"),
-        project_boundary=draft.project_root,
-        acceptance_criteria=draft.acceptance_criteria,
-        retry_budget=budgets["max_attempts"],
-        revision_budget=budgets["max_revision_cycles"],
-        non_goals=draft.non_goals, risks=draft.risks,
-        preview_id=preview.preview_id, version=preview.version,
-        content_hash=preview.content_hash,
-        leader_adapter=draft.leader_adapter, leader_version=draft.leader_version,
-        additional_budgets=(
-            f"Leader schema repairs: {budgets['max_leader_schema_repairs']}",
-            f"ACP reconnects: {budgets['max_acp_reconnects']}",
-            f"Final acceptance attempts: {budgets['max_final_acceptance_attempts']}",
-        ),
-    )
-
-
-def validate_mission_preview(value: MissionPreviewView) -> None:
-    """Require the complete Preview to pass the same human renderer pre-write."""
-
-    if type(value) is not MissionPreviewView:
-        raise TypeError("Preview validator requires MissionPreviewView")
-    text = render(_preview_presentation(value))
-    if len(text.encode("utf-8", "strict")) > 65_536:
-        raise ValueError("rendered Mission Preview exceeds its human display bound")
-
-
-__all__ = ["ProductShell", "validate_mission_preview"]
+__all__ = ["AsyncTerminalReader", "ProductShell", "validate_mission_preview"]

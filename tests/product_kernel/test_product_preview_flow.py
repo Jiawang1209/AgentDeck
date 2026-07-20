@@ -1,14 +1,20 @@
 from __future__ import annotations
 
+import asyncio
 from copy import deepcopy
 from dataclasses import replace
 from datetime import datetime, timezone
+from functools import wraps
 from pathlib import Path
 
 from agentdeck.adapters.sqlite import SQLiteStore
+from agentdeck.application.async_exit_coordinator import AsyncExitCoordinator
 from agentdeck.application.exit_service import ExitService
+from agentdeck.application.execution_runtime import ForegroundExecutionRuntime
 from agentdeck.application.leader_service import LeaderService
 from agentdeck.application.mission_service import MissionService
+from agentdeck.application.project_lifecycle_service import ProjectLifecycleService
+from agentdeck.application.recovery_service import RecoveryService
 from agentdeck.application.session_service import SessionService
 from agentdeck.product.bootstrap import build_product_shell
 from agentdeck.product.shell import ProductShell, validate_mission_preview
@@ -17,8 +23,15 @@ from .fakes import FrozenClock
 from .test_leader_contract import request, valid_proposal
 
 
-NOW = datetime(2026, 7, 19, 8, 9, 10, tzinfo=timezone.utc)
+NOW = datetime(2026, 7, 20, 8, 9, 10, tzinfo=timezone.utc)
 AVAILABLE = {"codex-cli": ("native-default",)}
+
+
+def async_test(function):
+    @wraps(function)
+    def run(*args, **kwargs):
+        return asyncio.run(function(*args, **kwargs))
+    return run
 
 
 class EchoLeader:
@@ -32,32 +45,81 @@ class EchoLeader:
         return payload
 
 
-def _mission_service(root: Path, store: SQLiteStore) -> MissionService:
+class RecordingExecution:
+    def __init__(self) -> None:
+        self.calls = []
+        self.loop_ids: set[int] = set()
+
+    async def run_confirmed_mission(self, **facts):
+        self.calls.append(facts)
+        self.loop_ids.add(id(asyncio.get_running_loop()))
+
+
+def _mission_service(
+    root: Path, store: SQLiteStore, session: SessionService,
+) -> MissionService:
     base = request()
     template = replace(
         base, project_context=replace(base.project_context, project_root=str(root))
     )
     return MissionService(
-        store=store, clock=FrozenClock(NOW), session_id="ses_product",
+        store=store, clock=FrozenClock(NOW),
+        session_id=session.current().session_id,
         leader_service=LeaderService(EchoLeader(root)), request_template=template,
-        session_authority=SessionService(
-            store=store, clock=FrozenClock(NOW), session_id="ses_product",
-            project_root=str(root), available_leaders=AVAILABLE,
-        ),
-        preview_validator=validate_mission_preview,
+        session_authority=session, preview_validator=validate_mission_preview,
     )
 
 
-def _exit_service(store: SQLiteStore) -> ExitService:
-    return ExitService(
-        store=store,
-        clock=FrozenClock(NOW),
-        session_id="ses_product",
+def _async_lines(*values: str):
+    pending = iter(values)
+
+    async def read(_prompt: str) -> str:
+        await asyncio.sleep(0)
+        try:
+            return next(pending)
+        except StopIteration:
+            raise EOFError from None
+
+    return read
+
+
+def _shell(
+    root: Path, store: SQLiteStore, session: SessionService, *,
+    mission: MissionService | None, execution: RecordingExecution | None,
+    lines: tuple[str, ...], output: list[str],
+) -> ProductShell:
+    clock = FrozenClock(NOW)
+    runtime = ForegroundExecutionRuntime()
+    lifecycle = ProjectLifecycleService(
+        store=store, clock=clock, session_id=session.current().session_id
+    )
+    exit_service = ExitService(
+        store=store, clock=clock, session_id=session.current().session_id,
         request_id_factory=iter(("xrt_" + "1" * 32,)).__next__,
     )
+    return ProductShell(
+        session_service=session,
+        exit_coordinator=AsyncExitCoordinator(
+            exit_service=exit_service, store=store, clock=clock,
+            runtime=runtime, lifecycle=lifecycle,
+            session_id=session.current().session_id,
+        ),
+        recovery_service=RecoveryService(
+            store=store, clock=clock, session_id=session.current().session_id,
+            recovery_run_id="restart_preview",
+        ),
+        lifecycle=lifecycle, mission_service=mission,
+        execution_service=execution,
+        resume_snapshot_loader=lambda: store.load_execution_resume(
+            session.current().session_id
+        ),
+        available_leaders=AVAILABLE, read_line=_async_lines(*lines),
+        write_line=output.append, close=store.close,
+    )
 
 
-def test_configured_shell_renders_human_preview_and_exact_confirmation(
+@async_test
+async def test_exact_fresh_confirmation_uses_same_singleton_child_guard(
     tmp_path: Path,
 ) -> None:
     output: list[str] = []
@@ -67,51 +129,54 @@ def test_configured_shell_renders_human_preview_and_exact_confirmation(
         project_root=str(tmp_path), available_leaders=AVAILABLE,
     )
     session.configure(leader="codex-cli", model="native-default")
-    mission = _mission_service(tmp_path, store)
+    mission = _mission_service(tmp_path, store, session)
     preview = mission.propose("Build an accessible page").preview
     assert preview is not None
-    lines = iter((
-        f"confirm {preview.preview_id} {preview.content_hash}", "/status", "/exit",
-    ))
-    shell = ProductShell(
-        session_service=session, exit_service=_exit_service(store),
-        mission_service=mission,
-        available_leaders=AVAILABLE, read_line=lambda _: next(lines),
-        write_line=output.append, close=store.close,
+    execution = RecordingExecution()
+    shell = _shell(
+        tmp_path, store, session, mission=mission, execution=execution,
+        lines=(f"confirm {preview.preview_id} {preview.content_hash}", "/exit"),
+        output=output,
     )
 
-    assert shell.run() == 0
+    await shell.run_async()
+
     transcript = "\n".join(output)
+    assert len(execution.calls) == 1
+    assert execution.calls[0]["resume_plan"] is None
+    assert execution.loop_ids == {id(asyncio.get_running_loop())}
     assert preview.content_hash in transcript
     assert "Mission confirmed" in transcript
-    assert "AgentDeck is running." in transcript
     assert "{" not in transcript
 
 
-def test_open_goal_without_leader_is_retained_not_discarded(tmp_path: Path) -> None:
-    output: list[str] = []
-    pending = iter(("Build a page", "/exit"))
+@async_test
+async def test_open_goal_without_leader_is_retained_not_discarded(
+    tmp_path: Path,
+) -> None:
     store = SQLiteStore.open(tmp_path, clock=FrozenClock(NOW))
-    service = SessionService(
+    session = SessionService(
         store=store, clock=FrozenClock(NOW), session_id="ses_product",
         project_root=str(tmp_path), available_leaders=AVAILABLE,
     )
-    shell = ProductShell(
-        session_service=service, exit_service=_exit_service(store),
-        mission_service=None,
-        available_leaders=AVAILABLE, read_line=lambda _: next(pending),
-        write_line=output.append, close=store.close,
+    shell = _shell(
+        tmp_path, store, session, mission=None, execution=None,
+        lines=("Build a page", "/exit"), output=[],
     )
 
-    shell.run()
+    await shell.run_async()
+
     reopened = SQLiteStore.open(tmp_path, clock=FrozenClock(NOW))
     try:
-        assert reopened.load_aggregate("product_sessions", "ses_product")["pending_goal"] == "Build a page"
+        assert reopened.load_aggregate(
+            "product_sessions", "ses_product"
+        )["pending_goal"] == "Build a page"
     finally:
         reopened.close()
 
 
-def test_bootstrap_binds_only_an_injected_mission_factory(tmp_path: Path) -> None:
+@async_test
+async def test_bootstrap_binds_only_injected_mission_factory(tmp_path: Path) -> None:
     calls: list[str] = []
     store = SQLiteStore.open(tmp_path, clock=FrozenClock(NOW))
 
@@ -122,13 +187,15 @@ def test_bootstrap_binds_only_an_injected_mission_factory(tmp_path: Path) -> Non
         return None
 
     shell = build_product_shell(
-        project_root=str(tmp_path), read_line=lambda _: (_ for _ in ()).throw(EOFError),
+        project_root=str(tmp_path), read_line=_async_lines("/exit"),
         write_line=lambda _: None, clock_factory=lambda: FrozenClock(NOW),
         discovery_factory=lambda: {}, config_factory=lambda **_: type(
-            "Config", (), {"resolve": lambda self, key: type("V", (), {"value": "approve-for-me"})()}
+            "Config", (), {"resolve": lambda self, key: type(
+                "V", (), {"value": "approve-for-me"}
+            )()}
         )(), store_factory=lambda *args, **kwargs: store,
         mission_service_factory=mission_factory,
     )
 
     assert calls == ["mission"]
-    shell.run()
+    await shell.run_async()

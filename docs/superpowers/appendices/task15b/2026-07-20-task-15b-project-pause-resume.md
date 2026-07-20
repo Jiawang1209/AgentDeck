@@ -75,6 +75,7 @@ project-local SQLite v2, pytest/pytest-asyncio, conda environment `agentdeck`.
 | `src/agentdeck/adapters/acp_worker_connection.py` | Bounded cancel notification plus bounded owner reap |
 | `src/agentdeck/adapters/acp.py` | Map transport cancellation to the closed Worker Port error |
 | `src/agentdeck/product/shell.py` | Single async input loop and explicit resume child task |
+| `src/agentdeck/product/shell_projection.py` | Pure preview/input projection helpers extracted for the shell line budget |
 | `src/agentdeck/product/bootstrap.py` | Compose one loop, mandatory recovery, shared services/runtime |
 
 ### Mandatory line-budget edits
@@ -1809,6 +1810,7 @@ git commit -m "fix: close task15b exit replay gaps"
 
 - Modify: `src/agentdeck/application/recovery_service.py`
 - Modify: `src/agentdeck/product/shell.py`
+- Create: `src/agentdeck/product/shell_projection.py`
 - Modify: `src/agentdeck/product/bootstrap.py`
 - Modify: `tests/product_kernel/test_recovery_service.py`
 - Modify: `tests/product_kernel/test_sqlite_recovery_integrity.py`
@@ -2211,7 +2213,11 @@ same-loop resume, crash convergence, RED/GREEN counts, and the exact one-match
 ```bash
 git add HISTORY.md \
   src/agentdeck/application/recovery_service.py \
-  src/agentdeck/product/shell.py src/agentdeck/product/bootstrap.py \
+  src/agentdeck/product/shell.py \
+  src/agentdeck/product/shell_projection.py \
+  src/agentdeck/product/bootstrap.py \
+  docs/superpowers/appendices/task15b/2026-07-20-task-15b-project-pause-resume.md \
+  docs/superpowers/appendices/task15b/2026-07-20-task-15b-acp-cancellation-recovery-design.md \
   tests/product_kernel/test_recovery_service.py \
   tests/product_kernel/test_sqlite_recovery_integrity.py \
   tests/product_kernel/test_product_shell.py \

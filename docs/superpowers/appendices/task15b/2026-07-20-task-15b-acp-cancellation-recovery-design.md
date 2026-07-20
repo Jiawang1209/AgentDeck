@@ -322,6 +322,8 @@ The original Task 15B files remain authorized:
 - `src/agentdeck/application/recovery_service.py`
 - `src/agentdeck/application/exit_service.py`
 - `src/agentdeck/product/shell.py`
+- `src/agentdeck/product/shell_projection.py` (approved pure helper extraction
+  for the 500-line ProductShell boundary)
 - `src/agentdeck/product/bootstrap.py`
 - `tests/product_kernel/test_execution_runtime.py`
 - `tests/product_kernel/test_product_exit_acp_integration.py`

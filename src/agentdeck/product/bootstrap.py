@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from functools import partial
 from pathlib import Path
+import sys
 from types import MappingProxyType
 from uuid import uuid4
 
@@ -21,13 +23,20 @@ from agentdeck.adapters.discovery import (
 )
 from agentdeck.adapters.sqlite import SQLiteStore
 from agentdeck.adapters.system_clock import SystemClock
-from agentdeck.application.exit_records import restore_pending_exit
-from agentdeck.application.exit_service import ExitResult, ExitService
+from agentdeck.application.approval_service import ApprovalService
+from agentdeck.application.async_exit_coordinator import AsyncExitCoordinator
+from agentdeck.application.execution_runtime import ForegroundExecutionRuntime
+from agentdeck.application.execution_service import ExecutionService
+from agentdeck.application.exit_service import ExitService
+from agentdeck.application.project_lifecycle_service import ProjectLifecycleService
+from agentdeck.application.recovery_service import RecoveryService
 from agentdeck.application.session_service import SessionService
 from agentdeck.ports.clock import Clock
 from agentdeck.ports.transport import TransportPort
 from agentdeck.product.renderer import render
-from agentdeck.product.shell import ProductShell, validate_mission_preview
+from agentdeck.product.shell import (
+    AsyncTerminalReader, ProductShell, validate_mission_preview,
+)
 
 
 def _new_session_id() -> str:
@@ -36,6 +45,10 @@ def _new_session_id() -> str:
 
 def _new_exit_request_id() -> str:
     return f"xrt_{uuid4().hex}"
+
+
+def _new_recovery_run_id() -> str:
+    return f"restart_{uuid4().hex}"
 
 
 WorkerAgentFactory = Callable[
@@ -119,7 +132,7 @@ def build_acp_adapter_composition(
 def build_product_shell(
     *,
     project_root: str,
-    read_line: Callable[[str], str] = input,
+    read_line: Callable | None = None,
     write_line: Callable[[str], object] = print,
     clock_factory: Callable[[], object] = SystemClock,
     discovery_factory: Callable[[], Mapping[str, ToolDiscovery]] = discover_tools,
@@ -129,6 +142,15 @@ def build_product_shell(
     mission_service_factory: Callable[..., object] | None = None,
     session_id_factory: Callable[[], str] = _new_session_id,
     exit_request_id_factory: Callable[[], str] = _new_exit_request_id,
+    recovery_run_id_factory: Callable[[], str] = _new_recovery_run_id,
+    runtime_factory: Callable[[], object] = ForegroundExecutionRuntime,
+    lifecycle_factory: Callable[..., object] = ProjectLifecycleService,
+    recovery_factory: Callable[..., object] = RecoveryService,
+    approval_service_factory: Callable[..., object] = ApprovalService,
+    execution_service_factory: Callable[..., object] = ExecutionService,
+    exit_coordinator_factory: Callable[..., object] = AsyncExitCoordinator,
+    adapter_composition_factory: Callable[..., object] = build_acp_adapter_composition,
+    adapter_readiness: Mapping[str, AdapterReadiness] | None = None,
 ) -> ProductShell:
     """Compose the foreground Product Shell through injectable factories."""
 
@@ -151,13 +173,23 @@ def build_product_shell(
             available_leaders=available_leaders,
             session_id_factory=session_id_factory,
         )
+        session_id = service.current().session_id
+        runtime = runtime_factory()
+        if not callable(getattr(runtime, "is_empty", None)) or not runtime.is_empty():
+            raise RuntimeError("fresh Product composition requires an empty runtime")
+        lifecycle = lifecycle_factory(
+            store=store, clock=clock, session_id=session_id,
+        )
+        recovery = recovery_factory(
+            store=store, clock=clock, session_id=session_id,
+            recovery_run_id=recovery_run_id_factory(),
+        )
         exit_service = ExitService(
             store=store,
             clock=clock,
-            session_id=service.current().session_id,
+            session_id=session_id,
             request_id_factory=exit_request_id_factory,
         )
-        restored_exit = _restored_exit(store, service, clock)
         mission_service = None
         if mission_service_factory is not None:
             mission_service = mission_service_factory(
@@ -165,13 +197,36 @@ def build_product_shell(
                 available_leaders=available_leaders, project_root=project_root,
                 preview_validator=validate_mission_preview,
             )
+        execution = None
+        if adapter_readiness is not None:
+            adapters = adapter_composition_factory(
+                readiness=adapter_readiness, project_root=project_root,
+                clock=clock,
+            )
+            approval = approval_service_factory(store=store, clock=clock)
+            execution = execution_service_factory(
+                store=store, clock=clock, approval_service=approval,
+                worker_factory=lambda task: adapters.worker(task.backend),
+                runtime=runtime, lifecycle=lifecycle,
+            )
+        exit_coordinator = exit_coordinator_factory(
+            exit_service=exit_service, store=store, clock=clock,
+            runtime=runtime, lifecycle=lifecycle, session_id=session_id,
+        )
+        reader = (
+            AsyncTerminalReader(sys.stdin, sys.stdout)
+            if read_line is None else read_line
+        )
         return shell_factory(
             session_service=service,
-            exit_service=exit_service,
-            restored_exit=restored_exit,
+            exit_coordinator=exit_coordinator,
+            recovery_service=recovery,
+            lifecycle=lifecycle,
             mission_service=mission_service,
+            execution_service=execution,
+            resume_snapshot_loader=lambda: store.load_execution_resume(session_id),
             available_leaders=available_leaders,
-            read_line=read_line,
+            read_line=reader,
             write_line=write_line,
             close=store.close,
             default_permission=default_permission,
@@ -180,16 +235,6 @@ def build_product_shell(
     except BaseException:
         store.close()
         raise
-
-
-def _restored_exit(
-    store: SQLiteStore,
-    service: SessionService,
-    clock: Clock,
-) -> ExitResult | None:
-    return restore_pending_exit(
-        store=store, clock=clock, session_id=service.current().session_id,
-    )
 
 
 def _available_leaders(
@@ -212,7 +257,8 @@ def run_product_dev(*, diagnostic: bool = False) -> int:
     if diagnostic:
         print("AgentDeck Product Kernel development entry: ready")
         return 0
-    return build_product_shell(project_root=str(Path.cwd())).run()
+    shell = build_product_shell(project_root=str(Path.cwd()))
+    return asyncio.run(shell.run_async())
 
 
 __all__ = [
