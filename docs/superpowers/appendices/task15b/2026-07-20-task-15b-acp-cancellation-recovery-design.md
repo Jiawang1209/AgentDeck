@@ -90,6 +90,15 @@ shutdown. `ACPWorker` maps that transport outcome into
 Attempt state. A timeout, disconnect, rejected cancellation, or uncertain
 shutdown never permits AgentDeck to claim `interrupted`.
 
+Caller task cancellation is not a transport outcome. Both adapter layers must
+detect cancellation owned by the current caller, finish bounded connection
+owner and prompt-task cleanup, and then re-raise the original
+`asyncio.CancelledError`. A remotely raised `CancelledError` without caller
+cancellation remains a content-free `cancel_timeout`. Prompt cleanup sends a
+second bounded task cancellation when the first deadline expires, reports
+`cancel_timeout` if the task is still pending, and must never report Worker
+`cancelled` success while an AgentDeck-owned prompt task remains alive.
+
 ## 3. Exact foreground execution binding
 
 `ForegroundExecutionRuntime` owns only the current event-loop-local binding:
@@ -398,6 +407,12 @@ The revised Task 15B plan must prove at least:
 - cancellation persistence failure, event failure, commit failure, unexpected
   Worker exception, and caller cancellation retain one closed fence outcome so
   every retry performs zero additional Worker I/O;
+- the real `ACPWorker` plus `ACPWorkerConnection` stack preserves caller
+  `CancelledError` after owner/prompt cleanup, closes the exact fence as an
+  unknown transport outcome, and performs no late Store mutation or dispatch;
+- a prompt that resists its first task cancellation is cancelled again within
+  the fixed cleanup bound before success; a task still pending after both
+  bounds is reported as `cancel_timeout`, never false success;
 - exact success settles only its non-copyable lease; foreign/copied keys,
   handles, reservations, quarantine, and bindings cannot clear the fence;
 - replay is ProductSession-scoped, closes against the original canonical

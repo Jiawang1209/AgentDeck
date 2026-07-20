@@ -74,6 +74,8 @@ project-local SQLite v2, pytest/pytest-asyncio, conda environment `agentdeck`.
 | `src/agentdeck/application/recovery_service.py` | Conservative async restart convergence to paused |
 | `src/agentdeck/adapters/acp_worker_connection.py` | Bounded cancel notification plus bounded owner reap |
 | `src/agentdeck/adapters/acp.py` | Map transport cancellation to the closed Worker Port error |
+| `src/agentdeck/adapters/acp_task_boundary.py` | Bounded prompt-task cancellation and caller-cancellation detection |
+| `src/agentdeck/adapters/acp_worker_cancellation.py` | Content-free Worker cancellation cleanup facts |
 | `src/agentdeck/product/shell.py` | Single async input loop and explicit resume child task |
 | `src/agentdeck/product/shell_projection.py` | Pure preview/input projection helpers extracted for the shell line budget |
 | `src/agentdeck/product/bootstrap.py` | Compose one loop, mandatory recovery, shared services/runtime |
@@ -111,7 +113,8 @@ budget moves:
   cases of equal or lower line count. New SQLite rollback cases live in
   `test_sqlite_recovery_integrity.py`.
 - `acp.py` starts at 498 lines. Replace the existing generic cancellation
-  branch in place. New two-phase logic remains in
+  branch in place. Shared cancellation resolution belongs in the focused
+  `acp_worker_cancellation.py` helper; notification/owner logic remains in
   `acp_worker_connection.py`.
 
 ## Exact stage-closure rule
@@ -632,8 +635,11 @@ git commit -m "feat: add durable project resume projection"
 - Modify: `src/agentdeck/ports/worker.py`
 - Modify: `src/agentdeck/adapters/acp_worker_connection.py`
 - Modify: `src/agentdeck/adapters/acp.py`
+- Modify: `src/agentdeck/adapters/acp_task_boundary.py`
+- Create: `src/agentdeck/adapters/acp_worker_cancellation.py`
 - Modify: `tests/product_kernel/test_acp_worker_connection.py`
 - Modify: `tests/product_kernel/test_acp_worker_failures.py`
+- Create: `tests/product_kernel/test_product_exit_real_acp_cancellation.py`
 - Modify: `HISTORY.md`
 
 - [ ] **Step 1: Write RED tests for the closed error and two-phase success**
@@ -682,10 +688,12 @@ async def test_owner_reap_timeout_never_reports_cancel_success(owner):
     assert connection.closed is True
 ```
 
-Parametrize disconnect, unexpected SDK exception, cancellation of the caller,
-and hostile exception text containing a credential-shaped string. Assert that
-`str`, `repr`, `args`, `__dict__`, and all public properties contain only the
-allowlisted code and exact bool.
+Parametrize disconnect, unexpected SDK exception, remotely raised
+`CancelledError`, and hostile exception text containing a credential-shaped
+string. Assert that `str`, `repr`, `args`, `__dict__`, and all public
+properties contain only the allowlisted code and exact bool. Separately cancel
+the real caller Task and assert its `CancelledError` propagates only after the
+connection owner is reaped.
 
 Add to `test_acp_worker_failures.py`:
 
@@ -776,12 +784,17 @@ async def cancel(self, *args: object, **kwargs: Any) -> None:
         notification_failure = ("cancel_timeout", False)
     except (BrokenPipeError, ConnectionError, EOFError):
         notification_failure = ("transport_disconnected", False)
-    except asyncio.CancelledError:
-        notification_failure = ("cancel_timeout", False)
+    except asyncio.CancelledError as error:
+        if caller_cancellation_pending():
+            caller_cancelled = error
+        else:
+            notification_failure = ("cancel_timeout", False)
     except BaseException:
         notification_failure = ("transport_disconnected", False)
 
     shutdown_failure = await self._bounded_shutdown_facts()
+    if caller_cancelled is not None:
+        raise caller_cancelled
     failure = notification_failure or shutdown_failure
     if failure is not None:
         code, outcome_known = failure
@@ -801,11 +814,15 @@ its raw `except` blocks. Return `cancel_timeout/False` on timeout and
 `transport_disconnected/False` on any other exception. Existing initialize/
 session/prompt/error close paths continue to use `aclose()` and remain
 terminal; pre-start close and synchronous spawn failure tests must stay green.
+Caller cancellation must not skip the bounded owner reap, and must be
+re-raised rather than normalized after that cleanup.
 
 - [ ] **Step 5: Map the ACP Worker cancellation without losing its code**
 
-Change the `_Run.error` union to include `WorkerCancellationError`. Replace the
-current generic `acp_cancel_failed` path with:
+Change the `_Run.error` union to include `WorkerCancellationError`. Resolve
+notification and prompt cleanup as content-free facts. Caller cancellation is
+retained separately from transport failure and re-raised only after the prompt
+task is done or both cleanup bounds have expired:
 
 ```python
 failure: tuple[str, bool] | None = None
@@ -813,13 +830,22 @@ try:
     await self._agent.cancel(run.raw_session_id)
 except WorkerCancellationError as caught:
     failure = (caught.code, caught.outcome_known)
+except asyncio.CancelledError as error:
+    caller_cancelled = error if caller_cancellation_pending() else None
+    if caller_cancelled is None:
+        failure = ("cancel_timeout", False)
 except BaseException:
     failure = ("transport_disconnected", False)
+cleanup_pending = await self._cancel_prompt(run)
+if caller_cancelled is not None:
+    self._close_cancellation(run, None)
+    raise caller_cancelled
+if cleanup_pending:
+    failure = ("cancel_timeout", False)
 if failure is not None:
     error = WorkerCancellationError(
         code=failure[0], outcome_known=failure[1]
     )
-    await self._cancel_prompt(run)
     self._fail_cancellation(run, error)
     raise error from None
 ```
@@ -839,6 +865,7 @@ conda run -n agentdeck env PYTHONPATH="$PWD/src" pytest \
   tests/product_kernel/test_acp_worker_failures.py \
   tests/product_kernel/test_acp_worker_contract.py \
   tests/product_kernel/test_acp_transport.py \
+  tests/product_kernel/test_product_exit_real_acp_cancellation.py \
   tests/product_kernel/test_real_adapter_preflight_contract.py -q
 ```
 
@@ -2268,6 +2295,7 @@ conda run -n agentdeck env PYTHONPATH="$PWD/src" pytest \
   tests/product_kernel/test_sqlite_execution.py \
   tests/product_kernel/test_exit_service.py \
   tests/product_kernel/test_product_exit_acp_integration.py \
+  tests/product_kernel/test_product_exit_real_acp_cancellation.py \
   tests/product_kernel/test_product_reentry.py \
   tests/product_kernel/test_project_resume_replay.py \
   tests/product_kernel/test_product_shell_cleanup.py \

@@ -4,6 +4,32 @@
 
 ## 2026-07-20
 
+### Preserve caller cancellation through the real ACP stack
+
+- Corrected the real project-exit path so caller-owned `CancelledError` is no
+  longer normalized into `cancel_timeout` by either `ACPWorkerConnection` or
+  `ACPWorker`. The connection still finishes bounded owner cleanup, the Worker
+  still closes its prompt task, and `AsyncExitCoordinator` can now close the
+  exact cancellation fence as `transport_disconnected/outcome_known=false`
+  before the original caller cancellation propagates. Remote cancellation,
+  timeout, nonzero/protocol failure, and disconnect continue to use the closed,
+  content-free `WorkerCancellationError` vocabulary.
+- Fixed prompt cleanup so expiration of the first bound triggers one further
+  bounded task cancellation and success is reported only when the owned prompt
+  task is actually done. If it remains pending after both bounds, cancellation
+  resolves as `cancel_timeout` instead of a false `cancelled` Worker result.
+  The shared resolution logic moved to a focused helper so `acp.py` remains
+  within the enforced 500-line boundary.
+- TDD evidence: a new real `ACPWorker` plus `ACPWorkerConnection` exit harness
+  first failed because confirm returned normally instead of raising
+  `CancelledError`, and because an anti-cancellation prompt remained alive
+  after false success. A follow-up RED exposed an indefinitely gated owner
+  claim when cancellation outlived the second claim deadline. GREEN passes all
+  5 real-stack regressions and 97 focused ACP cancellation/replay tests,
+  including owner reap, fence closure, no late Store mutation,
+  single-resistance cleanup, explicit bounded-timeout reporting, and bounded
+  stalled-claim teardown. The final Product Kernel suite passes all 1781 tests.
+
 ### Require explicit resume after Product re-entry
 
 - Made startup recovery mandatory before the first terminal read. A fresh

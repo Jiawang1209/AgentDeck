@@ -15,6 +15,7 @@ from agentdeck.kernel.diagnostics import Diagnostic, Severity
 from agentdeck.kernel.events import normalize_occurred_at
 from agentdeck.ports.clock import Clock
 from agentdeck.adapters.acp_task_boundary import cancel_background_task, observe_background_task
+from agentdeck.adapters.acp_worker_cancellation import resolve_worker_cancellation
 from agentdeck.ports.worker import (
     TaskRequest, WorkerCancellationError, WorkerEvent, WorkerHandle, WorkerResult, validate_worker_reason,
 )
@@ -158,27 +159,19 @@ class ACPWorker:
             raise ValueError("ACP Worker task is not cancellable")
         reason = validate_worker_reason(reason)
         run.cancellation_requested = True
-        failure: tuple[str, bool] | None = None
-        fatal: BaseException | None = None
-        try:
-            await self._agent.cancel(run.raw_session_id)
-        except WorkerCancellationError as caught:
-            failure = (caught.code, caught.outcome_known)
-        except asyncio.CancelledError:
-            failure = ("cancel_timeout", False)
-        except BaseException as caught:
-            if isinstance(caught, Exception) and not isinstance(caught, MemoryError):
-                failure = ("transport_disconnected", False)
-            else:
-                fatal = caught
-        cleanup_cancelled = await self._cancel_prompt(run)
-        if fatal is not None:
+        facts = await resolve_worker_cancellation(
+            self._agent.cancel(run.raw_session_id), lambda: self._cancel_prompt(run),
+        )
+        if facts.fatal is not None:
             self._close_cancellation(run, None)
-            raise fatal
-        if cleanup_cancelled:
-            failure = ("cancel_timeout", False)
-        if failure is not None:
-            error = WorkerCancellationError(code=failure[0], outcome_known=failure[1])
+            raise facts.fatal
+        if facts.caller_cancelled is not None:
+            self._close_cancellation(run, None)
+            raise facts.caller_cancelled
+        if facts.failure is not None:
+            error = WorkerCancellationError(
+                code=facts.failure[0], outcome_known=facts.failure[1],
+            )
             self._close_cancellation(run, error)
             raise error from None
         self._finish("cancelled", {"reason": reason})

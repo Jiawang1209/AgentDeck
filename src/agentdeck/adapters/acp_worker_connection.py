@@ -12,7 +12,9 @@ from acp.schema import InitializeResponse, NewSessionResponse
 from agentdeck.adapters.adapter_readiness import (
     canonical_project_root, exact_absolute_path, merged_environment,
 )
-from agentdeck.adapters.acp_task_boundary import observe_background_task
+from agentdeck.adapters.acp_task_boundary import (
+    caller_cancellation_pending, observe_background_task,
+)
 from agentdeck.ports.worker import WorkerCancellationError
 from agentdeck.ports.transport import (
     transport_argv, transport_byte_bound, transport_project_root,
@@ -123,13 +125,18 @@ class ACPWorkerConnection:
             await self.aclose()
 
     async def cancel(self, *args: object, **kwargs: Any) -> None:
-        connection, shutdown, gate, claim_failure = await self._claim_cancel_owner()
+        connection, shutdown, gate, claim_failure, caller_cancelled = (
+            await self._claim_cancel_owner()
+        )
         notification_failure = claim_failure
         fatal: BaseException | None = None
         if claim_failure is None and connection is not None and shutdown is None:
             notification_failure = ("transport_disconnected", False)
         try:
-            if notification_failure is None and connection is not None:
+            if (
+                caller_cancelled is None and notification_failure is None
+                and connection is not None
+            ):
                 await asyncio.wait_for(
                     connection.cancel(*args, **kwargs),
                     timeout=self.timeout_seconds,
@@ -138,8 +145,11 @@ class ACPWorkerConnection:
             notification_failure = ("cancel_timeout", False)
         except (BrokenPipeError, ConnectionError, EOFError):
             notification_failure = ("transport_disconnected", False)
-        except asyncio.CancelledError:
-            notification_failure = ("cancel_timeout", False)
+        except asyncio.CancelledError as error:
+            if caller_cancellation_pending():
+                caller_cancelled = error
+            else:
+                notification_failure = ("cancel_timeout", False)
         except MemoryError as error:
             fatal = error
         except Exception:
@@ -158,6 +168,8 @@ class ACPWorkerConnection:
             shutdown_failure = None
         if fatal is not None:
             raise fatal
+        if caller_cancelled is not None:
+            raise caller_cancelled
         failure = (
             notification_failure or shutdown_failure
             if connection is not None
@@ -189,42 +201,50 @@ class ACPWorkerConnection:
     async def _claim_cancel_owner(
         self,
     ) -> tuple[object | None, asyncio.Task[None] | None, asyncio.Event | None,
-               tuple[str, bool] | None]:
+               tuple[str, bool] | None, asyncio.CancelledError | None]:
         claim = asyncio.create_task(self._detach_cancel_owner())
         failure: tuple[str, bool] | None = None
-        caller_cancelled = False
+        caller_cancelled: asyncio.CancelledError | None = None
         try:
             connection, shutdown, gate = await asyncio.wait_for(
                 asyncio.shield(claim), timeout=self.timeout_seconds,
             )
-        except asyncio.CancelledError:
-            caller_cancelled = True
-            failure = ("cancel_timeout", False)
+        except asyncio.CancelledError as error:
+            if caller_cancellation_pending():
+                caller_cancelled = error
+            else:
+                failure = ("cancel_timeout", False)
         except TimeoutError:
             failure = ("cancel_timeout", False)
         except MemoryError:
             raise
         except Exception:
             failure = ("transport_disconnected", False)
-        if caller_cancelled:
+        if caller_cancelled is not None:
             try:
                 connection, shutdown, gate = await asyncio.wait_for(
                     asyncio.shield(claim), timeout=self.timeout_seconds,
                 )
             except (TimeoutError, asyncio.CancelledError):
-                pass
+                connection, shutdown, gate, settle_failure = (
+                    await self._settle_cancel_claim(claim)
+                )
+                return (
+                    connection, shutdown, gate, settle_failure,
+                    caller_cancelled,
+                )
             except MemoryError:
                 raise
             except Exception:
                 failure = ("transport_disconnected", False)
             else:
-                return connection, shutdown, gate, failure
+                return connection, shutdown, gate, failure, caller_cancelled
         if failure is not None:
             connection, shutdown, gate, _ = await self._settle_cancel_claim(
                 claim
             )
-            return connection, shutdown, gate, failure
-        return connection, shutdown, gate, None
+            return connection, shutdown, gate, failure, caller_cancelled
+        return connection, shutdown, gate, None, caller_cancelled
 
     async def _detach_cancel_owner(
         self,
@@ -279,7 +299,11 @@ class ACPWorkerConnection:
                 asyncio.shield(shutdown),
                 timeout=self.timeout_seconds,
             )
-        except (TimeoutError, asyncio.CancelledError):
+        except TimeoutError:
+            failure = ("cancel_timeout", False)
+        except asyncio.CancelledError:
+            if caller_cancellation_pending():
+                raise
             failure = ("cancel_timeout", False)
         except MemoryError:
             raise

@@ -214,12 +214,12 @@ async def test_caller_cancellation_finishes_claim_and_owner_cleanup(
     assert task.cancelling() == 1
     connection._close_lock.release()
     try:
-        with pytest.raises(WorkerCancellationError) as captured:
+        with pytest.raises(asyncio.CancelledError):
             await asyncio.wait_for(asyncio.shield(task), timeout=0.3)
     finally:
         if connection._close_lock.locked():
             connection._close_lock.release()
-    _assert_error(captured.value, "cancel_timeout", False)
+    assert task.cancelled()
     assert owner.notification_calls == 0
     assert connection.closed is True
     assert connection._connection is None and connection._manager is None

@@ -21,15 +21,39 @@ def observe_background_task(task: asyncio.Task[_T]) -> asyncio.Task[_T]:
     return task
 
 
+def caller_cancellation_pending() -> bool:
+    task = asyncio.current_task()
+    return task is not None and task.cancelling() > 0
+
+
 async def cancel_background_task(task: asyncio.Task[Any]) -> bool:
     if task.done():
         return False
     task.cancel()
+    caller_cancelled: asyncio.CancelledError | None = None
     try:
-        await asyncio.wait({task}, timeout=_PROMPT_CLEANUP_TIMEOUT_SECONDS)
-    except asyncio.CancelledError:
-        return True
-    return False
+        done, _ = await asyncio.wait(
+            {task}, timeout=_PROMPT_CLEANUP_TIMEOUT_SECONDS,
+        )
+    except asyncio.CancelledError as error:
+        if caller_cancellation_pending():
+            caller_cancelled = error
+        done = set()
+    if task not in done and not task.done():
+        task.cancel()
+        try:
+            await asyncio.wait(
+                {task}, timeout=_PROMPT_CLEANUP_TIMEOUT_SECONDS,
+            )
+        except asyncio.CancelledError as error:
+            if caller_cancellation_pending() and caller_cancelled is None:
+                caller_cancelled = error
+    if caller_cancelled is not None:
+        raise caller_cancelled
+    return not task.done()
 
 
-__all__ = ["cancel_background_task", "observe_background_task"]
+__all__ = [
+    "caller_cancellation_pending", "cancel_background_task",
+    "observe_background_task",
+]

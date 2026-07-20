@@ -299,7 +299,7 @@ def test_acp_worker_propagates_cancel_fatal_after_prompt_cleanup(
     asyncio.run(scenario())
 
 
-def test_cleanup_caller_cancellation_closes_stream_with_typed_timeout() -> None:
+def test_cleanup_caller_cancellation_propagates_after_prompt_cleanup() -> None:
     async def scenario() -> None:
         worker, cleanup_entered, cleanup_release = _worker_with_resistant_prompt()
         handle = await worker.start_task(task_request())
@@ -311,14 +311,12 @@ def test_cleanup_caller_cancellation_closes_stream_with_typed_timeout() -> None:
         await cleanup_entered.wait()
         operation.cancel()
         try:
-            with pytest.raises(WorkerCancellationError) as captured:
+            with pytest.raises(asyncio.CancelledError):
                 await operation
         finally:
             cleanup_release.set()
 
-        assert (captured.value.code, captured.value.outcome_known) == (
-            "cancel_timeout", False,
-        )
+        assert operation.cancelled()
         assert worker._run is not None and worker._run.terminal is True
         assert [event async for event in stream] == []
         prompt = worker._run.prompt_task

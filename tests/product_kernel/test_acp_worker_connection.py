@@ -372,7 +372,7 @@ async def test_cancel_transport_failures_are_closed_and_content_free(
 
 
 @_sync_test
-async def test_cancel_caller_cancellation_still_reaps_and_is_sanitized(
+async def test_cancel_caller_cancellation_propagates_after_owner_reap(
     tmp_path: Path,
 ) -> None:
     owner = _CancellationOwner(tmp_path)
@@ -384,13 +384,10 @@ async def test_cancel_caller_cancellation_still_reaps_and_is_sanitized(
     await owner.cancel_entered.wait()
 
     task.cancel("private caller cancellation")
-    with pytest.raises(WorkerCancellationError) as captured:
+    with pytest.raises(asyncio.CancelledError):
         await task
 
-    _assert_cancellation_error(
-        captured.value, "cancel_timeout", False,
-        "raw_session", "private caller cancellation",
-    )
+    assert task.cancelled()
     assert owner.calls[-1] == ("owner_reaped",)
     assert connection.closed is True
 
