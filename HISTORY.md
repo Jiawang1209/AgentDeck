@@ -4,6 +4,14 @@
 
 ## 2026-07-20
 
+### Bind the Task 15B exit coordinator to one ProductSession
+
+- Corrected the async-exit composition contract before Worker behavior: the
+  coordinator now receives one explicit strictly validated ProductSession ID
+  and uses it as the sole active-exit projection identity. It may not hard-code
+  or infer that identity from a pending request or Worker handle, and
+  `ExitService` remains limited to its four approved public operations.
+
 ### Close the Task 15B active-exit authority boundary
 
 - Corrected the Task 15B.4 file and TDD boundary before behavior work: active

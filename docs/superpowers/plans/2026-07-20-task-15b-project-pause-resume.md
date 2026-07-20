@@ -1411,6 +1411,8 @@ Also prove:
 
 - Worker/full-handle/ACP-session/event-loop drift performs zero cancel I/O and
   zero writes;
+- invalid or cross-session coordinator identity fails before Worker I/O and
+  before any Store write;
 - durable authority drift before cancel performs zero cancel I/O and zero
   writes;
 - durable authority drift after successful cancel stores one closed
@@ -1491,6 +1493,7 @@ class AsyncExitCoordinator:
         self, *, exit_service: ExitService, store: Store, clock: Clock,
         runtime: ForegroundExecutionRuntime,
         lifecycle: ProjectLifecycleService,
+        session_id: str,
     ) -> None:
         for dependency, methods in (
             (exit_service, ("request_exit", "decline", "confirm", "input_closed")),
@@ -1508,6 +1511,7 @@ class AsyncExitCoordinator:
         self._clock = clock
         self._runtime = runtime
         self._lifecycle = lifecycle
+        self._session_id = _session_identity(session_id)
 
     async def request_exit(self) -> ExitResult:
         async with self._lifecycle.stop_lease():
@@ -1531,7 +1535,12 @@ class AsyncExitCoordinator:
 
 `_confirm_locked()` is specified completely in Steps 5 and 6.
 Constructor validation accepts only the listed Port/service methods and stores
-no terminal/process text. `ExitService.confirm()` returns the exact validated
+no terminal/process text. The explicit, strictly validated `session_id` is the
+only ProductSession identity used for active-exit projection reads; the
+coordinator must not hard-code it, infer it from a pending request or Worker
+handle, or add a fifth public `ExitService` method. Invalid identity fails at
+composition, while a valid cross-session identity closes before Worker I/O or
+Store writes. `ExitService.confirm()` returns the exact validated
 pending request as `mode="exit_confirmation_ready"`; it never calls a Worker
 and ProductShell never presents that internal mode directly.
 
