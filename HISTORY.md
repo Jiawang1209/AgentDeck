@@ -4,6 +4,25 @@
 
 ## 2026-07-20
 
+### Close Task 28 faithful cursor-safe Agent streams
+
+- Closed Task 28 after independent specification and code-quality approval.
+  The verified implementation HEAD is
+  `bb506ae949b019e77daeb68874c0f396cdba3f2a`; development stops before Task 29
+  and no live tmux, provider, ACP Mission, or Golden Product run was performed.
+- Final evidence: Task 28/27 plus ACP and architecture/context `215 passed`,
+  Product Kernel `1900 passed`, legacy final rerun `4461 passed, 3 skipped`,
+  with compile, diff, 500-line, pane/reply-extraction, raw-protocol logging,
+  direct-persistence, and `asyncio.run` gates green.
+- Recorded the first legacy run's isolated old daemon journal inode race
+  transparently: the exact test passed once and then five consecutive times,
+  followed by the green full rerun. No test skip, timeout relaxation,
+  StateStore change, or retry behavior was added to Task 28.
+- Updated the current handoff with the immutable subscription, exact replay,
+  delivery/ack ordering, redaction, hostile-boundary, and non-authority
+  invariants. Task 29 is the sole next numerical task and requires a new
+  explicit instruction.
+
 ### Reject oversized exact dict payloads before copying
 
 - Added the remaining exact built-in dict budget guard inside the Observer

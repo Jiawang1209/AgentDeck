@@ -4,26 +4,29 @@ Updated: 2026-07-20
 
 ## Active goal
 
-R2, Task 15B, and Task 27 are closed. Development is intentionally stopped
-before Task 28. The only next numerical task is Task 28, **Render faithful
-cursor-safe, redacted Agent streams**, from the approved
+R2, Task 15B, Task 27, and Task 28 are closed. Development is intentionally
+stopped before Task 29. The only next numerical task is Task 29, **Add explicit
+takeover and validated return-control**, from the approved
 [Product Kernel Rewrite TDD plan](../superpowers/plans/2026-07-18-agentdeck-product-kernel-rewrite.md).
 
 Do not reopen M2/M2c, daemon, ConversationSession, autonomous, Skill, Memory,
-GUI, or historical architecture plans as active authority. Task 28 has not
+GUI, or historical architecture plans as active authority. Task 29 has not
 started, and this handoff does not authorize a real provider/tmux gate.
 
 ## Verified implementation state
 
-- Verified Task 27 implementation HEAD: `b0d4e9be74e05626873c8e2a296972ac06cbebd7`.
+- Verified Task 28 implementation HEAD: `bb506ae949b019e77daeb68874c0f396cdba3f2a`.
 - Branch: `codex/product-kernel-rewrite`.
 - R2 exit: complete.
 - Task 15B.1 through Task 15B.5: complete.
 - Task 27 Observer Runtime Port and deterministic tmux layout: complete.
+- Task 28 faithful cursor-safe, redacted Agent streams: complete.
 - Final integrated spec review: `✅ Final Task 15B spec compliant`.
 - Final integrated quality review: `✅ Final Task 15B code quality approved`.
 - Task 27 spec review: `✅ Task 27 spec compliant`.
 - Task 27 quality review: `✅ Task 27 code quality approved`.
+- Task 28 spec review: `✅ Task 28 spec compliant`.
+- Task 28 quality review: `✅ Task 28 code quality approved`.
 - Immediately before this handoff-only edit, `git status --short` returned no
   output.
 - No push or merge was performed.
@@ -108,6 +111,55 @@ No live tmux session, provider, ACP Mission, or Golden Product run occurred.
 Task 27 does not implement Task 28 stream rendering/cursors/redaction or Task
 29 validated return-control.
 
+## Task 28 evidence and boundary
+
+Task 28 adds a Product Observer for decoded Worker Event-shaped values and a
+bounded tmux observation sink. Every rendered record retains event, session,
+Agent, Task, Attempt, ACP transport, sequence, and normalized timestamp
+identity. Agent prose is labeled `[Agent <id>]`; AgentDeck observation status
+is labeled `[AgentDeck]` and cannot become lifecycle authority.
+
+The Observer binds one immutable read-only subscription identity. A new stream
+starts at sequence one; reconnect requires an exact replay of the last
+acknowledged event and fingerprint before accepting the next sequence. Exact
+replay deduplicates, while foreign identity, rollback, gap, cursor conflict,
+or malformed input fails closed. Delivery uses an injected sink, then the
+foreground Application cursor writer, then local cursor advancement. Neither
+Product nor the tmux Adapter writes SQLite, Store, state files, or terminal
+pixels as authority.
+
+Defense-in-depth redaction removes credential assignments, tokens,
+authorization values, private keys, hidden reasoning, raw ACP/protocol
+material, full prompts, and stderr while retaining safe observability metrics.
+Hostile mappings, capability getters, event getters, equivalent timestamp
+encodings, and oversized payloads have deterministic content-free coverage.
+
+Fresh final evidence at the verified Task 28 implementation HEAD:
+
+```text
+Task 28/27 + ACP + architecture/context: 215 passed
+Product Kernel full suite:               1900 passed in 73.61s
+Legacy suite final rerun:                4461 passed, 3 skipped in 230.47s
+compileall:                              pass
+git diff --check:                        pass
+changed Python/test files <= 500 lines:  pass
+legacy pane/reply extraction scan:       pass
+raw protocol logging scan:               pass
+direct SQLite/Store/state write scan:    pass
+Task 28 asyncio.run gate:                pass
+```
+
+The first legacy full-suite run produced one old daemon-acceptance timing
+failure when `events.jsonl` was atomically replaced during a concurrent
+fail-closed inode-identity read (`4460 passed, 3 skipped, 1 failed`). Task 28
+does not modify that StateStore or test. The exact failure passed once in
+isolation, then five consecutive times, and the fresh full legacy rerun above
+passed. No retry, timeout, xfail, skip, StateStore relaxation, or historical
+test edit was added.
+
+No live tmux session, provider, ACP Mission, or Golden Product run occurred.
+Task 28 does not implement Task 29 takeover/return-control state transitions.
+
 ## Approved MVP direction
 
 - bare `agentdeck` continuous natural-language ProductSession;
@@ -145,14 +197,15 @@ requirements.
 
 ## Next gate
 
-1. Do not start Task 28 without a new explicit `/goal` or user instruction.
-2. When authorized, Task 28 must consume the Task 27 Port and immutable plan;
-   it must not redesign workspace authority or add return-control.
-3. Task 28 owns cursor-safe faithful rendering, reconnect cursors, and
-   redaction. It must preserve the rule that tmux/PTY pixels are observation,
-   never lifecycle, approval, result, completion, or recovery authority.
-4. Preserve closed R2/Task 15B and Task 27 invariants and rerun their focused
-   gates when Task 28 touches shared Observer composition.
+1. Do not start Task 29 without a new explicit `/goal` or user instruction.
+2. When authorized, Task 29 must consume the closed Task 27 Runtime Port and
+   Task 28 decoded Observer stream; it must not redesign cursor or workspace
+   authority.
+3. Task 29 owns only explicit takeover and validated return-control. It must
+   preserve the rule that tmux/PTY pixels are observation, never lifecycle,
+   approval, result, completion, or recovery authority.
+4. Preserve closed R2/Task 15B and Task 27/28 invariants and rerun their focused
+   gates when Task 29 touches shared Observer composition.
 5. Real provider, ACP/tmux, and Golden Product gates still require their exact
    later Task authorization; this handoff does not authorize them.
 
