@@ -4,6 +4,24 @@
 
 ## 2026-07-20
 
+### Resume execution from a committed handoff
+
+- Added a mission-local foreground execution runtime that binds one exact ACP
+  Worker and full handle lineage to one event loop, rejects attempt, Worker,
+  handle, session, or loop reuse, and releases ownership only after a durable
+  terminal transition.
+- Added a project-wide dispatch/stop barrier with exact running-session checks,
+  transactionally revalidated pause/resume authority, deterministic lifecycle
+  events, and fail-closed handling for active, malformed, or drifted exit facts.
+- Resumed execution from the committed handoff suffix without repeating closed
+  stages: interrupted ordinals advance while preserving their retry budget,
+  completed review evidence remains revision authority, and dispatch is checked
+  again after durable Attempt start before any Worker is constructed. Initial
+  TDD RED produced the expected two missing-module collection errors; a
+  follow-up retry-count RED produced the expected `1 failed, 16 passed`. Final
+  GREEN passes 199 execution/recovery tests and 14 architecture tests without
+  schema, provider, tmux, or legacy-path changes.
+
 ### Close ACP background task boundaries
 
 - Added a minimal ACP task-boundary helper with one fixed positive prompt

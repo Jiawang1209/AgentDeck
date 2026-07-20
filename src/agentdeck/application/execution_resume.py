@@ -6,7 +6,10 @@ from dataclasses import dataclass
 from hashlib import sha256
 import json
 
-from agentdeck.application.execution_records import AuthoritativeRevisionTask
+from agentdeck.application.execution_records import (
+    AuthoritativeRevisionTask,
+    CommittedEvidence,
+)
 from agentdeck.kernel.execution import (
     Attempt,
     AttemptState,
@@ -23,6 +26,7 @@ from agentdeck.kernel.mission import (
     TaskDefinition,
     _canonical_mission_draft,
 )
+from agentdeck.kernel.permissions import PermissionScope
 from agentdeck.ports.execution_resume import (
     ExecutionResumeFacts,
     ExecutionResumeProjectionError,
@@ -73,6 +77,16 @@ class _ExecutionHistory:
     evidence: tuple[Evidence, ...]
     handoffs: tuple[Handoff, ...]
     revision_task: AuthoritativeRevisionTask
+
+
+@dataclass(frozen=True)
+class InitialExecutionState:
+    attempts: tuple[Attempt, ...]
+    evidence: tuple[Evidence, ...]
+    committed_evidence: tuple[CommittedEvidence, ...]
+    handoffs: tuple[Handoff, ...]
+    revision_task: AuthoritativeRevisionTask
+    stages: tuple[tuple[TaskDefinition, int, int], ...]
 
 
 def _fail() -> None:
@@ -377,4 +391,97 @@ class ExecutionResumePlanner:
             _fail()
 
 
-__all__ = ["ExecutionResumePlan", "ExecutionResumePlanner"]
+def initial_execution_state(
+    resume_plan: ExecutionResumePlan | None, draft: MissionDraft,
+) -> InitialExecutionState:
+    """Return immutable prior context plus `(Task, first ordinal, budget)`."""
+    if type(draft) is not MissionDraft:
+        raise TypeError("execution state requires MissionDraft")
+    if resume_plan is None:
+        attempts: tuple[Attempt, ...] = ()
+        evidence: tuple[Evidence, ...] = ()
+        handoffs: tuple[Handoff, ...] = ()
+        revision_task = AuthoritativeRevisionTask(
+            draft.tasks[2].task_id, "agentdeck", draft.scope, ()
+        )
+        remaining = draft.tasks
+        first_ordinal = 1
+        mission_id = None
+    else:
+        if type(resume_plan) is not ExecutionResumePlan or (
+            resume_plan.draft != draft
+            or resume_plan.confirmed.canonical_content
+            != draft.preview(resume_plan.confirmed.version).canonical_content
+            or not resume_plan.remaining_tasks
+            or resume_plan.remaining_tasks
+            != draft.tasks[len(draft.tasks) - len(resume_plan.remaining_tasks):]
+        ):
+            _fail()
+        attempts = resume_plan.prior_attempts
+        evidence = resume_plan.prior_evidence
+        handoffs = resume_plan.prior_handoffs
+        revision_task = resume_plan.revision_task
+        remaining = resume_plan.remaining_tasks
+        first_ordinal = resume_plan.first_attempt_ordinal
+        mission_id = resume_plan.confirmed.mission_id
+    indexed_attempts = {item.attempt_id: item for item in attempts}
+    indexed_evidence = {item.evidence_id: item for item in evidence}
+    committed: list[CommittedEvidence] = []
+    if mission_id is not None:
+        for handoff in handoffs:
+            attempt = indexed_attempts.get(handoff.source_attempt_id)
+            if attempt is None:
+                _fail()
+            for identity in handoff.verification_evidence_ids:
+                item = indexed_evidence.get(identity)
+                if item is None:
+                    _fail()
+                committed.append(CommittedEvidence(
+                    item, mission_id, attempt.task_id, attempt.attempt_id))
+    stages: list[tuple[TaskDefinition, int, int]] = []
+    for index, task in enumerate(remaining):
+        maximum = 1 if task.name == "acceptance" else min(draft.max_attempts, 2)
+        consumed = sum(
+            item.task_id == task.task_id
+            and item.state is AttemptState.FAILED
+            and item.retryable
+            for item in attempts
+        )
+        budget = maximum - consumed
+        if budget < 1:
+            raise ExecutionResumeProjectionError(code="resume_stage_not_retryable")
+        stages.append((task, first_ordinal if index == 0 else 1, budget))
+    return InitialExecutionState(
+        attempts, evidence, tuple(committed), handoffs, revision_task, tuple(stages)
+    )
+
+
+def validate_execution_authority(
+    session_id: str, confirmed: ConfirmedMissionVersion, draft: MissionDraft,
+    permission_scope: PermissionScope, resume_plan: ExecutionResumePlan | None,
+) -> None:
+    if type(session_id) is not str or not session_id.startswith("ses_"):
+        raise ValueError("session_id must be a typed identity")
+    if type(confirmed) is not ConfirmedMissionVersion or type(draft) is not MissionDraft:
+        raise TypeError("execution requires a confirmed Mission and its draft")
+    if type(permission_scope) is not PermissionScope:
+        raise TypeError("permission_scope must be a PermissionScope")
+    preview = draft.preview(confirmed.version)
+    if preview.content_hash != confirmed.content_hash or (
+        preview.canonical_content != confirmed.canonical_content
+    ):
+        raise ValueError("execution draft does not match confirmed Mission")
+    if permission_scope.profile is not draft.permission_profile:
+        raise ValueError("permission profile does not match confirmed Mission")
+    if resume_plan is not None and (
+        type(resume_plan) is not ExecutionResumePlan
+        or resume_plan.confirmed != confirmed
+        or resume_plan.draft != draft
+    ):
+        _fail()
+
+
+__all__ = [
+    "ExecutionResumePlan", "ExecutionResumePlanner", "InitialExecutionState",
+    "initial_execution_state", "validate_execution_authority",
+]

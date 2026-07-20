@@ -1,6 +1,10 @@
 from dataclasses import dataclass
 from datetime import datetime
 
+from agentdeck.application.approval_service import ApprovalService
+from agentdeck.application.project_lifecycle_service import (
+    ProjectLifecycleService,
+)
 from agentdeck.ports.worker import (
     TaskRequest, WorkerEvent, WorkerHandle, WorkerResult, validate_worker_reason,
 )
@@ -12,6 +16,36 @@ class FrozenClock:
 
     def now(self) -> datetime:
         return self.value
+
+
+class RecordingApprovalService(ApprovalService):
+    def __init__(self, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self.scopes = []
+
+    async def bridge_attempt(self, worker, handle, context):
+        self.scopes.append(context.permission_scope)
+        return await super().bridge_attempt(worker, handle, context)
+
+
+class HarnessLifecycle(ProjectLifecycleService):
+    """Preserve closed-command replay before a test Store seeds lineage."""
+
+    def __init__(self, *, replay_command_id: str, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self._replay_command_id = replay_command_id
+
+    def require_dispatchable(self) -> None:
+        session = self._store.load_aggregate(
+            "product_sessions", self._session_id
+        )
+        if session is None:
+            replay = self._store.lookup_command(
+                self._replay_command_id, "execution_attempt_started"
+            )
+            if replay is not None:
+                return
+        super().require_dispatchable()
 
 
 class FakeWorker:

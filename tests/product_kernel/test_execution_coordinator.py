@@ -6,12 +6,13 @@ import json
 
 import pytest
 
-from agentdeck.application.approval_service import ApprovalService
+from agentdeck.application.execution_runtime import ForegroundExecutionRuntime
 from agentdeck.application.execution_service import ExecutionService
+from agentdeck.application.execution_records import command_id
 from agentdeck.kernel.mission import MissionDraft
 from agentdeck.kernel.permissions import Effect, PermissionProfile, PermissionScope
 from agentdeck.ports.worker import TaskRequest, WorkerEvent, WorkerHandle, WorkerResult
-from product_kernel.fakes import FrozenClock
+from product_kernel.fakes import FrozenClock, HarnessLifecycle, RecordingApprovalService
 
 NOW = datetime(2026, 7, 19, 3, 0, tzinfo=timezone.utc)
 class Transaction:
@@ -42,7 +43,11 @@ class Transaction:
 
 class MemoryStore:
     def __init__(self) -> None:
-        self.aggregates: dict[tuple[str, str], dict[str, object]] = {}
+        self.aggregates = {
+            ("product_sessions", "ses_1"): {
+                "session_id": "ses_1", "state": "running",
+            },
+        }
         self.commands: dict[tuple[str, str], dict[str, object]] = {}
         self.fail_on_handoff_commit = False
         self.fail_on_aggregate: tuple[str, str] | None = None
@@ -67,15 +72,7 @@ class MemoryStore:
     def load_aggregate(self, kind, identity):
         snapshot = self.aggregates.get((kind, identity))
         return None if snapshot is None else dict(snapshot)
-
-class RecordingApprovalService(ApprovalService):
-    def __init__(self, **kwargs) -> None:
-        super().__init__(**kwargs)
-        self.scopes = []
-
-    async def bridge_attempt(self, worker, handle, context):
-        self.scopes.append(context.permission_scope)
-        return await super().bridge_attempt(worker, handle, context)
+    def list_active_exit_attempts(self, session_id): return ()
 
 class ScriptedWorker:
     def __init__(self, harness: "Harness", task_name: str) -> None:
@@ -167,9 +164,13 @@ class Harness:
         self.confirmed = preview.confirm(preview_id=preview.preview_id, content_hash=preview.content_hash)
         clock = FrozenClock(NOW)
         self.approvals = RecordingApprovalService(store=self.store, clock=clock)
+        self.runtime = ForegroundExecutionRuntime()
+        self.lifecycle = HarnessLifecycle(
+            store=self.store, clock=clock, session_id="ses_1",
+            replay_command_id=command_id("start", self.confirmed, self.draft.tasks[0], 1))
         self.service = ExecutionService(store=self.store, clock=clock, approval_service=self.approvals,
-            worker_factory=lambda task: ScriptedWorker(self, task.name),
-        )
+            worker_factory=lambda task: ScriptedWorker(self, task.name), runtime=self.runtime,
+            lifecycle=self.lifecycle)
     def result_payload(self, name):
         payload = json.loads(json.dumps(self.results[name]))
         task_ids = {task.name: task.task_id for task in self.draft.tasks}
