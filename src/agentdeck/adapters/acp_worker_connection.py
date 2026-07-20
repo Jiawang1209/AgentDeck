@@ -139,7 +139,9 @@ class ACPWorkerConnection:
             notification_failure = ("transport_disconnected", False)
         except asyncio.CancelledError:
             notification_failure = ("cancel_timeout", False)
-        except BaseException:
+        except MemoryError:
+            raise
+        except Exception:
             notification_failure = ("transport_disconnected", False)
 
         shutdown_failure = await self._bounded_shutdown_facts(manager)
@@ -163,19 +165,44 @@ class ACPWorkerConnection:
         self,
     ) -> tuple[object | None, AbstractAsyncContextManager[object] | None,
                tuple[str, bool] | None]:
-        acquired = False
+        claim = asyncio.create_task(self._detach_cancel_owner())
         failure: tuple[str, bool] | None = None
+        caller_cancelled = False
         try:
-            await asyncio.wait_for(
-                self._close_lock.acquire(), timeout=self.timeout_seconds,
+            connection, manager = await asyncio.wait_for(
+                asyncio.shield(claim), timeout=self.timeout_seconds,
             )
-            acquired = True
-        except (TimeoutError, asyncio.CancelledError):
+        except asyncio.CancelledError:
+            caller_cancelled = True
             failure = ("cancel_timeout", False)
-        except BaseException:
+        except TimeoutError:
+            failure = ("cancel_timeout", False)
+        except MemoryError:
+            raise
+        except Exception:
             failure = ("transport_disconnected", False)
-        if not acquired:
+        if caller_cancelled:
+            try:
+                connection, manager = await asyncio.wait_for(
+                    asyncio.shield(claim), timeout=self.timeout_seconds,
+                )
+            except (TimeoutError, asyncio.CancelledError):
+                await self._cancel_and_drain_claim(claim)
+                return None, None, failure
+            except MemoryError:
+                raise
+            except Exception:
+                return None, None, ("transport_disconnected", False)
+            return connection, manager, failure
+        if failure is not None:
+            await self._cancel_and_drain_claim(claim)
             return None, None, failure
+        return connection, manager, None
+
+    async def _detach_cancel_owner(
+        self,
+    ) -> tuple[object | None, AbstractAsyncContextManager[object] | None]:
+        await self._close_lock.acquire()
         try:
             self._closed = True
             connection = self._connection
@@ -184,7 +211,20 @@ class ACPWorkerConnection:
             self._connection = None
         finally:
             self._close_lock.release()
-        return connection, manager, None
+        return connection, manager
+
+    @staticmethod
+    async def _cancel_and_drain_claim(claim: asyncio.Task[object]) -> None:
+        if not claim.done():
+            claim.cancel()
+        try:
+            await claim
+        except asyncio.CancelledError:
+            pass
+        except MemoryError:
+            raise
+        except Exception:
+            pass
 
     async def _bounded_shutdown_facts(
         self, manager: AbstractAsyncContextManager[object] | None,
@@ -199,7 +239,9 @@ class ACPWorkerConnection:
             )
         except (TimeoutError, asyncio.CancelledError):
             failure = ("cancel_timeout", False)
-        except BaseException:
+        except MemoryError:
+            raise
+        except Exception:
             failure = ("transport_disconnected", False)
         return failure
 

@@ -162,23 +162,53 @@ async def test_concurrent_and_repeated_cancel_claim_owner_once(
 
 
 @_sync_test
-async def test_cancel_lock_contention_sanitizes_caller_cancellation(
+async def test_caller_cancellation_finishes_claim_and_owner_cleanup(
     tmp_path: Path,
 ) -> None:
     owner = _Owner(tmp_path)
-    connection = await owner.ready()
+    connection = await owner.ready(timeout_seconds=0.1)
     await connection._close_lock.acquire()
     task = asyncio.create_task(connection.cancel("raw_session"))
     await asyncio.sleep(0)
-    task.cancel("private lock cancellation")
+    assert task.cancel("private lock cancellation") is True
+    await asyncio.sleep(0)
+    assert task.cancelling() == 1
+    connection._close_lock.release()
     try:
         with pytest.raises(WorkerCancellationError) as captured:
-            await task
+            await asyncio.wait_for(asyncio.shield(task), timeout=0.3)
+    finally:
+        if connection._close_lock.locked():
+            connection._close_lock.release()
+    _assert_error(captured.value, "cancel_timeout", False)
+    assert owner.notification_calls == 0
+    assert connection.closed is True
+    assert connection._connection is None and connection._manager is None
+    assert owner.reap_calls == 1
+
+
+@_sync_test
+async def test_claim_timeout_drains_task_and_preserves_explicit_close(
+    tmp_path: Path,
+) -> None:
+    owner = _Owner(tmp_path)
+    connection = await owner.ready(timeout_seconds=0.01)
+    await connection._close_lock.acquire()
+    try:
+        with pytest.raises(WorkerCancellationError) as captured:
+            await connection.cancel("raw_session")
     finally:
         connection._close_lock.release()
     _assert_error(captured.value, "cancel_timeout", False)
-    assert owner.notification_calls == 0
-    assert owner.reap_calls == 0
+    assert connection.closed is False
+    assert connection._connection is not None and connection._manager is not None
+    assert owner.notification_calls == 0 and owner.reap_calls == 0
+    current = asyncio.current_task()
+    assert [
+        task for task in asyncio.all_tasks()
+        if task is not current and not task.done()
+    ] == []
+    await connection.aclose()
     await connection.aclose()
     assert owner.reap_calls == 1
 

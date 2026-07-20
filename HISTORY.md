@@ -4,6 +4,22 @@
 
 ## 2026-07-20
 
+### Finish ACP cleanup after caller cancellation
+
+- Shielded the short cancellation-owner claim from caller cancellation. A
+  cancelled caller now fixes the public result to content-free
+  `cancel_timeout/false` while the bounded internal claim detaches the live
+  connection and manager, skips notification, and completes one bounded reap.
+- Kept real lock-budget exhaustion distinct: the internal claim task is
+  cancelled and drained before returning the typed timeout, live ownership
+  remains available for explicit `aclose()`, and later close cannot double
+  reap. Memory exhaustion and process-exit exceptions are not disguised as
+  transport failures.
+- Review RED produced the expected `1 failed, 5 passed` because sanitized
+  caller cancellation left live references behind. GREEN passes all `6`
+  ownership integrity cases, `70` focused cancellation tests, and the corrected
+  full ACP adapter gate of `151` tests without a real provider or adapter.
+
 ### Serialize ACP cancellation ownership
 
 - Moved cancellation ownership claim and connection/manager detach into one
