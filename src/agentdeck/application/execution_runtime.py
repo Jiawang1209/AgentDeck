@@ -293,7 +293,7 @@ class ForegroundExecutionRuntime:
         self._binding: ActiveExecutionBinding | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
         self._released: tuple[str, WorkerHandle] | None = None
-        self._used_worker_ids: set[int] = set()
+        self._used_workers: list[Worker] = []
         self._used_handles: list[WorkerHandle] = []
         self._reservation: ExecutionReservation | None = None
         self._reservation_handle: WorkerHandle | None = None
@@ -304,7 +304,7 @@ class ForegroundExecutionRuntime:
             self._binding is None
             and self._loop is None
             and self._released is None
-            and not self._used_worker_ids
+            and not self._used_workers
             and not self._used_handles
             and self._reservation is None
             and self._quarantined is False
@@ -333,15 +333,15 @@ class ForegroundExecutionRuntime:
             raise ExecutionBindingError("execution runtime owner is not available")
         if self._loop is not None and self._loop is not loop:
             raise ExecutionBindingError("execution loop identity drifted")
-        if id(reservation.worker) in self._used_worker_ids:
+        if any(worker is reservation.worker for worker in self._used_workers):
             raise ExecutionBindingError("execution Worker identity was reused")
         if self._released is not None and self._released[0] == reservation.attempt_id:
             raise ExecutionBindingError("released attempt cannot be reserved")
-        if len(self._used_worker_ids) >= _MAX_MISSION_BINDINGS:
+        if len(self._used_workers) >= _MAX_MISSION_BINDINGS:
             raise ExecutionBindingError("execution binding budget was exhausted")
         self._loop = loop
         self._released = None
-        self._used_worker_ids.add(id(reservation.worker))
+        self._used_workers.append(reservation.worker)
         self._reservation = reservation
 
     def claim_handle(
@@ -401,7 +401,7 @@ class ForegroundExecutionRuntime:
         if self._loop is not None and self._loop is not loop:
             raise ExecutionBindingError("execution loop identity drifted")
         if (
-            id(binding.worker) in self._used_worker_ids
+            any(worker is binding.worker for worker in self._used_workers)
             or binding.worker_handle in self._used_handles
         ):
             raise ExecutionBindingError("execution binding identity was reused")
@@ -409,10 +409,10 @@ class ForegroundExecutionRuntime:
             if self._released[0] == binding.attempt_id:
                 raise ExecutionBindingError("released attempt cannot be rebound")
             self._released = None
-        if len(self._used_worker_ids) >= _MAX_MISSION_BINDINGS:
+        if len(self._used_workers) >= _MAX_MISSION_BINDINGS:
             raise ExecutionBindingError("execution binding budget was exhausted")
         self._loop = loop
-        self._used_worker_ids.add(id(binding.worker))
+        self._used_workers.append(binding.worker)
         self._used_handles.append(binding.worker_handle)
         self._binding = binding
 

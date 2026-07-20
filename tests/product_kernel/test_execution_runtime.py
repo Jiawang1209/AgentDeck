@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import asyncio
+import gc
+import weakref
 from contextlib import asynccontextmanager
 from dataclasses import replace
 from functools import wraps
 
 import pytest
 
+import agentdeck.application.execution_runtime as execution_runtime
 from agentdeck.application.execution_runtime import (
     ActiveExecutionBinding,
     ExecutionBindingError,
@@ -204,6 +207,37 @@ async def test_empty_runtime_reports_only_pristine_mission_state():
     runtime.bind(binding)
     runtime.release(binding.attempt_id, binding.worker_handle)
     assert runtime.is_empty() is False
+
+
+@async_test
+async def test_runtime_retains_bounded_worker_objects_and_compares_by_identity(
+    monkeypatch,
+):
+    monkeypatch.setattr(execution_runtime, "id", lambda value: 1, raising=False)
+    runtime = ForegroundExecutionRuntime()
+    worker = RecordingWorker()
+    worker_ref = weakref.ref(worker)
+    reservation = reservation_for(worker=worker)
+    runtime.reserve(reservation)
+    runtime.rollback(reservation)
+
+    del reservation, worker
+    gc.collect()
+    retained = worker_ref()
+    assert retained is not None
+    with pytest.raises(ExecutionBindingError):
+        runtime.reserve(reservation_for(worker=retained))
+    del retained
+
+    for ordinal in range(2, 65):
+        reservation = reservation_for(
+            f"att_{ordinal}", f"tsk_{ordinal}", f"agt_{ordinal}",
+        )
+        runtime.reserve(reservation)
+        runtime.rollback(reservation)
+
+    with pytest.raises(ExecutionBindingError):
+        runtime.reserve(reservation_for("att_65", "tsk_65", "agt_65"))
 
 
 def reservation_for(

@@ -6,6 +6,14 @@
 
 ### Resume execution from a committed handoff
 
+- Fixed nondeterministic false Worker-reuse rejection after a prior short-lived
+  Worker was collected and CPython reused its integer object ID. The Mission
+  runtime now retains at most 64 used Worker objects strongly and compares
+  identity with `is`; reservation, quarantine, activation, release, and exact
+  replay authority remain unchanged. A deterministic GC plus simulated-ID
+  collision RED produced `1 failed`; targeted GREEN passes 101 runtime,
+  review/revision, and SQLite execution tests. Five consecutive full R4 runs
+  each pass 214 tests, and the architecture gate passes 14 tests.
 - Final quality review split pre-start authority from durable Attempt cleanup:
   gate/start persistence failures now return fixed content-free diagnostics
   with zero writes, while a blocked second gate durably interrupts the exact
