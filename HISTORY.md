@@ -4,6 +4,16 @@
 
 ## 2026-07-20
 
+### Close Task 15B recovery authority ambiguity in the implementation plan
+
+- Corrected the Task 15B.5 recovery pseudocode so two distinct active Attempts
+  are rejected before any command transaction or durable write begins. The
+  previous loop-shaped sketch could be misread as allowing the first Attempt to
+  persist before discovering the second.
+- Preserved the approved product rule: startup recovery has at most one exact
+  session-scoped active Attempt authority; ambiguous authority fails closed in
+  one zero-write boundary and never calls Worker, Leader, ACP, or transport.
+
 ### Close resume projection integrity gaps
 
 - Added read-only ownership coverage for every Evidence and Handoff attached to

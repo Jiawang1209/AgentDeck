@@ -1765,6 +1765,8 @@ Change the public method to:
 ```python
 async def reconcile(self) -> RecoveryReport:
     attempts = self._store.list_active_exit_attempts(self._session_id)
+    if len(attempts) > 1:
+        raise RecoveryError("recovery authority is ambiguous")
     for attempt in attempts:
         outcome = (
             RecoveryOutcome.OUTCOME_UNKNOWN
@@ -1780,8 +1782,11 @@ Initialize `RecoveryService` with exactly `store`, `clock`, `session_id`, and
 `recovery_run_id`; remove the transport dependency. Recovery uses only
 `list_active_exit_attempts(session_id)` and exact aggregate reloads, never the
 global `list_running_attempts()` fallback. The private helpers shown above are
-extracted from the existing implementation. Recovery persists Attempt outcome,
-Session pause, and recovery events in one exact command transaction. Remove
+extracted from the existing implementation. It must validate `len(attempts) <=
+1` before entering any command transaction or writing any Attempt, Session,
+event, or command row; two distinct active Attempts fail closed with zero
+writes. Recovery persists the sole Attempt outcome, Session pause, and recovery
+events in one exact command transaction. Remove
 `RecoveryOutcome.RESUMED` and the `ReconnectStatus.CONFIRMED` success path.
 Keep allowlisted, content-free recovery reason codes.
 
