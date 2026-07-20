@@ -380,29 +380,63 @@ def test_projection_rejects_noncompleted_later_terminal_command_read_only(
     assert _table_snapshot(store) == before
 
 
+def _stored_command_id(mission_id, version, task_id, ordinal):
+    raw = json.dumps((mission_id, str(version), task_id, "terminal", str(ordinal)),
+                     separators=(",", ":"))
+    return "cmd_" + sha256(raw.encode()).hexdigest()[:24]
+
+
+def _seed_unrelated_history(store, count):
+    connection, now, mission = store._require_writer(), NOW.isoformat(), "msn_history"
+    connection.execute("INSERT INTO missions VALUES (?,?,?,?,?,?)",
+                       (mission, "ses_1", "completed", 1, now, now))
+    connection.execute("INSERT INTO mission_versions VALUES (?,?,?,?,?,?)",
+                       (mission, 1, "prv_history", "0" * 64, "{}", now))
+    connection.executemany("INSERT INTO tasks VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)", (
+        (f"tsk_history_{i}", mission, 1, i + 1, f"history-{i}", "implementer",
+         "codex-cli", "agt_history", "route", "completed", "{}", now, now)
+        for i in range(count)))
+    connection.executemany("INSERT INTO attempts VALUES (?,?,?,?,?,?,?,?,?,?,?,?)", (
+        (f"att_history_{i}", f"tsk_history_{i}", None, 1, "completed", None,
+         "done", 0, None, 0, now, now) for i in range(count)))
+    connection.executemany("INSERT INTO commands VALUES (?,?,'completed',?,?,?)", (
+        (_stored_command_id(mission, 1, f"tsk_history_{i}", 1),
+         "execution_stage_committed", json.dumps({
+             "attempt_id": f"att_history_{i}", "evidence_ids": [f"ev_history_{i}"],
+             "handoff_id": None, "mission_id": mission, "mission_version": 1,
+             "task_id": f"tsk_history_{i}"}, sort_keys=True, separators=(",", ":")),
+         now, now) for i in range(count)))
+
+
+@pytest.mark.parametrize("case", ("invalid_identity", "nonexistent", "incomplete"))
+def test_projection_rejects_disguised_unowned_command_read_only(store, case):
+    seed_closed_stage(store, "implementation")
+    _seed_unrelated_history(store, 1)
+    task = next(item for item in store._resume_draft.tasks if item.name == "revision")
+    result = {"attempt_id": "att_history_0", "evidence_ids": ["ev_history_0"],
+              "handoff_id": None, "mission_id": "msn_history",
+              "mission_version": 1, "task_id": "tsk_history_0"}
+    if case == "invalid_identity":
+        result["mission_id"] = "other"
+    elif case == "nonexistent":
+        result["mission_id"] = "msn_nonexistent"
+    else:
+        result.pop("handoff_id")
+    store._require_writer().execute("INSERT INTO commands VALUES (?,?,'completed',?,?,?)", (
+        command_id("terminal", store._resume_confirmed, task, 2),
+        "execution_stage_committed", json.dumps(result, sort_keys=True, separators=(",", ":")),
+        NOW.isoformat(), NOW.isoformat()))
+    before = _table_snapshot(store)
+
+    with pytest.raises(ExecutionResumeProjectionError, match="resume_projection_malformed"):
+        store.load_execution_resume("ses_1")
+
+    assert _table_snapshot(store) == before
+
+
 def test_projection_ignores_unrelated_completed_command_history(store):
     seed_closed_stage(store, "implementation")
-    unrelated_result = json.dumps(
-        {
-            "attempt_id": "att_unrelated_1",
-            "evidence_ids": ["ev_unrelated_1"],
-            "handoff_id": "hnd_unrelated_1",
-            "mission_id": "msn_unrelated",
-            "mission_version": 1,
-            "task_id": "tsk_unrelated",
-        },
-        sort_keys=True, separators=(",", ":"),
-    )
-    store._require_writer().executemany(
-        "INSERT INTO commands VALUES (?,?,'completed',?,?,?)",
-        (
-            (
-                f"cmd_unrelated_{index}", "execution_stage_committed",
-                unrelated_result, NOW.isoformat(), NOW.isoformat(),
-            )
-            for index in range(4097)
-        ),
-    )
+    _seed_unrelated_history(store, 4097)
     before = _table_snapshot(store)
 
     snapshot = store.load_execution_resume("ses_1")

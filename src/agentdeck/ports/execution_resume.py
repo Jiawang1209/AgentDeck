@@ -119,6 +119,26 @@ def _tuple(value: object, item_type: type) -> tuple:
     return value
 
 
+def _terminal_result_owner(value: object) -> tuple[str, int, str, str]:
+    fields = {
+        "mission_id", "mission_version", "task_id", "attempt_id",
+        "evidence_ids", "handoff_id",
+    }
+    if type(value) is not dict or set(value) != fields:
+        _malformed()
+    evidence_ids = value["evidence_ids"]
+    if type(evidence_ids) is not list or not evidence_ids:
+        _malformed()
+    checked_evidence = tuple(_identity(item, "ev_") for item in evidence_ids)
+    if len(checked_evidence) != len(set(checked_evidence)):
+        _malformed()
+    _optional_identity(value["handoff_id"], "hnd_")
+    return (
+        _identity(value["mission_id"], "msn_"), _integer(value["mission_version"]),
+        _identity(value["task_id"], "tsk_"), _identity(value["attempt_id"], "att_"),
+    )
+
+
 @dataclass(frozen=True)
 class ResumeAttemptFacts:
     attempt_id: str

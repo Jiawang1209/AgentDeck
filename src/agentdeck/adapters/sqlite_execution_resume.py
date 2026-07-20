@@ -40,6 +40,7 @@ from agentdeck.ports.execution_resume import (
     ResumeEvidenceFacts,
     ResumeHandoffFacts,
     ResumeStageFacts,
+    _terminal_result_owner,
 )
 
 
@@ -195,13 +196,8 @@ def _load_attempts(
             _fail()
         grouped[task_id] = attempts
     return {key: tuple(value) for key, value in grouped.items()}
-def _command_id(
-    confirmed: ConfirmedMissionVersion, task: TaskDefinition, ordinal: int,
-) -> str:
-    parts = (
-        confirmed.mission_id, str(confirmed.version), task.task_id,
-        "terminal", str(ordinal),
-    )
+def _command_id(mission_id: str, version: int, task_id: str, ordinal: int) -> str:
+    parts = (mission_id, str(version), task_id, "terminal", str(ordinal))
     canonical = json.dumps(parts, ensure_ascii=False, separators=(",", ":"))
     return "cmd_" + sha256(canonical.encode("utf-8")).hexdigest()[:24]
 def _load_terminal_command(
@@ -210,7 +206,9 @@ def _load_terminal_command(
     task: TaskDefinition,
     attempt: Attempt,
 ) -> tuple[str, str, dict[str, object]]:
-    identity = _command_id(confirmed, task, attempt.ordinal)
+    identity = _command_id(
+        confirmed.mission_id, confirmed.version, task.task_id, attempt.ordinal
+    )
     row = connection.execute(
         """SELECT command_kind,state,canonical_result_facts,created_at,completed_at
              FROM commands WHERE command_id=?""",
@@ -219,22 +217,8 @@ def _load_terminal_command(
     if row is None or row[0] != "execution_stage_committed":
         _fail()
     result = _validate_command_row(row)
-    expected_base = {
-        "mission_id": confirmed.mission_id,
-        "mission_version": confirmed.version,
-        "task_id": task.task_id,
-        "attempt_id": attempt.attempt_id,
-    }
-    if type(result) is not dict or set(result) != {
-        *expected_base, "evidence_ids", "handoff_id"
-    } or any(result[field] != value for field, value in expected_base.items()):
-        _fail()
-    evidence_ids = result["evidence_ids"]
-    if (
-        type(evidence_ids) is not list or not evidence_ids
-        or any(type(item) is not str for item in evidence_ids)
-        or len(evidence_ids) != len(set(evidence_ids))
-        or (result["handoff_id"] is not None and type(result["handoff_id"]) is not str)
+    if _terminal_result_owner(result) != (
+        confirmed.mission_id, confirmed.version, task.task_id, attempt.attempt_id
     ):
         _fail()
     canonical_result = row[2]
@@ -429,6 +413,7 @@ def _validate_command_coverage(
         if stage is None or row[0] != "execution_stage_committed":
             _fail()
         result = _validate_command_row(row)
+        _terminal_result_owner(result)
         expected = {
             "mission_id": confirmed.mission_id, "mission_version": confirmed.version,
             "task_id": stage.task_id, "attempt_id": stage.terminal_attempt_id,
@@ -444,7 +429,9 @@ def _validate_command_coverage(
         maximum = last + 1 if stage.terminal_command_id is None else last
         maximum = max(maximum, 1)
         for ordinal in range(1, maximum + 1):
-            identity = _command_id(confirmed, task, ordinal)
+            identity = _command_id(
+                confirmed.mission_id, confirmed.version, task.task_id, ordinal
+            )
             row = connection.execute(
                 """SELECT command_kind,state,canonical_result_facts,
                           created_at,completed_at FROM commands WHERE command_id=?""",
@@ -458,12 +445,21 @@ def _validate_command_coverage(
              WHERE command_kind='execution_stage_committed'""")
     for identity, *row in rows:
         decoded = _validate_command_row(tuple(row))
-        mission_id, mission_version = decoded.get("mission_id"), decoded.get("mission_version")
-        if (type(mission_id) is not str or not mission_id.strip()
-                or type(mission_version) is not int or mission_version < 1):
-            _fail()
+        mission_id, mission_version, task_id, attempt_id = _terminal_result_owner(decoded)
         if (mission_id, mission_version) == (confirmed.mission_id, confirmed.version):
             validate(identity, tuple(row))
+            continue
+        owner = connection.execute(
+            """SELECT a.ordinal,a.state FROM mission_versions AS v
+                 JOIN tasks AS t ON (t.mission_id,t.mission_version)=(v.mission_id,v.version)
+                 JOIN attempts AS a ON a.task_id=t.task_id
+               WHERE v.mission_id=? AND v.version=? AND t.task_id=? AND a.attempt_id=?""",
+            (mission_id, mission_version, task_id, attempt_id),
+        ).fetchone()
+        if owner is None or owner[1] != "completed" or identity != _command_id(
+            mission_id, mission_version, task_id, owner[0]
+        ):
+            _fail()
     if seen != set(represented):
         _fail()
 def load_execution_resume(

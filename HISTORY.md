@@ -4,6 +4,20 @@
 
 ## 2026-07-20
 
+### Prove unrelated resume command ownership
+
+- Tightened every streamed terminal result to the same exact six-field,
+  typed-ID, nonempty unique Evidence, and optional typed Handoff closure used
+  by current-Mission terminal bundles. Payload claims such as an untyped owner,
+  nonexistent Mission/version, or incomplete result can no longer disguise a
+  high-ordinal current command.
+- Unrelated completed commands are now ignored only after SQLite proves the
+  MissionVersion, owning Task, completed Attempt, and deterministic command ID
+  rebuilt from the real Attempt ordinal. A 4,097-command real unrelated history
+  remains accepted. Focused RED produced `3 failed, 1 passed`; GREEN passes
+  `177` focused tests and `16` architecture/schema authority checks without
+  schema or migration changes.
+
 ### Close unowned resume command gaps
 
 - Expanded the unbounded `execution_stage_committed` stream from completed
