@@ -12,12 +12,12 @@ from acp.schema import (
     RequestPermissionResponse, TextContentBlock, ToolCallProgress,
     ToolCallStart, ToolCallUpdate,
 )
-
 from agentdeck.kernel.diagnostics import Diagnostic, Severity
 from agentdeck.kernel.events import normalize_occurred_at
 from agentdeck.ports.clock import Clock
 from agentdeck.ports.worker import (
-    TaskRequest, WorkerEvent, WorkerHandle, WorkerResult, validate_worker_reason,
+    TaskRequest, WorkerCancellationError, WorkerEvent, WorkerHandle, WorkerResult,
+    validate_worker_reason,
 )
 _MAX_ACP_UPDATE_BYTES: Final = 64 * 1024
 _MAX_ACP_TOTAL_BYTES: Final = 1024 * 1024
@@ -46,7 +46,7 @@ class _Run:
     queue: asyncio.Queue[WorkerEvent | None] = field(default_factory=asyncio.Queue)
     prompt_task: asyncio.Task[None] | None = None
     result: WorkerResult | None = None
-    error: ACPWorkerError | None = None
+    error: ACPWorkerError | WorkerCancellationError | None = None
     pending_permission: _PermissionWaiter | None = None
     sequence: int = 0
     permission_count: int = 0
@@ -163,12 +163,17 @@ class ACPWorker:
             raise ValueError("ACP Worker task is not cancellable")
         reason = validate_worker_reason(reason)
         run.cancellation_requested = True
+        failure: tuple[str, bool] | None = None
         try:
             await self._agent.cancel(run.raw_session_id)
-        except Exception:
-            error = self._error("acp_cancel_failed", False, run.request)
+        except WorkerCancellationError as caught:
+            failure = (caught.code, caught.outcome_known)
+        except BaseException:
+            failure = ("transport_disconnected", False)
+        if failure is not None:
+            error = WorkerCancellationError(code=failure[0], outcome_known=failure[1])
             await self._cancel_prompt(run)
-            self._fail(error)
+            self._fail_cancellation(run, error)
             raise error from None
         await self._cancel_prompt(run)
         self._finish("cancelled", {"reason": reason})
@@ -387,6 +392,13 @@ class ACPWorker:
         run.error = error
         run.terminal = True
         run.queue.put_nowait(None)
+    def _fail_cancellation(self, run: _Run, error: WorkerCancellationError) -> None:
+        if run.terminal:
+            return
+        self._cancel_pending_permission(run)
+        run.error = error
+        run.terminal = True
+        run.queue.put_nowait(None)
     async def _event_stream(self, run: _Run) -> AsyncIterator[WorkerEvent]:
         while True:
             event = await run.queue.get()
@@ -413,7 +425,6 @@ class ACPWorker:
         if self._run is None:
             raise ValueError("ACP Worker has no active task")
         return self._run
-
     def _error(
         self, code: str, outcome_known: bool, request: TaskRequest, *,
         retryable: bool = False,
@@ -429,16 +440,13 @@ class ACPWorker:
             occurred_at=self._now(), task_id=request.task_id,
             attempt_id=request.attempt_id,
         ))
-
     def _run_error(self, code: str, run: _Run) -> ACPWorkerError:
         return self._error(code, not run.effect_may_have_occurred, run.request)
-
     def _now(self) -> str:
         try:
             return normalize_occurred_at(self._clock.now().isoformat())
         except Exception:
             raise RuntimeError("clock did not provide a canonical aware time") from None
-
 def _permission_id(value: object) -> str:
     if type(value) is not str or not value.startswith("perm_") or not value[5:]:
         raise ValueError("permission_request_id must be typed and bounded")
@@ -480,12 +488,8 @@ def _permission_effect(
             "destructive", "project_boundary_unproven"
         )
     return _PERMISSION_EFFECTS.get(kind, ("destructive", "unclassified_tool_effect"))
-
-
 def _is_recoverable_disconnect(error: Exception) -> bool:
     return isinstance(error, (ConnectionError, EOFError, TimeoutError))
-
-
 def _tool_payload(update: ToolCallStart | ToolCallProgress) -> dict[str, object]:
     payload: dict[str, object] = {"tool_call_id": update.tool_call_id}
     for name in ("kind", "status", "title"):
@@ -493,6 +497,4 @@ def _tool_payload(update: ToolCallStart | ToolCallProgress) -> dict[str, object]
         if value is not None:
             payload[name] = value
     return payload
-
-
 __all__ = ["ACPWorker", "ACPWorkerError"]

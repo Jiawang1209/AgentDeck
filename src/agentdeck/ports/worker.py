@@ -58,6 +58,23 @@ PayloadValue: TypeAlias = PayloadScalar | tuple["PayloadValue", ...] | Mapping[s
 RedactedPayload: TypeAlias = Mapping[str, PayloadValue]
 
 
+class WorkerCancellationError(RuntimeError):
+    ALLOWED_CODES = frozenset({
+        "cancel_rejected",
+        "cancel_timeout",
+        "transport_disconnected",
+    })
+
+    def __init__(self, *, code: str, outcome_known: bool) -> None:
+        if type(code) is not str or code not in self.ALLOWED_CODES:
+            raise ValueError("cancellation code is not allowlisted")
+        if type(outcome_known) is not bool:
+            raise TypeError("outcome_known must be an exact bool")
+        self.code = code
+        self.outcome_known = outcome_known
+        super().__init__(code, outcome_known)
+
+
 def _text(value: object, field: str, *, prefix: str | None = None) -> str:
     if type(value) is not str:
         raise TypeError(f"{field} must be a string")
@@ -282,6 +299,6 @@ class Worker(Protocol):
 
 __all__ = [
     "RedactedPayload", "TaskRequest", "Worker", "WorkerEvent", "WorkerHandle",
-    "WorkerResult", "WORKER_EVENT_KINDS", "WORKER_RESULT_STATUSES",
-    "validate_worker_reason",
+    "WorkerResult", "WorkerCancellationError", "WORKER_EVENT_KINDS",
+    "WORKER_RESULT_STATUSES", "validate_worker_reason",
 ]

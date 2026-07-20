@@ -12,6 +12,7 @@ from acp.schema import InitializeResponse, NewSessionResponse
 from agentdeck.adapters.adapter_readiness import (
     canonical_project_root, exact_absolute_path, merged_environment,
 )
+from agentdeck.ports.worker import WorkerCancellationError
 from agentdeck.ports.transport import (
     transport_argv, transport_byte_bound, transport_project_root,
     transport_timeout,
@@ -120,11 +121,32 @@ class ACPWorkerConnection:
             await self.aclose()
 
     async def cancel(self, *args: object, **kwargs: Any) -> None:
-        connection = self._require_connection()
+        connection = self._connection_or_none()
+        notification_failure: tuple[str, bool] | None = None
+        if connection is None:
+            notification_failure = ("cancel_rejected", True)
         try:
-            await connection.cancel(*args, **kwargs)
-        finally:
-            await self.aclose()
+            if connection is not None:
+                await asyncio.wait_for(
+                    connection.cancel(*args, **kwargs),
+                    timeout=self.timeout_seconds,
+                )
+        except TimeoutError:
+            notification_failure = ("cancel_timeout", False)
+        except (BrokenPipeError, ConnectionError, EOFError):
+            notification_failure = ("transport_disconnected", False)
+        except asyncio.CancelledError:
+            notification_failure = ("cancel_timeout", False)
+        except BaseException:
+            notification_failure = ("transport_disconnected", False)
+
+        shutdown_failure = await self._bounded_shutdown_facts()
+        failure = notification_failure or shutdown_failure
+        if failure is not None:
+            code, outcome_known = failure
+            raise WorkerCancellationError(
+                code=code, outcome_known=outcome_known,
+            ) from None
 
     async def aclose(self) -> None:
         async with self._close_lock:
@@ -135,6 +157,26 @@ class ACPWorkerConnection:
             if manager is None:
                 return
             await manager.__aexit__(None, None, None)
+
+    async def _bounded_shutdown_facts(self) -> tuple[str, bool] | None:
+        async with self._close_lock:
+            self._closed = True
+            manager = self._manager
+            self._manager = None
+            self._connection = None
+        if manager is None:
+            return None
+        failure: tuple[str, bool] | None = None
+        try:
+            await asyncio.wait_for(
+                manager.__aexit__(None, None, None),
+                timeout=self.timeout_seconds,
+            )
+        except (TimeoutError, asyncio.CancelledError):
+            failure = ("cancel_timeout", False)
+        except BaseException:
+            failure = ("transport_disconnected", False)
+        return failure
 
     async def _connect(self) -> object:
         if self._started or self._closed:
@@ -180,6 +222,11 @@ class ACPWorkerConnection:
     def _require_connection(self) -> object:
         if self._connection is None or self._closed:
             raise ValueError("ACP Worker connection is not active")
+        return self._connection
+
+    def _connection_or_none(self) -> object | None:
+        if self._closed:
+            return None
         return self._connection
 
 

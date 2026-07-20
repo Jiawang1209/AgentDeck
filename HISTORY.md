@@ -4,6 +4,23 @@
 
 ## 2026-07-20
 
+### Close bounded ACP project cancellation
+
+- Defined ACP cancellation success as two ordered bounded phases: the cancel
+  notification must complete first, then the AgentDeck-owned connection and
+  local adapter-process manager must shut down and reap. A notification or
+  owner timeout, disconnect, SDK failure, caller cancellation, or missing live
+  connection now closes terminal ownership without claiming false success.
+- Added the content-free `WorkerCancellationError` Port boundary with only
+  `cancel_rejected`, `cancel_timeout`, or `transport_disconnected` plus an exact
+  outcome-known bool. ACPWorker preserves that typed pair, closes a failed
+  cancellation stream once with no cancelled/failed event, and stores neither
+  the raw ACP session nor the original exception.
+- Strict RED produced the expected `2` collection errors for the absent Port
+  error. Focused GREEN passes `64` cancellation/connection failure tests, and
+  the full ACP adapter gate passes `145` tests using only fakes and read-only
+  preflight contracts with zero real provider or adapter process starts.
+
 ### Close Task 15B recovery authority ambiguity in the implementation plan
 
 - Corrected the Task 15B.5 recovery pseudocode so two distinct active Attempts

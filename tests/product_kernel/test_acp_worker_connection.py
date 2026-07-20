@@ -16,6 +16,7 @@ from acp.schema import (
 
 from agentdeck.adapters.acp import ACPWorker, ACPWorkerError
 from agentdeck.adapters.acp_worker_connection import ACPWorkerConnection
+from agentdeck.ports.worker import WorkerCancellationError
 
 from .fakes import FrozenClock
 from .fixtures.fake_acp_stdio_agent import fake_command
@@ -91,6 +92,85 @@ class _Connection:
 
     async def cancel(self, session_id: str) -> None:
         self.cancelled = True
+
+
+class _CallbackWorker:
+    async def session_update(self, *args, **kwargs) -> None:
+        return None
+
+    async def request_permission(self, *args, **kwargs) -> object:
+        return object()
+
+
+class _CancellationConnection:
+    def __init__(self, owner: "_CancellationOwner") -> None:
+        self.owner = owner
+
+    async def initialize(self, protocol_version: int) -> InitializeResponse:
+        return InitializeResponse(
+            protocol_version=protocol_version,
+            agent_capabilities=AgentCapabilities(),
+        )
+
+    async def new_session(self, *, cwd: str) -> NewSessionResponse:
+        return NewSessionResponse(session_id="raw_session")
+
+    async def cancel(self, session_id: str) -> None:
+        self.owner.calls.append(("cancel", session_id))
+        self.owner.cancel_count += 1
+        self.owner.cancel_entered.set()
+        if self.owner.cancel_blocks:
+            await asyncio.Event().wait()
+        if self.owner.cancel_failure is not None:
+            raise self.owner.cancel_failure
+
+
+class _CancellationOwner:
+    def __init__(self, tmp_path: Path) -> None:
+        self.project_root = str(tmp_path)
+        self.calls: list[tuple[object, ...]] = []
+        self.cancel_count = 0
+        self.cancel_entered = asyncio.Event()
+        self.cancel_blocks = False
+        self.cancel_failure: BaseException | None = None
+        self.reap_blocks = False
+        self.reap_failure: BaseException | None = None
+
+    def connection(self, *, timeout_seconds: float = 30.0) -> ACPWorkerConnection:
+        @asynccontextmanager
+        async def spawn(client, command, *args, **kwargs):
+            try:
+                yield _CancellationConnection(self), object()
+            finally:
+                if self.reap_blocks:
+                    await asyncio.Event().wait()
+                if self.reap_failure is not None:
+                    raise self.reap_failure
+                self.calls.append(("owner_reaped",))
+
+        connection = ACPWorkerConnection(
+            ("/verified/adapter",), project_root=self.project_root,
+            spawn_factory=spawn, timeout_seconds=timeout_seconds,
+        )
+        connection.on_connect(_CallbackWorker())
+        return connection
+
+
+def _assert_cancellation_error(
+    error: WorkerCancellationError, code: str, outcome_known: bool,
+    *forbidden: str,
+) -> None:
+    assert type(error) is WorkerCancellationError
+    assert error.code == code
+    assert error.outcome_known is outcome_known
+    assert error.args == (code, outcome_known)
+    assert error.__dict__ == {"code": code, "outcome_known": outcome_known}
+    assert str(error) == repr((code, outcome_known))
+    assert repr(error) == f"WorkerCancellationError({code!r}, {outcome_known!r})"
+    assert error.__cause__ is None
+    assert error.__context__ is None
+    rendered = repr(error) + str(error) + repr(error.args) + repr(error.__dict__)
+    assert all(value not in rendered for value in forbidden)
 
 
 def _injected_owner(
@@ -185,6 +265,175 @@ def test_connection_rejects_relative_command_root_or_hostile_environment(
             ("/adapter",), project_root=str(tmp_path),
             environment={"BAD\nKEY": "value"},
         )
+
+
+@_sync_test
+async def test_cancel_succeeds_only_after_notification_and_owner_reap(
+    tmp_path: Path,
+) -> None:
+    owner = _CancellationOwner(tmp_path)
+    connection = owner.connection()
+    await connection.initialize(PROTOCOL_VERSION)
+    await connection.new_session(cwd=owner.project_root)
+
+    await connection.cancel("raw_session")
+
+    assert owner.calls[-2:] == [
+        ("cancel", "raw_session"),
+        ("owner_reaped",),
+    ]
+    assert connection.closed is True
+
+
+@_sync_test
+async def test_cancel_notification_timeout_is_closed_and_content_free(
+    tmp_path: Path,
+) -> None:
+    owner = _CancellationOwner(tmp_path)
+    owner.cancel_blocks = True
+    connection = owner.connection(timeout_seconds=0.01)
+    await connection.initialize(PROTOCOL_VERSION)
+    await connection.new_session(cwd=owner.project_root)
+
+    with pytest.raises(WorkerCancellationError) as captured:
+        await connection.cancel("raw_session")
+
+    _assert_cancellation_error(
+        captured.value, "cancel_timeout", False, "raw_session",
+    )
+    assert connection.closed is True
+
+
+@_sync_test
+async def test_owner_reap_timeout_never_reports_cancel_success(
+    tmp_path: Path,
+) -> None:
+    owner = _CancellationOwner(tmp_path)
+    owner.reap_blocks = True
+    connection = owner.connection(timeout_seconds=0.01)
+    await connection.initialize(PROTOCOL_VERSION)
+    await connection.new_session(cwd=owner.project_root)
+
+    with pytest.raises(WorkerCancellationError) as captured:
+        await connection.cancel("raw_session")
+
+    _assert_cancellation_error(captured.value, "cancel_timeout", False)
+    assert owner.cancel_count == 1
+    assert connection.closed is True
+
+
+@_sync_test
+async def test_owner_reap_failure_is_transport_disconnected(
+    tmp_path: Path,
+) -> None:
+    owner = _CancellationOwner(tmp_path)
+    owner.reap_failure = RuntimeError("private owner shutdown body")
+    connection = owner.connection()
+    await connection.initialize(PROTOCOL_VERSION)
+    await connection.new_session(cwd=owner.project_root)
+
+    with pytest.raises(WorkerCancellationError) as captured:
+        await connection.cancel("raw_session")
+
+    _assert_cancellation_error(
+        captured.value, "transport_disconnected", False,
+        "private owner shutdown body", "raw_session",
+    )
+    assert owner.cancel_count == 1 and connection.closed is True
+
+
+@pytest.mark.parametrize(
+    "raw_failure",
+    [
+        BrokenPipeError("private broken pipe"),
+        ConnectionError("private connection body"),
+        EOFError("private eof body"),
+        RuntimeError("private unexpected SDK body"),
+    ],
+)
+@_sync_test
+async def test_cancel_transport_failures_are_closed_and_content_free(
+    tmp_path: Path, raw_failure: BaseException,
+) -> None:
+    owner = _CancellationOwner(tmp_path)
+    owner.cancel_failure = raw_failure
+    connection = owner.connection()
+    await connection.initialize(PROTOCOL_VERSION)
+    await connection.new_session(cwd=owner.project_root)
+
+    with pytest.raises(WorkerCancellationError) as captured:
+        await connection.cancel("raw_session")
+
+    _assert_cancellation_error(
+        captured.value, "transport_disconnected", False,
+        "raw_session", str(raw_failure),
+    )
+    assert connection.closed is True
+
+
+@_sync_test
+async def test_cancel_caller_cancellation_still_reaps_and_is_sanitized(
+    tmp_path: Path,
+) -> None:
+    owner = _CancellationOwner(tmp_path)
+    owner.cancel_blocks = True
+    connection = owner.connection()
+    await connection.initialize(PROTOCOL_VERSION)
+    await connection.new_session(cwd=owner.project_root)
+    task = asyncio.create_task(connection.cancel("raw_session"))
+    await owner.cancel_entered.wait()
+
+    task.cancel("private caller cancellation")
+    with pytest.raises(WorkerCancellationError) as captured:
+        await task
+
+    _assert_cancellation_error(
+        captured.value, "cancel_timeout", False,
+        "raw_session", "private caller cancellation",
+    )
+    assert owner.calls[-1] == ("owner_reaped",)
+    assert connection.closed is True
+
+
+@_sync_test
+async def test_cancel_hostile_raw_text_never_crosses_the_port(
+    tmp_path: Path,
+) -> None:
+    hostile = "ghp_" + ("A" * 36)
+    owner = _CancellationOwner(tmp_path)
+    owner.cancel_failure = RuntimeError(hostile)
+    connection = owner.connection()
+    await connection.initialize(PROTOCOL_VERSION)
+    await connection.new_session(cwd=owner.project_root)
+
+    with pytest.raises(WorkerCancellationError) as captured:
+        await connection.cancel("raw_session")
+
+    _assert_cancellation_error(
+        captured.value, "transport_disconnected", False,
+        hostile, "raw_session",
+    )
+    assert connection.closed is True
+
+
+@pytest.mark.parametrize("lifecycle", ["never_connected", "already_closed"])
+@_sync_test
+async def test_cancel_without_live_connection_is_known_rejection(
+    tmp_path: Path, lifecycle: str,
+) -> None:
+    owner = _CancellationOwner(tmp_path)
+    connection = owner.connection()
+    if lifecycle == "already_closed":
+        await connection.aclose()
+
+    with pytest.raises(WorkerCancellationError) as captured:
+        await connection.cancel("raw_session")
+
+    _assert_cancellation_error(
+        captured.value, "cancel_rejected", True, "raw_session",
+    )
+    assert owner.cancel_count == 0
+    assert connection.closed is True
 
 
 @_sync_test

@@ -5,6 +5,7 @@ import asyncio
 import pytest
 
 from agentdeck.adapters.acp import ACPWorkerError
+from agentdeck.ports.worker import WorkerCancellationError
 from product_kernel.test_acp_worker_contract import worker_factory
 from product_kernel.worker_contract import task_request
 
@@ -35,6 +36,55 @@ async def run_failure(scenario: str) -> ACPWorkerError:
     with pytest.raises(ACPWorkerError) as raised:
         await worker.collect_result(handle)
     return raised.value
+
+
+def _worker_with_cancel_error(error: BaseException):
+    worker = worker_factory("cancel_race")()
+    agent = worker._agent
+
+    async def cancel(session_id: str, **kwargs) -> None:
+        agent.cancelled = True
+        agent.cancel_gate.set()
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+        raise error
+
+    agent.cancel = cancel
+    return worker
+
+
+def test_worker_cancellation_error_is_closed_and_content_free() -> None:
+    assert WorkerCancellationError.ALLOWED_CODES == frozenset({
+        "cancel_rejected", "cancel_timeout", "transport_disconnected",
+    })
+    error = WorkerCancellationError(
+        code="transport_disconnected", outcome_known=False,
+    )
+    assert error.code == "transport_disconnected"
+    assert error.outcome_known is False
+    assert error.args == ("transport_disconnected", False)
+    assert set(error.__dict__) == {"code", "outcome_known"}
+    assert error.__cause__ is None
+    assert error.__context__ is None
+    assert str(error) == "('transport_disconnected', False)"
+    assert repr(error) == (
+        "WorkerCancellationError('transport_disconnected', False)"
+    )
+
+
+@pytest.mark.parametrize(
+    ("code", "outcome_known", "exception"),
+    [
+        ("unknown", False, ValueError),
+        ("cancel_timeout", 0, TypeError),
+        ("cancel_timeout", 1, TypeError),
+    ],
+)
+def test_worker_cancellation_error_rejects_open_values(
+    code: str, outcome_known: object, exception: type[Exception],
+) -> None:
+    with pytest.raises(exception):
+        WorkerCancellationError(code=code, outcome_known=outcome_known)  # type: ignore[arg-type]
 
 
 @pytest.mark.parametrize(("scenario", "code", "outcome_known", "retryable"), [
@@ -146,24 +196,54 @@ def test_cancel_intent_wins_prompt_completion_race() -> None:
     asyncio.run(scenario())
 
 
-def test_cancel_failure_has_one_typed_authoritative_terminal() -> None:
+def test_acp_worker_preserves_exact_cancellation_failure_and_closes_stream() -> None:
     async def scenario() -> None:
-        worker = worker_factory("cancel_failure")()
+        expected = WorkerCancellationError(
+            code="cancel_timeout", outcome_known=False,
+        )
+        worker = _worker_with_cancel_error(expected)
         handle = await worker.start_task(task_request())
         stream = worker.stream_events(handle).__aiter__()
         assert (await anext(stream)).kind == "started"
 
-        with pytest.raises(ACPWorkerError) as raised:
+        with pytest.raises(WorkerCancellationError) as raised:
             await worker.cancel_task(handle, reason="cancelled by test")
 
-        assert raised.value.diagnostic.code == "acp_cancel_failed"
-        assert raised.value.diagnostic.outcome_known is False
-        assert raised.value.diagnostic.retryable is False
-        assert "RAW-CANCEL-BODY" not in repr(raised.value.diagnostic) + str(raised.value)
         events = [event async for event in stream]
-        assert [event.kind for event in events] == ["failed"]
-        with pytest.raises(ACPWorkerError, match="acp_cancel_failed"):
+        assert (raised.value.code, raised.value.outcome_known) == (
+            "cancel_timeout", False,
+        )
+        assert events == []
+        assert worker._run is not None and worker._run.queue.empty()
+        assert worker._run.error is raised.value
+        assert "raw-acp-session" not in repr(worker._run.error.__dict__)
+        with pytest.raises(WorkerCancellationError) as collected:
             await worker.collect_result(handle)
+        assert collected.value is raised.value
+
+    asyncio.run(scenario())
+
+
+def test_acp_worker_sanitizes_unexpected_cancel_exception_without_event() -> None:
+    async def scenario() -> None:
+        hostile = "ghp_" + ("B" * 36)
+        worker = _worker_with_cancel_error(RuntimeError(hostile))
+        handle = await worker.start_task(task_request())
+        stream = worker.stream_events(handle).__aiter__()
+        assert (await anext(stream)).kind == "started"
+
+        with pytest.raises(WorkerCancellationError) as raised:
+            await worker.cancel_task(handle, reason="cancelled by test")
+
+        events = [event async for event in stream]
+        assert (raised.value.code, raised.value.outcome_known) == (
+            "transport_disconnected", False,
+        )
+        assert raised.value.__cause__ is None
+        assert raised.value.__context__ is None
+        assert hostile not in repr(raised.value) + repr(raised.value.__dict__)
+        assert events == []
+        assert worker._run is not None and worker._run.queue.empty()
 
     asyncio.run(scenario())
 
