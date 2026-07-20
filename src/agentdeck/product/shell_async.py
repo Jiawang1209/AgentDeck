@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import asyncio
-from typing import TextIO
+from collections.abc import Coroutine
+from typing import Any, TextIO
 
 
 _CHILD_SETTLE_TIMEOUT_SECONDS = 1.0
@@ -39,18 +40,37 @@ class AsyncTerminalReader:
             loop.remove_reader(descriptor)
 
 
-async def consume_cancelled(task: asyncio.Task) -> None:
-    try:
-        await task
-    except asyncio.CancelledError:
-        pass
+async def _shield_cleanup(
+    cleanup: Coroutine[Any, Any, None],
+    caller_cancelled: asyncio.CancelledError | None,
+) -> None:
+    cleanup_task = asyncio.create_task(cleanup)
+    first_cancelled = caller_cancelled
+    while not cleanup_task.done():
+        try:
+            await asyncio.shield(cleanup_task)
+        except asyncio.CancelledError as error:
+            if first_cancelled is None:
+                first_cancelled = error
+    await asyncio.gather(cleanup_task, return_exceptions=True)
+    if first_cancelled is not None:
+        raise first_cancelled
 
 
-async def collect_iteration_tasks(*tasks: asyncio.Task) -> None:
+async def _cancel_and_collect(*tasks: asyncio.Task) -> None:
     for task in tasks:
         if not task.done():
             task.cancel()
     await asyncio.gather(*tasks, return_exceptions=True)
+
+
+async def collect_iteration_tasks(
+    *tasks: asyncio.Task,
+    caller_cancelled: asyncio.CancelledError | None = None,
+) -> None:
+    await _shield_cleanup(
+        _cancel_and_collect(*tasks), caller_cancelled,
+    )
 
 
 async def cancel_and_settle_owned(task: asyncio.Task | None) -> None:
@@ -68,20 +88,18 @@ async def cancel_and_settle_owned(task: asyncio.Task | None) -> None:
         await asyncio.gather(task, return_exceptions=True)
 
 
-async def settle_owned_after_caller_cancel(task: asyncio.Task | None) -> None:
-    cleanup = asyncio.create_task(cancel_and_settle_owned(task))
-    while not cleanup.done():
-        try:
-            await asyncio.shield(cleanup)
-        except asyncio.CancelledError:
-            continue
-    await asyncio.gather(cleanup, return_exceptions=True)
+async def settle_owned_after_caller_cancel(
+    task: asyncio.Task | None,
+    caller_cancelled: asyncio.CancelledError,
+) -> None:
+    await _shield_cleanup(
+        cancel_and_settle_owned(task), caller_cancelled,
+    )
 
 
 __all__ = [
     "AsyncTerminalReader",
     "cancel_and_settle_owned",
     "collect_iteration_tasks",
-    "consume_cancelled",
     "settle_owned_after_caller_cancel",
 ]

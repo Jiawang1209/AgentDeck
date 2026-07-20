@@ -83,6 +83,11 @@
   Worker cancel RPC. Terminal ownership moved to `product/shell_async.py`, and
   caller discrimination plus validated approval records moved to focused
   Application modules as meaningful 500-line boundary splits.
+- Closed the final per-iteration cancellation window. The Shell now captures
+  the first caller cancellation before entering each iteration's `finally` and
+  runs read/SIGINT collection as an independent shielded Task. A later cancel
+  can no longer replace the first error or interrupt `gather`; the supported
+  cooperative terminal reader is settled before the Store closes.
 - Corrected the R2 lexical legacy-authority gate to inspect production source
   only. The previous command also scanned negative regression tests and
   therefore rejected the test that explicitly proves recovery has no tmux
@@ -111,6 +116,19 @@
   Worker cancel RPC. GREEN passes all four regressions, 127 focused Task 15B.5
   tests, 148 Task 15B.4 tests, 489 integrated Task 15B tests, 79 focused
   approval/ACP tests, and the current 1785-test Product Kernel suite.
+- The iteration-cleanup RED then reproduced an empty replacement
+  `CancelledError` during a resistant reader's cleanup. GREEN preserves the
+  original `("first",)` cancellation and leaves both read and SIGINT Tasks
+  done; final suite counts are recorded by the closing gate.
+- The normal SIGINT-loser RED then cancelled the Shell for the first time while
+  a cooperative reader was handling its own cancellation. The direct loser
+  await swallowed caller authority and surfaced the child's `EOFError` instead.
+  GREEN removes both direct loser awaits: branches only request cancellation,
+  and the shielded iteration collector performs every child wait before Store
+  close and re-raises the exact caller error. The closing gate passes 129
+  focused Task 15B.5 tests, 148 Task 15B.4 tests, 491 integrated Task 15B
+  tests, 79 focused approval/ACP tests, 42 architecture/entry/transaction
+  tests, and the current 1787-test Product Kernel suite.
 
 ### Restore the Product Kernel documentation source of truth
 

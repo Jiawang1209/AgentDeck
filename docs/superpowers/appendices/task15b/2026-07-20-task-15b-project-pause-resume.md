@@ -1883,6 +1883,19 @@ The bridge may send that cleanup RPC only when `Task.cancelling()` proves the
 bridge Task has caller-origin cancellation authority. A Worker event stream
 that raises `CancelledError` by itself must propagate unchanged with zero
 cancel RPC and zero new durable facts.
+The first caller `CancelledError` must be captured inside the input iteration,
+before its `finally` begins. Read/SIGINT collection runs as a shielded owned
+cleanup Task and absorbs later cancellation requests until a cooperative
+terminal reader has settled; only then may the exact first cancellation cross
+the outer Shell boundary. This is the same ownership helper used for Mission
+settlement and prevents the cleanup `gather` itself from becoming a leak
+window.
+The winning read/SIGINT branch may request cancellation of the losing child,
+but it must never await that child directly. A first caller cancellation during
+that direct await can be forwarded into and consumed by the child. Both loser
+Tasks are therefore awaited only by the same shielded iteration collector,
+which preserves caller cancellation identity and keeps normal SIGINT/read
+winner semantics unchanged.
 
 - [ ] **Step 1: Write mandatory startup-recovery RED tests**
 

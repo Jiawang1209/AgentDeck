@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
+import signal
 from types import SimpleNamespace
 
 import pytest
@@ -32,6 +33,28 @@ class BlockingReader:
             finally:
                 self.stopped.set()
             raise AssertionError("blocked input resumed without cancellation")
+
+
+class ResistantReader:
+    def __init__(self) -> None:
+        self.started = asyncio.Event()
+        self.cleanup_started = asyncio.Event()
+        self.release = asyncio.Event()
+        self.stopped = asyncio.Event()
+        self.cancel_count = 0
+
+    async def __call__(self, _prompt: str) -> str:
+        self.started.set()
+        try:
+            while not self.release.is_set():
+                try:
+                    await self.release.wait()
+                except asyncio.CancelledError:
+                    self.cancel_count += 1
+                    self.cleanup_started.set()
+        finally:
+            self.stopped.set()
+        raise EOFError
 
 
 class BlockingACPAgent:
@@ -243,4 +266,84 @@ async def test_repeated_caller_cancel_preserves_first_error_and_finishes_cleanup
         assert leaked == set()
     finally:
         execution.cleanup_release.set()
+        await _cancel_tasks(leaked)
+
+
+@async_test
+async def test_repeated_cancel_during_reader_cleanup_preserves_first_error(
+    tmp_path: Path,
+) -> None:
+    store, close_calls = _store_probe(tmp_path)
+    reader = ResistantReader()
+    shell = build_product_shell(
+        project_root=str(tmp_path), read_line=reader,
+        write_line=lambda _: None, clock_factory=lambda: FrozenClock(NOW),
+        discovery_factory=_discovery, config_factory=_config,
+        store_factory=lambda *args, **kwargs: store,
+    )
+    baseline = set(asyncio.all_tasks())
+    running = asyncio.create_task(shell.run_async())
+    await reader.started.wait()
+    owned = set(asyncio.all_tasks()) - baseline
+
+    running.cancel("first")
+    await reader.cleanup_started.wait()
+    running.cancel("second")
+    await asyncio.sleep(0)
+    still_cleaning = not running.done()
+    reader.release.set()
+    raised: asyncio.CancelledError | None = None
+    try:
+        await running
+    except asyncio.CancelledError as error:
+        raised = error
+    leaked = {task for task in owned if not task.done()}
+    try:
+        assert still_cleaning is True
+        assert raised is not None and raised.args == ("first",)
+        assert reader.stopped.is_set()
+        assert close_calls == ["close"]
+        assert leaked == set()
+    finally:
+        reader.release.set()
+        await _cancel_tasks(leaked)
+
+
+@async_test
+async def test_first_caller_cancel_during_sigint_reader_cleanup_is_preserved(
+    tmp_path: Path,
+) -> None:
+    store, close_calls = _store_probe(tmp_path)
+    reader = ResistantReader()
+    shell = build_product_shell(
+        project_root=str(tmp_path), read_line=reader,
+        write_line=lambda _: None, clock_factory=lambda: FrozenClock(NOW),
+        discovery_factory=_discovery, config_factory=_config,
+        store_factory=lambda *args, **kwargs: store,
+    )
+    baseline = set(asyncio.all_tasks())
+    running = asyncio.create_task(shell.run_async())
+    await reader.started.wait()
+    owned = set(asyncio.all_tasks()) - baseline
+
+    signal.raise_signal(signal.SIGINT)
+    await reader.cleanup_started.wait()
+    running.cancel("caller-first")
+    await asyncio.sleep(0)
+    reader.release.set()
+    raised: asyncio.CancelledError | None = None
+    result: int | None = None
+    try:
+        result = await running
+    except asyncio.CancelledError as error:
+        raised = error
+    leaked = {task for task in owned if not task.done()}
+    try:
+        assert result is None
+        assert raised is not None and raised.args == ("caller-first",)
+        assert reader.stopped.is_set()
+        assert close_calls == ["close"]
+        assert leaked == set()
+    finally:
+        reader.release.set()
         await _cancel_tasks(leaked)

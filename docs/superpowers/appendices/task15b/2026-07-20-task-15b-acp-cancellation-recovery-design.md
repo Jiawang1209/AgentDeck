@@ -341,7 +341,8 @@ The original Task 15B files remain authorized:
 - `src/agentdeck/application/approval_records.py` (validated public approval
   records extracted to preserve the 500-line service boundary)
 - `src/agentdeck/product/shell_async.py` (terminal Task ownership and bounded
-  caller-cancellation cleanup extracted from the Product Shell)
+  caller-cancellation cleanup extracted from the Product Shell, including
+  shielded per-iteration read/SIGINT collection)
 - `tests/product_kernel/test_project_resume_replay.py` (focused replay
   generation regression extracted to preserve the 500-line test boundary)
 - `tests/product_kernel/test_product_shell_cleanup.py` (focused cleanup
