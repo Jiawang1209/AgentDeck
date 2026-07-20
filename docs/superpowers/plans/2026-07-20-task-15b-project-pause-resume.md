@@ -1302,10 +1302,15 @@ git commit -m "feat: resume execution from committed handoff"
 
 **Files:**
 
+- Create: `src/agentdeck/ports/exit_authority.py`
+- Modify: `src/agentdeck/ports/store.py`
+- Create: `src/agentdeck/adapters/sqlite_exit_authority.py`
+- Modify: `src/agentdeck/adapters/sqlite.py`
 - Create: `src/agentdeck/application/async_exit_coordinator.py`
 - Modify: `src/agentdeck/application/exit_records.py`
 - Modify: `src/agentdeck/application/exit_service.py`
 - Modify: `src/agentdeck/application/project_lifecycle_service.py`
+- Create: `tests/product_kernel/test_sqlite_exit_authority.py`
 - Create: `tests/product_kernel/test_product_exit_acp_integration.py`
 - Modify: `tests/product_kernel/test_exit_service.py`
 - Modify: `tests/product_kernel/test_product_reentry.py`
@@ -1425,19 +1430,50 @@ Also prove:
 - setup/drafting/awaiting-confirmation `/exit` closes the interface without a
   synthetic `paused` transition.
 
+Before the coordinator tests, add the SQLite authority RED in
+`test_sqlite_exit_authority.py`. Define one immutable, bounded,
+content-free `ActiveExitAuthority` value in `ports/exit_authority.py`, and add
+the same read operation to `Store` and `StoreTransaction`:
+
+```python
+load_active_exit_authority(session_id: str) -> ActiveExitAuthority
+```
+
+The projection is the single complete CAS source for active exit. It contains
+only exact ProductSession state and pending five-field request authority;
+Attempt identity, immutable lineage, ordinal, state, effect flag and durable
+fingerprint; Task identity, planned Agent identity, Mission identity and
+version; Mission-to-ProductSession linkage and state; Agent Instance identity,
+ProductSession linkage, ACP transport/session and state; and the full derived
+typed `WorkerHandle` lineage. It contains no provider/model, prompt, path,
+environment, credential, frame, terminal text, or Worker prose.
+
+Both public Store and command-transaction reads must delegate to one helper in
+`sqlite_exit_authority.py`; the transaction method must use its live command
+connection and must not call the public/read connection. RED must prove public
+and transaction-local projection equality, transaction-local visibility of
+drift, row drift changes the projection hash, missing/partial/duplicate lineage
+fails closed, malformed or oversized facts fail closed, and no cross-connection
+read is possible while a command transaction owns the writer. Application code
+must consume this typed projection and must not scatter SQL or infer omitted
+lineage.
+
 - [ ] **Step 3: Run RED and record why it fails**
 
 Run:
 
 ```bash
 conda run -n agentdeck env PYTHONPATH="$PWD/src" pytest \
+  tests/product_kernel/test_sqlite_exit_authority.py \
   tests/product_kernel/test_exit_service.py \
   tests/product_kernel/test_product_exit_acp_integration.py \
   tests/product_kernel/test_product_reentry.py -q
 ```
 
-Expected: collection fails because `AsyncExitCoordinator` is absent and
-`ExitService.confirm()` still returns `exit_cancellation_unavailable`.
+Expected: collection fails because `ActiveExitAuthority` and
+`AsyncExitCoordinator` are absent; after those imports exist, the behavioral
+RED remains because `ExitService.confirm()` still returns
+`exit_cancellation_unavailable`.
 
 - [ ] **Step 4: Split durable request authority from async execution**
 
@@ -1458,7 +1494,9 @@ class AsyncExitCoordinator:
     ) -> None:
         for dependency, methods in (
             (exit_service, ("request_exit", "decline", "confirm", "input_closed")),
-            (store, ("lookup_command", "execute_once", "load_aggregate")),
+            (store, (
+                "lookup_command", "execute_once", "load_active_exit_authority",
+            )),
             (clock, ("now",)),
             (runtime, ("resolve_exact", "release", "is_empty")),
             (lifecycle, ("stop_lease", "pause_between_stages")),
@@ -1530,10 +1568,15 @@ content-free result; it does not mutate Attempt or Session state.
 
 - [ ] **Step 6: Implement the atomic project pause commit**
 
-The success callback re-reads, on the transaction connection, the exact
-ProductSession, pending five-field group, Attempt, Task, Mission, Agent
-Instance, ACP session, and full Worker-handle lineage. It must compare the
-entire pre-cancel authority. On exact match it performs only:
+Before Worker I/O, the coordinator loads one typed `ActiveExitAuthority` and
+requires its exact pending request, Attempt snapshot, ACP session, and derived
+full Worker handle to match the runtime binding. The success callback then
+calls `transaction.load_active_exit_authority(session_id)` on the live command
+connection and compares the complete projection hash with that pre-cancel
+value. This one projection is the complete CAS authority for ProductSession,
+pending five-field group, Attempt, Task, Mission, Agent Instance, ACP session,
+and full Worker-handle lineage; the Application layer must not reconstruct it
+from scattered reads. On exact match it performs only:
 
 ```python
 transaction.save_attempt(interrupted_attempt_snapshot)
@@ -1570,6 +1613,7 @@ Run:
 
 ```bash
 conda run -n agentdeck env PYTHONPATH="$PWD/src" pytest \
+  tests/product_kernel/test_sqlite_exit_authority.py \
   tests/product_kernel/test_exit_service.py \
   tests/product_kernel/test_product_exit_acp_integration.py \
   tests/product_kernel/test_product_reentry.py \
@@ -1592,10 +1636,15 @@ between-stage zero-I/O pause, and the no-false-interruption rule. Then run:
 
 ```bash
 git add HISTORY.md \
+  src/agentdeck/ports/exit_authority.py \
+  src/agentdeck/ports/store.py \
+  src/agentdeck/adapters/sqlite_exit_authority.py \
+  src/agentdeck/adapters/sqlite.py \
   src/agentdeck/application/async_exit_coordinator.py \
   src/agentdeck/application/exit_records.py \
   src/agentdeck/application/exit_service.py \
   src/agentdeck/application/project_lifecycle_service.py \
+  tests/product_kernel/test_sqlite_exit_authority.py \
   tests/product_kernel/test_product_exit_acp_integration.py \
   tests/product_kernel/test_exit_service.py \
   tests/product_kernel/test_product_reentry.py

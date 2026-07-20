@@ -4,6 +4,16 @@
 
 ## 2026-07-20
 
+### Close the Task 15B active-exit authority boundary
+
+- Corrected the Task 15B.4 file and TDD boundary before behavior work: active
+  exit now requires one bounded, content-free, transaction-local typed
+  projection covering ProductSession, pending request, Attempt, Task, Mission,
+  Agent Instance, ACP session, and full derived Worker-handle lineage. Public
+  and command-transaction Store reads must share one SQLite helper, while the
+  Application layer compares one complete projection hash instead of inferring
+  exact cancellation authority from scattered partial reads.
+
 ### Resume execution from a committed handoff
 
 - Fixed nondeterministic false Worker-reuse rejection after a prior short-lived
