@@ -4,6 +4,28 @@
 
 ## 2026-07-20
 
+### Add the durable project resume projection
+
+- Added a no-new-schema, read-only SQLite v2 resume authority that validates
+  the exact paused ProductSession, sole executing confirmed Mission, frozen
+  four-stage Task and Agent lineage, contiguous terminal Attempts, deterministic
+  completed stage commands, Evidence, and direct Handoffs. The immutable
+  snapshot derives and hashes the closed prefix, first unclosed stage, next
+  Attempt ordinal, and preceding Handoff without Worker, provider, tmux, or
+  legacy access.
+- Added the pure resume planner that reconstructs the exact confirmed Mission,
+  closed execution context, interrupted first-open-stage history, review-backed
+  authoritative revision task, and remaining suffix. Rehashed cursor, ordinal,
+  terminal-command, canonical-domain, unknown-outcome, non-retryable-stage, and
+  completed-Mission drift all fail through content-free allowlisted errors.
+- TDD RED first produced two expected collection errors for the absent resume
+  Port and Application modules. Hardening RED cycles then exposed two rehashed
+  terminal-command/Attempt-ordinal failures, two cross-stage Evidence-lineage
+  failures, and one pure-planner Evidence-lineage failure. GREEN passes all
+  `160` focused projection/Mission/execution/quality tests and `16`
+  architecture plus schema/table-authority checks while retaining SQLite schema
+  version 2 and its pinned fingerprint.
+
 ### Plan the corrected Task 15B project lifecycle implementation
 
 - Added the normative five-commit TDD plan for durable resume projection,

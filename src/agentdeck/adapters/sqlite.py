@@ -10,6 +10,7 @@ from agentdeck.adapters.sqlite_approval import _save_approval
 from agentdeck.adapters.sqlite_execution import (
     _save_execution_aggregate, load_execution_aggregate,
 )
+from agentdeck.adapters.sqlite_execution_resume import load_execution_resume
 from agentdeck.adapters.sqlite_mission import MISSION_AGGREGATE_TYPES, load_mission_aggregate, save_mission_aggregate
 from agentdeck.adapters.sqlite_migrations import migrate_schema, _validate_before_durability, _validate_existing_schema
 from agentdeck.adapters.sqlite_schema import (
@@ -131,7 +132,8 @@ class _SQLiteCommandTransaction:
         return self._store._load_aggregate(
             self._store._require_writer(), aggregate_type, aggregate_id
         )
-
+    def load_execution_resume(self, session_id: str):
+        return load_execution_resume(self._require_mutable(), session_id)
     def save_aggregate(
         self, aggregate_type: str, aggregate_id: str, snapshot: CommandResult
     ) -> None:
@@ -389,7 +391,8 @@ class SQLiteStore:
 
     def load_aggregate(self, aggregate_type: str, aggregate_id: str) -> CommandResult | None:
         return self._load_aggregate(self._read_connection(), aggregate_type, aggregate_id)
-
+    def load_execution_resume(self, session_id: str):
+        return load_execution_resume(self._read_connection(), session_id)
     def select_latest_nonterminal_session(self) -> SessionSelection:
         return select_latest_nonterminal_session(
             self._read_connection(), self._project_id

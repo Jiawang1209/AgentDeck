@@ -10,6 +10,7 @@ from typing import Final, Protocol, TypeAlias
 from agentdeck.kernel.events import DomainEvent
 from agentdeck.kernel.execution import AttemptState
 from agentdeck.kernel.session import ExitAttemptSnapshot
+from agentdeck.ports.execution_resume import ExecutionResumeSnapshot
 
 
 JsonScalar: TypeAlias = str | int | float | bool | None
@@ -104,6 +105,9 @@ class StoreTransaction(Protocol):
     def load_aggregate(
         self, aggregate_type: str, aggregate_id: str
     ) -> AggregateSnapshot | None: ...
+    def load_execution_resume(
+        self, session_id: str
+    ) -> ExecutionResumeSnapshot: ...
     def save_aggregate(
         self, aggregate_type: str, aggregate_id: str, snapshot: AggregateSnapshot
     ) -> None: ...
@@ -137,6 +141,9 @@ class Store(Protocol):
     def load_aggregate(
         self, aggregate_type: str, aggregate_id: str
     ) -> AggregateSnapshot | None: ...
+    def load_execution_resume(
+        self, session_id: str
+    ) -> ExecutionResumeSnapshot: ...
     def select_latest_nonterminal_session(self) -> SessionSelection: ...
     def list_running_attempts(self) -> tuple[RunningAttempt, ...]: ...
     def list_active_exit_attempts(

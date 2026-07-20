@@ -43,11 +43,13 @@ _TRANSITIONS: frozenset[tuple[SessionState, SessionState]] = frozenset(
         (SessionState.RUNNING, SessionState.FAILED),
         (SessionState.RUNNING, SessionState.CANCELLED),
         (SessionState.AWAITING_APPROVAL, SessionState.RUNNING),
+        (SessionState.AWAITING_APPROVAL, SessionState.PAUSED),
         (SessionState.AWAITING_APPROVAL, SessionState.FAILED),
         (SessionState.AWAITING_APPROVAL, SessionState.CANCELLED),
         (SessionState.PAUSED, SessionState.RUNNING),
         (SessionState.PAUSED, SessionState.CANCELLED),
         (SessionState.NEEDS_ATTENTION, SessionState.RUNNING),
+        (SessionState.NEEDS_ATTENTION, SessionState.PAUSED),
         (SessionState.NEEDS_ATTENTION, SessionState.FAILED),
         (SessionState.NEEDS_ATTENTION, SessionState.CANCELLED),
     }

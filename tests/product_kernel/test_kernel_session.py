@@ -23,11 +23,13 @@ ALLOWED_TRANSITIONS = frozenset(
         (SessionState.RUNNING, SessionState.FAILED),
         (SessionState.RUNNING, SessionState.CANCELLED),
         (SessionState.AWAITING_APPROVAL, SessionState.RUNNING),
+        (SessionState.AWAITING_APPROVAL, SessionState.PAUSED),
         (SessionState.AWAITING_APPROVAL, SessionState.FAILED),
         (SessionState.AWAITING_APPROVAL, SessionState.CANCELLED),
         (SessionState.PAUSED, SessionState.RUNNING),
         (SessionState.PAUSED, SessionState.CANCELLED),
         (SessionState.NEEDS_ATTENTION, SessionState.RUNNING),
+        (SessionState.NEEDS_ATTENTION, SessionState.PAUSED),
         (SessionState.NEEDS_ATTENTION, SessionState.FAILED),
         (SessionState.NEEDS_ATTENTION, SessionState.CANCELLED),
     }
@@ -54,7 +56,7 @@ def test_new_session_starts_in_setup_with_declared_states() -> None:
 
 
 def test_session_transition_matrix_matches_the_declared_edges_exactly() -> None:
-    assert len(ALLOWED_TRANSITIONS) == 22
+    assert len(ALLOWED_TRANSITIONS) == 24
 
     for source in SessionState:
         for target in SessionState:
@@ -67,6 +69,25 @@ def test_session_transition_matrix_matches_the_declared_edges_exactly() -> None:
                 with pytest.raises(TransitionError, match="illegal session transition"):
                     session.transition(target)
             assert session.state is source
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        SessionState.RUNNING,
+        SessionState.AWAITING_APPROVAL,
+        SessionState.NEEDS_ATTENTION,
+    ],
+)
+def test_executing_project_can_pause_and_only_paused_project_can_resume(
+    source: SessionState,
+) -> None:
+    paused = ProductSession("ses_1", "/project", source).transition(
+        SessionState.PAUSED
+    )
+
+    assert paused.state is SessionState.PAUSED
+    assert paused.transition(SessionState.RUNNING).state is SessionState.RUNNING
 
 
 def test_transition_authority_cannot_be_changed_to_restart_terminal_session() -> None:
