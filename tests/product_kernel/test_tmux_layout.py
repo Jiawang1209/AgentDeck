@@ -205,13 +205,52 @@ def expected_create_calls(plan: Any) -> list[tuple[str, ...]]:
         (*prefix, "select-pane", "-t", f"{target}.0", "-T", workers[0].name),
         (*prefix, "split-window", "-d", "-h", "-t", f"{target}.0", *workers[1].command),
         (*prefix, "select-pane", "-t", f"{target}.1", "-T", workers[1].name),
-        (*prefix, "split-window", "-d", "-v", "-t", f"{target}.0", *workers[2].command),
+        (*prefix, "split-window", "-d", "-v", "-t", f"{target}.1", *workers[2].command),
         (*prefix, "select-pane", "-t", f"{target}.2", "-T", workers[2].name),
-        (*prefix, "split-window", "-d", "-v", "-t", f"{target}.1", *workers[3].command),
+        (*prefix, "split-window", "-d", "-v", "-t", f"{target}.2", *workers[3].command),
         (*prefix, "select-pane", "-t", f"{target}.3", "-T", workers[3].name),
         (*prefix, "select-layout", "-t", target, "tiled"),
         (*prefix, "select-window", "-t", f"{plan.workspace_name}:Overview"),
     ]
+
+
+def test_split_insertion_order_keeps_takeover_bound_to_exact_worker() -> None:
+    port, _ = runtime_api()
+    runner = RecordingRunner()
+    adapter = observer(runner)
+    instances = four_instances()
+    by_instance_id = {
+        instance.instance_id: (
+            instance.role, instance.session_id, instance.instance_id,
+        )
+        for instance in instances
+    }
+
+    adapter.create_workspace(project_id="prj_1", instances=instances)
+    pane_bindings: list[tuple[str, str, str]] = []
+    for argv in runner.calls:
+        if "new-window" not in argv and "split-window" not in argv:
+            continue
+        instance_id = argv[argv.index("--instance-id") + 1]
+        binding = by_instance_id[instance_id]
+        if "new-window" in argv:
+            pane_bindings.append(binding)
+        else:
+            target = argv[argv.index("-t") + 1]
+            target_index = int(target.rsplit(".", 1)[1])
+            pane_bindings.insert(target_index + 1, binding)
+
+    selected_bindings = []
+    for instance in instances:
+        adapter.take_ownership(port.TakeoverOwnership(
+            project_id="prj_1", instance_id=instance.instance_id,
+            session_id=instance.session_id, role=instance.role, owner_id="human",
+        ))
+        target = runner.calls[-1][runner.calls[-1].index("-t") + 1]
+        selected_bindings.append(pane_bindings[int(target.rsplit(".", 1)[1])])
+
+    expected = tuple(by_instance_id[instance.instance_id] for instance in instances)
+    assert (tuple(pane_bindings), tuple(selected_bindings)) == (expected, expected)
 
 
 def test_create_workspace_uses_exact_injected_tmux_argv() -> None:

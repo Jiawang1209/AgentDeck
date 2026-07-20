@@ -4,6 +4,18 @@
 
 ## 2026-07-20
 
+### Preserve declared Worker order under tmux pane insertion
+
+- Corrected the deterministic split sequence to append each new Worker pane
+  after the current last pane. Under tmux target-after insertion semantics the
+  final indices now remain exactly `0 implementer`, `1 reviewer`, `2 reviser`,
+  and `3 acceptance_reviewer`, so explicit human takeover selects the pane
+  bound to the requested role, session, and instance.
+- TDD evidence: a subprocess-free tmux semantics simulator first failed with
+  the observed order `implementer`, `reviser`, `acceptance_reviewer`,
+  `reviewer`. It now verifies both the final layout and all four takeover
+  bindings from emitted argv rather than repeating hard-coded assumptions.
+
 ### Define the Observer Runtime Port and deterministic tmux layout
 
 - Added the authority-free Observer Runtime Port for creating, selecting, and
