@@ -327,6 +327,8 @@ The original Task 15B files remain authorized:
 - `src/agentdeck/product/bootstrap.py`
 - `tests/product_kernel/test_project_resume_replay.py` (focused replay
   generation regression extracted to preserve the 500-line test boundary)
+- `tests/product_kernel/test_product_shell_cleanup.py` (focused cleanup
+  regressions extracted to preserve the 500-line shell test boundary)
 - `tests/product_kernel/test_execution_runtime.py`
 - `tests/product_kernel/test_product_exit_acp_integration.py`
 - `tests/product_kernel/test_product_reentry.py`

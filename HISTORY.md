@@ -35,6 +35,12 @@
   once. Shell cleanup now encloses recovery, resume projection, initial render,
   and SIGINT-handler installation, removes the handler only when installed,
   and closes the Store exactly once on failure or cancellation.
+- Closed the final cleanup review gap with nested finalization. If the owned
+  Mission child itself raises `CancelledError` while the shell is settling it,
+  the original cancellation still propagates, but the exact Product Store is
+  now guaranteed to close once. Cleanup regressions were separated into a
+  focused test module so the shell behavior tests remain reviewable without
+  weakening the 500-line gate.
 - TDD evidence: the recovery contract RED produced 18 failures and the async
   shell RED produced 9 failures; final audit REDs independently caught one
   oversized recovery command identity, one stale complete pending-exit group,
@@ -42,11 +48,13 @@
   callback and pipe-backed terminal reader regressions also pass without a
   platform fallback. The independent review RED produced 8 focused failures
   for adapter availability, stale resume replay, real execution gating, and
-  pre-input cleanup. GREEN passes 123 focused Task 15B.5 tests, 485 integrated
-  Task 15B tests, 17 architecture/development-entry tests, and all 1775 Product
-  Kernel tests. Modified source/test files are at most 500 lines; Application,
-  Shell, and Worker paths contain zero `asyncio.run()` calls, while Product
-  bootstrap contains exactly one outer entrypoint call.
+  pre-input cleanup. The final quality RED proved that child cancellation had
+  left the Store open (`close_calls == []`); GREEN preserves that cancellation
+  and records one close. GREEN passes 124 focused Task 15B.5 tests, 486
+  integrated Task 15B tests, 17 architecture/development-entry tests, and all
+  1776 Product Kernel tests. Modified source/test files are at most 500 lines;
+  Application, Shell, and Worker paths contain zero `asyncio.run()` calls,
+  while Product bootstrap contains exactly one outer entrypoint call.
 
 ### Restore the Product Kernel documentation source of truth
 

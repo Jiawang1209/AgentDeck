@@ -59,6 +59,10 @@ def is_supported_permission(value: object) -> bool:
     return type(value) is str and value in _SUPPORTED_PERMISSIONS
 
 
+def display_permission(value: str | None, default: str) -> str:
+    return default if value is None else value.replace("_", "-")
+
+
 def resume_point_text(
     snapshot: ExecutionResumeSnapshot, plan: ExecutionResumePlan,
 ) -> str:
@@ -122,6 +126,7 @@ __all__ = [
     "HELP_TEXT",
     "confirmation_authority",
     "copy_available_leaders",
+    "display_permission",
     "is_supported_permission",
     "preview_presentation",
     "resume_point_text",

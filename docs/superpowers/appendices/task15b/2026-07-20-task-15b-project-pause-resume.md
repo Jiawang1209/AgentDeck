@@ -1815,6 +1815,7 @@ git commit -m "fix: close task15b exit replay gaps"
 - Modify: `tests/product_kernel/test_recovery_service.py`
 - Modify: `tests/product_kernel/test_sqlite_recovery_integrity.py`
 - Modify: `tests/product_kernel/test_product_shell.py`
+- Create: `tests/product_kernel/test_product_shell_cleanup.py`
 - Modify: `tests/product_kernel/test_product_preview_flow.py`
 - Modify: `tests/product_kernel/test_product_reentry.py`
 - Create: `tests/product_kernel/test_project_resume_replay.py`
@@ -1829,6 +1830,9 @@ Session is paused; and the Store cleanup scope must begin before recovery,
 projection, initial rendering, or SIGINT-handler installation. The focused
 replay regression lives in `test_project_resume_replay.py` so the primary
 lifecycle test remains within the unchanged 500-line gate.
+Shell cleanup regressions live in `test_product_shell_cleanup.py`; an owned
+Mission child cancellation must preserve `CancelledError` while a nested
+cleanup `finally` still closes the Store exactly once.
 
 - [ ] **Step 1: Write mandatory startup-recovery RED tests**
 
@@ -1960,6 +1964,7 @@ conda run -n agentdeck env PYTHONPATH="$PWD/src" pytest \
   tests/product_kernel/test_recovery_service.py \
   tests/product_kernel/test_sqlite_recovery_integrity.py \
   tests/product_kernel/test_product_shell.py \
+  tests/product_kernel/test_product_shell_cleanup.py \
   tests/product_kernel/test_product_preview_flow.py \
   tests/product_kernel/test_product_reentry.py -q
 ```
@@ -2194,6 +2199,7 @@ conda run -n agentdeck env PYTHONPATH="$PWD/src" pytest \
   tests/product_kernel/test_recovery_service.py \
   tests/product_kernel/test_sqlite_recovery_integrity.py \
   tests/product_kernel/test_product_shell.py \
+  tests/product_kernel/test_product_shell_cleanup.py \
   tests/product_kernel/test_product_preview_flow.py \
   tests/product_kernel/test_product_reentry.py \
   tests/product_kernel/test_project_resume_replay.py \
@@ -2233,6 +2239,7 @@ git add HISTORY.md \
   tests/product_kernel/test_recovery_service.py \
   tests/product_kernel/test_sqlite_recovery_integrity.py \
   tests/product_kernel/test_product_shell.py \
+  tests/product_kernel/test_product_shell_cleanup.py \
   tests/product_kernel/test_product_preview_flow.py \
   tests/product_kernel/test_product_reentry.py \
   tests/product_kernel/test_project_resume_replay.py
@@ -2263,6 +2270,7 @@ conda run -n agentdeck env PYTHONPATH="$PWD/src" pytest \
   tests/product_kernel/test_product_exit_acp_integration.py \
   tests/product_kernel/test_product_reentry.py \
   tests/product_kernel/test_project_resume_replay.py \
+  tests/product_kernel/test_product_shell_cleanup.py \
   tests/product_kernel/test_recovery_service.py \
   tests/product_kernel/test_sqlite_recovery_integrity.py \
   tests/product_kernel/test_product_shell.py \

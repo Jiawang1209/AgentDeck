@@ -31,6 +31,7 @@ from agentdeck.product.shell_projection import (
     HELP_TEXT,
     confirmation_authority,
     copy_available_leaders,
+    display_permission,
     is_supported_permission,
     preview_presentation,
     resume_point_text,
@@ -128,8 +129,7 @@ class ProductShell:
         self._resume_planner = resume_planner or ExecutionResumePlanner()
         view = self._service.current()
         self._leader, self._model = view.leader_backend, view.model
-        self._permission = view.permission.replace(
-            "_", "-") if view.permission is not None else default_permission
+        self._permission = display_permission(view.permission, default_permission)
         self._resume_snapshot: ExecutionResumeSnapshot | None = None
         self._resume_plan: ExecutionResumePlan | None = None
         self._resume_blocker: str | None = None
@@ -173,10 +173,12 @@ class ProductShell:
                     await self._finish_child_for_exit()
                     return 0
         finally:
-            if signal_installed:
-                loop.remove_signal_handler(signal.SIGINT)
-            await self._settle_owned_child()
-            self._close_once()
+            try:
+                if signal_installed:
+                    loop.remove_signal_handler(signal.SIGINT)
+                await self._settle_owned_child()
+            finally:
+                self._close_once()
 
     def _restore_resume_projection(self) -> None:
         self._resume_snapshot = self._resume_plan = None
@@ -345,8 +347,7 @@ class ProductShell:
     def _execution_available(self) -> bool:
         if self._execution is None:
             self._emit(EXECUTION_ADAPTER_UNAVAILABLE)
-            return False
-        return True
+        return self._execution is not None
 
     async def _handle_input_closed(self) -> int:
         result = await self._exit.input_closed()
