@@ -2687,7 +2687,20 @@ diagnosed while preserving the old request, and only an explicit `/exit` may
 supersede it. `ExitService` keeps exactly its four public operations; bootstrap
 must not call side-effecting `request_exit()` before user input.
 
-#### Task 15B: Bind real ACP cancellation and mandatory recovery
+#### Task 15B: Project pause, real ACP cancellation, and explicit resume
+
+**Normative correction (2026-07-20):** execute Task 15B only from
+`docs/superpowers/plans/2026-07-20-task-15b-project-pause-resume.md`, which
+implements the approved revised design in
+`docs/superpowers/specs/2026-07-20-task-15b-acp-cancellation-recovery-design.md`.
+That five-commit plan supersedes the retired sketch retained below only as
+historical review evidence. In particular, `/exit` pauses the whole executing
+project, restart is conservative and observational, and only explicit
+`/resume` may continue from the first unclosed stage. Do not implement the
+retired sketch as an alternative or merge its contradictory transport-resume
+assumptions into the normative plan.
+
+##### Retired pre-correction Task 15B sketch — DO NOT EXECUTE
 
 **Scheduling gate:** execute this subsection only after Task 24, Task 25, and
 Task 26 are implemented, reviewed, and integrated. It is the only authorized

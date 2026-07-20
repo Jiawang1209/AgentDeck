@@ -1,6 +1,6 @@
 # Task 15B Project Pause, ACP Cancellation, and Explicit Resume Design
 
-**Status:** Revised design approved in conversation; written-spec review pending
+**Status:** Approved; normative implementation plan written for review
 
 **Date:** 2026-07-20
 

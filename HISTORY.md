@@ -4,6 +4,20 @@
 
 ## 2026-07-20
 
+### Plan the corrected Task 15B project lifecycle implementation
+
+- Added the normative five-commit TDD plan for durable resume projection,
+  bounded ACP cancellation, exact foreground runtime binding, project-pause
+  transaction, and mandatory paused re-entry with explicit `/resume`.
+- Locked one shared foreground event loop, an async dispatch/stop exclusion
+  barrier, external cancellation outside SQLite transactions, exact replay,
+  first-unclosed-stage continuation, crash-gap convergence, and the final R2
+  full-suite/review gate.
+- Marked the master plan's earlier Task 15B sketch as retired historical
+  evidence and linked the corrected plan as the only implementation authority,
+  preventing old fake transport-resume assumptions from influencing the
+  Product Kernel rewrite.
+
 ### Make Task 15B a project-wide pause and explicit resume boundary
 
 - Clarified that `/exit` stops the whole executing AgentDeck project rather
