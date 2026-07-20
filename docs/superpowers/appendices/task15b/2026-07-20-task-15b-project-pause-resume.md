@@ -1,5 +1,13 @@
 # Task 15B Project Pause and Explicit Resume Implementation Plan
 
+> **Document role:** Historical/execution appendix — not an independent source
+> of truth. Canonical authority remains the
+> [Product Kernel Rewrite Design](../../specs/2026-07-18-agentdeck-product-kernel-rewrite-design.md)
+> and the
+> [Product Kernel Rewrite TDD plan](../../plans/2026-07-18-agentdeck-product-kernel-rewrite.md).
+> Read this appendix only where the canonical Task 15B section explicitly
+> invokes its detailed execution steps.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use
 > superpowers:subagent-driven-development (recommended) or
 > superpowers:executing-plans to implement this plan task-by-task. Steps use
@@ -25,7 +33,8 @@ project-local SQLite v2, pytest/pytest-asyncio, conda environment `agentdeck`.
 **Authority:**
 
 - `docs/superpowers/specs/2026-07-18-agentdeck-product-kernel-rewrite-design.md`
-- `docs/superpowers/specs/2026-07-20-task-15b-acp-cancellation-recovery-design.md`
+- `docs/superpowers/plans/2026-07-18-agentdeck-product-kernel-rewrite.md`
+- `docs/superpowers/appendices/task15b/2026-07-20-task-15b-acp-cancellation-recovery-design.md`
 - `docs/roadmap/product-north-star.md`
 - `AGENTS.md`, `CLAUDE.md`, `AGENT.md`, and `HISTORY.md`
 
@@ -1779,7 +1788,7 @@ and five consecutive focused race runs. Then commit without amend:
 
 ```bash
 git add HISTORY.md \
-  docs/superpowers/plans/2026-07-20-task-15b-project-pause-resume.md \
+  docs/superpowers/appendices/task15b/2026-07-20-task-15b-project-pause-resume.md \
   src/agentdeck/application/async_exit_coordinator.py \
   src/agentdeck/application/exit_service.py \
   tests/product_kernel/test_exit_service.py \

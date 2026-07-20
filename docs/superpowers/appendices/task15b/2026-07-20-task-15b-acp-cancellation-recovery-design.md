@@ -1,14 +1,22 @@
 # Task 15B Project Pause, ACP Cancellation, and Explicit Resume Design
 
-**Status:** Approved; normative implementation plan written for review
+> **Document role:** Historical/execution appendix — not an independent source
+> of truth. Canonical authority remains the
+> [Product Kernel Rewrite Design](../../specs/2026-07-18-agentdeck-product-kernel-rewrite-design.md)
+> and the
+> [Product Kernel Rewrite TDD plan](../../plans/2026-07-18-agentdeck-product-kernel-rewrite.md).
+> Read this appendix only where those canonical documents explicitly invoke
+> the Task 15B correction.
+
+**Status:** Approved execution appendix; non-canonical
 
 **Date:** 2026-07-20
 
-**Authority:** This document is a narrow normative correction to sections
-5.2, 10.4, and 10.4.3 of the approved AgentDeck Product Kernel Rewrite Design.
-It does not change the 39-task order, open post-MVP ACP resume work, or
-authorize implementation before the written spec and revised TDD plan are
-reviewed.
+**Authority:** This appendix records the approved narrow Task 15B correction to
+sections 5.2, 10.4, and 10.4.3 of the canonical Product Kernel Rewrite Design.
+It cannot independently create requirements or override the canonical design
+and plan. It does not change the 39-task order, open post-MVP ACP resume work,
+or authorize implementation beyond the canonical Task 15B gate.
 
 ## 1. Problem and decision
 

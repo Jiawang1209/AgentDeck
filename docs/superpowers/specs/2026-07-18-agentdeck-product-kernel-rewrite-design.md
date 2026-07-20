@@ -11,7 +11,7 @@ recoverable historical evidence but cannot create requirements, dictate task
 order, or veto the rewrite.
 
 **Normative Task 15B correction:** The approved
-[Task 15B Project Pause, ACP Cancellation, and Explicit Resume Design](2026-07-20-task-15b-acp-cancellation-recovery-design.md)
+[Task 15B Project Pause, ACP Cancellation, and Explicit Resume appendix](../appendices/task15b/2026-07-20-task-15b-acp-cancellation-recovery-design.md)
 defines the exact project-wide exit, foreground cancellation, explicit resume,
 and restart-recovery semantics for sections 5.2, 10.4, and 10.4.3. It narrows
 no product promise: current ACP cancel is a bounded notification plus local

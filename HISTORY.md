@@ -4,6 +4,19 @@
 
 ## 2026-07-20
 
+### Restore the Product Kernel documentation source of truth
+
+- Restored the Rewrite Context Firewall's single-authority rule: the
+  2026-07-18 Product Kernel design and TDD plan are again the only documents in
+  `docs/superpowers/specs/` and `docs/superpowers/plans/`.
+- Moved the approved Task 15B correction and detailed execution steps, without
+  deleting their content, into `docs/superpowers/appendices/task15b/`. Both
+  documents now identify themselves as non-canonical historical/execution
+  appendices and link back to the canonical 2026-07-18 design and plan.
+- Updated every repository reference to the appendix paths; no firewall test,
+  production code, schema, migration, provider, transport, or runtime behavior
+  changed.
+
 ### Close the Task 15B exit replay gaps
 
 - Confirmation replay now maps bounded persistent-command lookup failures to
