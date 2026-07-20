@@ -54,20 +54,25 @@ def _valid_request_id(value: object) -> bool:
         and _valid_lower_hex(value[4:], 32)
     )
 
-def _request_result(request: ExitRequest) -> CommandResult:
+def _request_result(request: ExitRequest, session_id: str) -> CommandResult:
     return {
         "attempt_hash": request.attempt_hash,
         "canonical_attempt_facts": request.attempt.canonical_bytes().decode("utf-8"),
         "mode": "exit_confirmation_required",
         "request_id": request.request_id,
         "requested_at": request.requested_at,
+        "session_id": _session_identity(session_id),
     }
 
-def _request_from_result(result: CommandResult) -> ExitRequest:
+def _request_from_result(
+    result: CommandResult, session_id: str,
+) -> ExitRequest:
     if set(result) != {
         "attempt_hash", "canonical_attempt_facts", "mode", "request_id",
-        "requested_at",
+        "requested_at", "session_id",
     } or result["mode"] != "exit_confirmation_required":
+        raise ValueError("stored exit request result is malformed")
+    if result["session_id"] != _session_identity(session_id):
         raise ValueError("stored exit request result is malformed")
     canonical = result["canonical_attempt_facts"]
     if type(canonical) is not str:
@@ -79,6 +84,17 @@ def _request_from_result(result: CommandResult) -> ExitRequest:
     if canonical != snapshot.canonical_bytes().decode("utf-8"):
         raise ValueError("stored exit request result is malformed")
     return request
+
+def exit_request_command_id(session_id: str, request_id: str) -> str:
+    session_id = _session_identity(session_id)
+    if not _valid_request_id(request_id):
+        raise ValueError("request_id is invalid")
+    return f"exit:request:{session_id}:{request_id}"
+
+def exit_request_from_command_result(
+    result: CommandResult, session_id: str,
+) -> ExitRequest:
+    return _request_from_result(result, session_id)
 
 def _event(
     command_id: str, kind: str, session_id: str, request: ExitRequest,
@@ -181,10 +197,11 @@ class ExitService:
         if pending is not None and candidate.request_id == pending.request_id:
             raise ValueError("request_id_factory repeated durable exit identity")
         if self._store.lookup_command(
-            f"exit:request:{candidate.request_id}", "request_product_exit"
+            exit_request_command_id(self._session_id, candidate.request_id),
+            "request_product_exit",
         ) is not None:
             raise ValueError("request_id_factory returned a durable exit identity")
-        command_id = f"exit:request:{candidate.request_id}"
+        command_id = exit_request_command_id(self._session_id, candidate.request_id)
 
         def persist(transaction: StoreTransaction) -> CommandResult:
             live_session, live_pending = self._transaction_pending(transaction)
@@ -204,7 +221,7 @@ class ExitService:
                 command_id, "exit_requested", self._session_id, candidate,
                 candidate.requested_at,
             ))
-            return _request_result(candidate)
+            return _request_result(candidate, self._session_id)
 
         try:
             result = self._store.execute_once(
@@ -212,7 +229,7 @@ class ExitService:
             )
         except _ExitAbort as error:
             return self._failure(error.code, request=error.request)
-        request = _request_from_result(result)
+        request = _request_from_result(result, self._session_id)
         return ExitResult("exit_confirmation_required", False, request)
 
     def decline(self, request_id: str, attempt_hash: str) -> ExitResult:

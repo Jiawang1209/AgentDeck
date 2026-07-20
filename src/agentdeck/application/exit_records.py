@@ -28,6 +28,7 @@ _DIAGNOSTIC_CODES = frozenset({
     "exit_input_closed_with_active_work", "exit_request_drift",
     "exit_request_identity_mismatch", "exit_request_malformed",
     "exit_request_missing", "exit_session_missing", "project_dispatch_paused",
+    "exit_persistence_pending", "exit_runtime_convergence_failed",
 })
 ACTIVE_EXIT_RESULT_FIELDS = frozenset({
     "attempt_hash", "attempt_id", "diagnostic_code", "mode",
@@ -75,7 +76,9 @@ def closed_exit_result(
     }
 
 
-def exit_result_from_command(result: object, *, clock: Clock) -> ExitResult:
+def exit_result_from_command(
+    result: object, *, clock: Clock, request: ExitRequest | None = None,
+) -> ExitResult:
     if type(result) is not dict or set(result) != ACTIVE_EXIT_RESULT_FIELDS:
         raise ValueError("stored exit result is malformed")
     mode = result["mode"]
@@ -91,6 +94,7 @@ def exit_result_from_command(result: object, *, clock: Clock) -> ExitResult:
     populated = (
         type(attempt_id) is str and attempt_id.startswith("att_")
         and bool(attempt_id.removeprefix("att_")) and len(attempt_id.encode("utf-8")) <= 255
+        and not any(character.isspace() or not character.isprintable() for character in attempt_id)
         and type(attempt_hash) is str and len(attempt_hash) == 64
         and all(character in "0123456789abcdef" for character in attempt_hash)
         and type(request_id) is str and request_id.startswith("xrt_")
@@ -108,10 +112,19 @@ def exit_result_from_command(result: object, *, clock: Clock) -> ExitResult:
         )
     if not valid_result:
         raise ValueError("stored exit result is malformed")
+    if request is not None:
+        if not populated or (
+            request.request_id != request_id
+            or request.attempt.attempt_id != attempt_id
+            or not compare_digest(request.attempt_hash, attempt_hash)
+        ):
+            raise ValueError("stored exit result is malformed")
     if mode == "project_paused":
         return ExitResult(mode, True)
     return exit_failure(
         clock, code, outcome_known=known, attempt_id=attempt_id,
+        request=request,
+        occurred_at=None if request is None else request.requested_at,
     )
 
 
@@ -197,6 +210,7 @@ def exit_failure(
     should_exit: bool = False,
     outcome_known: bool = True,
     attempt_id: str | None = None,
+    occurred_at: str | None = None,
 ) -> ExitResult:
     if code not in _DIAGNOSTIC_CODES:
         raise ValueError("exit diagnostic code is not allowlisted")
@@ -212,7 +226,7 @@ def exit_failure(
         recovery_actions=("Review the current exit status and retry explicitly.",),
         retryable=True,
         outcome_known=outcome_known,
-        occurred_at=_now(clock),
+        occurred_at=_now(clock) if occurred_at is None else occurred_at,
         attempt_id=(
             request.attempt.attempt_id if request is not None else attempt_id
         ),

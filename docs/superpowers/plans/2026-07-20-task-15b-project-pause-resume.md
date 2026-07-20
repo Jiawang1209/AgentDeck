@@ -1319,6 +1319,7 @@ before changing production code.
 - Modify: `src/agentdeck/application/project_lifecycle_service.py`
 - Create: `tests/product_kernel/test_sqlite_exit_authority.py`
 - Create: `tests/product_kernel/test_product_exit_acp_integration.py`
+- Create: `tests/product_kernel/test_product_exit_terminal_race.py`
 - Modify: `tests/product_kernel/test_exit_service.py`
 - Modify: `tests/product_kernel/test_product_reentry.py`
 - Modify: `tests/product_kernel/test_execution_runtime.py`
@@ -1496,6 +1497,7 @@ conda run -n agentdeck env PYTHONPATH="$PWD/src" pytest \
   tests/product_kernel/test_sqlite_exit_authority.py \
   tests/product_kernel/test_exit_service.py \
   tests/product_kernel/test_product_exit_acp_integration.py \
+  tests/product_kernel/test_product_exit_terminal_race.py \
   tests/product_kernel/test_product_reentry.py -q
 ```
 
@@ -1711,6 +1713,7 @@ conda run -n agentdeck env PYTHONPATH="$PWD/src" pytest \
   tests/product_kernel/test_sqlite_exit_authority.py \
   tests/product_kernel/test_exit_service.py \
   tests/product_kernel/test_product_exit_acp_integration.py \
+  tests/product_kernel/test_product_exit_terminal_race.py \
   tests/product_kernel/test_product_reentry.py \
   tests/product_kernel/test_project_lifecycle_service.py \
   tests/product_kernel/test_execution_runtime.py -q

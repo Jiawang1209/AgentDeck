@@ -13,6 +13,7 @@ from agentdeck.ports.worker import WorkerHandle
 _ACTIVE_ATTEMPT_STATES = frozenset({
     "running", "awaiting_approval", "human_controlled",
 })
+_SQLITE_MAX_INTEGER = 2**63 - 1
 
 
 def _identity(value: object, prefix: str, field: str) -> str:
@@ -24,7 +25,8 @@ def _identity(value: object, prefix: str, field: str) -> str:
         raise ValueError(f"{field} must be a typed identity") from None
     if (
         not value.startswith(prefix) or not value.removeprefix(prefix)
-        or len(encoded) > 255 or any(character.isspace() for character in value)
+        or len(encoded) > 255
+        or any(character.isspace() or not character.isprintable() for character in value)
     ):
         raise ValueError(f"{field} must be a typed identity")
     return value
@@ -61,6 +63,7 @@ class ActiveExitAuthority:
         _identity(self.agent_acp_session_id, "ses_", "agent ACP session")
         if type(self.request) is not ExitRequest:
             raise TypeError("request must be an ExitRequest")
+        _identity(self.request.attempt.attempt_id, "att_", "attempt identity")
         if type(self.worker_handle) is not WorkerHandle:
             raise TypeError("worker_handle must be a WorkerHandle")
         if self.session_state != "running":
@@ -79,6 +82,11 @@ class ActiveExitAuthority:
             type(self.mission_current_version) is not int
         ):
             raise TypeError("active exit Mission versions must be exact integers")
+        if not (
+            1 <= self.task_mission_version <= _SQLITE_MAX_INTEGER
+            and 1 <= self.mission_current_version <= _SQLITE_MAX_INTEGER
+        ):
+            raise ValueError("active exit Mission versions are out of range")
         expected = self.request.attempt
         if (
             self.session_id != self.mission_session_id

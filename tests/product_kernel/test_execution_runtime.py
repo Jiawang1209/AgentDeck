@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from copy import copy, deepcopy
 import gc
 import weakref
 from contextlib import asynccontextmanager
@@ -16,6 +17,10 @@ from agentdeck.application.execution_runtime import (
     ExecutionReservation,
     ExecutionRuntimeStatus,
     ForegroundExecutionRuntime,
+)
+from agentdeck.application.exit_cancellation import (
+    ExitCancellationKey,
+    ExitCancellationOutcome,
 )
 from agentdeck.application.project_lifecycle_service import (
     ProjectDispatchBlocked,
@@ -207,6 +212,38 @@ async def test_empty_runtime_reports_only_pristine_mission_state():
     runtime.bind(binding)
     runtime.release(binding.attempt_id, binding.worker_handle)
     assert runtime.is_empty() is False
+
+
+@async_test
+async def test_exit_fence_is_exact_noncopyable_bounded_and_settles_once():
+    runtime = ForegroundExecutionRuntime()
+    binding = binding_for()
+    runtime.bind(binding)
+    snapshot = exit_snapshot(binding)
+    key = ExitCancellationKey(
+        "ses_1", "xrt_" + "1" * 32, snapshot.attempt_id,
+        snapshot.content_hash, "2026-07-20T00:00:00+00:00",
+        binding.worker_handle, "a" * 64,
+    )
+    lease = runtime.claim_exit_cancellation(key, binding.worker_handle)
+    assert runtime.has_live_owner() is True and lease.needs_worker_io is True
+    with pytest.raises(TypeError):
+        copy(lease)
+    with pytest.raises(TypeError):
+        deepcopy(lease)
+    runtime.close_exit_cancellation(
+        lease, key, binding.worker_handle, ExitCancellationOutcome.success()
+    )
+    assert runtime.claim_exit_cancellation(key, binding.worker_handle) is lease
+    assert lease.needs_worker_io is False
+    runtime.settle_exit_cancellation(
+        lease, key, binding.worker_handle, quarantine=False
+    )
+    assert runtime.has_live_owner() is False
+    with pytest.raises(ExecutionBindingError):
+        runtime.settle_exit_cancellation(
+            lease, key, binding.worker_handle, quarantine=False
+        )
 
 
 @async_test

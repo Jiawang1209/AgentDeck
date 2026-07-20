@@ -8,6 +8,10 @@ from dataclasses import dataclass
 
 from agentdeck.application import execution_records as _records
 from agentdeck.application.execution_resume import ExecutionResult
+from agentdeck.application.exit_cancellation import (
+    ExecutionBindingError, ExitCancellationLease,
+    ExitCancellationRuntimeMixin, _binding_matches_snapshot,
+)
 from agentdeck.kernel.diagnostics import Diagnostic, Severity
 from agentdeck.kernel.execution import Attempt
 from agentdeck.kernel.mission import ConfirmedMissionVersion, TaskDefinition
@@ -54,7 +58,10 @@ class ExecutionRuntimeStatus:
     has_handle: bool
 
     def __post_init__(self) -> None:
-        if self.state not in {"idle", "reserved", "active", "quarantined"}:
+        if self.state not in {
+            "idle", "reserved", "active", "quarantined", "cancelling",
+            "fenced_pending",
+        }:
             raise ValueError("execution runtime status state is invalid")
         identities = (self.attempt_id, self.task_id, self.agent_instance_id)
         if self.state == "idle" and identities != (None, None, None):
@@ -70,10 +77,6 @@ class ExecutionRuntimeStatus:
             raise TypeError("execution runtime has_handle must be an exact bool")
         if self.state == "idle" and self.has_handle:
             raise ValueError("idle execution runtime status cannot have a handle")
-
-
-class ExecutionBindingError(RuntimeError):
-    """Raised when foreground Worker identity is absent, reused, or drifted."""
 
 
 def execution_diagnostic(
@@ -262,31 +265,7 @@ def _validate_reservation(reservation: object) -> ExecutionReservation:
     return reservation
 
 
-def _matches(binding: ActiveExecutionBinding, snapshot: object) -> bool:
-    return type(snapshot) is ExitAttemptSnapshot and (
-        binding.attempt_id,
-        binding.task_id,
-        binding.agent_instance_id,
-        binding.acp_session_id,
-        binding.worker_handle.attempt_id,
-        binding.worker_handle.task_id,
-        binding.worker_handle.agent_id,
-        binding.worker_handle.session_id,
-        binding.worker_handle.transport,
-    ) == (
-        snapshot.attempt_id,
-        snapshot.task_id,
-        snapshot.agent_instance_id,
-        snapshot.acp_session_id,
-        snapshot.attempt_id,
-        snapshot.task_id,
-        snapshot.agent_instance_id,
-        snapshot.acp_session_id,
-        "acp",
-    )
-
-
-class ForegroundExecutionRuntime:
+class ForegroundExecutionRuntime(ExitCancellationRuntimeMixin):
     """Mission-local registry for one exact Worker on one foreground loop."""
 
     def __init__(self) -> None:
@@ -298,6 +277,7 @@ class ForegroundExecutionRuntime:
         self._reservation: ExecutionReservation | None = None
         self._reservation_handle: WorkerHandle | None = None
         self._quarantined = False
+        self._exit_fence: ExitCancellationLease | None = None
 
     def is_empty(self) -> bool:
         return (
@@ -311,6 +291,16 @@ class ForegroundExecutionRuntime:
         )
 
     def status(self) -> ExecutionRuntimeStatus:
+        if self._exit_fence is not None:
+            lease = self._exit_fence
+            state = (
+                "quarantined" if lease.quarantined else
+                "cancelling" if lease.outcome is None else "fenced_pending"
+            )
+            return ExecutionRuntimeStatus(
+                state, lease.key.attempt_id, lease.worker_handle.task_id,
+                lease.worker_handle.agent_id, True,
+            )
         if self._reservation is not None:
             state = "quarantined" if self._quarantined else "reserved"
             item = self._reservation
@@ -329,7 +319,10 @@ class ForegroundExecutionRuntime:
     def reserve(self, reservation: ExecutionReservation) -> None:
         loop = asyncio.get_running_loop()
         reservation = _validate_reservation(reservation)
-        if self._binding is not None or self._reservation is not None:
+        if (
+            self._binding is not None or self._reservation is not None
+            or self._exit_fence is not None
+        ):
             raise ExecutionBindingError("execution runtime owner is not available")
         if self._loop is not None and self._loop is not loop:
             raise ExecutionBindingError("execution loop identity drifted")
@@ -396,7 +389,10 @@ class ForegroundExecutionRuntime:
     def bind(self, binding: ActiveExecutionBinding) -> None:
         loop = asyncio.get_running_loop()
         binding = _validate_binding(binding)
-        if self._binding is not None or self._reservation is not None:
+        if (
+            self._binding is not None or self._reservation is not None
+            or self._exit_fence is not None
+        ):
             raise ExecutionBindingError("execution binding is not available")
         if self._loop is not None and self._loop is not loop:
             raise ExecutionBindingError("execution loop identity drifted")
@@ -421,7 +417,7 @@ class ForegroundExecutionRuntime:
     ) -> ActiveExecutionBinding:
         self._require_loop()
         binding = self._binding
-        if binding is None or not _matches(binding, snapshot):
+        if binding is None or not _binding_matches_snapshot(binding, snapshot):
             raise ExecutionBindingError("exact execution binding is unavailable")
         return binding
 

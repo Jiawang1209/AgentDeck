@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -14,6 +15,7 @@ from agentdeck.application.exit_service import ExitService
 from agentdeck.kernel.execution import AttemptState
 from agentdeck.kernel.session import ExitAttemptSnapshot, ExitRequest
 from agentdeck.ports.exit_authority import ActiveExitAuthority
+from agentdeck.ports.worker import WorkerHandle
 
 from .fakes import FrozenClock
 
@@ -350,3 +352,30 @@ def test_transaction_projection_never_uses_public_connection(
     assert active_store.execute_once(
         "exit-authority:local", "read_exit_authority", read
     )["hash"]
+
+
+@pytest.mark.parametrize("version", [-1, 0, 2**63])
+def test_active_exit_authority_rejects_versions_outside_sqlite_range(
+    active_store, version,
+):
+    authority = active_store.load_active_exit_authority("ses_1")
+    with pytest.raises(ValueError, match="Mission versions"):
+        replace(
+            authority, task_mission_version=version,
+            mission_current_version=version,
+        )
+
+
+def test_active_exit_authority_rejects_control_byte_attempt_identity(active_store):
+    authority = active_store.load_active_exit_authority("ses_1")
+    snapshot = replace(authority.request.attempt, attempt_id="att_\x01")
+    request = ExitRequest(
+        authority.request.request_id, snapshot, snapshot.content_hash,
+        authority.request.requested_at,
+    )
+    handle = WorkerHandle(
+        authority.worker_handle.session_id, authority.worker_handle.agent_id,
+        authority.worker_handle.task_id, snapshot.attempt_id,
+    )
+    with pytest.raises(ValueError, match="attempt identity"):
+        replace(authority, request=request, worker_handle=handle)

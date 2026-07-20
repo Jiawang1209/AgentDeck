@@ -14,6 +14,34 @@
   confirmation replay closes against the original canonical request, and
   Task 15B.5 remains the sole crash-recovery authority.
 
+### Close the Task 15B exit cancellation gap
+
+- Added one bounded, non-copyable foreground cancellation lease. It closes an
+  exact request/authority/Worker handle before persistence, retains only an
+  allowlisted content-free outcome, makes same-process retry perform zero
+  additional Worker I/O, and settles durable success to idle or durable
+  failure to quarantine. Reserved, active, quarantined, cancelling, and
+  fenced-pending owners now block between-stage pause; cancellation-started
+  requests cannot be declined back into dispatch.
+- Session-scoped request and confirmation commands now validate the original
+  request ID, Attempt hash/identity, requested time, and ProductSession
+  lineage. Replay diagnostics reuse the original request time, unexpected
+  Worker and caller-cancellation paths close to an unknown transport outcome,
+  persistence failure returns only `exit_persistence_pending`, and authority
+  drift retries persistence without a second cancel. Mission versions are
+  bounded to SQLite signed positive integers and control-byte Attempt identity
+  is rejected.
+- Replaced the synthetic terminal-win fixture with a production SQLite
+  terminal command that atomically persists Attempt, Evidence, and Handoff and
+  then performs production runtime release; the exit race preserves exact
+  artifact facts and hashes and pauses between stages without another cancel.
+  Recorded REDs were one missing-module collection error, five coordinator
+  failures, four authority-bound failures, two exception-mapping failures, one
+  cross-session replay failure, one empty-identity replay failure, and one
+  persistence-drift failure. GREEN passes 136 Task 15B.4 tests, 215 Task 15B.3
+  R4 tests, 39 architecture/transaction
+  tests, and five consecutive 21-test replay/advancing-clock runs.
+
 ### Make exit one project-pause transaction
 
 - Added one explicit-session async exit coordinator under the project stop
