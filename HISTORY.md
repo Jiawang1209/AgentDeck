@@ -4,6 +4,27 @@
 
 ## 2026-07-20
 
+### Define the Observer Runtime Port and deterministic tmux layout
+
+- Added the authority-free Observer Runtime Port for creating, selecting, and
+  closing a project-namespaced workspace plus the minimal explicit human
+  takeover operation shape. The Port exposes no dispatch, completion,
+  persistence, return-control, or database-write API.
+- Added a deterministic tmux Adapter plan with exact `Overview` and `Workers`
+  windows and ordered `implementer`, `reviewer`, `reviser`, and
+  `acceptance_reviewer` panes. Every pane launches `agentdeck observer` as
+  tuple argv in read-only Application-event subscription mode with bounded
+  project/session/instance identities only; tmux remains a human transparency
+  surface and never stores domain authority.
+- All tmux effects cross an injected runner boundary as exact argv tuples.
+  Unsafe identities, duplicate bindings, role drift, and unstable ordering fail
+  before the first runner call, while runner exceptions and nonzero results are
+  normalized to content-free Adapter diagnostics.
+- TDD evidence: the focused RED produced 29 expected failures because the new
+  Runtime Port did not exist. GREEN passes all 29 deterministic layout,
+  negative-authority, failure, input-firewall, and architecture tests without
+  a live tmux, provider, ACP, or Golden Mission run.
+
 ### Close the R2 ProductSession exit gate
 
 - Closed Task 15B.1 through Task 15B.5 and recorded the exact verified
