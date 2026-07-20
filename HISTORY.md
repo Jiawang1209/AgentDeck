@@ -4,6 +4,21 @@
 
 ## 2026-07-20
 
+### Reject hidden resume authority after spec re-review
+
+- Replaced textual Mission-ID matching for terminal command discovery with a
+  bounded scan of completed `execution_stage_committed` rows. Each row now
+  passes the existing canonical command validator and exact terminal-result
+  shape before parsed Mission/version selection, so whitespace, key order, or
+  noncanonical JSON cannot hide an orphan current-Mission command.
+- Split executing Mission selection from current-version loading. Resume first
+  counts every confirmed/running Mission row for the supplied session, then
+  requires the sole Mission's exact current version row; an executing Mission
+  with missing version authority can no longer disappear through an inner join.
+- Focused RED produced the expected `2 failed`; GREEN passes both regressions
+  and all `167` focused resume/Mission/execution/quality tests without schema,
+  provider, Worker, tmux, or legacy changes.
+
 ### Close resume projection lineage gaps after review
 
 - Corrected review resume authority to retain every committed review Evidence

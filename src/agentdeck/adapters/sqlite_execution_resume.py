@@ -52,12 +52,10 @@ _ACTIVE_ATTEMPT_STATES = frozenset({
 _SESSION_QUERY = """SELECT state,pending_exit_id,pending_exit_attempt_id,
     canonical_pending_exit_attempt_facts,pending_exit_attempt_hash,
     pending_exit_requested_at FROM product_sessions WHERE session_id=?"""
-_MISSION_QUERY = """SELECT m.mission_id,m.state,m.current_version,v.version,
-    v.content_hash,v.canonical_mission_facts,v.confirmed_at
-  FROM missions AS m
-  JOIN mission_versions AS v
-    ON v.mission_id=m.mission_id AND v.version=m.current_version
- WHERE m.session_id=? AND m.state IN ('confirmed','running')"""
+_MISSION_QUERY = """SELECT mission_id,state,current_version FROM missions
+ WHERE session_id=? AND state IN ('confirmed','running')"""
+_VERSION_QUERY = """SELECT version,content_hash,canonical_mission_facts,confirmed_at
+ FROM mission_versions WHERE mission_id=? AND version=?"""
 _TASK_QUERY = """SELECT task_id,ordinal,name,role,planned_backend,
     planned_agent_instance_id,acp_route,state,canonical_task_facts
   FROM tasks WHERE mission_id=? AND mission_version=? ORDER BY ordinal"""
@@ -104,8 +102,14 @@ def _load_mission(
         _fail("resume_mission_missing")
     if len(rows) != 1:
         _fail("resume_mission_ambiguous")
-    mission_id, state, current, version, content_hash, canonical, confirmed_at = rows[0]
-    if state not in {"confirmed", "running"} or current != version:
+    mission_id, state, current = rows[0]
+    versions = connection.execute(
+        _VERSION_QUERY, (mission_id, current)
+    ).fetchall()
+    if state not in {"confirmed", "running"} or len(versions) != 1:
+        _fail()
+    version, content_hash, canonical, confirmed_at = versions[0]
+    if current != version:
         _fail()
     normalize_occurred_at(confirmed_at)
     confirmed = ConfirmedMissionVersion(
@@ -421,11 +425,9 @@ def _validate_command_coverage(
         """SELECT command_id,command_kind,state,canonical_result_facts,
                   created_at,completed_at FROM commands
              WHERE command_kind='execution_stage_committed'
-               AND instr(canonical_result_facts, ?) > 0
-             ORDER BY command_id LIMIT 33""",
-        (f'"mission_id":"{confirmed.mission_id}"',),
+               AND state='completed' ORDER BY command_id LIMIT 4097""",
     ).fetchall()
-    if len(rows) > 32:
+    if len(rows) > 4096:
         _fail()
     represented = {
         stage.terminal_command_id: stage for stage in stages
@@ -435,9 +437,16 @@ def _validate_command_coverage(
     task_ids = {task.task_id for task in draft.tasks}
     for row in rows:
         result = _validate_command_row(row[1:])
-        if result.get("mission_id") != confirmed.mission_id:
+        if set(result) != {
+            "mission_id", "mission_version", "task_id", "attempt_id",
+            "evidence_ids", "handoff_id",
+        }:
+            _fail()
+        if (result["mission_id"], result["mission_version"]) != (
+            confirmed.mission_id, confirmed.version
+        ):
             continue
-        if result.get("mission_version") != confirmed.version or result.get("task_id") not in task_ids:
+        if result["task_id"] not in task_ids:
             _fail()
         stage = represented.get(row[0])
         if stage is None or sha256(row[3].encode("utf-8")).hexdigest() != stage.terminal_command_hash:

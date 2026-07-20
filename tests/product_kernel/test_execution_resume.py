@@ -284,13 +284,31 @@ def test_projection_rejects_orphan_later_terminal_command_read_only(store):
         (
             command_id("terminal", store._resume_confirmed, task, 1),
             "execution_stage_committed",
-            json.dumps(result, sort_keys=True, separators=(",", ":")),
+            json.dumps(result),
             NOW.isoformat(), NOW.isoformat(),
         ),
     )
     before = _table_snapshot(store)
 
     with pytest.raises(ExecutionResumeProjectionError, match="resume_projection_malformed"):
+        store.load_execution_resume("ses_1")
+
+    assert _table_snapshot(store) == before
+
+
+def test_projection_counts_executing_mission_without_current_version(store):
+    store._require_writer().execute(
+        "INSERT INTO missions VALUES (?,?,?,?,?,?)",
+        (
+            "msn_hidden_without_version", "ses_1", "confirmed", 1,
+            NOW.isoformat(), NOW.isoformat(),
+        ),
+    )
+    before = _table_snapshot(store)
+
+    with pytest.raises(
+        ExecutionResumeProjectionError, match="resume_mission_ambiguous"
+    ):
         store.load_execution_resume("ses_1")
 
     assert _table_snapshot(store) == before
