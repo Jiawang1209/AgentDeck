@@ -4,6 +4,27 @@
 
 ## 2026-07-20
 
+### Close Task 28 subscription-cursor and redaction review gaps
+
+- Bound every Observer stream to one immutable expected read-only subscription
+  identity across session, Agent, Task, Attempt, and ACP transport. A loaded
+  foreign cursor now fails during construction before event, sink, or cursor
+  writer effects, and every decoded event must match the same binding.
+- Required a reconnect to replay the exact last acknowledged event before any
+  later sequence can be accepted. Exact replay is deduplicated; skipped replay,
+  stale sequence, changed event identity/content, and fabricated cursor
+  fingerprint fail closed without output or cursor advancement. The cursor
+  remains observational evidence and gains no lifecycle authority.
+- Redacted complete multi-token authorization values plus exact `auth` key
+  words such as `auth_header` and `authValue`, while preserving harmless
+  authentication documentation. Sensitive numeric/bool count, bytes, total,
+  latency-ms, and duration-ms observability metrics remain faithfully visible,
+  matching the decoded Worker Event boundary.
+- Review-fix TDD evidence: the expanded focused RED produced `31 failed, 12
+  passed`; issue-isolated RED produced `4 failed, 1 passed`; and auth key-word
+  RED produced `2 failed, 3 passed`. Focused GREEN passes all 46 Observer
+  fidelity/redaction cases.
+
 ### Render faithful cursor-safe, redacted Agent event streams
 
 - Added a Product Observer that consumes only decoded Worker Event-shaped

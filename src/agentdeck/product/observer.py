@@ -30,7 +30,9 @@ _ERROR_MESSAGES = {
     "observer_sequence_gap": "sequence gap",
     "observer_sequence_rollback": "sequence rollback",
     "observer_sink_failed": "observation sink failed",
+    "observer_subscription_invalid": "invalid observer subscription",
     "observer_subscription_failed": "event subscription failed",
+    "observer_replay_required": "exact cursor replay required",
 }
 _FORBIDDEN_FIELD_SHAPES = (
     "hiddenreasoning", "chainofthought", "rawacp", "rawprotocol", "rawframe",
@@ -55,6 +57,9 @@ _PRIVATE_KEY_BLOCK = re.compile(
     r"-----END [^-\r\n]*PRIVATE KEY-----",
     re.IGNORECASE | re.DOTALL,
 )
+_CAMEL_BOUNDARY = re.compile(
+    r"(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])"
+)
 _FORBIDDEN_CONTENT = re.compile(
     r"\b(?:raw\s+ACP\s+(?:frame|frames|log|logs)|"
     r"raw\s+protocol\s+(?:frame|frames|log|logs|transcript)|"
@@ -76,6 +81,32 @@ class ObserverError(RuntimeError):
             raise ValueError("unknown Observer error code")
         self.code = code
         super().__init__(f"{code}: {_ERROR_MESSAGES[code]}")
+
+
+@dataclass(frozen=True)
+class ObserverSubscription:
+    """Immutable identity expected from one read-only event subscription."""
+
+    session_id: str
+    agent_id: str
+    task_id: str
+    attempt_id: str
+    transport: str
+
+    def __post_init__(self) -> None:
+        try:
+            _typed_identity(self.session_id, "ses_")
+            _typed_identity(self.agent_id, "agt_")
+            _typed_identity(self.task_id, "tsk_")
+            _typed_identity(self.attempt_id, "att_")
+            if self.transport != "acp":
+                raise ValueError("invalid transport")
+        except Exception:
+            raise ObserverError("observer_subscription_invalid") from None
+
+    @property
+    def lineage(self) -> tuple[str, str, str, str, str]:
+        return self.session_id, self.agent_id, self.task_id, self.attempt_id, self.transport
 
 
 @dataclass(frozen=True)
@@ -107,8 +138,7 @@ class ObserverCursor:
     @property
     def lineage(self) -> tuple[str, str, str, str, str]:
         return (
-            self.session_id, self.agent_id, self.task_id, self.attempt_id,
-            self.transport,
+            self.session_id, self.agent_id, self.task_id, self.attempt_id, self.transport,
         )
 
 
@@ -142,8 +172,7 @@ class _EventSnapshot:
     @property
     def lineage(self) -> tuple[str, str, str, str, str]:
         return (
-            self.session_id, self.agent_id, self.task_id, self.attempt_id,
-            self.transport,
+            self.session_id, self.agent_id, self.task_id, self.attempt_id, self.transport,
         )
 
     def cursor(self) -> ObserverCursor:
@@ -266,14 +295,32 @@ def _snapshot_event(value: object) -> _EventSnapshot:
 
 
 def _key_shape(value: str) -> str:
-    return "".join(character for character in value.lower() if character.isalnum())
+    return "".join(_key_words(value))
+
+
+def _key_words(value: str) -> tuple[str, ...]:
+    return tuple(re.findall(r"[a-z0-9]+", _CAMEL_BOUNDARY.sub("_", value).lower()))
+
+
+def _is_sensitive_key(value: str) -> bool:
+    words = _key_words(value)
+    return "auth" in words or any(marker in "".join(words) for marker in _SENSITIVE_KEY_SHAPES)
+
+
+def _is_observability_metric(key: str, value: object) -> bool:
+    words = _key_words(key)
+    return type(value) in {bool, int, float} and (
+        words[-1:] in {("count",), ("bytes",), ("total",)}
+        or words[-2:] in {("latency", "ms"), ("duration", "ms")}
+    )
 
 
 def _redact_text(value: str) -> str:
     if _FORBIDDEN_CONTENT.search(value):
         return "[REDACTED]"
     redacted = _PRIVATE_KEY_BLOCK.sub("[REDACTED]", value)
-    redacted = _SECRET_RELATION.sub("[REDACTED]", redacted)
+    if _SECRET_RELATION.search(redacted):
+        return "[REDACTED]"
     redacted = _CREDENTIAL_SHAPE.sub("[REDACTED]", redacted)
     return redacted
 
@@ -289,7 +336,7 @@ def _redact(value: object) -> object:
             shape = _key_shape(key)
             if any(marker in shape for marker in _FORBIDDEN_FIELD_SHAPES):
                 continue
-            if any(marker in shape for marker in _SENSITIVE_KEY_SHAPES):
+            if _is_sensitive_key(key) and not _is_observability_metric(key, child):
                 result[key] = "[REDACTED]"
             else:
                 result[key] = _redact(child)
@@ -339,8 +386,11 @@ class ObserverStream:
     """Render one immutable event lineage and acknowledge accepted cursors."""
 
     def __init__(
-        self, *, cursor_store: CursorStore, sink: ObservationSink | None = None,
+        self, *, subscription: ObserverSubscription, cursor_store: CursorStore,
+        sink: ObservationSink | None = None,
     ) -> None:
+        if type(subscription) is not ObserverSubscription:
+            raise ObserverError("observer_subscription_invalid")
         load = getattr(cursor_store, "load", None)
         acknowledge = getattr(cursor_store, "acknowledge", None)
         if not callable(load) or not callable(acknowledge):
@@ -355,7 +405,11 @@ class ObserverStream:
             raise ObserverError("observer_cursor_load_failed") from None
         if cursor is not None and type(cursor) is not ObserverCursor:
             raise ObserverError("observer_cursor_invalid")
+        if cursor is not None and cursor.lineage != subscription.lineage:
+            raise ObserverError("observer_identity_mismatch")
+        self._subscription = subscription
         self._cursor = cursor
+        self._replay_required = cursor is not None
 
     def render(self, events: Iterable[object]) -> tuple[str, ...]:
         try:
@@ -371,6 +425,12 @@ class ObserverStream:
             except Exception:
                 raise ObserverError("observer_subscription_failed") from None
             event = _snapshot_event(value)
+            if event.lineage != self._subscription.lineage:
+                raise ObserverError("observer_identity_mismatch")
+            if self._replay_required:
+                self._validate_replay(event)
+                self._replay_required = False
+                continue
             if self._is_exact_duplicate(event):
                 continue
             self._validate_next(event)
@@ -387,6 +447,20 @@ class ObserverStream:
                 raise ObserverError("observer_cursor_write_failed") from None
             self._cursor = cursor
             output.append(record)
+
+    def _validate_replay(self, event: _EventSnapshot) -> None:
+        cursor = self._cursor
+        if cursor is None:
+            raise ObserverError("observer_cursor_invalid")
+        if event.sequence < cursor.sequence:
+            raise ObserverError("observer_sequence_rollback")
+        if event.sequence > cursor.sequence:
+            raise ObserverError("observer_replay_required")
+        if (
+            event.event_id != cursor.event_id
+            or event.fingerprint != cursor.fingerprint
+        ):
+            raise ObserverError("observer_cursor_conflict")
 
     def _is_exact_duplicate(self, event: _EventSnapshot) -> bool:
         cursor = self._cursor
@@ -419,6 +493,6 @@ class ObserverStream:
 
 
 __all__ = [
-    "CursorStore", "ObservationSink", "ObserverCursor", "ObserverError",
-    "ObserverStream", "render_event", "render_system",
+    "CursorStore", "ObservationSink", "ObserverCursor", "ObserverError", "ObserverStream",
+    "ObserverSubscription", "render_event", "render_system",
 ]

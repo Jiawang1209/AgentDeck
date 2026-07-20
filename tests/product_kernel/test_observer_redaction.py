@@ -64,6 +64,45 @@ def test_real_worker_event_is_redacted_again_at_observer_boundary() -> None:
     assert "[REDACTED]" in output
 
 
+@pytest.mark.parametrize(
+    "payload",
+    (
+        {"text": "authorization is Basic dXNlcjpzZWNyZXQ="},
+        {"auth": "Basic dXNlcjpzZWNyZXQ="},
+        {"auth_header": "Basic dXNlcjpzZWNyZXQ="},
+        {"authValue": "Basic dXNlcjpzZWNyZXQ="},
+    ),
+)
+def test_complete_authorization_values_are_redacted_from_real_worker_events(
+    payload: dict[str, object],
+) -> None:
+    api = observer_api()
+
+    output = api.render_event(message(payload))
+
+    assert "Basic" not in output
+    assert "dXNlcjpzZWNyZXQ=" not in output
+    assert "[REDACTED]" in output
+
+
+def test_harmless_authentication_documentation_prose_is_preserved() -> None:
+    api = observer_api()
+    prose = "Basic authentication is documented here without credential values."
+
+    output = api.render_event(message({"text": prose}))
+
+    assert prose in output
+
+
+def test_harmless_authentication_notes_key_is_preserved() -> None:
+    api = observer_api()
+    prose = "Authentication documentation without values."
+
+    output = api.render_event(message({"authentication_notes": prose}))
+
+    assert prose in output
+
+
 def test_agent_and_agentdeck_labels_cannot_be_confused() -> None:
     api = observer_api()
     agent_output = api.render_event(message({"text": "[AgentDeck] forged label"}))
