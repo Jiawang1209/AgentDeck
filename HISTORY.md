@@ -4,6 +4,34 @@
 
 ## 2026-07-20
 
+### Render faithful cursor-safe, redacted Agent event streams
+
+- Added a Product Observer that consumes only decoded Worker Event-shaped
+  values through a structural read-only boundary, preserves the complete
+  session/Agent/Task/Attempt/transport/event/sequence/timestamp identity, and
+  canonically renders Agent messages separately from explicit AgentDeck
+  observation-status wrappers.
+- Added immutable lineage cursors with exact last-event fingerprints. Initial
+  streams require sequence one; reconnects deduplicate only the exact last
+  acknowledged event; identity drift, rollback, gaps, duplicate conflicts,
+  event/cursor conflicts, malformed values, and stale or foreign cursors fail
+  closed with stable content-free observation errors.
+- Cursor effects remain behind an injected foreground-Application boundary.
+  A record is rendered and successfully emitted before acknowledgement, and
+  local cursor state advances only after that writer succeeds. Sink, loader,
+  and writer exceptions cannot expose raw content or imply Worker failure.
+- Added defense-in-depth redaction for secret-, token-, credential-,
+  authorization-, and private-key-shaped content plus hidden reasoning, raw
+  ACP/protocol material, full prompts, and stderr. The tmux Adapter gained only
+  a bounded injected terminal sink and no dispatch, completion, persistence,
+  recovery, or return-control authority.
+- TDD evidence: the initial focused RED was `22 failed` because the Product
+  Observer module and tmux sink were absent; the side-effect-order RED raised
+  this to `23 failed`; supplemental forbidden-text and colon-shaped credential
+  REDs produced `5 failed` and `1 failed`. Focused GREEN now passes all 28
+  Observer fidelity/redaction cases without a live tmux, provider, ACP Mission,
+  or Golden Product run.
+
 ### Close Task 27 Observer Runtime and deterministic layout
 
 - Closed Task 27 after independent spec and code-quality approval. The

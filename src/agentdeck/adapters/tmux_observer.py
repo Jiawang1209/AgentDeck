@@ -21,7 +21,7 @@ Runner = Callable[[tuple[str, ...]], object]
 class TmuxObserverFailure(RuntimeError):
     ALLOWED_CODES = frozenset({
         "observer_create_failed", "observer_select_failed",
-        "observer_close_failed", "observer_takeover_failed",
+        "observer_close_failed", "observer_takeover_failed", "observer_sink_failed",
     })
 
     def __init__(self, code: str) -> None:
@@ -29,6 +29,32 @@ class TmuxObserverFailure(RuntimeError):
             raise ValueError("unknown tmux Observer failure code")
         self.code = code
         super().__init__(code)
+
+
+class TmuxObservationSink:
+    """A bounded terminal writer for already-rendered observation records."""
+
+    def __init__(self, *, writer: Callable[[str], object]) -> None:
+        if not callable(writer):
+            raise TypeError("writer must be callable")
+        self._writer = writer
+
+    def emit(self, record: str) -> None:
+        if type(record) is not str:
+            raise TmuxObserverFailure("observer_sink_failed")
+        try:
+            encoded = record.encode("utf-8", "strict")
+        except UnicodeEncodeError:
+            raise TmuxObserverFailure("observer_sink_failed") from None
+        if (
+            not record or len(encoded) > 256 * 1024 or "\n" in record or "\r" in record
+            or not record.startswith(("[Agent ", "[AgentDeck]"))
+        ):
+            raise TmuxObserverFailure("observer_sink_failed")
+        try:
+            self._writer(record)
+        except Exception:
+            raise TmuxObserverFailure("observer_sink_failed") from None
 
 
 class TmuxObserver:
@@ -199,4 +225,4 @@ class TmuxObserver:
             raise TmuxObserverFailure(failure_code)
 
 
-__all__ = ["TmuxObserver", "TmuxObserverFailure"]
+__all__ = ["TmuxObservationSink", "TmuxObserver", "TmuxObserverFailure"]
