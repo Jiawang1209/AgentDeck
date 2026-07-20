@@ -1298,7 +1298,12 @@ git commit -m "feat: resume execution from committed handoff"
 
 ### Task 15B.4: Make exit one project-pause transaction
 
-**Commit:** `feat: make exit a project pause transaction`
+**Corrective commit:** `fix: close task15b exit cancellation gap`
+
+The prior `feat: make exit a project pause transaction` commit is retained as
+history and must not be amended. First commit this corrected spec/plan/HISTORY
+boundary as `docs: close task15b exit cancellation gap`; then run every RED
+before changing production code.
 
 **Files:**
 
@@ -1307,6 +1312,8 @@ git commit -m "feat: resume execution from committed handoff"
 - Create: `src/agentdeck/adapters/sqlite_exit_authority.py`
 - Modify: `src/agentdeck/adapters/sqlite.py`
 - Create: `src/agentdeck/application/async_exit_coordinator.py`
+- Create: `src/agentdeck/application/exit_cancellation.py`
+- Modify: `src/agentdeck/application/execution_runtime.py`
 - Modify: `src/agentdeck/application/exit_records.py`
 - Modify: `src/agentdeck/application/exit_service.py`
 - Modify: `src/agentdeck/application/project_lifecycle_service.py`
@@ -1314,6 +1321,8 @@ git commit -m "feat: resume execution from committed handoff"
 - Create: `tests/product_kernel/test_product_exit_acp_integration.py`
 - Modify: `tests/product_kernel/test_exit_service.py`
 - Modify: `tests/product_kernel/test_product_reentry.py`
+- Modify: `tests/product_kernel/test_execution_runtime.py`
+- Modify: `tests/product_kernel/test_execution_coordinator.py`
 - Modify: `HISTORY.md`
 
 - [ ] **Step 1: Freeze the closed exit-result vocabulary with RED tests**
@@ -1351,7 +1360,8 @@ authority codes plus:
 {
     "cancel_rejected", "cancel_timeout", "transport_disconnected",
     "exit_binding_drift", "exit_authority_changed_after_cancel",
-    "project_dispatch_paused",
+    "project_dispatch_paused", "exit_persistence_pending",
+    "exit_runtime_convergence_failed",
 }
 ```
 
@@ -1429,6 +1439,21 @@ Also prove:
   unresolved;
 - decline clears only the exact pending request and reopens dispatch without
   touching the Worker;
+- after cancellation has claimed a matching fence or quarantined owner,
+  decline rejects and cannot reopen dispatch;
+- callback, event, and commit failure after cancellation return only
+  `exit_persistence_pending/outcome_known=false`, retain the fence, and exact
+  retry performs zero additional Worker I/O;
+- an unexpected ordinary Worker exception maps to the fixed content-free
+  `transport_disconnected/outcome_known=false`; caller `asyncio.CancelledError`
+  closes the fence to the same unknown outcome before propagating;
+- a success replay settles only the exact fence or accepts a pristine
+  fresh-process runtime; unrelated active/reserved/quarantined ownership
+  returns `exit_runtime_convergence_failed` and never claims exit;
+- first result and replay are equal under an advancing Clock because
+  `Diagnostic.occurred_at` is reconstructed from the original request time;
+- confirmation replay is scoped by ProductSession and validates the original
+  request command's request ID, Attempt hash, Attempt ID, and requested time;
 - setup/drafting/awaiting-confirmation `/exit` closes the interface without a
   synthetic `paused` transition.
 
@@ -1458,7 +1483,9 @@ drift, row drift changes the projection hash, missing/partial/duplicate lineage
 fails closed, malformed or oversized facts fail closed, and no cross-connection
 read is possible while a command transaction owns the writer. Application code
 must consume this typed projection and must not scatter SQL or infer omitted
-lineage.
+lineage. `ActiveExitAuthority` requires mission versions in
+`1..9223372036854775807`; Attempt identity rejects every whitespace/control
+character, not only an empty value.
 
 - [ ] **Step 3: Run RED and record why it fails**
 
@@ -1472,10 +1499,12 @@ conda run -n agentdeck env PYTHONPATH="$PWD/src" pytest \
   tests/product_kernel/test_product_reentry.py -q
 ```
 
-Expected: collection fails because `ActiveExitAuthority` and
-`AsyncExitCoordinator` are absent; after those imports exist, the behavioral
-RED remains because `ExitService.confirm()` still returns
-`exit_cancellation_unavailable`.
+Expected for the corrective RED: assertions fail because the current
+coordinator re-enters Worker cancellation after a persistence exception,
+replay is not ProductSession-scoped, diagnostic time is resampled, runtime
+history is confused with live ownership, decline can clear a cancellation in
+progress, and the existing terminal-win fixture bypasses production terminal
+bundle persistence/release.
 
 - [ ] **Step 4: Split durable request authority from async execution**
 
@@ -1501,7 +1530,10 @@ class AsyncExitCoordinator:
                 "lookup_command", "execute_once", "load_active_exit_authority",
             )),
             (clock, ("now",)),
-            (runtime, ("resolve_exact", "release", "is_empty")),
+            (runtime, (
+                "has_live_owner", "claim_exit_cancellation",
+                "close_exit_cancellation", "settle_exit_cancellation",
+            )),
             (lifecycle, ("stop_lease", "pause_between_stages")),
         ):
             if any(not callable(getattr(dependency, name, None)) for name in methods):
@@ -1518,6 +1550,8 @@ class AsyncExitCoordinator:
             result = self._exit_service.request_exit()
             if result.mode != "exit_ready":
                 return result
+            if self._runtime.has_live_owner():
+                return content_free_dispatch_paused(result)
             paused = self._lifecycle.pause_between_stages()
             return exit_result_from_lifecycle(paused, default=result)
 
@@ -1533,7 +1567,9 @@ class AsyncExitCoordinator:
         return await self.request_exit()
 ```
 
-`_confirm_locked()` is specified completely in Steps 5 and 6.
+`_confirm_locked()` is specified completely in Steps 5 and 6. The coordinator
+also rejects `decline()` whenever the matching request owns a cancelling,
+fenced-pending, or cancellation-quarantined runtime owner.
 Constructor validation accepts only the listed Port/service methods and stores
 no terminal/process text. The explicit, strictly validated `session_id` is the
 only ProductSession identity used for active-exit projection reads; the
@@ -1549,31 +1585,55 @@ and ProductShell never presents that internal mode directly.
 Inside `confirm()` acquire `lifecycle.stop_lease()` and perform this order:
 
 ```python
-replay = load_and_validate_completed_confirm(request_id, attempt_hash)
+replay = load_and_validate_session_scoped_completed_confirm(
+    session_id, request_id, attempt_hash
+)
 if replay is not None:
-    return replay
+    return converge_runtime_before_replay(replay)
 decision = self._exit_service.confirm(request_id, attempt_hash)
 if decision.mode != "exit_confirmation_ready":
     return decision
 pending = decision.request
 if pending is None:
     raise ValueError("exit confirmation authority is missing")
-binding = runtime.resolve_exact(pending.attempt)
+authority = store.load_active_exit_authority(session_id)
+lease = runtime.claim_exit_cancellation(
+    cancellation_key(pending, authority), authority.worker_handle
+)
 try:
-    await binding.worker.cancel_task(
-        binding.worker_handle, reason="product_exit_confirmed"
-    )
+    if lease.needs_worker_io:
+        await lease.worker.cancel_task(
+            lease.worker_handle, reason="product_exit_confirmed"
+        )
 except WorkerCancellationError as error:
-    return persist_closed_cancel_failure(pending, error)
-return persist_exact_pause_after_cancel(pending, binding)
+    runtime.close_exit_cancellation(lease, cancellation_failure(error))
+except asyncio.CancelledError:
+    runtime.close_exit_cancellation(lease, unknown_transport_failure())
+    raise
+except Exception:
+    runtime.close_exit_cancellation(lease, unknown_transport_failure())
+else:
+    if lease.needs_worker_io:
+        runtime.close_exit_cancellation(lease, cancellation_success())
+return persist_then_settle_exact_cancellation(pending, lease)
 ```
 
-`runtime.resolve_exact()` happens before Worker I/O. The single external
-`await cancel_task()` happens before `execute_once`; never hold a SQLite
-transaction open across it. The failure command ID is the same
-`exit:confirm:<request-id>` replay authority as success. Its callback rechecks
-the exact pending request and Attempt snapshot before recording the closed
-content-free result; it does not mutate Attempt or Session state.
+Create `application/exit_cancellation.py` with bounded immutable
+`ExitCancellationKey` and `ExitCancellationOutcome` values. Runtime creates an
+opaque, non-copyable `ExitCancellationLease`; `close` and `settle` require the
+same Python object identity plus exact key and handle. At most one foreground
+fence exists. `has_live_owner()` is true for active, reserved, quarantined,
+cancelling, and fenced-pending state, but false for bounded used-object history
+and released markers. The lease rejects both `copy.copy()` and
+`copy.deepcopy()`; a newly constructed lookalike is never accepted.
+
+The single external `await cancel_task()` happens before `execute_once`; never
+hold a SQLite transaction open across it. If callback, event append, or commit
+raises, catch it at the coordinator boundary and return only non-durable
+`exit_persistence_pending/outcome_known=false/should_exit=false`; retain the
+closed fence and never include exception content. Same-process retry consumes
+the fence outcome and repeats only persistence. The durable command ID is
+`exit:confirm:<session-id>:<request-id>` for success and failure.
 
 - [ ] **Step 6: Implement the atomic project pause commit**
 
@@ -1602,8 +1662,26 @@ Attempt, Session, Handoff, Evidence, or next Task. Exact command replay is
 resolved before pending-state inspection, so a cleared request never causes a
 second cancellation.
 
+After a durable success, settle the exact lease to idle before returning
+`should_exit=true`. Settlement failure returns only
+`exit_runtime_convergence_failed/should_exit=false` and retains the fence for
+zero-I/O replay. A durable success may replay in a fresh process only when the
+runtime is pristine; active, reserved, quarantined, or foreign fenced ownership
+cannot be treated as success. After a durable cancellation failure, settle the
+exact fence into quarantine and retain the pending request. `/decline` must
+reject it. Task 15B.5 owns later recovery; Task 15B.4 never invents a live
+Worker restoration path.
+
+Command replay first reconstructs the original completed exit request and
+validates its canonical request ID, Attempt hash, Attempt ID, requested time,
+and current ProductSession lineage. Stored active results must match that
+request exactly. `exit_result_from_command()` derives
+`Diagnostic.occurred_at` from the original request's `requested_at`, never from
+the current Clock, so advancing-clock replay is byte-stable.
+
 For no-live-Attempt authority, awaited `request_exit()` already owns the stop
-lease. `ProjectLifecycleService.pause_between_stages()` transactionally
+lease and first requires `runtime.has_live_owner() is False`.
+`ProjectLifecycleService.pause_between_stages()` transactionally
 revalidates an exact `running` ProductSession, empty session-scoped active
 Attempt set, and either a null pending group or one exact stale pending request
 whose bound Attempt is now terminal. It clears that group, pauses the
@@ -1615,6 +1693,14 @@ awaiting-confirmation, completed, failed, or cancelled, the lifecycle result is
 `project_not_executing`; the converter preserves the original plain
 `exit_ready` and state. No synthetic pending group or confirmation is created
 between stages.
+
+The terminal-win integration test must run the production execution completion
+path: one real atomic command persists the terminal Attempt plus required
+Evidence and Handoff, then production runtime release runs. The test may use a
+barrier-controlled conforming Worker but may not manually update SQLite or call
+`runtime.release()` to manufacture the race. It asserts every Evidence,
+Handoff, canonical fact, and content hash is unchanged, the pending exit blocks
+the next Task, and a later between-stage `/exit` sends zero cancellation I/O.
 
 - [ ] **Step 7: Run GREEN, race tests, and quality gates**
 
@@ -1645,6 +1731,8 @@ between-stage zero-I/O pause, and the no-false-interruption rule. Then run:
 
 ```bash
 git add HISTORY.md \
+  src/agentdeck/application/exit_cancellation.py \
+  src/agentdeck/application/execution_runtime.py \
   src/agentdeck/ports/exit_authority.py \
   src/agentdeck/ports/store.py \
   src/agentdeck/adapters/sqlite_exit_authority.py \
@@ -1656,8 +1744,10 @@ git add HISTORY.md \
   tests/product_kernel/test_sqlite_exit_authority.py \
   tests/product_kernel/test_product_exit_acp_integration.py \
   tests/product_kernel/test_exit_service.py \
-  tests/product_kernel/test_product_reentry.py
-git commit -m "feat: make exit a project pause transaction"
+  tests/product_kernel/test_product_reentry.py \
+  tests/product_kernel/test_execution_runtime.py \
+  tests/product_kernel/test_execution_coordinator.py
+git commit -m "fix: close task15b exit cancellation gap"
 ```
 
 ---

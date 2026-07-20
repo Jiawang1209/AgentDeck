@@ -125,46 +125,93 @@ Attempt but a confirmed Mission is incomplete, may pause the ProductSession
 without sending ACP. A request made during an active Attempt requires exact
 confirmation and cancellation.
 
-`AsyncExitCoordinator.confirm()` is the sole active-confirm path:
+`AsyncExitCoordinator.confirm()` is the sole active-confirm path. Its durable
+command identity is scoped to the coordinator ProductSession as
+`exit:confirm:<session-id>:<request-id>`. Before accepting a replay it also
+reconstructs the original completed exit-request command and validates the
+canonical request ID, Attempt hash, Attempt ID, request time, and current
+session lineage. A command from another ProductSession, a forged Attempt ID,
+or any canonical drift fails closed.
 
-1. Read a completed `exit:confirm:<request-id>` command first. A closed exact
-   result is returned before inspecting a now-cleared pending request.
-2. If no completed command exists, validate the current pending request and
-   eight-field Attempt snapshot.
-3. Resolve the exact `ActiveExecutionBinding`. Drift fails with zero Worker I/O
-   and zero Store writes.
-4. Outside a Store transaction, call exactly:
+Active confirmation follows this exact order:
+
+1. Under the project stop lease, read and validate the session-scoped completed
+   confirmation and original request commands. Durable replay never invokes a
+   Worker.
+2. If no completed confirmation exists, validate the current pending request,
+   eight-field Attempt snapshot, and complete `ActiveExitAuthority`.
+3. Claim one exact in-process cancellation fence before Worker I/O. The fence
+   lease is a non-copyable object-identity capability bound to the exact
+   request key, full Worker handle, runtime binding, and foreground event loop;
+   only that lease may close or settle it. The runtime owns at most one bounded
+   foreground exit fence.
+4. Outside a Store transaction, call at most once:
 
    ```python
-   await binding.worker.cancel_task(
-       binding.worker_handle,
+   await lease.worker.cancel_task(
+       lease.worker_handle,
        reason="product_exit_confirmed",
    )
    ```
 
-5. After successful bounded cancellation, enter one `execute_once` callback,
+5. Close the fence with either success or one allowlisted, content-free outcome.
+   `WorkerCancellationError` is preserved only as its validated code and
+   `outcome_known`; any other ordinary exception becomes
+   `transport_disconnected/outcome_known=false`. On `asyncio.CancelledError`,
+   close the fence as that unknown outcome before re-raising. No exception
+   message, traceback, prompt, path, frame, output, or credential is retained.
+6. After successful bounded cancellation, enter one `execute_once` callback,
    re-read ProductSession, request, Attempt, Agent, ACP session, and full handle
    lineage, and compare the complete durable authority again.
-6. Only an exact match may atomically change the Attempt to `interrupted`,
+7. Only an exact match may atomically change the Attempt to `interrupted`,
    change the ProductSession to `paused`, clear all five pending-exit fields,
    append `attempt_interrupted`, `project_paused`, and `exit_confirmed`, and
    save the closed completed command result.
+8. Only after that durable success may the exact fence settle to an idle
+   runtime. `should_exit=true` requires either successful exact settlement or
+   a pristine fresh-process runtime with no live owner. Any active, reserved,
+   quarantined, cancelling, or fenced-pending owner blocks success.
 
 If authority changed after cancellation, AgentDeck returns
 `exit_authority_changed_after_cancel`, keeps the request, never claims the
 Attempt was interrupted, and stores only the closed diagnostic command result.
 Cancellation rejection, timeout, disconnect, or uncertain owner shutdown does
 the same, while the still-present pending-exit group keeps the dispatch gate
-closed. These first outcomes are replay authority: exact replay performs no
-second Worker I/O. Unknown request ID, wrong hash, missing pending Attempt, or
-malformed authority creates no command row. Any callback failure rolls back
-all database mutations.
+closed. After its diagnostic command is durable, the exact fence settles to a
+quarantined live owner; `/decline` must reject that request, so cancellation
+cannot be followed by reopening dispatch. Recovery of that quarantine belongs
+to Task 15B.5.
+
+These first outcomes are replay authority: exact same-process replay consumes
+the closed fence outcome and performs no second Worker I/O. If any
+`execute_once` callback, event append, or commit fails after cancellation, the
+coordinator returns only non-durable `exit_persistence_pending` with
+`outcome_known=false` and `should_exit=false`, retains the fence, and exposes
+no exception content. Retry repeats persistence only. A successful durable
+command whose exact fence cannot settle returns a content-free convergence
+failure with `should_exit=false`, retains the fence, and retries settlement
+without Worker I/O. Unknown request ID, wrong hash, missing pending Attempt, or
+malformed authority creates no command row.
+
+The fence is deliberately in-process rather than durable schema authority. A
+crash after cancellation and before command persistence destroys the ACP
+process/channel and the fence; mandatory Task 15B.5 startup recovery observes
+the running Attempt without an exact current-process binding and conservatively
+pauses it. A crash after durable command commit and before settlement replays
+the command against a pristine runtime. Task 15B does not claim cross-process
+continuation of the old Worker binding.
 
 If the current Worker commits its terminal Handoff before confirmation, the
 old Attempt-bound request cannot cancel it or claim interruption. The pending
 stop intent still prevents the next stage from starting. A subsequent `/exit`
 revalidates the new between-stage state and atomically pauses the project with
 all committed Handoff and Evidence intact.
+
+Between-stage pause additionally requires `ForegroundExecutionRuntime` to
+report no live owner. Active, reserved, quarantined, cancelling, and
+fenced-pending ownership all count as live; bounded history of used/released
+objects does not. The coordinator never uses a coarse empty-history predicate
+as runtime authority.
 
 ## 5. Mandatory restart recovery
 
@@ -292,6 +339,8 @@ The corrected project-level contract also requires these exact files:
   durable pause/resume gate.
 - Create `src/agentdeck/application/async_exit_coordinator.py` for the async
   project-stop protocol.
+- Create `src/agentdeck/application/exit_cancellation.py` for immutable,
+  bounded cancellation keys/outcomes and the opaque runtime lease contract.
 - Modify `src/agentdeck/application/exit_records.py` for closed results and
   diagnostics.
 - Modify `tests/product_kernel/test_acp_worker_failures.py`.
@@ -301,6 +350,8 @@ The corrected project-level contract also requires these exact files:
 - Create `tests/product_kernel/test_execution_resume.py`.
 - Create `tests/product_kernel/test_project_lifecycle_service.py`.
 - Modify `tests/product_kernel/test_execution_coordinator.py`.
+- Modify `tests/product_kernel/test_execution_runtime.py` for fence identity,
+  bounded ownership, settlement, and live-owner semantics.
 - Modify `tests/product_kernel/test_sqlite_recovery_integrity.py`.
 - Modify `tests/product_kernel/test_product_shell.py`.
 - Modify `tests/product_kernel/test_product_preview_flow.py`.
@@ -330,7 +381,19 @@ The revised Task 15B plan must prove at least:
 - handle, ACP session, Worker, event-loop, and durable-authority drift produce
   zero unintended I/O or writes;
 - authority drift after cancel never commits interruption or cancels twice;
-- cancel racing normal terminal persistence fails the final CAS safely;
+- cancellation persistence failure, event failure, commit failure, unexpected
+  Worker exception, and caller cancellation retain one closed fence outcome so
+  every retry performs zero additional Worker I/O;
+- exact success settles only its non-copyable lease; foreign/copied keys,
+  handles, reservations, quarantine, and bindings cannot clear the fence;
+- replay is ProductSession-scoped, closes against the original canonical
+  request snapshot, remains byte-stable under an advancing clock, and rejects
+  forged Attempt identity;
+- mission versions outside `1..9223372036854775807`, whitespace/control-byte
+  Attempt identity, and malformed authority fail before Worker I/O;
+- cancel racing normal terminal persistence uses the production atomic terminal
+  Attempt/Evidence/Handoff bundle and runtime release, fails the final CAS
+  safely, and preserves every artifact and content hash;
 - fresh-process empty runtime classifies no-effect work as `interrupted` and
   effect-observed work as `outcome_unknown`, and pauses the project;
 - recovery performs no backend/role/pane/latest fallback;
@@ -382,7 +445,15 @@ The revised TDD plan must preserve this reviewable order:
    - exact active cancellation;
    - between-stage pause;
    - command-atomic Attempt, Session, event, and replay facts.
-5. `feat: require explicit resume after product reentry`
+5. `docs: close task15b exit cancellation gap`
+   - non-copyable cancellation fence and settlement semantics;
+   - session-scoped canonical replay and stable diagnostics;
+   - exact same-process retry and Task 15B.5 crash boundary.
+6. `fix: close task15b exit cancellation gap`
+   - bounded runtime fence and live-owner convergence;
+   - zero-I/O persistence retry and decline quarantine;
+   - production terminal-bundle race acceptance.
+7. `feat: require explicit resume after product reentry`
    - single async ProductShell loop;
    - mandatory startup recovery;
    - observational paused startup;

@@ -4,6 +4,16 @@
 
 ## 2026-07-20
 
+### Close the Task 15B exit cancellation gap design
+
+- Tightened the approved Task 15B.4 contract before behavior work: one
+  non-copyable, exact runtime fence is claimed before cancellation, retains a
+  bounded content-free outcome across persistence retries, and settles only
+  after the matching session-scoped command is durable. Between-stage pause
+  now requires no active, reserved, quarantined, cancelling, or fenced owner;
+  confirmation replay closes against the original canonical request, and
+  Task 15B.5 remains the sole crash-recovery authority.
+
 ### Make exit one project-pause transaction
 
 - Added one explicit-session async exit coordinator under the project stop
