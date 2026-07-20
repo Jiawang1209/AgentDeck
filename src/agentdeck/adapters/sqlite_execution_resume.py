@@ -455,14 +455,14 @@ def _validate_command_coverage(
             validate(identity, row)
     rows = connection.execute("""SELECT command_id,command_kind,state,canonical_result_facts,
                   created_at,completed_at FROM commands
-             WHERE command_kind='execution_stage_committed' AND state='completed'""")
+             WHERE command_kind='execution_stage_committed'""")
     for identity, *row in rows:
-        try:
-            decoded = json.loads(row[2])
-        except (TypeError, ValueError, RecursionError):
-            continue
-        if type(decoded) is dict and (decoded.get("mission_id"),
-            decoded.get("mission_version")) == (confirmed.mission_id, confirmed.version):
+        decoded = _validate_command_row(tuple(row))
+        mission_id, mission_version = decoded.get("mission_id"), decoded.get("mission_version")
+        if (type(mission_id) is not str or not mission_id.strip()
+                or type(mission_version) is not int or mission_version < 1):
+            _fail()
+        if (mission_id, mission_version) == (confirmed.mission_id, confirmed.version):
             validate(identity, tuple(row))
     if seen != set(represented):
         _fail()

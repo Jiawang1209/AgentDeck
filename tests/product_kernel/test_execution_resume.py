@@ -329,6 +329,33 @@ def test_projection_rejects_high_ordinal_current_mission_command_read_only(store
 
 
 @pytest.mark.parametrize(
+    ("state", "result"),
+    (("started", None), ("failed", None), ("completed", "{malformed")),
+)
+def test_projection_rejects_unowned_high_ordinal_command_read_only(
+    store, state, result,
+):
+    seed_closed_stage(store, "implementation")
+    task = next(
+        item for item in store._resume_draft.tasks if item.name == "revision"
+    )
+    store._require_writer().execute(
+        "INSERT INTO commands VALUES (?,?,?,?,?,?)",
+        (
+            command_id("terminal", store._resume_confirmed, task, 2),
+            "execution_stage_committed", state, result, NOW.isoformat(),
+            NOW.isoformat() if state == "completed" else None,
+        ),
+    )
+    before = _table_snapshot(store)
+
+    with pytest.raises(ExecutionResumeProjectionError, match="resume_projection_malformed"):
+        store.load_execution_resume("ses_1")
+
+    assert _table_snapshot(store) == before
+
+
+@pytest.mark.parametrize(
     ("task_name", "state"), (("review", "started"), ("revision", "failed"))
 )
 def test_projection_rejects_noncompleted_later_terminal_command_read_only(

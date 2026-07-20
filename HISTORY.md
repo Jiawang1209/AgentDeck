@@ -4,6 +4,19 @@
 
 ## 2026-07-20
 
+### Close unowned resume command gaps
+
+- Expanded the unbounded `execution_stage_committed` stream from completed
+  rows to every command state. Any `started`/`failed` row, malformed completed
+  result, or completed result without a minimal typed Mission/version owner now
+  fails closed because SQLite v2 cannot otherwise prove which resume authority
+  it belongs to.
+- Legal completed history with an explicit different Mission/version remains
+  ignorable, while current-Mission rows at every ordinal still require an exact
+  represented closed-stage bundle. Focused RED produced `3 failed, 1 passed`;
+  GREEN passes `174` focused tests and `16` architecture/schema authority
+  checks without schema or migration changes.
+
 ### Detect high-ordinal current-Mission resume commands
 
 - Added a hybrid command-coverage projection: deterministic candidate IDs are
