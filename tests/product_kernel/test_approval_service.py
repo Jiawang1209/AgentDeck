@@ -410,3 +410,34 @@ def test_decision_replay_does_not_call_reviewer_twice() -> None:
         assert second.responses == [("perm_1", True, "reviewed")]
 
     asyncio.run(scenario())
+
+
+def test_stream_self_cancellation_does_not_send_worker_cancel() -> None:
+    class SelfCancelledWorker:
+        def __init__(self) -> None:
+            self.cancel_calls = 0
+
+        async def _events(self):
+            raise asyncio.CancelledError("worker stream self-cancelled")
+            if False:
+                yield
+
+        def stream_events(self, _handle):
+            return self._events()
+
+        async def cancel_task(self, *_args, **_kwargs):
+            self.cancel_calls += 1
+
+    async def scenario() -> None:
+        worker = SelfCancelledWorker()
+        service = ApprovalService(store=FakeStore(), clock=FrozenClock(NOW))
+
+        with pytest.raises(asyncio.CancelledError, match="self-cancelled"):
+            await service.bridge_attempt(
+                worker, handle(), context(PermissionProfile.APPROVE_FOR_ME)
+            )
+
+        assert asyncio.current_task().cancelling() == 0
+        assert worker.cancel_calls == 0
+
+    asyncio.run(scenario())

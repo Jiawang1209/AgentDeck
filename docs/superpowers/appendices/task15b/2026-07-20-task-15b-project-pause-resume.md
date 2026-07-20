@@ -1836,13 +1836,19 @@ git commit -m "fix: close task15b exit replay gaps"
 **Files:**
 
 - Modify: `src/agentdeck/application/recovery_service.py`
+- Modify: `src/agentdeck/application/approval_service.py`
+- Create: `src/agentdeck/application/approval_cancellation.py`
+- Create: `src/agentdeck/application/approval_records.py`
 - Modify: `src/agentdeck/product/shell.py`
 - Create: `src/agentdeck/product/shell_projection.py`
+- Create: `src/agentdeck/product/shell_async.py`
 - Modify: `src/agentdeck/product/bootstrap.py`
 - Modify: `tests/product_kernel/test_recovery_service.py`
 - Modify: `tests/product_kernel/test_sqlite_recovery_integrity.py`
 - Modify: `tests/product_kernel/test_product_shell.py`
 - Create: `tests/product_kernel/test_product_shell_cleanup.py`
+- Create: `tests/product_kernel/test_product_shell_caller_cancellation.py`
+- Modify: `tests/product_kernel/test_approval_service.py`
 - Modify: `tests/product_kernel/test_product_preview_flow.py`
 - Modify: `tests/product_kernel/test_product_reentry.py`
 - Create: `tests/product_kernel/test_project_resume_replay.py`
@@ -1860,6 +1866,23 @@ lifecycle test remains within the unchanged 500-line gate.
 Shell cleanup regressions live in `test_product_shell_cleanup.py`; an owned
 Mission child cancellation must preserve `CancelledError` while a nested
 cleanup `finally` still closes the Store exactly once.
+External cancellation of `run_async()` is a distinct ownership boundary. Each
+input-loop iteration must cancel and await its read and SIGINT Tasks, then the
+Shell must bounded-cancel and settle an owned Mission child before closing the
+Store and re-raising the original caller `CancelledError`. That teardown must
+not synthesize terminal Attempt facts or a project pause: a real in-flight
+Attempt remains durably `running` for mandatory startup recovery.
+The bridge cancellation path must invoke the real Worker cancellation boundary
+so an `ACPWorker` also closes its separately owned prompt Task; cancelling only
+the Mission child is insufficient. Cleanup must run behind a shielded owned
+Task so a second caller cancellation cannot replace the first
+`CancelledError` or strand the Mission child. Arbitrary coroutines that refuse
+all cancellation are outside the supported Worker contract; the acceptance
+uses the real cooperative ACPWorker path and proves every owned Task is done.
+The bridge may send that cleanup RPC only when `Task.cancelling()` proves the
+bridge Task has caller-origin cancellation authority. A Worker event stream
+that raises `CancelledError` by itself must propagate unchanged with zero
+cancel RPC and zero new durable facts.
 
 - [ ] **Step 1: Write mandatory startup-recovery RED tests**
 
@@ -1992,6 +2015,7 @@ conda run -n agentdeck env PYTHONPATH="$PWD/src" pytest \
   tests/product_kernel/test_sqlite_recovery_integrity.py \
   tests/product_kernel/test_product_shell.py \
   tests/product_kernel/test_product_shell_cleanup.py \
+  tests/product_kernel/test_product_shell_caller_cancellation.py \
   tests/product_kernel/test_product_preview_flow.py \
   tests/product_kernel/test_product_reentry.py -q
 ```
@@ -2227,6 +2251,7 @@ conda run -n agentdeck env PYTHONPATH="$PWD/src" pytest \
   tests/product_kernel/test_sqlite_recovery_integrity.py \
   tests/product_kernel/test_product_shell.py \
   tests/product_kernel/test_product_shell_cleanup.py \
+  tests/product_kernel/test_product_shell_caller_cancellation.py \
   tests/product_kernel/test_product_preview_flow.py \
   tests/product_kernel/test_product_reentry.py \
   tests/product_kernel/test_project_resume_replay.py \
@@ -2257,8 +2282,12 @@ same-loop resume, crash convergence, RED/GREEN counts, and the exact one-match
 
 ```bash
 git add HISTORY.md \
+  src/agentdeck/application/approval_cancellation.py \
+  src/agentdeck/application/approval_records.py \
+  src/agentdeck/application/approval_service.py \
   src/agentdeck/application/recovery_service.py \
   src/agentdeck/product/shell.py \
+  src/agentdeck/product/shell_async.py \
   src/agentdeck/product/shell_projection.py \
   src/agentdeck/product/bootstrap.py \
   docs/superpowers/appendices/task15b/2026-07-20-task-15b-project-pause-resume.md \
@@ -2267,6 +2296,8 @@ git add HISTORY.md \
   tests/product_kernel/test_sqlite_recovery_integrity.py \
   tests/product_kernel/test_product_shell.py \
   tests/product_kernel/test_product_shell_cleanup.py \
+  tests/product_kernel/test_product_shell_caller_cancellation.py \
+  tests/product_kernel/test_approval_service.py \
   tests/product_kernel/test_product_preview_flow.py \
   tests/product_kernel/test_product_reentry.py \
   tests/product_kernel/test_project_resume_replay.py
@@ -2299,6 +2330,7 @@ conda run -n agentdeck env PYTHONPATH="$PWD/src" pytest \
   tests/product_kernel/test_product_reentry.py \
   tests/product_kernel/test_project_resume_replay.py \
   tests/product_kernel/test_product_shell_cleanup.py \
+  tests/product_kernel/test_product_shell_caller_cancellation.py \
   tests/product_kernel/test_recovery_service.py \
   tests/product_kernel/test_sqlite_recovery_integrity.py \
   tests/product_kernel/test_product_shell.py \

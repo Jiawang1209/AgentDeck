@@ -67,6 +67,22 @@
   now guaranteed to close once. Cleanup regressions were separated into a
   focused test module so the shell behavior tests remain reviewable without
   weakening the 500-line gate.
+- Closed the integrated caller-cancellation ownership gap. Every input-loop
+  iteration now cancels and awaits its read and SIGINT Tasks; external
+  cancellation bounded-cancels and settles the owned Mission child, closes the
+  Store exactly once, and then preserves the caller's original
+  `CancelledError`. The real ExecutionService regression retains the in-flight
+  Attempt and ProductSession as durably `running`, writes no Evidence, Handoff,
+  completion, or project-pause facts. The cancelled ApprovalService bridge now
+  invokes the real Worker cancellation boundary, so ACPWorker also closes its
+  separately owned prompt Task. Shielded cleanup absorbs later cancellation
+  requests and re-raises the first `CancelledError`; every supported owned Task
+  is done before Store close, leaving mandatory startup recovery as the only
+  authority that converges the interrupted work. A stream-originated
+  `CancelledError` with no pending Task cancellation propagates without a new
+  Worker cancel RPC. Terminal ownership moved to `product/shell_async.py`, and
+  caller discrimination plus validated approval records moved to focused
+  Application modules as meaningful 500-line boundary splits.
 - Corrected the R2 lexical legacy-authority gate to inspect production source
   only. The previous command also scanned negative regression tests and
   therefore rejected the test that explicitly proves recovery has no tmux
@@ -86,6 +102,15 @@
   1776 Product Kernel tests. Modified source/test files are at most 500 lines;
   Application, Shell, and Worker paths contain zero `asyncio.run()` calls,
   while Product bootstrap contains exactly one outer entrypoint call.
+- Caller-cancellation TDD first failed both focused tests: the blocked terminal
+  reader was not cancelled, and a real blocking Mission prevented Shell
+  completion and Store close beyond the 200 ms test bound. Independent review
+  REDs then proved that a real ACP prompt Task survived Mission cancellation
+  and a second caller cancellation replaced the first error and interrupted
+  cleanup. A final RED proved that stream self-cancellation incorrectly sent a
+  Worker cancel RPC. GREEN passes all four regressions, 127 focused Task 15B.5
+  tests, 148 Task 15B.4 tests, 489 integrated Task 15B tests, 79 focused
+  approval/ACP tests, and the current 1785-test Product Kernel suite.
 
 ### Restore the Product Kernel documentation source of truth
 

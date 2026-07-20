@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Awaitable, Callable, Mapping
 import signal
-from typing import Final, TextIO
+from typing import Final
 
 from agentdeck.application.async_exit_coordinator import AsyncExitCoordinator
 from agentdeck.application.execution_resume import (
@@ -26,6 +26,12 @@ from agentdeck.product.presenter import (
     DiagnosisPresentation, ExitPresentation, SetupPresentation, StatusPresentation,
 )
 from agentdeck.product.renderer import render
+from agentdeck.product.shell_async import (
+    AsyncTerminalReader,
+    collect_iteration_tasks,
+    consume_cancelled,
+    settle_owned_after_caller_cancel,
+)
 from agentdeck.product.shell_projection import (
     EXECUTION_ADAPTER_UNAVAILABLE,
     HELP_TEXT,
@@ -41,38 +47,6 @@ from agentdeck.product.slash_commands import CommandKind, SlashCommand, parse_co
 
 
 _DEFAULT_PERMISSION: Final = "approve-for-me"
-class AsyncTerminalReader:
-    def __init__(self, stream: TextIO, prompt_stream: TextIO) -> None:
-        self._stream, self._prompt_stream = stream, prompt_stream
-    async def __call__(self, prompt: str) -> str:
-        loop = asyncio.get_running_loop()
-        future: asyncio.Future[str] = loop.create_future()
-        descriptor = self._stream.fileno()
-        self._prompt_stream.write(prompt)
-        self._prompt_stream.flush()
-        def ready() -> None:
-            if future.done():
-                return
-            try:
-                line = self._stream.readline()
-                if line == "":
-                    future.set_exception(EOFError())
-                else:
-                    future.set_result(line.rstrip("\r\n"))
-            except BaseException as error:
-                future.set_exception(error)
-        loop.add_reader(descriptor, ready)
-        try:
-            return await future
-        finally:
-            loop.remove_reader(descriptor)
-
-
-async def _consume_cancelled(task: asyncio.Task) -> None:
-    try:
-        await task
-    except asyncio.CancelledError:
-        pass
 
 
 class ProductShell:
@@ -139,6 +113,7 @@ class ProductShell:
     async def run_async(self) -> int:
         loop = asyncio.get_running_loop()
         signal_installed = False
+        caller_cancelled = False
         interrupted = asyncio.Event()
         try:
             await self._recovery.reconcile()
@@ -150,33 +125,44 @@ class ProductShell:
             while True:
                 read_task = asyncio.create_task(self._read_line("agentdeck> "))
                 signal_task = asyncio.create_task(interrupted.wait())
-                done, _ = await asyncio.wait(
-                    (read_task, signal_task), return_when=asyncio.FIRST_COMPLETED)
-                if signal_task in done:
-                    read_task.cancel()
-                    await _consume_cancelled(read_task)
-                    interrupted.clear()
-                    if await self._present_exit(await self._exit.request_exit()):
+                try:
+                    done, _ = await asyncio.wait(
+                        (read_task, signal_task),
+                        return_when=asyncio.FIRST_COMPLETED,
+                    )
+                    if signal_task in done:
+                        read_task.cancel()
+                        await consume_cancelled(read_task)
+                        interrupted.clear()
+                        if await self._present_exit(await self._exit.request_exit()):
+                            await self._finish_child_for_exit()
+                            return 0
+                        continue
+                    signal_task.cancel()
+                    await consume_cancelled(signal_task)
+                    try:
+                        line = read_task.result()
+                    except EOFError:
+                        return await self._handle_input_closed()
+                    if type(line) is not str:
+                        self._emit("Input was not accepted. Use /help.")
+                        continue
+                    if await self._accept_line(line):
                         await self._finish_child_for_exit()
                         return 0
-                    continue
-                signal_task.cancel()
-                await _consume_cancelled(signal_task)
-                try:
-                    line = read_task.result()
-                except EOFError:
-                    return await self._handle_input_closed()
-                if type(line) is not str:
-                    self._emit("Input was not accepted. Use /help.")
-                    continue
-                if await self._accept_line(line):
-                    await self._finish_child_for_exit()
-                    return 0
+                finally:
+                    await collect_iteration_tasks(read_task, signal_task)
+        except asyncio.CancelledError:
+            caller_cancelled = True
+            raise
         finally:
             try:
                 if signal_installed:
                     loop.remove_signal_handler(signal.SIGINT)
-                await self._settle_owned_child()
+                if caller_cancelled:
+                    await settle_owned_after_caller_cancel(self._mission_child)
+                else:
+                    await self._settle_owned_child()
             finally:
                 self._close_once()
 

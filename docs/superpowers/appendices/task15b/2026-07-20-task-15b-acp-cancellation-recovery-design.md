@@ -334,10 +334,22 @@ The original Task 15B files remain authorized:
 - `src/agentdeck/product/shell_projection.py` (approved pure helper extraction
   for the 500-line ProductShell boundary)
 - `src/agentdeck/product/bootstrap.py`
+- `src/agentdeck/application/approval_service.py` (the permission/event bridge
+  closes real Worker-owned background work when its caller is cancelled)
+- `src/agentdeck/application/approval_cancellation.py` (caller-origin
+  discrimination and Worker cleanup extracted from the approval bridge)
+- `src/agentdeck/application/approval_records.py` (validated public approval
+  records extracted to preserve the 500-line service boundary)
+- `src/agentdeck/product/shell_async.py` (terminal Task ownership and bounded
+  caller-cancellation cleanup extracted from the Product Shell)
 - `tests/product_kernel/test_project_resume_replay.py` (focused replay
   generation regression extracted to preserve the 500-line test boundary)
 - `tests/product_kernel/test_product_shell_cleanup.py` (focused cleanup
   regressions extracted to preserve the 500-line shell test boundary)
+- `tests/product_kernel/test_product_shell_caller_cancellation.py` (external
+  caller-cancellation ownership and durable recovery regressions)
+- `tests/product_kernel/test_approval_service.py` (non-caller stream
+  cancellation must not synthesize a Worker cancel RPC)
 - `tests/product_kernel/test_execution_runtime.py`
 - `tests/product_kernel/test_product_exit_acp_integration.py`
 - `tests/product_kernel/test_product_reentry.py`
