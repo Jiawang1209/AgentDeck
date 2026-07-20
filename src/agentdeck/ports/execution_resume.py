@@ -139,6 +139,27 @@ def _terminal_result_owner(value: object) -> tuple[str, int, str, str]:
     )
 
 
+def _terminal_command_id(
+    mission_id: str, version: int, task_id: str, ordinal: int,
+) -> str:
+    parts = (mission_id, str(version), task_id, "terminal", str(ordinal))
+    canonical = json.dumps(parts, ensure_ascii=False, separators=(",", ":"))
+    return "cmd_" + sha256(canonical.encode("utf-8")).hexdigest()[:24]
+
+
+def _validate_stage_evidence_shape(name: str, kinds: tuple[str, ...]) -> None:
+    expected = {
+        "implementation": ("artifact_hash",),
+        "revision": ("diff_identity",),
+        "acceptance": ("acceptance_result",),
+    }
+    if name == "review":
+        if not kinds or any(kind != "review_finding" for kind in kinds):
+            _malformed()
+    elif name not in expected or kinds != expected[name]:
+        _malformed()
+
+
 @dataclass(frozen=True)
 class ResumeAttemptFacts:
     attempt_id: str

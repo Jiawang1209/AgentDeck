@@ -4,6 +4,24 @@
 
 ## 2026-07-20
 
+### Close resume projection integrity gaps
+
+- Added read-only ownership coverage for every Evidence and Handoff attached to
+  the executing Mission. Only a represented closed stage's terminal Attempt
+  may own its exact command-referenced bundle; facts attached to interrupted,
+  prior failed/nonterminal, or later-stage Attempts now fail closed.
+- Aligned stored stage Evidence with live execution semantics: implementation
+  requires exactly one artifact hash, review requires only review findings,
+  revision requires exactly one diff identity, and acceptance requires exactly
+  one accepted acceptance result. The shared closed-stage fixture now follows
+  the same revision schema.
+- Closed SQLite and pure-planner error boundaries over hostile deep JSON plus
+  `RecursionError`/`OverflowError` without weakening the existing one-megabyte
+  projection bound. The dedicated integrity RED produced `13 failed, 2 passed`;
+  GREEN passes all `15` integrity cases, `192` focused tests, and `16`
+  architecture/schema checks. The reviewed unrelated-command N+1 is recorded
+  for later optimization and intentionally unchanged in this integrity fix.
+
 ### Prove unrelated resume command ownership
 
 - Tightened every streamed terminal result to the same exact six-field,

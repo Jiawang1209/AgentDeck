@@ -31,6 +31,8 @@ from agentdeck.ports.execution_resume import (
     ResumeEvidenceFacts,
     ResumeHandoffFacts,
     ResumeStageFacts,
+    _terminal_command_id,
+    _validate_stage_evidence_shape,
 )
 
 
@@ -83,7 +85,7 @@ def _canonical(value: object) -> str:
             value, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
             allow_nan=False,
         )
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, RecursionError, OverflowError):
         _fail()
 
 
@@ -181,17 +183,6 @@ def _rebuild_handoff(facts: ResumeHandoffFacts, stage: ResumeStageFacts) -> Hand
     return handoff
 
 
-def _terminal_command_id(
-    facts: ExecutionResumeFacts, task: TaskDefinition, ordinal: int,
-) -> str:
-    parts = (
-        facts.mission_id, str(facts.mission_version), task.task_id,
-        "terminal", str(ordinal),
-    )
-    canonical = json.dumps(parts, ensure_ascii=False, separators=(",", ":"))
-    return "cmd_" + sha256(canonical.encode("utf-8")).hexdigest()[:24]
-
-
 def _review_finding(evidence: Evidence) -> ReviewFinding:
     try:
         payload = json.loads(evidence.canonical_content)
@@ -265,6 +256,9 @@ def _rebuild_execution_history(
             rebuilt_evidence = tuple(
                 _rebuild_evidence(item, stage) for item in stage.evidence
             )
+            _validate_stage_evidence_shape(
+                task.name, tuple(item.kind.value for item in rebuilt_evidence)
+            )
             for item in rebuilt_evidence:
                 references = _cross_stage_reference_ids(item)
                 if references and (
@@ -292,7 +286,8 @@ def _rebuild_execution_history(
                 terminal.state is not AttemptState.COMPLETED
                 or stage.terminal_attempt_id != terminal.attempt_id
                 or stage.terminal_command_id != _terminal_command_id(
-                    snapshot.facts, task, terminal.ordinal
+                    snapshot.facts.mission_id, snapshot.facts.mission_version,
+                    task.task_id, terminal.ordinal
                 )
                 or (next_task is None) != (rebuilt_handoff is None)
                 or (
@@ -377,7 +372,8 @@ class ExecutionResumePlanner:
             )
         except ExecutionResumeProjectionError:
             raise
-        except (KeyError, StopIteration, TypeError, ValueError):
+        except (KeyError, StopIteration, TypeError, ValueError,
+                RecursionError, OverflowError):
             _fail()
 
 

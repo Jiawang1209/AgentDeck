@@ -165,6 +165,11 @@ def _evidence(store: SQLiteStore, name: str, ordinal: int) -> Evidence:
         return Evidence.acceptance(
             identity, result=result, source_kind=EvidenceKind.ACCEPTANCE_RESULT
         )
+    if name == "revision":
+        return Evidence.create(identity, EvidenceKind.DIFF_IDENTITY, {
+            "base": "before", "head": "after",
+            "diff_hash": sha256(name.encode()).hexdigest(),
+        })
     return Evidence.create(identity, EvidenceKind.ARTIFACT_HASH, {
         "artifact_reference": f"{name} patch",
         "content_hash": sha256(name.encode()).hexdigest(),

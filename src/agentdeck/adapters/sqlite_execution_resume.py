@@ -40,9 +40,8 @@ from agentdeck.ports.execution_resume import (
     ResumeEvidenceFacts,
     ResumeHandoffFacts,
     ResumeStageFacts,
-    _terminal_result_owner,
+    _terminal_command_id, _terminal_result_owner, _validate_stage_evidence_shape,
 )
-
 
 _ACTIVE_ATTEMPT_STATES = frozenset({
     AttemptState.PENDING,
@@ -196,17 +195,13 @@ def _load_attempts(
             _fail()
         grouped[task_id] = attempts
     return {key: tuple(value) for key, value in grouped.items()}
-def _command_id(mission_id: str, version: int, task_id: str, ordinal: int) -> str:
-    parts = (mission_id, str(version), task_id, "terminal", str(ordinal))
-    canonical = json.dumps(parts, ensure_ascii=False, separators=(",", ":"))
-    return "cmd_" + sha256(canonical.encode("utf-8")).hexdigest()[:24]
 def _load_terminal_command(
     connection: sqlite3.Connection,
     confirmed: ConfirmedMissionVersion,
     task: TaskDefinition,
     attempt: Attempt,
 ) -> tuple[str, str, dict[str, object]]:
-    identity = _command_id(
+    identity = _terminal_command_id(
         confirmed.mission_id, confirmed.version, task.task_id, attempt.ordinal
     )
     row = connection.execute(
@@ -380,6 +375,7 @@ def _stage_facts(
             evidence = _load_evidence(
                 connection, task, terminal, result["evidence_ids"]
             )
+            _validate_stage_evidence_shape(task.name, tuple(item.kind for item in evidence))
             for item in evidence:
                 references = _cross_stage_reference_ids(item)
                 if references and (
@@ -429,7 +425,7 @@ def _validate_command_coverage(
         maximum = last + 1 if stage.terminal_command_id is None else last
         maximum = max(maximum, 1)
         for ordinal in range(1, maximum + 1):
-            identity = _command_id(
+            identity = _terminal_command_id(
                 confirmed.mission_id, confirmed.version, task.task_id, ordinal
             )
             row = connection.execute(
@@ -456,11 +452,19 @@ def _validate_command_coverage(
                WHERE v.mission_id=? AND v.version=? AND t.task_id=? AND a.attempt_id=?""",
             (mission_id, mission_version, task_id, attempt_id),
         ).fetchone()
-        if owner is None or owner[1] != "completed" or identity != _command_id(
+        if owner is None or owner[1] != "completed" or identity != _terminal_command_id(
             mission_id, mission_version, task_id, owner[0]
         ):
             _fail()
-    if seen != set(represented):
+    facts = connection.execute("""SELECT 'evidence',e.evidence_id FROM evidence e
+      LEFT JOIN attempts a ON a.attempt_id=e.attempt_id LEFT JOIN tasks d ON d.task_id=e.task_id LEFT JOIN tasks v ON v.task_id=a.task_id
+      WHERE (d.mission_id=? AND d.mission_version=?) OR (v.mission_id=? AND v.mission_version=?) UNION ALL SELECT 'handoff',h.handoff_id FROM handoffs h
+      JOIN attempts a ON a.attempt_id=h.source_attempt_id JOIN tasks s ON s.task_id=a.task_id JOIN tasks t ON t.task_id=h.target_task_id
+      WHERE (s.mission_id=? AND s.mission_version=?) OR (t.mission_id=? AND t.mission_version=?)""",
+        (confirmed.mission_id, confirmed.version) * 4)
+    expected = {("evidence", item.evidence_id) for stage in stages for item in stage.evidence}
+    expected.update(("handoff", stage.handoff.handoff_id) for stage in stages if stage.handoff)
+    if set(facts) != expected or seen != set(represented):
         _fail()
 def load_execution_resume(
     connection: sqlite3.Connection, session_id: str,
@@ -489,7 +493,7 @@ def load_execution_resume(
         return ExecutionResumeSnapshot.create(facts)
     except ExecutionResumeProjectionError:
         raise
-    except (KeyError, TypeError, ValueError, StoreCommandStateError, sqlite3.Error):
+    except (KeyError, TypeError, ValueError, RecursionError, OverflowError, StoreCommandStateError, sqlite3.Error):
         _fail()
 
 
