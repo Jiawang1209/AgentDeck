@@ -101,6 +101,33 @@ def test_missing_session_blocks_even_with_closed_start_replay(tmp_path) -> None:
         store.close()
 
 
+@pytest.mark.parametrize("boundary", ["dispatch_gate", "persist_start"])
+def test_pre_start_internal_failure_is_content_free_and_writes_nothing(
+    boundary,
+) -> None:
+    harness = Harness()
+
+    def fail(*args, **kwargs):
+        raise RuntimeError("/private/hostile/path secret prompt")
+
+    if boundary == "dispatch_gate":
+        harness.lifecycle.require_dispatchable = fail
+    else:
+        harness.service._persist_started = fail
+    before = deepcopy((harness.store.aggregates, harness.store.commands))
+
+    result = asyncio.run(harness.run())
+
+    assert result.diagnostic.code == "execution_start_failed"
+    assert result.diagnostic.cause == (
+        "the durable execution start boundary did not close"
+    )
+    assert result.diagnostic.outcome_known is True
+    assert result.attempts == ()
+    assert harness.started_tasks == [] and harness.requests == []
+    assert (harness.store.aggregates, harness.store.commands) == before
+
+
 def _binding_result(harness, request, session_id):
     return {
         "mission_id": harness.confirmed.mission_id,

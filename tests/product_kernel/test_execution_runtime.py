@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import asynccontextmanager
 from dataclasses import replace
 from functools import wraps
 
@@ -9,11 +10,20 @@ import pytest
 from agentdeck.application.execution_runtime import (
     ActiveExecutionBinding,
     ExecutionBindingError,
+    ExecutionReservation,
+    ExecutionRuntimeStatus,
     ForegroundExecutionRuntime,
+)
+from agentdeck.application.project_lifecycle_service import (
+    ProjectDispatchBlocked,
+    ProjectLifecycleService,
 )
 from agentdeck.kernel.execution import AttemptState
 from agentdeck.kernel.session import ExitAttemptSnapshot
 from agentdeck.ports.worker import WorkerHandle
+from product_kernel.fakes import FrozenClock
+from product_kernel.test_execution_coordinator import Harness, ScriptedWorker
+from product_kernel.test_sqlite_execution_resume import NOW
 
 
 def async_test(function):
@@ -194,3 +204,218 @@ async def test_empty_runtime_reports_only_pristine_mission_state():
     runtime.bind(binding)
     runtime.release(binding.attempt_id, binding.worker_handle)
     assert runtime.is_empty() is False
+
+
+def reservation_for(
+    attempt_id="att_1", task_id="tsk_1", agent_id="agt_1", *, worker=None,
+):
+    return ExecutionReservation(
+        attempt_id, task_id, agent_id,
+        RecordingWorker() if worker is None else worker,
+    )
+
+
+@async_test
+async def test_reservation_is_invisible_until_exact_atomic_activation():
+    runtime = ForegroundExecutionRuntime()
+    reservation = reservation_for()
+    handle = WorkerHandle("ses_acp_1", "agt_1", "tsk_1", "att_1")
+    snapshot = ExitAttemptSnapshot(
+        "att_1", "tsk_1", "agt_1", 1, AttemptState.RUNNING,
+        "ses_acp_1", False, None,
+    )
+
+    runtime.reserve(reservation)
+    assert runtime.status() == ExecutionRuntimeStatus(
+        "reserved", "att_1", "tsk_1", "agt_1", False
+    )
+    with pytest.raises(ExecutionBindingError):
+        runtime.resolve_exact(snapshot)
+    binding = runtime.claim_handle(reservation, handle)
+    assert runtime.status().has_handle is True
+    with pytest.raises(ExecutionBindingError):
+        runtime.resolve_exact(snapshot)
+
+    runtime.activate(reservation, binding)
+
+    assert runtime.resolve_exact(snapshot) is binding
+
+
+@async_test
+async def test_quarantine_owner_is_bounded_invisible_and_cannot_be_cleared():
+    runtime = ForegroundExecutionRuntime()
+    reservation = reservation_for()
+    handle = WorkerHandle("ses_acp_1", "agt_1", "tsk_1", "att_1")
+    runtime.reserve(reservation)
+    runtime.claim_handle(reservation, handle)
+    runtime.quarantine(reservation)
+    status = runtime.status()
+    snapshot = ExitAttemptSnapshot(
+        "att_1", "tsk_1", "agt_1", 1, AttemptState.RUNNING,
+        "ses_acp_1", False, None,
+    )
+
+    with pytest.raises(ExecutionBindingError):
+        runtime.resolve_exact(snapshot)
+    with pytest.raises(ExecutionBindingError):
+        runtime.reserve(reservation_for("att_2", "tsk_2", "agt_2"))
+    with pytest.raises(ExecutionBindingError):
+        runtime.bind(binding_for("att_2", "tsk_2", "agt_2", "ses_acp_2"))
+    with pytest.raises(ExecutionBindingError):
+        runtime.release("att_1", handle)
+    with pytest.raises(ExecutionBindingError):
+        runtime.rollback(reservation)
+
+    assert runtime.status() == status
+    assert status == ExecutionRuntimeStatus(
+        "quarantined", "att_1", "tsk_1", "agt_1", True
+    )
+    assert runtime.is_empty() is False
+
+
+@pytest.mark.parametrize("status", [
+    ("quarantined", "raw-attempt", "tsk_1", "agt_1", False),
+    ("idle", None, None, None, True),
+])
+def test_runtime_status_rejects_invalid_bounded_state(status):
+    with pytest.raises(ValueError):
+        ExecutionRuntimeStatus(*status)
+
+
+class ReturnedHandleWorker(ScriptedWorker):
+    def __init__(self, harness, task_name, returned_handle, *, cancel_fails=False):
+        super().__init__(harness, task_name)
+        self.returned_handle = returned_handle
+        self.cancel_fails = cancel_fails
+        self.cancel_calls = []
+
+    async def start_task(self, request):
+        self._harness.started_tasks.append(self._task_name)
+        self._harness.requests.append(request)
+        self._request = request
+        self._handle = self.returned_handle
+        return self.returned_handle
+
+    async def cancel_task(self, handle, *, reason):
+        self.cancel_calls.append((handle, reason))
+        if self.cancel_fails:
+            raise RuntimeError("/private/cancel/raw prompt")
+
+
+@async_test
+@pytest.mark.parametrize(
+    ("cancel_fails", "terminal_fails", "expected_status"),
+    [(False, False, "idle"), (True, False, "quarantined"),
+     (False, True, "quarantined")],
+)
+async def test_equal_old_handle_cancels_only_new_worker_or_quarantines(
+    cancel_fails, terminal_fails, expected_status,
+):
+    harness = Harness()
+    first = ScriptedWorker(harness, "implementation")
+    second = None
+    lease_states = []
+
+    class CheckingLifecycle(ProjectLifecycleService):
+        @asynccontextmanager
+        async def dispatch_lease(self):
+            async with super().dispatch_lease():
+                yield
+                lease_states.append(harness.runtime.status().state)
+
+    harness.lifecycle = harness.service._lifecycle = CheckingLifecycle(
+        store=harness.store, clock=FrozenClock(NOW), session_id="ses_1"
+    )
+
+    def factory(task):
+        nonlocal second
+        if task.name == "implementation":
+            return first
+        second = ReturnedHandleWorker(
+            harness, task.name, first._handle, cancel_fails=cancel_fails
+        )
+        return second
+
+    harness.service._worker_factory = factory
+    if terminal_fails:
+        original = harness.service._persist_terminal_attempt
+
+        def persist(attempt, *args, **kwargs):
+            if attempt.reason == "worker_handle_lineage_invalid":
+                raise RuntimeError("/private/terminal/raw prompt")
+            return original(attempt, *args, **kwargs)
+
+        harness.service._persist_terminal_attempt = persist
+
+    result = await harness.run()
+
+    assert second is not None
+    assert second.cancel_calls == [
+        (first._handle, "execution_binding_rejected")
+    ]
+    if terminal_fails:
+        assert result.diagnostic.code == "terminal_attempt_persistence_failed"
+        assert "/private/terminal" not in result.diagnostic.cause
+    else:
+        assert result.attempts[-1].state is AttemptState.OUTCOME_UNKNOWN
+        assert result.diagnostic.code == "worker_handle_lineage_invalid"
+    assert harness.runtime.status().state == expected_status
+    assert lease_states[-1] == expected_status
+    assert harness.started_tasks == ["implementation", "review"]
+
+
+@async_test
+async def test_opaque_handle_is_never_cancelled_and_quarantines_bounded_owner():
+    harness = Harness()
+    first = ScriptedWorker(harness, "implementation")
+    opaque = object()
+    second = None
+
+    def factory(task):
+        nonlocal second
+        if task.name == "implementation":
+            return first
+        second = ReturnedHandleWorker(harness, task.name, opaque)
+        return second
+
+    harness.service._worker_factory = factory
+
+    result = await harness.run()
+
+    assert second.cancel_calls == []
+    assert result.attempts[-1].state is AttemptState.OUTCOME_UNKNOWN
+    assert harness.runtime.status() == ExecutionRuntimeStatus(
+        "quarantined", result.attempts[-1].attempt_id,
+        harness.draft.tasks[1].task_id,
+        harness.draft.tasks[1].agent_instance_id, False,
+    )
+    assert harness.runtime.is_empty() is False
+
+
+@async_test
+async def test_second_gate_terminal_failure_is_fixed_and_content_free():
+    harness = Harness()
+
+    class BlockSecondCheck(ProjectLifecycleService):
+        calls = 0
+
+        def require_dispatchable(self):
+            self.calls += 1
+            if self.calls == 2:
+                raise ProjectDispatchBlocked("/private/hostile/prompt")
+            return super().require_dispatchable()
+
+    harness.lifecycle = harness.service._lifecycle = BlockSecondCheck(
+        store=harness.store, clock=FrozenClock(NOW), session_id="ses_1"
+    )
+
+    def fail_terminal(*args, **kwargs):
+        raise RuntimeError("/private/terminal/path raw prompt")
+
+    harness.service._persist_terminal_attempt = fail_terminal
+
+    result = await harness.run()
+
+    assert result.diagnostic.code == "terminal_attempt_persistence_failed"
+    assert "/private/terminal/path" not in result.diagnostic.cause
+    assert harness.started_tasks == [] and harness.requests == []

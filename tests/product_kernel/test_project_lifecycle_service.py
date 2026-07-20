@@ -342,9 +342,12 @@ async def test_second_dispatch_check_blocks_before_worker_factory():
 
     assert factory_calls == 0
     assert result.diagnostic.code == "project_dispatch_paused"
+    assert result.diagnostic.outcome_known is True
     attempt = next(value for (kind, _), value in harness.store.aggregates.items()
                    if kind == "attempts")
     assert attempt["state"] == "interrupted"
+    assert result.attempts[-1].state is AttemptState.INTERRUPTED
+    assert result.diagnostic.attempt_id == result.attempts[-1].attempt_id
 
 
 @async_test
@@ -433,37 +436,37 @@ async def test_dispatch_lease_keeps_stop_out_until_worker_binding_is_visible():
 
 
 @async_test
-async def test_runtime_bind_failure_closes_later_attempt_without_ghost_running():
+async def test_reused_worker_is_rejected_before_second_start():
     harness = Harness()
     singleton = ScriptedWorker(harness, "implementation")
     harness.service._worker_factory = lambda task: singleton
 
     result = await harness.run()
 
-    assert result.diagnostic.code == "acp_session_binding_failed"
+    assert result.diagnostic.code == "execution_binding_rejected"
     assert result.diagnostic.cause == (
-        "the validated ACP session did not bind durably"
+        "the Worker identity was not available for a new Attempt"
     )
     assert [attempt.state for attempt in result.attempts] == [
-        AttemptState.COMPLETED, AttemptState.OUTCOME_UNKNOWN,
+        AttemptState.COMPLETED, AttemptState.FAILED,
     ]
-    assert harness.started_tasks == ["implementation", "implementation"]
+    assert harness.started_tasks == ["implementation"]
     persisted = harness.store.load_aggregate(
         "attempts", result.attempts[-1].attempt_id
     )
-    assert persisted["state"] == "outcome_unknown"
-    assert persisted["reason"] == "acp_session_binding_failed"
+    assert persisted["state"] == "failed"
+    assert persisted["reason"] == "execution_binding_rejected"
 
 
 @async_test
-async def test_runtime_bind_failure_terminal_write_failure_is_content_free():
+async def test_reused_worker_terminal_write_failure_is_content_free():
     harness = Harness()
     singleton = ScriptedWorker(harness, "implementation")
     harness.service._worker_factory = lambda task: singleton
     original = harness.service._persist_terminal_attempt
 
     def fail_runtime_terminal(attempt, *args, **kwargs):
-        if attempt.reason == "acp_session_binding_failed":
+        if attempt.reason == "execution_binding_rejected":
             raise RuntimeError("hostile raw persistence marker")
         return original(attempt, *args, **kwargs)
 
@@ -473,4 +476,4 @@ async def test_runtime_bind_failure_terminal_write_failure_is_content_free():
 
     assert result.diagnostic.code == "terminal_attempt_persistence_failed"
     assert "hostile raw persistence marker" not in result.diagnostic.cause
-    assert harness.started_tasks == ["implementation", "implementation"]
+    assert harness.started_tasks == ["implementation"]

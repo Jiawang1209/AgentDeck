@@ -6,6 +6,19 @@
 
 ### Resume execution from a committed handoff
 
+- Final quality review split pre-start authority from durable Attempt cleanup:
+  gate/start persistence failures now return fixed content-free diagnostics
+  with zero writes, while a blocked second gate durably interrupts the exact
+  Attempt or returns `terminal_attempt_persistence_failed` without raw text.
+  Foreground runtime now reserves Worker identity before external start,
+  atomically upgrades only an exact claimed handle after durable ACP binding,
+  and retains an invisible bounded quarantine owner when cancellation or safe
+  terminal persistence fails. Reused Workers are rejected before Worker I/O;
+  invalid typed handles cancel only their returning Worker with fixed reason
+  `execution_binding_rejected`, while opaque handles are never cancelled.
+  Initial RED produced `4 failed`; reservation RED produced the expected import
+  collection error, and bounded-status RED produced `1 failed`. Final GREEN
+  passes 213 execution/recovery tests and 14 architecture tests.
 - Follow-up review removed the test-only missing-session dispatch bypass: even
   an exact closed start-command replay now requires a legal running Project
   Session, while seeded replay remains non-advancing with zero Worker I/O.

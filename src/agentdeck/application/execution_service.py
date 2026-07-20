@@ -9,9 +9,12 @@ from agentdeck.application.execution_resume import (
     ExecutionResult, ExecutionResumePlan, initial_execution_state, validate_execution_authority,
 )
 from agentdeck.application.execution_records import AuthoritativeRevisionTask
-from agentdeck.application.execution_runtime import ActiveExecutionBinding, ForegroundExecutionRuntime
+from agentdeck.application.execution_runtime import (
+    ExecutionReservation, ForegroundExecutionRuntime, execution_diagnostic,
+    reject_reserved_worker, retry_execution_attempt,
+    start_reserved_worker, stop_execution_attempt, worker_failure_result,
+)
 from agentdeck.application.project_lifecycle_service import ProjectDispatchBlocked, ProjectLifecycleService
-from agentdeck.kernel.diagnostics import Diagnostic, Severity
 from agentdeck.kernel.execution import Attempt, Evidence, Handoff
 from agentdeck.kernel.execution_semantics import RetryPolicy, materialize_revision
 from agentdeck.kernel.mission import ConfirmedMissionVersion, MissionDraft, TaskDefinition
@@ -49,6 +52,7 @@ class ExecutionService:
             reconnects = 0
             for attempt_number, ordinal in enumerate(range(
                 first_ordinal, first_ordinal + attempt_budget)):
+                reservation = None
                 attempt = Attempt.pending(
                     _records.stage_id("att_", confirmed, task, str(ordinal)),
                     task.task_id, ordinal,
@@ -87,59 +91,108 @@ class ExecutionService:
                         attempts.append(attempt)
                         self._lifecycle.require_dispatchable()
                         worker = self._worker_factory(task)
-                        handle = await worker.start_task(request)
-                        if not _records.handle_matches_request(handle, request):
+                        candidate = ExecutionReservation(
+                            attempt.attempt_id, task.task_id,
+                            task.agent_instance_id, worker,
+                        )
+                        try:
+                            self._runtime.reserve(candidate)
+                        except Exception:
                             return self._stop_attempt(
-                                confirmed, attempts, evidence, handoffs, revision_task, task,
-                                attempt.unknown_outcome("worker_handle_lineage_invalid"),
+                                confirmed, attempts, evidence, handoffs,
+                                revision_task, task, attempt.fail(
+                                    "execution_binding_rejected", retryable=False),
+                                "execution_binding_rejected",
+                                "the Worker identity was not available for a new Attempt",
+                            )
+                        reservation = candidate
+                        binding = await start_reserved_worker(
+                            self._runtime, reservation, request)
+                        if binding is None:
+                            return self._stop_attempt(
+                                confirmed, attempts, evidence, handoffs,
+                                revision_task, task, attempt.unknown_outcome(
+                                    "worker_handle_lineage_invalid"),
                                 "worker_handle_lineage_invalid",
                                 "ACP Worker handle did not match the exact Task request",
+                                reservation=reservation,
                             )
+                        handle = binding.worker_handle
                         try:
                             attempt = self._bind_acp_session(
                                 attempt, task, confirmed, handle.session_id
                             )
                         except Exception:
-                            failed = attempt.unknown_outcome("acp_session_binding_failed")
+                            await reject_reserved_worker(
+                                self._runtime, reservation, handle)
+                            self._runtime.quarantine(reservation)
+                            failed = attempt.unknown_outcome(
+                                "acp_session_binding_failed")
                             diagnostic = self._diagnostic(
-                                "acp_session_binding_failed", confirmed, task, failed,
-                                "the validated ACP session did not bind durably")
-                            return ExecutionResult(tuple(attempts), tuple(evidence),
-                                tuple(handoffs), revision_task, diagnostic)
+                                "acp_session_binding_failed", confirmed, task,
+                                failed,
+                                "the validated ACP session did not bind durably",
+                            )
+                            return ExecutionResult(
+                                tuple(attempts), tuple(evidence),
+                                tuple(handoffs), revision_task, diagnostic,
+                            )
                         attempts[-1] = attempt
                         try:
-                            self._runtime.bind(ActiveExecutionBinding(attempt.attempt_id,
-                                task.task_id, task.agent_instance_id, handle.session_id, handle, worker))
+                            self._runtime.activate(reservation, binding)
                         except Exception:
+                            await reject_reserved_worker(
+                                self._runtime, reservation, handle)
                             return self._stop_attempt(
                                 confirmed, attempts, evidence, handoffs, revision_task,
                                 task, attempt.unknown_outcome("acp_session_binding_failed"),
                                 "acp_session_binding_failed",
                                 "the validated ACP session did not bind durably",
                                 acp_session_id=handle.session_id,
+                                reservation=reservation,
                             )
                 except ProjectDispatchBlocked:
                     if attempts and attempts[-1] == attempt:
-                        stopped = self._persist_terminal_attempt(
-                            attempt.interrupt("project_dispatch_paused"), task, confirmed, None)
-                        attempts[-1] = stopped
+                        return self._stop_attempt(
+                            confirmed, attempts, evidence, handoffs,
+                            revision_task, task,
+                            attempt.interrupt("project_dispatch_paused"),
+                            "project_dispatch_paused",
+                            "the durable project stop intent closed dispatch",
+                        )
+                    stopped = attempt.interrupt("project_dispatch_paused")
                     diagnostic = self._diagnostic(
-                        "project_dispatch_paused", confirmed, task, attempt,
+                        "project_dispatch_paused", confirmed, task, stopped,
                         "the durable project stop intent closed dispatch")
                     return ExecutionResult(tuple(attempts), tuple(evidence),
                         tuple(handoffs), revision_task, diagnostic)
                 except Exception as error:
+                    if not attempts or attempts[-1] != attempt:
+                        stopped = attempt.interrupt("execution_start_failed")
+                        diagnostic = self._diagnostic(
+                            "execution_start_failed", confirmed, task, stopped,
+                            "the durable execution start boundary did not close",
+                        )
+                        return ExecutionResult(
+                            tuple(attempts), tuple(evidence), tuple(handoffs),
+                            revision_task, diagnostic,
+                        )
                     condition = _records.exception_condition(
                         error, task_id=task.task_id, attempt_id=attempt.attempt_id
                     )
+                    if reservation is not None and condition == "outcome_unknown":
+                        self._runtime.quarantine(reservation)
                     can_reconnect = (
                         condition == "transport_before_effect"
                         and reconnects < min(draft.max_acp_reconnects, 1)
                     )
-                    if (can_reconnect or condition == "worker_schema_invalid") and self._retry_attempt(
-                        RetryPolicy.default(), condition, attempt, task, confirmed,
-                        attempts, attempt_number + 1, attempt_number + 1 < attempt_budget,
-                        acp_session_id=None,
+                    if (can_reconnect or condition == "worker_schema_invalid") and retry_execution_attempt(
+                        runtime=self._runtime, persist=self._persist_terminal_attempt,
+                        policy=RetryPolicy.default(), condition=condition,
+                        attempt=attempt, task=task, confirmed=confirmed,
+                        attempts=attempts, retry_ordinal=attempt_number + 1,
+                        can_retry=attempt_number + 1 < attempt_budget,
+                        acp_session_id=None, reservation=reservation,
                     ):
                         reconnects += int(condition == "transport_before_effect")
                         continue
@@ -158,6 +211,7 @@ class ExecutionService:
                         confirmed, attempts, evidence, handoffs, revision_task, task,
                         terminal, code,
                         "ACP Worker task start failed",
+                        reservation=reservation,
                     )
                 try:
                     bridge = await self._approval_service.bridge_attempt(
@@ -175,9 +229,12 @@ class ExecutionService:
                         condition == "transport_before_effect"
                         and reconnects < min(draft.max_acp_reconnects, 1)
                     )
-                    if (can_reconnect or condition == "worker_schema_invalid") and self._retry_attempt(
-                        RetryPolicy.default(), condition, attempt, task, confirmed,
-                        attempts, attempt_number + 1, attempt_number + 1 < attempt_budget,
+                    if (can_reconnect or condition == "worker_schema_invalid") and retry_execution_attempt(
+                        runtime=self._runtime, persist=self._persist_terminal_attempt,
+                        policy=RetryPolicy.default(), condition=condition,
+                        attempt=attempt, task=task, confirmed=confirmed,
+                        attempts=attempts, retry_ordinal=attempt_number + 1,
+                        can_retry=attempt_number + 1 < attempt_budget,
                         acp_session_id=handle.session_id, worker_handle=handle,
                     ):
                         reconnects += int(condition == "transport_before_effect")
@@ -211,9 +268,10 @@ class ExecutionService:
                         acp_session_id=handle.session_id, worker_handle=handle,
                     )
                 if worker_result.status != "completed":
-                    return self._worker_failure(
-                        confirmed, attempts, evidence, handoffs, revision_task, task,
-                        attempt, worker_result, handle,
+                    return worker_failure_result(
+                        self._stop_attempt, confirmed, attempts, evidence,
+                        handoffs, revision_task, task, attempt, worker_result,
+                        handle,
                     )
                 evidence_authority = (
                     None if not index else _records.EvidenceAuthority(
@@ -337,26 +395,6 @@ class ExecutionService:
                     )
                 break
         return ExecutionResult(tuple(attempts), tuple(evidence), tuple(handoffs), revision_task)
-    def _retry_attempt(
-        self, policy, condition, attempt, task, confirmed, attempts,
-        retry_ordinal, can_retry, *, acp_session_id, worker_handle=None,
-    ) -> bool:
-        decision = policy.decision(condition, ordinal=retry_ordinal)
-        if not decision.retry or not can_retry:
-            return False
-        reason = (
-            "recoverable_transport_interruption"
-            if condition == "transport_before_effect" else "worker_schema_invalid"
-        )
-        terminal = attempt.fail(reason, retryable=True)
-        try:
-            terminal = self._persist_terminal_attempt(terminal, task, confirmed, acp_session_id)
-        except Exception:
-            return False
-        attempts[-1] = terminal
-        if worker_handle is not None:
-            self._runtime.release(attempt.attempt_id, worker_handle)
-        return True
     def _persist_started(
         self, attempt: Attempt, task: TaskDefinition,
         confirmed: ConfirmedMissionVersion,
@@ -426,38 +464,18 @@ class ExecutionService:
         return _records.validated_terminal_bundle(
             result, confirmed, task, attempt, evidence, handoff,
             acp_session_id, attempt_facts, evidence_facts, handoff_facts)
-    def _worker_failure(
-        self, confirmed, attempts, evidence, handoffs, revision_task,
-        task, attempt, result, worker_handle,
-    ) -> ExecutionResult:
-        condition = _records.worker_failure_condition(result)
-        terminal = (
-            attempt.cancel("worker_cancelled")
-            if result.status == "cancelled"
-            else attempt.fail(condition or "worker_failed", retryable=False)
-        )
-        return self._stop_attempt(
-            confirmed, attempts, evidence, handoffs, revision_task, task, terminal,
-            condition or "worker_stage_failed",
-            "ACP Worker returned a non-completed terminal result",
-            acp_session_id=worker_handle.session_id, worker_handle=worker_handle,
-        )
     def _stop_attempt(
         self, confirmed, attempts, evidence, handoffs, revision_task, task,
         terminal, code, cause, *, acp_session_id=None, worker_handle=None,
+        reservation=None,
     ) -> ExecutionResult:
-        try:
-            terminal = self._persist_terminal_attempt(terminal, task, confirmed, acp_session_id)
-        except Exception:
-            diagnostic = self._diagnostic("terminal_attempt_persistence_failed", confirmed, task,
-                attempts[-1], "the safe terminal Attempt did not commit")
-            return ExecutionResult(tuple(attempts), tuple(evidence), tuple(handoffs), revision_task, diagnostic)
-        attempts[-1] = terminal
-        if worker_handle is not None:
-            self._runtime.release(terminal.attempt_id, worker_handle)
-        return ExecutionResult(
-            tuple(attempts), tuple(evidence), tuple(handoffs), revision_task,
-            self._diagnostic(code, confirmed, task, terminal, cause),
+        return stop_execution_attempt(
+            runtime=self._runtime, persist=self._persist_terminal_attempt,
+            diagnostic=self._diagnostic, confirmed=confirmed,
+            attempts=attempts, evidence=evidence, handoffs=handoffs,
+            revision_task=revision_task, task=task, terminal=terminal,
+            code=code, cause=cause, acp_session_id=acp_session_id,
+            worker_handle=worker_handle, reservation=reservation,
         )
     def _persist_terminal_attempt(
         self, attempt: Attempt, task: TaskDefinition,
@@ -478,23 +496,5 @@ class ExecutionService:
         return _authority.validated_stopped_attempt(
             result, confirmed, task, attempt, acp_session_id, facts
         )
-    def _diagnostic(self, code, confirmed, task, attempt, cause) -> Diagnostic:
-        outcome_known = attempt.state.value in {
-            "completed", "failed", "cancelled", "interrupted",
-        }
-        return Diagnostic.create(
-            code=code, stage="execution", severity=Severity.ERROR,
-            actor="agentdeck", summary="automatic execution stopped", cause=cause,
-            impact="the dependent Task was not started",
-            protection="durable dependency and handoff authority remained closed",
-            recovery_actions=(
-                ("inspect and reconcile the durable Attempt before any new action",)
-                if not outcome_known
-                else ("inspect the durable Attempt before an explicit new action",)
-            ),
-            retryable=False,
-            outcome_known=outcome_known,
-            occurred_at=self._clock.now().isoformat(), mission_id=confirmed.mission_id,
-            task_id=None if task is None else task.task_id,
-            attempt_id=attempt.attempt_id,
-        )
+    def _diagnostic(self, code, confirmed, task, attempt, cause):
+        return execution_diagnostic(self._clock, code, confirmed, task, attempt, cause)
