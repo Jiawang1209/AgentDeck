@@ -4,6 +4,24 @@
 
 ## 2026-07-20
 
+### Close ACP background task boundaries
+
+- Added a minimal ACP task-boundary helper with one fixed positive prompt
+  cleanup budget and content-free done-result consumption. Shared shutdown and
+  prompt tasks install the observer when created, preventing late hostile task
+  exceptions from reaching the event-loop logger while preserving later await
+  and cancellation classification semantics.
+- Made bounded prompt cleanup report caller cancellation instead of leaking
+  `CancelledError`. Successful, typed-failure, and ordinary-failure cancellation
+  now close the Worker stream once with `cancel_timeout/false` when that occurs;
+  fatal MemoryError and process-exit exceptions retain precedence, close local
+  terminal state without a fake event, and then propagate unchanged.
+- Removed the Worker cleanup path's dependency on unvalidated agent-owned
+  `timeout_seconds`; string, negative, and hostile values cannot affect the
+  internal bound. Review RED produced the expected `6 failed, 1 passed`; GREEN
+  passes `13` ownership cases, `85` focused tests, and the full `166`-test ACP
+  adapter gate without a real provider or adapter process.
+
 ### Share ACP shutdown ownership
 
 - Published one connection-owned shutdown task while detaching the SDK manager

@@ -12,6 +12,7 @@ from acp.schema import InitializeResponse, NewSessionResponse
 from agentdeck.adapters.adapter_readiness import (
     canonical_project_root, exact_absolute_path, merged_environment,
 )
+from agentdeck.adapters.acp_task_boundary import observe_background_task
 from agentdeck.ports.worker import WorkerCancellationError
 from agentdeck.ports.transport import (
     transport_argv, transport_byte_bound, transport_project_root,
@@ -178,7 +179,9 @@ class ACPWorkerConnection:
                 self._manager = None
                 self._connection = None
                 if manager is not None:
-                    shutdown = asyncio.create_task(self._reap_owner(manager))
+                    shutdown = observe_background_task(
+                        asyncio.create_task(self._reap_owner(manager))
+                    )
                     self._shutdown_task = shutdown
         if shutdown is not None:
             await asyncio.shield(shutdown)
@@ -238,7 +241,9 @@ class ACPWorkerConnection:
             gate = asyncio.Event() if manager is not None else None
             shutdown = None
             if manager is not None:
-                shutdown = asyncio.create_task(self._reap_owner(manager, gate))
+                shutdown = observe_background_task(
+                    asyncio.create_task(self._reap_owner(manager, gate))
+                )
                 self._shutdown_task = shutdown
         finally:
             self._close_lock.release()

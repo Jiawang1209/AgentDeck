@@ -53,6 +53,34 @@ def _worker_with_cancel_error(error: BaseException):
     return worker
 
 
+def _worker_with_resistant_prompt(cancel_error: BaseException | None = None):
+    worker = worker_factory("cancel_race")()
+    agent = worker._agent
+    cleanup_entered = asyncio.Event()
+    cleanup_release = asyncio.Event()
+
+    async def run_prompt() -> None:
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            cleanup_entered.set()
+            await cleanup_release.wait()
+            raise RuntimeError("credential=late-private-prompt")
+
+    async def cancel(*args, **kwargs) -> None:
+        if cancel_error is not None:
+            raise cancel_error
+
+    worker._run_prompt = run_prompt
+    agent.cancel = cancel
+    return worker, cleanup_entered, cleanup_release
+
+
+class _HostileTimeout:
+    def __radd__(self, other: object) -> object:
+        raise RuntimeError("credential=hostile-timeout")
+
+
 def test_worker_cancellation_error_is_closed_and_content_free() -> None:
     assert WorkerCancellationError.ALLOWED_CODES == frozenset({
         "cancel_rejected", "cancel_timeout", "transport_disconnected",
@@ -267,6 +295,87 @@ def test_acp_worker_propagates_cancel_fatal_after_prompt_cleanup(
         assert worker._run.prompt_task is not None
         assert worker._run.prompt_task.done()
         assert worker._run.pending_permission is None
+
+    asyncio.run(scenario())
+
+
+def test_cleanup_caller_cancellation_closes_stream_with_typed_timeout() -> None:
+    async def scenario() -> None:
+        worker, cleanup_entered, cleanup_release = _worker_with_resistant_prompt()
+        handle = await worker.start_task(task_request())
+        stream = worker.stream_events(handle).__aiter__()
+        assert (await anext(stream)).kind == "started"
+        operation = asyncio.create_task(
+            worker.cancel_task(handle, reason="cancelled by caller")
+        )
+        await cleanup_entered.wait()
+        operation.cancel()
+        try:
+            with pytest.raises(WorkerCancellationError) as captured:
+                await operation
+        finally:
+            cleanup_release.set()
+
+        assert (captured.value.code, captured.value.outcome_known) == (
+            "cancel_timeout", False,
+        )
+        assert worker._run is not None and worker._run.terminal is True
+        assert [event async for event in stream] == []
+        prompt = worker._run.prompt_task
+        assert prompt is not None
+        await asyncio.wait({prompt})
+        assert prompt._log_traceback is False
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("fatal", [MemoryError(), SystemExit(29)])
+def test_cleanup_caller_cancellation_cannot_mask_fatal(
+    fatal: BaseException, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def scenario() -> None:
+        worker, cleanup_entered, cleanup_release = _worker_with_resistant_prompt(fatal)
+        handle = await worker.start_task(task_request())
+        stream = worker.stream_events(handle).__aiter__()
+        assert (await anext(stream)).kind == "started"
+        await asyncio.sleep(0)
+
+        async def cancelled_wait(*args, **kwargs):
+            await cleanup_entered.wait()
+            raise asyncio.CancelledError
+
+        monkeypatch.setattr(asyncio, "wait", cancelled_wait)
+        try:
+            with pytest.raises(type(fatal)) as captured:
+                await worker.cancel_task(handle, reason="fatal cleanup")
+        finally:
+            cleanup_release.set()
+
+        assert captured.value is fatal
+        assert worker._run is not None and worker._run.terminal is True
+        assert worker._run.error is None
+        assert [event async for event in stream] == []
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize(
+    "timeout_value", ["invalid", -1.0, _HostileTimeout()],
+)
+def test_agent_timeout_attribute_cannot_control_prompt_cleanup(
+    timeout_value: object,
+) -> None:
+    async def scenario() -> None:
+        worker, _cleanup_entered, cleanup_release = _worker_with_resistant_prompt()
+        worker._agent.timeout_seconds = timeout_value
+        cleanup_release.set()
+        handle = await worker.start_task(task_request())
+        events = worker.stream_events(handle)
+
+        await worker.cancel_task(handle, reason="bounded cleanup")
+
+        assert [event.kind async for event in events] == ["started", "cancelled"]
+        assert (await worker.collect_result(handle)).status == "cancelled"
 
     asyncio.run(scenario())
 

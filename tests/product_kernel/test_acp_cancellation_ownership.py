@@ -72,6 +72,7 @@ class _Owner:
         self.reap_entered = asyncio.Event()
         self.reap_release = asyncio.Event()
         self.reap_blocks = False
+        self.reap_failure: BaseException | None = None
         self.detach_snapshots: list[tuple[bool, bool, bool]] = []
         self.connection_owner: ACPWorkerConnection
 
@@ -86,6 +87,8 @@ class _Owner:
                 if self.reap_blocks:
                     await self.reap_release.wait()
                 self.reap_completed += 1
+                if self.reap_failure is not None:
+                    raise self.reap_failure
 
         connection = ACPWorkerConnection(
             ("/verified/adapter",), project_root=self.project_root,
@@ -403,3 +406,34 @@ async def test_notification_fatal_reaps_owner_and_propagates_exactly(
     assert connection._connection is None and connection._manager is None
     await connection.aclose()
     assert owner.reap_calls == 1
+
+
+@_sync_test
+async def test_late_shutdown_failure_is_consumed_and_remains_classifiable(
+    tmp_path: Path,
+) -> None:
+    hostile = "credential=late-private-shutdown"
+    owner = _Owner(tmp_path)
+    owner.reap_blocks = True
+    owner.reap_failure = RuntimeError(hostile)
+    connection = await owner.ready(timeout_seconds=0.01)
+    loop_contexts: list[dict[str, object]] = []
+    asyncio.get_running_loop().set_exception_handler(
+        lambda _loop, context: loop_contexts.append(context)
+    )
+
+    with pytest.raises(WorkerCancellationError) as timed_out:
+        await connection.cancel("raw_session")
+    _assert_error(timed_out.value, "cancel_timeout", False)
+    owner.reap_release.set()
+    shutdown = connection._shutdown_task
+    assert shutdown is not None
+    await asyncio.wait({shutdown})
+
+    assert shutdown.done() and shutdown._log_traceback is False
+    assert loop_contexts == []
+    with pytest.raises(WorkerCancellationError) as later:
+        await connection.cancel("raw_session")
+    _assert_error(later.value, "transport_disconnected", False)
+    assert hostile not in repr(later.value)
+    assert loop_contexts == []

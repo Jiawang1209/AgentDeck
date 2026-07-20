@@ -14,6 +14,7 @@ from acp.schema import (
 from agentdeck.kernel.diagnostics import Diagnostic, Severity
 from agentdeck.kernel.events import normalize_occurred_at
 from agentdeck.ports.clock import Clock
+from agentdeck.adapters.acp_task_boundary import cancel_background_task, observe_background_task
 from agentdeck.ports.worker import (
     TaskRequest, WorkerCancellationError, WorkerEvent, WorkerHandle, WorkerResult, validate_worker_reason,
 )
@@ -107,15 +108,14 @@ class ACPWorker:
             raise self._error("acp_session_failed", True, request) from None
         if type(session) is not NewSessionResponse or not session.session_id:
             raise self._error("acp_protocol_mismatch", True, request)
-        identity = f"{session.session_id}:{request.agent_id}:{request.attempt_id}"
-        session_digest = sha256(identity.encode()).hexdigest()[:32]
+        session_digest = sha256(f"{session.session_id}:{request.agent_id}:{request.attempt_id}".encode()).hexdigest()[:32]
         handle = WorkerHandle(
             session_id=f"ses_{session_digest}", agent_id=request.agent_id,
             task_id=request.task_id, attempt_id=request.attempt_id,
         )
         self._run = _Run(request=request, handle=handle, raw_session_id=session.session_id)
         self._emit("started", {"protocol_version": PROTOCOL_VERSION})
-        self._run.prompt_task = asyncio.create_task(self._run_prompt())
+        self._run.prompt_task = observe_background_task(asyncio.create_task(self._run_prompt()))
         return handle
     def stream_events(self, handle: WorkerHandle) -> AsyncIterator[WorkerEvent]:
         run = self._require_handle(handle)
@@ -159,6 +159,7 @@ class ACPWorker:
         reason = validate_worker_reason(reason)
         run.cancellation_requested = True
         failure: tuple[str, bool] | None = None
+        fatal: BaseException | None = None
         try:
             await self._agent.cancel(run.raw_session_id)
         except WorkerCancellationError as caught:
@@ -169,14 +170,17 @@ class ACPWorker:
             if isinstance(caught, Exception) and not isinstance(caught, MemoryError):
                 failure = ("transport_disconnected", False)
             else:
-                await self._cancel_prompt(run)
-                raise
+                fatal = caught
+        cleanup_cancelled = await self._cancel_prompt(run)
+        if fatal is not None:
+            self._close_cancellation(run, None)
+            raise fatal
+        if cleanup_cancelled:
+            failure = ("cancel_timeout", False)
         if failure is not None:
             error = WorkerCancellationError(code=failure[0], outcome_known=failure[1])
-            await self._cancel_prompt(run)
-            self._fail_cancellation(run, error)
+            self._close_cancellation(run, error)
             raise error from None
-        await self._cancel_prompt(run)
         self._finish("cancelled", {"reason": reason})
     async def collect_result(self, handle: WorkerHandle) -> WorkerResult:
         run = self._require_handle(handle)
@@ -315,14 +319,10 @@ class ACPWorker:
                 code, known, run.request,
                 retryable=known and _is_recoverable_disconnect(error),
             ))
-    async def _cancel_prompt(self, run: _Run) -> None:
+    async def _cancel_prompt(self, run: _Run) -> bool:
         self._cancel_pending_permission(run)
         task = run.prompt_task
-        if task is not None and not task.done():
-            task.cancel()
-            await asyncio.wait({task}, timeout=getattr(self._agent, "timeout_seconds", 1.0))
-            if task.done() and not task.cancelled():
-                task.exception()
+        return False if task is None else await cancel_background_task(task)
     def _inspect_raw_update(self, run: _Run, update: object) -> None:
         serializer = getattr(update, "model_dump_json", None)
         if not callable(serializer):
@@ -393,7 +393,7 @@ class ACPWorker:
         run.error = error
         run.terminal = True
         run.queue.put_nowait(None)
-    def _fail_cancellation(self, run: _Run, error: WorkerCancellationError) -> None:
+    def _close_cancellation(self, run: _Run, error: WorkerCancellationError | None) -> None:
         if run.terminal:
             return
         run.error = error
