@@ -279,6 +279,10 @@ class ProjectLifecycleService:
                 command_id, "project_paused", self._session_id,
                 {"authority_hash": authority.content_hash}, _now(self._clock),
             ))
+            transaction.append_event(_event(
+                command_id, "exit_confirmed", self._session_id,
+                {"authority_hash": authority.content_hash}, _now(self._clock),
+            ))
             return {
                 "mode": "project_paused",
                 "session_id": self._session_id,

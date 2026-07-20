@@ -4,6 +4,26 @@
 
 ## 2026-07-20
 
+### Make exit one project-pause transaction
+
+- Added one explicit-session async exit coordinator under the project stop
+  lease. It resolves a complete transaction-local active-exit authority before
+  exactly one ACP cancellation, performs no SQLite await, and only an unchanged
+  post-cancel projection may atomically interrupt the Attempt, pause the
+  ProductSession, clear all pending-exit fields, and append the three ordered
+  audit events. Cancellation failure or post-cancel drift closes the exact
+  replay command with content-free diagnostics and never sends a second cancel.
+- Added a shared SQLite projection spanning ProductSession, pending request,
+  Attempt, Task, Mission, Agent Instance, ACP session, and full derived Worker
+  handle. Between-stage exit now pauses with zero Worker I/O and records both
+  pause and exit facts; terminal-win, binding/loop/session drift,
+  reservation/quarantine, stale replay, and decline remain fail-closed without
+  false interruption. Initial RED produced three missing-module/import
+  collection errors. The 11-case new projection matrix plus 16 preserved
+  request-authority regressions pass 27 tests, coordinator GREEN passes 82
+  tests, the full focused exit/reentry/runtime gate passes 128 tests, and the
+  architecture plus SQLite transaction gate passes 39 tests.
+
 ### Bind the Task 15B exit coordinator to one ProductSession
 
 - Corrected the async-exit composition contract before Worker behavior: the

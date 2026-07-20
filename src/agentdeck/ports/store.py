@@ -10,6 +10,7 @@ from typing import Final, Protocol, TypeAlias
 from agentdeck.kernel.events import DomainEvent
 from agentdeck.kernel.execution import AttemptState
 from agentdeck.kernel.session import ExitAttemptSnapshot
+from agentdeck.ports.exit_authority import ActiveExitAuthority
 from agentdeck.ports.execution_resume import ExecutionResumeSnapshot
 
 
@@ -108,6 +109,9 @@ class StoreTransaction(Protocol):
     def load_execution_resume(
         self, session_id: str
     ) -> ExecutionResumeSnapshot: ...
+    def load_active_exit_authority(
+        self, session_id: str
+    ) -> ActiveExitAuthority: ...
     def save_aggregate(
         self, aggregate_type: str, aggregate_id: str, snapshot: AggregateSnapshot
     ) -> None: ...
@@ -144,6 +148,9 @@ class Store(Protocol):
     def load_execution_resume(
         self, session_id: str
     ) -> ExecutionResumeSnapshot: ...
+    def load_active_exit_authority(
+        self, session_id: str
+    ) -> ActiveExitAuthority: ...
     def select_latest_nonterminal_session(self) -> SessionSelection: ...
     def list_running_attempts(self) -> tuple[RunningAttempt, ...]: ...
     def list_active_exit_attempts(

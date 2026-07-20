@@ -317,7 +317,8 @@ def test_active_exit_requires_copyable_exact_confirmation(
     ])
 
     assert f"/exit confirm {request} {digest}" in transcript
-    assert "Diagnosis exit_cancellation_unavailable" in transcript
+    assert "exit_confirmation_ready" not in transcript
+    assert transcript.count(f"/exit confirm {request} {digest}") >= 2
     assert "Session is safe to exit" not in transcript
     assert shell_harness.attempt_state == "running"
 

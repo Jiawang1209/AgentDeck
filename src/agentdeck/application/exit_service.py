@@ -264,9 +264,7 @@ class ExitService:
         checked = self._decision_authority(request_id, attempt_hash)
         if isinstance(checked, ExitResult):
             return checked
-        return self._failure(
-            "exit_cancellation_unavailable", request=checked,
-        )
+        return ExitResult("exit_confirmation_ready", False, checked)
 
     def input_closed(self) -> ExitResult:
         _, _, error = self._load_pending()

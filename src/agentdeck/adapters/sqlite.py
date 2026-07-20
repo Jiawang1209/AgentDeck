@@ -11,6 +11,7 @@ from agentdeck.adapters.sqlite_execution import (
     _save_execution_aggregate, load_execution_aggregate,
 )
 from agentdeck.adapters.sqlite_execution_resume import load_execution_resume
+from agentdeck.adapters.sqlite_exit_authority import load_active_exit_authority
 from agentdeck.adapters.sqlite_mission import MISSION_AGGREGATE_TYPES, load_mission_aggregate, save_mission_aggregate
 from agentdeck.adapters.sqlite_migrations import migrate_schema, _validate_before_durability, _validate_existing_schema
 from agentdeck.adapters.sqlite_schema import (
@@ -106,34 +107,31 @@ class _SQLiteCommandTransaction:
         self._active = True
         self._result: CommandResult | None = None
         self.duplicate_result: CommandResult | None = None
-
     def _require_mutable(self) -> sqlite3.Connection:
         if not self._active:
             raise StoreCommandStateError("command transaction is inactive")
         if self.duplicate_result is not None:
             raise StoreCommandStateError("duplicate command transaction is read-only")
         return self._store._require_writer()
-
     def set_result(self, result: CommandResult) -> None:
         self._require_mutable()
         _, self._result = _canonical(result)
-
     def lookup_command(self, command_id: str, command_kind: str | None = None) -> CommandResult | None:
         return self._store._lookup_command(self._store._require_writer(), command_id, command_kind)
-
     def record_command(
         self, command_id: str, command_kind: str, result: CommandResult
     ) -> None:
         if (command_id, command_kind) != (self.command_id, self.command_kind):
             raise StoreCommandStateError("transaction cannot record another command")
         self.set_result(result)
-
     def load_aggregate(self, aggregate_type: str, aggregate_id: str) -> CommandResult | None:
         return self._store._load_aggregate(
             self._store._require_writer(), aggregate_type, aggregate_id
         )
     def load_execution_resume(self, session_id: str):
         return load_execution_resume(self._require_mutable(), session_id)
+    def load_active_exit_authority(self, session_id: str):
+        return load_active_exit_authority(self._require_mutable(), session_id)
     def save_aggregate(
         self, aggregate_type: str, aggregate_id: str, snapshot: CommandResult
     ) -> None:
@@ -393,6 +391,8 @@ class SQLiteStore:
         return self._load_aggregate(self._read_connection(), aggregate_type, aggregate_id)
     def load_execution_resume(self, session_id: str):
         return load_execution_resume(self._read_connection(), session_id)
+    def load_active_exit_authority(self, session_id: str):
+        return load_active_exit_authority(self._read_connection(), session_id)
     def select_latest_nonterminal_session(self) -> SessionSelection:
         return select_latest_nonterminal_session(
             self._read_connection(), self._project_id

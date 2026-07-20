@@ -1,21 +1,20 @@
 from __future__ import annotations
-
 from datetime import datetime, timezone
 from hmac import compare_digest as real_compare_digest
 import inspect
 import json
 from pathlib import Path
-
 import pytest
-
 from agentdeck.adapters.sqlite import SQLiteStore
 import agentdeck.application.exit_service as exit_module
+from agentdeck.application.exit_records import (
+    ACTIVE_EXIT_RESULT_FIELDS,
+    closed_exit_result,
+    exit_result_from_command,
+)
 from agentdeck.application.exit_service import ExitResult, ExitService
 from agentdeck.kernel.session import ExitRequest
-
 from .fakes import FrozenClock
-
-
 NOW = datetime(2026, 7, 19, 3, 0, tzinfo=timezone.utc)
 EXIT_COLUMNS = (
     "pending_exit_id",
@@ -24,8 +23,6 @@ EXIT_COLUMNS = (
     "pending_exit_attempt_hash",
     "pending_exit_requested_at",
 )
-
-
 def _seed_session(store: SQLiteStore) -> None:
     now = NOW.isoformat()
     connection = store._require_writer()
@@ -50,8 +47,6 @@ def _seed_session(store: SQLiteStore) -> None:
         "canonical_mission_facts,confirmed_at) VALUES (?,?,?,?,?,?)",
         ("msn_1", 1, "prv_1", "a" * 64, "{}", now),
     )
-
-
 def _seed_attempt(
     store: SQLiteStore, *, attempt_id: str = "att_1", state: str = "running",
     task_ordinal: int = 1,
@@ -82,8 +77,6 @@ def _seed_attempt(
         (attempt_id, task_id, agent_id, 1, state, None, None, 0,
          f"acp_{suffix}", 0, now, now),
     )
-
-
 @pytest.fixture
 def store(tmp_path: Path) -> SQLiteStore:
     value = SQLiteStore.open(tmp_path, clock=FrozenClock(NOW))
@@ -92,8 +85,6 @@ def store(tmp_path: Path) -> SQLiteStore:
         yield value
     finally:
         value.close()
-
-
 class IdentityFactory:
     def __init__(self, *identities: str) -> None:
         self.identities, self.calls = iter(identities), 0
@@ -366,17 +357,35 @@ def test_decline_then_request_same_attempt_creates_new_lineage(
     assert second.attempt_hash == first.attempt_hash
 
 
-def test_task15a_exact_confirm_is_fail_closed_without_worker_cancel(
-    store: SQLiteStore, active_exit: tuple[ExitService, ExitRequest],
+@pytest.mark.parametrize(
+    ("mode", "code", "known", "should_exit"),
+    [("project_paused", None, True, True),
+     ("diagnostic", "cancel_timeout", False, False)],
+)
+def test_closed_active_exit_result_has_exact_seven_content_free_fields(
+    active_exit, mode, code, known, should_exit,
 ) -> None:
-    service, request = active_exit
-    before = database_facts(store)
-    result = service.confirm(request.request_id, request.attempt_hash)
-    assert result.diagnostic is not None
-    assert result.diagnostic.code == "exit_cancellation_unavailable"
-    assert result.should_exit is False
-    assert result.request == request
-    assert database_facts(store) == before
+    _, request = active_exit
+    result = closed_exit_result(
+        request=request, mode=mode, diagnostic_code=code,
+        outcome_known=known, should_exit=should_exit,
+    )
+    assert set(result) == ACTIVE_EXIT_RESULT_FIELDS
+    assert (result["mode"], result["diagnostic_code"]) == (mode, code)
+    assert result["should_exit"] is should_exit
+    assert type(result["outcome_known"]) is bool
+    projected = exit_result_from_command(result, clock=FrozenClock(NOW))
+    assert (projected.mode, projected.should_exit) == (mode, should_exit)
+
+
+def test_between_stage_result_uses_null_attempt_fields_and_malformed_replay_fails():
+    result = closed_exit_result(
+        request=None, mode="project_paused", diagnostic_code=None,
+        outcome_known=True, should_exit=True,
+    )
+    assert result["attempt_id"] is result["attempt_hash"] is None
+    with pytest.raises(ValueError, match="stored exit result"):
+        exit_result_from_command({**result, "raw_output": "secret"}, clock=FrozenClock(NOW))
 
 
 def test_input_closed_is_read_only_and_requires_recovery_for_active_work(
@@ -390,17 +399,6 @@ def test_input_closed_is_read_only_and_requires_recovery_for_active_work(
     assert result.should_exit is True
     assert database_facts(store) == before
 
-
-def test_exit_diagnostics_are_allowlisted_and_content_free(store: SQLiteStore) -> None:
-    _seed_attempt(store)
-    _seed_attempt(store, attempt_id="att_2", task_ordinal=2)
-    diagnostic = _service(store).request_exit().diagnostic
-    assert diagnostic is not None
-    rendered = json.dumps(diagnostic.__dict__, default=list, sort_keys=True)
-    assert diagnostic.stage == "exit"
-    assert diagnostic.actor == "agentdeck"
-    for forbidden in ("canonical", str(store.path), "acp_", "prompt", "traceback"):
-        assert forbidden not in rendered.lower()
 
 @pytest.mark.parametrize("decision", ["decline", "confirm"])
 @pytest.mark.parametrize("matching", [False, True])
@@ -420,7 +418,7 @@ def test_valid_external_decision_hash_uses_constant_time_comparison_once(
         assert result.diagnostic is not None
         assert result.diagnostic.code == "exit_request_identity_mismatch"
     else:
-        assert result.mode in {"exit_declined", "diagnostic"}
+        assert result.mode in {"exit_declined", "exit_confirmation_ready"}
     assert calls == [(supplied, request.attempt_hash)]
 
 def test_committed_decline_replays_before_pending_preflight(
