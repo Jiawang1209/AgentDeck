@@ -220,6 +220,28 @@ async def test_paused_reentry_starts_nothing_before_explicit_resume(
 
 
 @async_test
+async def test_resume_without_execution_adapter_stays_paused(
+    tmp_path: Path,
+) -> None:
+    _seed_resume(tmp_path)
+    output: list[str] = []
+    shell = _build(tmp_path, AsyncLines("/resume", "/exit"), output)
+
+    await shell.run_async()
+
+    store = SQLiteStore.open(tmp_path, clock=FrozenClock(NOW))
+    try:
+        assert store.load_aggregate("product_sessions", "ses_1")["state"] == "paused"
+        assert store.connection.execute(
+            "SELECT count(*) FROM events WHERE kind='project_resumed'"
+        ).fetchone() == (0,)
+        assert store.count("attempts") == 0
+    finally:
+        store.close()
+    assert "execution_adapter_unavailable" in "\n".join(output)
+
+
+@async_test
 async def test_explicit_resume_starts_one_same_loop_mission_child(
     tmp_path: Path,
 ) -> None:
@@ -356,3 +378,116 @@ async def test_async_terminal_reader_does_not_block_the_foreground_loop() -> Non
                 await task
         os.close(write_descriptor)
         stream.close()
+
+
+def _cleanup_probe_shell(tmp_path: Path, *, recovery_factory=RecoveryService):
+    store = SQLiteStore.open(tmp_path, clock=FrozenClock(NOW))
+    close_calls: list[str] = []
+    real_close = store.close
+
+    def close() -> None:
+        close_calls.append("close")
+        real_close()
+
+    store.close = close  # type: ignore[method-assign]
+    shell = build_product_shell(
+        project_root=str(tmp_path), read_line=AsyncLines("/exit"),
+        write_line=lambda _: None, clock_factory=lambda: FrozenClock(NOW),
+        discovery_factory=_discovery, config_factory=_config,
+        store_factory=lambda *args, **kwargs: store,
+        recovery_factory=recovery_factory,
+    )
+    return shell, close_calls
+
+
+@async_test
+async def test_recovery_failure_closes_store_once(tmp_path: Path) -> None:
+    class FailingRecovery:
+        def __init__(self, **_facts):
+            pass
+
+        async def reconcile(self):
+            raise RuntimeError("recovery failed")
+
+    shell, close_calls = _cleanup_probe_shell(
+        tmp_path, recovery_factory=FailingRecovery,
+    )
+
+    with pytest.raises(RuntimeError, match="recovery failed"):
+        await shell.run_async()
+
+    assert close_calls == ["close"]
+
+
+@async_test
+async def test_initial_render_failure_closes_store_once(tmp_path: Path) -> None:
+    shell, close_calls = _cleanup_probe_shell(tmp_path)
+    shell._render = lambda _value: (_ for _ in ()).throw(
+        RuntimeError("render failed")
+    )
+
+    with pytest.raises(RuntimeError, match="render failed"):
+        await shell.run_async()
+
+    assert close_calls == ["close"]
+
+
+@async_test
+async def test_resume_projection_failure_closes_store_once(tmp_path: Path) -> None:
+    _seed_resume(tmp_path)
+    shell, close_calls = _cleanup_probe_shell(tmp_path)
+
+    class FailingPlanner:
+        def materialize(self, _snapshot):
+            raise AssertionError("projection failed")
+
+    shell._resume_planner = FailingPlanner()
+
+    with pytest.raises(AssertionError, match="projection failed"):
+        await shell.run_async()
+
+    assert close_calls == ["close"]
+
+
+@async_test
+async def test_signal_handler_install_failure_closes_store_once(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    shell, close_calls = _cleanup_probe_shell(tmp_path)
+    loop = asyncio.get_running_loop()
+    monkeypatch.setattr(
+        loop, "add_signal_handler",
+        lambda *_args: (_ for _ in ()).throw(RuntimeError("signal failed")),
+    )
+
+    with pytest.raises(RuntimeError, match="signal failed"):
+        await shell.run_async()
+
+    assert close_calls == ["close"]
+
+
+@async_test
+async def test_cancellation_during_recovery_closes_store_once(
+    tmp_path: Path,
+) -> None:
+    started = asyncio.Event()
+
+    class BlockingRecovery:
+        def __init__(self, **_facts):
+            pass
+
+        async def reconcile(self):
+            started.set()
+            await asyncio.Event().wait()
+
+    shell, close_calls = _cleanup_probe_shell(
+        tmp_path, recovery_factory=BlockingRecovery,
+    )
+    running = asyncio.create_task(shell.run_async())
+    await started.wait()
+    running.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await running
+
+    assert close_calls == ["close"]

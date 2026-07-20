@@ -1817,7 +1817,18 @@ git commit -m "fix: close task15b exit replay gaps"
 - Modify: `tests/product_kernel/test_product_shell.py`
 - Modify: `tests/product_kernel/test_product_preview_flow.py`
 - Modify: `tests/product_kernel/test_product_reentry.py`
+- Create: `tests/product_kernel/test_project_resume_replay.py`
 - Modify: `HISTORY.md`
+
+Review closure extends this task with three mandatory fail-closed boundaries:
+`execution_service=None` must emit the stable
+`execution_adapter_unavailable` code before any paused-to-running resume
+transaction; a committed resume followed by recovery must allocate a bounded
+new resume command generation instead of accepting a stale replay while the
+Session is paused; and the Store cleanup scope must begin before recovery,
+projection, initial rendering, or SIGINT-handler installation. The focused
+replay regression lives in `test_project_resume_replay.py` so the primary
+lifecycle test remains within the unchanged 500-line gate.
 
 - [ ] **Step 1: Write mandatory startup-recovery RED tests**
 
@@ -2185,6 +2196,7 @@ conda run -n agentdeck env PYTHONPATH="$PWD/src" pytest \
   tests/product_kernel/test_product_shell.py \
   tests/product_kernel/test_product_preview_flow.py \
   tests/product_kernel/test_product_reentry.py \
+  tests/product_kernel/test_project_resume_replay.py \
   tests/product_kernel/test_product_exit_acp_integration.py \
   tests/product_kernel/test_project_lifecycle_service.py \
   tests/product_kernel/test_execution_runtime.py -q
@@ -2222,7 +2234,8 @@ git add HISTORY.md \
   tests/product_kernel/test_sqlite_recovery_integrity.py \
   tests/product_kernel/test_product_shell.py \
   tests/product_kernel/test_product_preview_flow.py \
-  tests/product_kernel/test_product_reentry.py
+  tests/product_kernel/test_product_reentry.py \
+  tests/product_kernel/test_project_resume_replay.py
 git commit -m "feat: require explicit resume after product reentry"
 ```
 
@@ -2249,6 +2262,7 @@ conda run -n agentdeck env PYTHONPATH="$PWD/src" pytest \
   tests/product_kernel/test_exit_service.py \
   tests/product_kernel/test_product_exit_acp_integration.py \
   tests/product_kernel/test_product_reentry.py \
+  tests/product_kernel/test_project_resume_replay.py \
   tests/product_kernel/test_recovery_service.py \
   tests/product_kernel/test_sqlite_recovery_integrity.py \
   tests/product_kernel/test_product_shell.py \

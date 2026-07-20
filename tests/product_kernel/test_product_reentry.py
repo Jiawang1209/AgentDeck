@@ -11,10 +11,12 @@ import pytest
 
 from agentdeck.adapters.sqlite import SQLiteStore
 from agentdeck.application.exit_service import ExitService
+from agentdeck.application.project_lifecycle_service import ProjectLifecycleService
 from agentdeck.application.recovery_service import RecoveryService
 from agentdeck.kernel.execution import Attempt
 from agentdeck.kernel.mission import MissionDraft
 from agentdeck.product.bootstrap import build_product_shell
+from agentdeck.ports.worker import WorkerEvent, WorkerHandle, WorkerResult
 
 from .fakes import FrozenClock
 from .test_product_shell import FakeExecution, _config, _discovery, _seed_resume
@@ -249,3 +251,93 @@ def test_reentry_production_recovery_is_never_a_noop_default(tmp_path: Path) -> 
         discovery_factory=_discovery, config_factory=_config,
     )
     assert type(shell._recovery) is RecoveryService
+
+
+@async_test
+async def test_recovered_resume_reaches_real_execution_gate_once(
+    tmp_path: Path,
+) -> None:
+    _seed_resume(tmp_path)
+    store = SQLiteStore.open(tmp_path, clock=FrozenClock(NOW))
+    snapshot = store.load_execution_resume("ses_1")
+    first = await ProjectLifecycleService(
+        store=store, clock=FrozenClock(NOW), session_id="ses_1",
+    ).resume(snapshot)
+    assert first.should_start is True
+    await RecoveryService(
+        store=store, clock=FrozenClock(NOW), session_id="ses_1",
+        recovery_run_id="restart_real_execution_gate",
+    ).reconcile()
+    store.close()
+
+    class FailedWorker:
+        def __init__(self) -> None:
+            self.starts = 0
+            self.started = asyncio.Event()
+            self.handle = None
+
+        async def start_task(self, request):
+            self.starts += 1
+            self.handle = WorkerHandle(
+                "ses_reentry", request.agent_id, request.task_id,
+                request.attempt_id,
+            )
+            self.started.set()
+            return self.handle
+
+        async def _events(self):
+            assert self.handle is not None
+            yield WorkerEvent(
+                event_id="evt_reentry_failed", session_id=self.handle.session_id,
+                agent_id=self.handle.agent_id, task_id=self.handle.task_id,
+                attempt_id=self.handle.attempt_id, transport="acp", sequence=1,
+                kind="failed", timestamp=NOW.isoformat(),
+                payload={"reason": "stopped"},
+            )
+
+        def stream_events(self, handle):
+            assert handle == self.handle
+            return self._events()
+
+        async def respond_permission(self, *args, **kwargs):
+            raise AssertionError("no permission request expected")
+
+        async def cancel_task(self, *args, **kwargs):
+            raise AssertionError("no cancellation expected")
+
+        async def collect_result(self, handle):
+            assert handle == self.handle
+            return WorkerResult(
+                session_id=handle.session_id, agent_id=handle.agent_id,
+                task_id=handle.task_id, attempt_id=handle.attempt_id,
+                status="failed", payload={"reason": "stopped"},
+            )
+
+    worker = FailedWorker()
+
+    class Reader(AsyncLines):
+        async def __call__(self, prompt: str) -> str:
+            value = await super().__call__(prompt)
+            if value == "/exit":
+                await asyncio.wait_for(worker.started.wait(), timeout=1)
+            return value
+
+    shell = build_product_shell(
+        project_root=str(tmp_path), read_line=Reader("/resume", "/exit"),
+        write_line=lambda _: None, clock_factory=lambda: FrozenClock(NOW),
+        discovery_factory=_discovery, config_factory=_config,
+        adapter_readiness={},
+        adapter_composition_factory=lambda **_: SimpleNamespace(
+            worker=lambda _backend: worker
+        ),
+    )
+    await shell.run_async()
+
+    reopened = SQLiteStore.open(tmp_path, clock=FrozenClock(NOW))
+    try:
+        assert worker.starts == 1
+        assert reopened._require_writer().execute(
+            "SELECT count(*) FROM events WHERE kind='project_resumed'"
+        ).fetchone() == (2,)
+    finally:
+        reopened.close()

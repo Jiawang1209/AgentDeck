@@ -151,6 +151,36 @@ async def test_exact_fresh_confirmation_uses_same_singleton_child_guard(
 
 
 @async_test
+async def test_fresh_confirmation_without_execution_adapter_is_closed(
+    tmp_path: Path,
+) -> None:
+    output: list[str] = []
+    store = SQLiteStore.open(tmp_path, clock=FrozenClock(NOW))
+    session = SessionService(
+        store=store, clock=FrozenClock(NOW), session_id="ses_product",
+        project_root=str(tmp_path), available_leaders=AVAILABLE,
+    )
+    session.configure(leader="codex-cli", model="native-default")
+    mission = _mission_service(tmp_path, store, session)
+    preview = mission.propose("Build an accessible page").preview
+    assert preview is not None
+    shell = _shell(
+        tmp_path, store, session, mission=mission, execution=None,
+        lines=(f"confirm {preview.preview_id} {preview.content_hash}", "/exit"),
+        output=output,
+    )
+
+    await shell.run_async()
+
+    reopened = SQLiteStore.open(tmp_path, clock=FrozenClock(NOW))
+    try:
+        assert reopened.count("attempts") == 0
+    finally:
+        reopened.close()
+    assert "execution_adapter_unavailable" in "\n".join(output)
+
+
+@async_test
 async def test_open_goal_without_leader_is_retained_not_discarded(
     tmp_path: Path,
 ) -> None:

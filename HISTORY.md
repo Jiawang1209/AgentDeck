@@ -25,13 +25,25 @@
   `product/shell_projection.py` so the behavior-owning shell remains within the
   500-line boundary, and recorded that approved boundary in both Task 15B
   appendices.
+- Closed the independent review gaps without weakening the lifecycle contract:
+  unavailable execution now produces the same stable
+  `execution_adapter_unavailable` diagnostic for fresh confirmation and
+  explicit resume, and resume refuses to mutate a paused Session before that
+  check. A crash after `project_resumed` can no longer reuse a stale success
+  while the Session is paused; bounded resume generations are derived from
+  durable command history and re-enter the real ExecutionService gate exactly
+  once. Shell cleanup now encloses recovery, resume projection, initial render,
+  and SIGINT-handler installation, removes the handler only when installed,
+  and closes the Store exactly once on failure or cancellation.
 - TDD evidence: the recovery contract RED produced 18 failures and the async
   shell RED produced 9 failures; final audit REDs independently caught one
   oversized recovery command identity, one stale complete pending-exit group,
   and replacement of a valid falsey injected async reader. The real SIGINT
   callback and pipe-backed terminal reader regressions also pass without a
-  platform fallback. GREEN passes 114 focused Task 15B.5 tests, 476 integrated
-  Task 15B tests, 17 architecture/development-entry tests, and all 1766 Product
+  platform fallback. The independent review RED produced 8 focused failures
+  for adapter availability, stale resume replay, real execution gating, and
+  pre-input cleanup. GREEN passes 123 focused Task 15B.5 tests, 485 integrated
+  Task 15B tests, 17 architecture/development-entry tests, and all 1775 Product
   Kernel tests. Modified source/test files are at most 500 lines; Application,
   Shell, and Worker paths contain zero `asyncio.run()` calls, while Product
   bootstrap contains exactly one outer entrypoint call.

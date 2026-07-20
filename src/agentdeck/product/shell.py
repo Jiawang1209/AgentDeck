@@ -27,25 +27,19 @@ from agentdeck.product.presenter import (
 )
 from agentdeck.product.renderer import render
 from agentdeck.product.shell_projection import (
+    EXECUTION_ADAPTER_UNAVAILABLE,
+    HELP_TEXT,
     confirmation_authority,
     copy_available_leaders,
+    is_supported_permission,
     preview_presentation,
+    resume_point_text,
     validate_mission_preview,
 )
 from agentdeck.product.slash_commands import CommandKind, SlashCommand, parse_command
 
 
 _DEFAULT_PERMISSION: Final = "approve-for-me"
-_PERMISSIONS: Final = frozenset({
-    "ask-for-approval", "approve-for-me", "full-access",
-})
-_HELP = ("AgentDeck commands\n/help\n/status\n/setup [confirm]\n"
-         "Select Leader with /leader <name>.\nSelect Model with /model <name>.\n"
-         "/agents\nSelect Permission with /permissions <profile>.\n/mission\n"
-         "/pause\n/resume\n/takeover <attempt>\n/diagnose [--json]\n"
-         "Exit safely with /exit.")
-
-
 class AsyncTerminalReader:
     def __init__(self, stream: TextIO, prompt_stream: TextIO) -> None:
         self._stream, self._prompt_stream = stream, prompt_stream
@@ -122,7 +116,7 @@ class ProductShell:
                 raise TypeError(f"{label} must be callable")
         if resume_snapshot_loader is not None and not callable(resume_snapshot_loader):
             raise TypeError("resume_snapshot_loader must be callable or None")
-        if default_permission not in _PERMISSIONS:
+        if not is_supported_permission(default_permission):
             raise ValueError("default_permission is unsupported")
         self._service, self._exit = session_service, exit_coordinator
         self._recovery, self._lifecycle = recovery_service, lifecycle
@@ -143,14 +137,16 @@ class ProductShell:
         self._closed = False
 
     async def run_async(self) -> int:
-        await self._recovery.reconcile()
-        self._service.resume()
-        self._restore_resume_projection()
-        self._show_initial_state()
         loop = asyncio.get_running_loop()
+        signal_installed = False
         interrupted = asyncio.Event()
-        loop.add_signal_handler(signal.SIGINT, interrupted.set)
         try:
+            await self._recovery.reconcile()
+            self._service.resume()
+            self._restore_resume_projection()
+            self._show_initial_state()
+            loop.add_signal_handler(signal.SIGINT, interrupted.set)
+            signal_installed = True
             while True:
                 read_task = asyncio.create_task(self._read_line("agentdeck> "))
                 signal_task = asyncio.create_task(interrupted.wait())
@@ -177,7 +173,8 @@ class ProductShell:
                     await self._finish_child_for_exit()
                     return 0
         finally:
-            loop.remove_signal_handler(signal.SIGINT)
+            if signal_installed:
+                loop.remove_signal_handler(signal.SIGINT)
             await self._settle_owned_child()
             self._close_once()
 
@@ -253,7 +250,7 @@ class ProductShell:
             await self._resume_project()
             return False
         if kind is CommandKind.HELP:
-            self._emit(_HELP)
+            self._emit(HELP_TEXT)
         elif kind is CommandKind.STATUS:
             self._show_status()
         elif kind is CommandKind.SETUP:
@@ -312,6 +309,8 @@ class ProductShell:
         if self._resume_snapshot is None or self._resume_plan is None:
             self._emit(f"Resume blocked: {self._resume_blocker or 'resume_projection_malformed'}.")
             return
+        if not self._execution_available():
+            return
         try:
             result = await self._lifecycle.resume(self._resume_snapshot)
         except (TypeError, ValueError, RuntimeError):
@@ -333,8 +332,7 @@ class ProductShell:
         if self._mission_child is not None and not self._mission_child.done():
             self._emit("The Mission is already running.")
             return
-        if self._execution is None:
-            self._emit("Execution adapter unavailable; no Worker was started.")
+        if not self._execution_available():
             return
         self._mission_child = asyncio.create_task(
             self._execution.run_confirmed_mission(
@@ -343,6 +341,12 @@ class ProductShell:
                 permission_scope=permission_scope, resume_plan=resume_plan,
             )
         )
+
+    def _execution_available(self) -> bool:
+        if self._execution is None:
+            self._emit(EXECUTION_ADAPTER_UNAVAILABLE)
+            return False
+        return True
 
     async def _handle_input_closed(self) -> int:
         result = await self._exit.input_closed()
@@ -450,12 +454,7 @@ class ProductShell:
         else:
             self._show_status()
         if self._resume_snapshot is not None and self._resume_plan is not None:
-            task = self._resume_plan.remaining_tasks[0]
-            preceding = self._resume_snapshot.preceding_handoff_id or "none"
-            self._emit(
-                f"Resume point: {task.name} ({task.task_id}), next Attempt "
-                f"{self._resume_snapshot.next_attempt_ordinal}, preceding Handoff {preceding}."
-            )
+            self._emit(resume_point_text(self._resume_snapshot, self._resume_plan))
         elif self._resume_blocker is not None:
             self._emit(f"Resume blocked: {self._resume_blocker}.")
 

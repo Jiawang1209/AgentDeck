@@ -325,6 +325,8 @@ The original Task 15B files remain authorized:
 - `src/agentdeck/product/shell_projection.py` (approved pure helper extraction
   for the 500-line ProductShell boundary)
 - `src/agentdeck/product/bootstrap.py`
+- `tests/product_kernel/test_project_resume_replay.py` (focused replay
+  generation regression extracted to preserve the 500-line test boundary)
 - `tests/product_kernel/test_execution_runtime.py`
 - `tests/product_kernel/test_product_exit_acp_integration.py`
 - `tests/product_kernel/test_product_reentry.py`

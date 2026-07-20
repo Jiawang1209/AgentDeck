@@ -31,6 +31,7 @@ _TERMINAL_ATTEMPT_STATES = frozenset({
     "completed", "failed", "cancelled", "interrupted", "outcome_unknown",
 })
 _MAX_AUTHORITY_BYTES = 1_048_576
+_MAX_RESUME_GENERATIONS = 64
 
 
 class ProjectDispatchBlocked(RuntimeError):
@@ -303,16 +304,37 @@ class ProjectLifecycleService:
     ) -> ProjectLifecycleResult:
         async with self._barrier:
             snapshot = _snapshot_for_session(snapshot, self._session_id)
-            command_id = (
+            command_base = (
                 f"project:resume:{self._session_id}:"
                 f"{snapshot.content_hash[:16]}"
             )
-            replay = self._store.lookup_command(command_id, "resume_project")
-            if replay is not None:
-                return _lifecycle_result(
+            command_id = command_base
+            for generation in range(_MAX_RESUME_GENERATIONS):
+                command_id = (
+                    command_base if generation == 0
+                    else f"{command_base}:generation:{generation}"
+                )
+                replay = self._store.lookup_command(command_id, "resume_project")
+                if replay is None:
+                    break
+                restored = _lifecycle_result(
                     replay, mode="project_resumed", session_id=self._session_id,
                     should_start=True, snapshot_hash=snapshot.content_hash,
                 )
+                live_session = self._store.load_aggregate(
+                    "product_sessions", self._session_id
+                )
+                if _exact_running_null(live_session, self._session_id):
+                    return restored
+                if not (
+                    type(live_session) is dict
+                    and live_session.get("session_id") == self._session_id
+                    and live_session.get("state") == "paused"
+                    and _null_pending(live_session)
+                ):
+                    raise ValueError("resume replay authority changed")
+            else:
+                raise ValueError("resume generation budget exhausted")
 
             def persist(transaction: StoreTransaction) -> CommandResult:
                 live = transaction.load_execution_resume(self._session_id)

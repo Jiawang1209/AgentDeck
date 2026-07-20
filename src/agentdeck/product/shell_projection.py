@@ -5,8 +5,26 @@ from __future__ import annotations
 from collections.abc import Mapping
 
 from agentdeck.application.mission_service import MissionPreviewView
+from agentdeck.application.execution_resume import (
+    ExecutionResumePlan, ExecutionResumeSnapshot,
+)
 from agentdeck.product.presenter import MissionPreviewPresentation
 from agentdeck.product.renderer import render
+
+
+EXECUTION_ADAPTER_UNAVAILABLE = (
+    "Execution blocked: execution_adapter_unavailable."
+)
+HELP_TEXT = (
+    "AgentDeck commands\n/help\n/status\n/setup [confirm]\n"
+    "Select Leader with /leader <name>.\nSelect Model with /model <name>.\n"
+    "/agents\nSelect Permission with /permissions <profile>.\n/mission\n"
+    "/pause\n/resume\n/takeover <attempt>\n/diagnose [--json]\n"
+    "Exit safely with /exit."
+)
+_SUPPORTED_PERMISSIONS = frozenset({
+    "ask-for-approval", "approve-for-me", "full-access",
+})
 
 
 def copy_available_leaders(
@@ -35,6 +53,21 @@ def confirmation_authority(text: str) -> tuple[str, str] | None:
     if len(parts) == 3 and parts[0].casefold() == "confirm":
         return parts[1], parts[2]
     return None
+
+
+def is_supported_permission(value: object) -> bool:
+    return type(value) is str and value in _SUPPORTED_PERMISSIONS
+
+
+def resume_point_text(
+    snapshot: ExecutionResumeSnapshot, plan: ExecutionResumePlan,
+) -> str:
+    task = plan.remaining_tasks[0]
+    preceding = snapshot.preceding_handoff_id or "none"
+    return (
+        f"Resume point: {task.name} ({task.task_id}), next Attempt "
+        f"{snapshot.next_attempt_ordinal}, preceding Handoff {preceding}."
+    )
 
 
 def preview_presentation(value: MissionPreviewView) -> MissionPreviewPresentation:
@@ -85,8 +118,12 @@ def validate_mission_preview(value: MissionPreviewView) -> None:
 
 
 __all__ = [
+    "EXECUTION_ADAPTER_UNAVAILABLE",
+    "HELP_TEXT",
     "confirmation_authority",
     "copy_available_leaders",
+    "is_supported_permission",
     "preview_presentation",
+    "resume_point_text",
     "validate_mission_preview",
 ]
