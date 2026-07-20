@@ -243,6 +243,14 @@ class ProductShell:
         if kind is CommandKind.RESUME:
             await self._resume_project()
             return False
+        if kind is CommandKind.TAKEOVER:
+            operation = None if self._execution is None else getattr(self._execution, "takeover", None)
+            if not callable(operation):
+                self._emit("No active Mission can accept takeover.")
+            else:
+                result = await operation(command.argument)
+                self._emit(f"Human control recorded for Attempt {command.argument}." if result.accepted else self._render(DiagnosisPresentation(result.diagnostic)))
+            return False
         if kind is CommandKind.HELP:
             self._emit(HELP_TEXT)
         elif kind is CommandKind.STATUS:

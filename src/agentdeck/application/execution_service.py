@@ -3,8 +3,8 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Callable
 from agentdeck.application.approval_service import ApprovalContext, ApprovalService
-from agentdeck.application import execution_authority as _authority
-from agentdeck.application import execution_records as _records
+from agentdeck.application import execution_authority as _authority, execution_records as _records
+from agentdeck.application.takeover_control import TakeoverExecutionMixin
 from agentdeck.application.execution_resume import (
     ExecutionResult, ExecutionResumePlan, initial_execution_state, validate_execution_authority,
 )
@@ -22,7 +22,7 @@ from agentdeck.kernel.permissions import PermissionScope
 from agentdeck.ports.clock import Clock
 from agentdeck.ports.store import Store
 from agentdeck.ports.worker import TaskRequest, Worker
-class ExecutionService:
+class ExecutionService(TakeoverExecutionMixin):
     def __init__(
         self, *, store: Store, clock: Clock, approval_service: ApprovalService,
         worker_factory: Callable[[TaskDefinition], Worker],
@@ -139,7 +139,7 @@ class ExecutionService:
                             )
                         attempts[-1] = attempt
                         try:
-                            self._runtime.activate(reservation, binding)
+                            self._takeover_activate(reservation, binding, (session_id, confirmed, task, attempt, effective_scope))
                         except Exception:
                             await reject_reserved_worker(
                                 self._runtime, reservation, handle)
@@ -215,7 +215,7 @@ class ExecutionService:
                     )
                 try:
                     bridge = await self._approval_service.bridge_attempt(
-                        worker, handle,
+                        self._takeover_worker(worker, handle), handle,
                         ApprovalContext(
                             confirmed.mission_id, confirmed.version,
                             effective_scope, confirmed.content_hash,
@@ -367,7 +367,7 @@ class ExecutionService:
                             terminal, "terminal execution bundle did not commit",
                         ),
                     )
-                self._runtime.release(attempt.attempt_id, handle)
+                self._takeover_release(attempt.attempt_id, handle)
                 terminal = committed.attempt
                 handoff = committed.handoff
                 if task.name == "review":

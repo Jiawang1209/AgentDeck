@@ -2,6 +2,54 @@
 
 本文件记录 AgentDeck 每一次开发内容。约束：每次新增功能、文档规则、项目骨架、运行环境或用户可见行为变化，都必须同步更新本文件，并在同一次 commit 中提交。
 
+## 2026-07-21
+
+### Add explicit human takeover and validated return-control
+
+- Added an Application-owned takeover controller for one exact foreground
+  ProductSession/Mission/Task/Attempt/Agent/ACP lineage. Explicit takeover
+  atomically changes the durable Attempt to `human_controlled`, appends the
+  full-lineage `human_takeover` event, and closes the automatic-input gate.
+  The Worker facade additionally blocks ACP permission responses and result
+  collection while the human owns the Attempt.
+- Return-control now revalidates the project evidence identity, active ACP
+  binding and session identity, immutable permission snapshot, exact Observer
+  cursor, and current durable Attempt snapshot. Any malformed, foreign, stale,
+  terminal, or drifted authority retains human ownership and performs no new
+  Store or runtime effect; only a clean match atomically restores `running`
+  and reopens automatic control. Pane pixels and Agent prose never enter this
+  authority.
+- Routed `/takeover <attempt-id>` through Product Shell to the Application
+  authority. The tmux Adapter remains unchanged and stateless: it may select
+  the already-bound pane but owns no lifecycle, cursor, Store, or return-control
+  state.
+- Corrected the approved Task 29 file plan after the baseline
+  `execution_service.py` was confirmed to be exactly 500 lines. The controller
+  explicitly authorized the additional Application-only
+  `takeover_control.py`; this keeps the existing coordinator readable and all
+  changed Python/test files at or below 500 lines without expanding product
+  scope.
+- TDD evidence is recorded transparently. The first attempted RED was invalid
+  because this repository does not install `pytest-asyncio` (`1 passed, 10
+  errors` from an unsupported async fixture). After adopting the repository's
+  existing `asyncio.run` test wrapper, the valid RED was `1 passed, 10 errors
+  in 0.20s`, all caused by the missing takeover/evidence API. The initial
+  focused GREEN was `11 passed in 0.13s`. A later source-availability test
+  exposed four fail-open defaults (`4 failed, 15 passed in 0.21s`); the minimal
+  correction made unavailable project, permission, and Observer evidence fail
+  closed (`19 passed in 0.15s`). Final self-review then exposed cached
+  idempotency after a completed ownership cycle (`1 failed, 18 passed in
+  0.20s`); the Attempt now admits only one takeover/return transition. A
+  contract correction separately proved that delivery of the same takeover
+  while still `human_controlled` must replay the accepted outcome with zero new
+  effects (`1 failed, 18 passed in 0.19s`). Both cases now pass in a `19 passed
+  in 0.15s` focused run. Final verification passed the combined
+  takeover/R5/Task 15B surface (`388 passed in 13.85s`), architecture/context
+  firewalls (`66 passed in 2.18s`), the complete Product Kernel suite (`1919
+  passed in 80.35s`), and the legacy suite (`4461 passed, 3 skipped in
+  225.43s`). No live tmux, provider, ACP Mission, installation, auth change,
+  network action, push, merge, or Golden Product run was performed.
+
 ## 2026-07-20
 
 ### Close Task 28 faithful cursor-safe Agent streams
