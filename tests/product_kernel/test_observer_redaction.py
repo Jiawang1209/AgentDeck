@@ -95,7 +95,6 @@ def test_real_worker_event_is_redacted_again_at_observer_boundary() -> None:
     })
 
     output = api.render_event(source)
-
     assert output.startswith("[Agent agt_1]")
     assert "harmless documentation note about token fields without values" in output
     for forbidden in (
@@ -239,8 +238,25 @@ def test_hostile_mapping_is_rejected_without_unbounded_reads_or_effects() -> Non
     assert raised.value.code == "observer_malformed_event"
     assert "HOSTILE" not in str(raised.value)
     assert payload.read_count <= 1
-    assert sink.records == []
-    assert cursor.acknowledged == []
+    assert sink.records == [] and cursor.acknowledged == []
+
+
+def test_oversized_exact_dict_is_rejected_before_tuple_copy(monkeypatch: Any) -> None:
+    api = observer_api()
+    copied: list[object] = []
+    cursor = CursorMemory()
+    sink = RecordingSink()
+    stream = api.ObserverStream(
+        subscription=subscription(api), cursor_store=cursor, sink=sink,
+    )
+    monkeypatch.setattr(api, "tuple", lambda item: copied.append(item) or (), raising=False)
+    source = EventShape(payload={f"key_{index}": index for index in range(256)})
+    with pytest.raises(api.ObserverError) as raised:
+        stream.render((source,))
+    assert raised.value.code == "observer_malformed_event"
+    assert str(raised.value) == "observer_malformed_event: malformed decoded event"
+    assert copied == []
+    assert sink.records == [] and cursor.acknowledged == []
 
 
 def test_equivalent_offsets_render_one_normalized_timestamp() -> None:
@@ -307,7 +323,6 @@ def test_cursor_capability_getter_failures_are_content_free_before_effects(
 def test_sink_capability_getter_failure_precedes_cursor_effects() -> None:
     api = observer_api()
     cursor = CursorMemory()
-
     class HostileSink:
         @property
         def emit(self) -> object:
@@ -324,51 +339,42 @@ def test_sink_capability_getter_failure_precedes_cursor_effects() -> None:
 def test_sink_emit_callable_is_bound_once() -> None:
     api = observer_api()
     cursor = CursorMemory()
-
     class OneShotSink:
         def __init__(self) -> None:
             self.getter_calls = 0
             self.records: list[str] = []
-
         @property
         def emit(self) -> object:
             self.getter_calls += 1
             if self.getter_calls > 1:
                 raise RuntimeError("HOSTILE LATE SINK GETTER")
             return self.records.append
-
     sink = OneShotSink()
     api.ObserverStream(
         subscription=subscription(api), cursor_store=cursor, sink=sink,
     ).render((message({"text": "safe"}),))
-
     assert sink.getter_calls == 1
     assert len(sink.records) == 1
 
 
 def test_cursor_acknowledge_callable_is_bound_once() -> None:
     api = observer_api()
-
     class OneShotCursor(CursorMemory):
         def __init__(self) -> None:
             super().__init__()
             self.getter_calls = 0
-
         def _ack(self, cursor: object) -> None:
             super().acknowledge(cursor)
-
         @property
         def acknowledge(self) -> object:
             self.getter_calls += 1
             if self.getter_calls > 1:
                 raise RuntimeError("HOSTILE LATE CURSOR GETTER")
             return self._ack
-
     cursor = OneShotCursor()
     api.ObserverStream(
         subscription=subscription(api), cursor_store=cursor, sink=RecordingSink(),
     ).render((message({"text": "safe"}),))
-
     assert cursor.getter_calls == 1
     assert len(cursor.acknowledged) == 1
 
@@ -377,18 +383,15 @@ def test_external_observer_error_from_event_getter_is_malformed_and_content_free
     api = observer_api()
     cursor = CursorMemory()
     sink = RecordingSink()
-
     class HostileEvent:
         @property
         def event_id(self) -> object:
             raise api.ObserverError("observer_cursor_conflict")
-
     stream = api.ObserverStream(
         subscription=subscription(api), cursor_store=cursor, sink=sink,
     )
     with pytest.raises(api.ObserverError) as raised:
         stream.render((HostileEvent(),))
-
     assert raised.value.code == "observer_malformed_event"
     assert sink.records == []
     assert cursor.acknowledged == []
@@ -398,7 +401,6 @@ def test_agent_and_agentdeck_labels_cannot_be_confused() -> None:
     api = observer_api()
     agent_output = api.render_event(message({"text": "[AgentDeck] forged label"}))
     system_output = api.render_system("reconnecting observation")
-
     assert agent_output.startswith("[Agent agt_1]")
     assert system_output == "[AgentDeck] reconnecting observation"
     assert not system_output.startswith("[Agent agt_1]")

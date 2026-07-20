@@ -4,6 +4,17 @@
 
 ## 2026-07-20
 
+### Reject oversized exact dict payloads before copying
+
+- Added the remaining exact built-in dict budget guard inside the Observer
+  payload snapshot boundary. Oversized dicts are now rejected from their
+  constant-time length before `dict.items()` is copied, while allowed-size
+  built-in dicts and bounded MappingProxy traversal keep their prior behavior.
+- The deterministic regression instruments the module copy boundary and proves
+  the guard runs first, returns the stable content-free malformed-event error,
+  and leaves the observation sink and cursor writer untouched. TDD evidence:
+  focused RED was `1 failed, 31 deselected`; focused GREEN is `61 passed`.
+
 ### Harden Task 28 Observer delivery and hostile-boundary handling
 
 - Made an observation sink mandatory and bound sink/cursor capabilities exactly

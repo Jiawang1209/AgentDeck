@@ -206,6 +206,8 @@ def _json_payload(value: object) -> dict[str, object]:
 
     def entries(item: object) -> tuple[tuple[object, object], ...]:
         if type(item) is dict:
+            if len(item) > budget[0]:
+                raise ValueError("payload size")
             return tuple(dict.items(item))
         if type(item) is MappingProxyType:
             result = []
