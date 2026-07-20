@@ -1,34 +1,74 @@
 # AgentDeck Current Development State
 
-Updated: 2026-07-18
+Updated: 2026-07-20
 
 ## Active goal
 
-Complete human review of the sole
-[Product Kernel Rewrite TDD plan](../superpowers/plans/2026-07-18-agentdeck-product-kernel-rewrite.md),
-then begin R0 through the approved execution mode.
+R2 and the complete Task 15B pause/re-entry gate are closed. The only next
+development task is Task 27, **Define the Observer Runtime Port and
+deterministic tmux layout**, from the approved
+[Product Kernel Rewrite TDD plan](../superpowers/plans/2026-07-18-agentdeck-product-kernel-rewrite.md).
 
-This is the only active development route. Historical P1, M2, M2c, daemon,
-ConversationSession, autonomous, Skill, Memory, and GUI work is not an active
-gate, implementation order, or release veto.
+Do not reopen M2/M2c, daemon, ConversationSession, autonomous, Skill, Memory,
+GUI, or historical architecture plans as active authority. Do not begin Task 28
+or any real provider/tmux gate before Task 27 passes its own TDD and review.
 
-## Current state
+## Verified implementation state
 
-- The ten-part Product Kernel Rewrite design was approved.
-- The Rewrite Context Firewall and direct removal of old design authority were
-  approved.
-- Old specs, plans, architecture proposals, PRD, live SOPs, and walkthroughs
-  have been removed from the active working tree.
-- Root Agent instructions, README files, this handoff, and the Rewrite Design
-  are aligned to the new authority.
-- Existing source, tests, legacy contracts, real validation evidence,
-  reference analysis, and the legacy capability inventory remain available.
-- The approved Design is now translated into one 39-Task R0-R8 TDD plan.
-- The plan selects an ACP bridge over Codex app-server and Claude Agent ACP,
-  with deterministic Fake gates before separately authorized real gates.
-- No product implementation has begun.
+- Verified implementation HEAD: `ce94d126bd8eed58a5951615453f8403e1d37450`.
+- Branch: `codex/product-kernel-rewrite`.
+- R2 exit: complete.
+- Task 15B.1 through Task 15B.5: complete.
+- Final integrated spec review: `✅ Final Task 15B spec compliant`.
+- Final integrated quality review: `✅ Final Task 15B code quality approved`.
+- Immediately before this handoff-only edit, `git status --short` returned no
+  output.
+- No push or merge was performed.
 
-## Approved MVP
+Task 15B now provides one ProductSession-scoped lifecycle authority for:
+
+- project-level `/exit` as a durable pause transaction;
+- exact ACP Worker cancellation and bounded prompt cleanup;
+- exact Attempt, Evidence, Handoff, revision, and acceptance lineage;
+- conservative startup recovery before the first terminal read;
+- observational paused re-entry followed only by explicit `/resume`;
+- one foreground asyncio loop and one owned Mission child;
+- adapter-unavailable, authority-drift, outcome-unknown, and replay-safe
+  fail-closed behavior;
+- caller cancellation that preserves the first `CancelledError`, collects
+  read/SIGINT/Mission/real ACP prompt tasks, closes the Store once, and leaves
+  durable running authority for the next startup recovery without fabricating
+  pause, Evidence, or Handoff facts.
+
+## R2 exit evidence
+
+All commands ran in the `agentdeck` conda environment against the verified
+implementation HEAD.
+
+```text
+Task 15B expanded focused matrix: 572 passed in 16.85s
+Product Kernel full suite:          1787 passed in 76.60s
+Legacy suite:                       4461 passed, 3 skipped in 228.66s
+Architecture gate:                  14 passed
+compileall:                          pass
+git diff --check:                    pass
+changed Python files <= 500 lines:  pass
+production legacy-authority scan:   pass
+Product asyncio.run ownership gate: pass
+```
+
+The production legacy-authority lexical gate scans `src/agentdeck`. Negative
+regression tests may name forbidden concepts such as tmux while proving that
+the Product Kernel does not use them, so test descriptions are intentionally
+outside that lexical scan.
+
+Two loaded full-suite reviews observed isolated discovery timing flakes
+(`version_probe_timeout` / one-second PID readiness). The exact failing tests
+passed on isolated rerun, they are outside the Task 15B diff, and fresh final
+Product Kernel and legacy runs above are green. No failure was hidden with
+xfail, skip, fallback, or a relaxed timeout in Task 15B.
+
+## Approved MVP direction
 
 - bare `agentdeck` continuous natural-language ProductSession;
 - Codex CLI, Claude CLI, or OpenAI-compatible API Leader selection;
@@ -41,48 +81,41 @@ gate, implementation order, or release veto.
 - plain-language diagnostics, safe exit, and deterministic re-entry;
 - real four-Worker website-reproduction Golden Product Gate.
 
-The MVP excludes background-after-exit execution, arbitrary Agent graphs,
-CLI/PTY automatic fallback, Memory, Skills, self-improvement, GUI, A2A,
-remote/mobile clients, and terminal-emulator work.
+The MVP still excludes background-after-exit execution, arbitrary Agent
+graphs, CLI/PTY automatic fallback, Memory, Skills, self-improvement, GUI,
+A2A, remote/mobile clients, and terminal-emulator work.
 
 ## Authority order
 
 1. Product Kernel Rewrite Design;
 2. Product North Star for long-term product invariants;
-3. approved Rewrite TDD plan, once it exists;
-4. current Task acceptance;
+3. approved Product Kernel Rewrite TDD plan;
+4. the current numerical Task acceptance criteria;
 5. real validation evidence;
 6. explicitly admitted legacy Adapter evidence.
+
+The Task 15B appendices are execution supplements, not parallel product
+designs:
+
+- `docs/superpowers/appendices/task15b/2026-07-20-task-15b-acp-cancellation-recovery-design.md`
+- `docs/superpowers/appendices/task15b/2026-07-20-task-15b-project-pause-resume.md`
 
 HISTORY, legacy code, legacy tests, and legacy contracts cannot create current
 requirements.
 
-## Verification baseline
-
-Before the documentation rewrite, the isolated worktree passed:
-
-```text
-4461 passed, 3 skipped
-```
-
-After the final documentation cleanup, fresh verification passed:
-
-```text
-compileall: exit 0
-pytest: 4461 passed, 3 skipped in 209.74s (final pre-commit rerun)
-source/test/runtime/environment diff: empty
-```
-
-No provider, ACP/tmux live run, daemon, preflight, Mission, installation,
-authentication change, merge, or push is part of this gate.
-
 ## Next gate
 
-1. Review the sole 39-Task Rewrite TDD plan.
-2. Select Subagent-Driven Development or inline executing-plans.
-3. After explicit plan approval, begin Task 1 at R0 with its RED test.
-4. Stop again at Task 35 and Task 36 for exact real-gate authorization; plan
-   approval does not pre-authorize a real provider, ACP/tmux run, or Mission.
+1. Start Task 27 only: define the Observer Runtime Port and deterministic tmux
+   layout using RED tests first.
+2. Keep tmux observational: decoded, redacted Agent events may be displayed,
+   but tmux/PTY text must not become lifecycle, approval, result, or recovery
+   authority.
+3. Preserve the now-closed R2/Task 15B invariants and rerun their focused gates
+   when Task 27 touches shared runtime composition.
+4. Stop after Task 27 implementation, verification, and two-stage review before
+   advancing to Task 28.
+5. Real provider, ACP/tmux, and Golden Product gates still require their exact
+   later Task authorization; this handoff does not authorize them.
 
 ## Canonical handoff inputs
 
@@ -100,10 +133,10 @@ Then inspect:
 
 ```bash
 git status --short
-git log --oneline -5
+git log --oneline -8
 git diff --name-only main...HEAD
 ```
 
-Removed historical designs can be recovered from Git when a specifically
+Removed historical designs can be recovered from Git only when a specifically
 approved legacy-admission task requires them. They must not be loaded as
 general project context.

@@ -4,6 +4,19 @@
 
 ## 2026-07-20
 
+### Close the R2 ProductSession exit gate
+
+- Closed Task 15B.1 through Task 15B.5 and recorded the exact verified
+  implementation HEAD, final spec/quality approvals, clean-worktree proof, and
+  focused/full/legacy evidence in the current development handoff.
+- R2 is now complete. The sole next numerical task is Task 27, Observer Runtime
+  Port and deterministic tmux layout; this closure does not start Task 27 and
+  does not authorize a real provider, ACP/tmux, or Golden Product run.
+- Final verification at `ce94d126bd8eed58a5951615453f8403e1d37450`:
+  Task 15B focused `572 passed`, Product Kernel `1787 passed`, legacy
+  `4461 passed, 3 skipped`, architecture `14 passed`, with compile, diff,
+  500-line, production legacy-authority, and single-`asyncio.run` gates green.
+
 ### Preserve caller cancellation through the real ACP stack
 
 - Corrected the real project-exit path so caller-owned `CancelledError` is no
