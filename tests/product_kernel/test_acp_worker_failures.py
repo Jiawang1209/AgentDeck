@@ -248,6 +248,29 @@ def test_acp_worker_sanitizes_unexpected_cancel_exception_without_event() -> Non
     asyncio.run(scenario())
 
 
+@pytest.mark.parametrize("fatal", [MemoryError(), SystemExit(23)])
+def test_acp_worker_propagates_cancel_fatal_after_prompt_cleanup(
+    fatal: BaseException,
+) -> None:
+    async def scenario() -> None:
+        worker = _worker_with_cancel_error(fatal)
+        handle = await worker.start_task(task_request())
+        stream = worker.stream_events(handle).__aiter__()
+        assert (await anext(stream)).kind == "started"
+
+        with pytest.raises(type(fatal)) as captured:
+            await worker.cancel_task(handle, reason="cancelled by test")
+
+        assert captured.value is fatal
+        assert worker._run is not None
+        assert worker._run.error is None
+        assert worker._run.prompt_task is not None
+        assert worker._run.prompt_task.done()
+        assert worker._run.pending_permission is None
+
+    asyncio.run(scenario())
+
+
 def test_end_turn_cannot_complete_while_permission_is_pending() -> None:
     async def scenario() -> None:
         worker = worker_factory("terminal_with_pending_permission")()

@@ -71,6 +71,7 @@ class ACPWorkerConnection:
         self._manager: AbstractAsyncContextManager[object] | None = None
         self._connection: object | None = None
         self._close_lock = asyncio.Lock()
+        self._shutdown_task: asyncio.Task[None] | None = None
         self._started = False
         self._closed = False
 
@@ -121,14 +122,13 @@ class ACPWorkerConnection:
             await self.aclose()
 
     async def cancel(self, *args: object, **kwargs: Any) -> None:
-        connection, manager, claim_failure = await self._claim_cancel_owner()
+        connection, shutdown, gate, claim_failure = await self._claim_cancel_owner()
         notification_failure = claim_failure
-        if claim_failure is None and connection is None:
-            notification_failure = ("cancel_rejected", True)
-        elif claim_failure is None and manager is None:
+        fatal: BaseException | None = None
+        if claim_failure is None and connection is not None and shutdown is None:
             notification_failure = ("transport_disconnected", False)
         try:
-            if notification_failure is None:
+            if notification_failure is None and connection is not None:
                 await asyncio.wait_for(
                     connection.cancel(*args, **kwargs),
                     timeout=self.timeout_seconds,
@@ -139,13 +139,30 @@ class ACPWorkerConnection:
             notification_failure = ("transport_disconnected", False)
         except asyncio.CancelledError:
             notification_failure = ("cancel_timeout", False)
-        except MemoryError:
-            raise
+        except MemoryError as error:
+            fatal = error
         except Exception:
             notification_failure = ("transport_disconnected", False)
+        except BaseException as error:
+            fatal = error
+        finally:
+            if gate is not None:
+                gate.set()
 
-        shutdown_failure = await self._bounded_shutdown_facts(manager)
-        failure = notification_failure or shutdown_failure
+        try:
+            shutdown_failure = await self._bounded_shutdown_facts(shutdown)
+        except BaseException:
+            if fatal is None:
+                raise
+            shutdown_failure = None
+        if fatal is not None:
+            raise fatal
+        failure = (
+            notification_failure or shutdown_failure
+            if connection is not None
+            else shutdown_failure or notification_failure
+            or ("cancel_rejected", True)
+        )
         if failure is not None:
             code, outcome_known = failure
             raise WorkerCancellationError(
@@ -155,21 +172,26 @@ class ACPWorkerConnection:
     async def aclose(self) -> None:
         async with self._close_lock:
             self._closed = True
-            manager = self._manager
-            self._manager = None
-            self._connection = None
-        if manager is not None:
-            await manager.__aexit__(None, None, None)
+            shutdown = self._shutdown_task
+            if shutdown is None:
+                manager = self._manager
+                self._manager = None
+                self._connection = None
+                if manager is not None:
+                    shutdown = asyncio.create_task(self._reap_owner(manager))
+                    self._shutdown_task = shutdown
+        if shutdown is not None:
+            await asyncio.shield(shutdown)
 
     async def _claim_cancel_owner(
         self,
-    ) -> tuple[object | None, AbstractAsyncContextManager[object] | None,
+    ) -> tuple[object | None, asyncio.Task[None] | None, asyncio.Event | None,
                tuple[str, bool] | None]:
         claim = asyncio.create_task(self._detach_cancel_owner())
         failure: tuple[str, bool] | None = None
         caller_cancelled = False
         try:
-            connection, manager = await asyncio.wait_for(
+            connection, shutdown, gate = await asyncio.wait_for(
                 asyncio.shield(claim), timeout=self.timeout_seconds,
             )
         except asyncio.CancelledError:
@@ -183,7 +205,7 @@ class ACPWorkerConnection:
             failure = ("transport_disconnected", False)
         if caller_cancelled:
             try:
-                connection, manager = await asyncio.wait_for(
+                connection, shutdown, gate = await asyncio.wait_for(
                     asyncio.shield(claim), timeout=self.timeout_seconds,
                 )
             except (TimeoutError, asyncio.CancelledError):
@@ -193,56 +215,63 @@ class ACPWorkerConnection:
             except Exception:
                 failure = ("transport_disconnected", False)
             else:
-                return connection, manager, failure
+                return connection, shutdown, gate, failure
         if failure is not None:
-            connection, manager, _ = await self._settle_cancel_claim(
+            connection, shutdown, gate, _ = await self._settle_cancel_claim(
                 claim
             )
-            return connection, manager, failure
-        return connection, manager, None
+            return connection, shutdown, gate, failure
+        return connection, shutdown, gate, None
 
     async def _detach_cancel_owner(
         self,
-    ) -> tuple[object | None, AbstractAsyncContextManager[object] | None]:
+    ) -> tuple[object | None, asyncio.Task[None] | None, asyncio.Event | None]:
         await self._close_lock.acquire()
         try:
             self._closed = True
+            if self._shutdown_task is not None:
+                return None, self._shutdown_task, None
             connection = self._connection
             manager = self._manager
             self._manager = None
             self._connection = None
+            gate = asyncio.Event() if manager is not None else None
+            shutdown = None
+            if manager is not None:
+                shutdown = asyncio.create_task(self._reap_owner(manager, gate))
+                self._shutdown_task = shutdown
         finally:
             self._close_lock.release()
-        return connection, manager
+        return connection, shutdown, gate
 
     @staticmethod
     async def _settle_cancel_claim(
         claim: asyncio.Task[
-            tuple[object | None, AbstractAsyncContextManager[object] | None]
+            tuple[object | None, asyncio.Task[None] | None, asyncio.Event | None]
         ],
-    ) -> tuple[object | None, AbstractAsyncContextManager[object] | None,
+    ) -> tuple[object | None, asyncio.Task[None] | None, asyncio.Event | None,
                tuple[str, bool] | None]:
         if not claim.done():
             claim.cancel()
         try:
-            connection, manager = await claim
+            connection, shutdown, gate = await claim
         except asyncio.CancelledError:
-            return None, None, None
+            return None, None, None, None
         except MemoryError:
             raise
         except Exception:
-            return None, None, ("transport_disconnected", False)
-        return connection, manager, None
+            return None, None, None, ("transport_disconnected", False)
+        return connection, shutdown, gate, None
 
     async def _bounded_shutdown_facts(
-        self, manager: AbstractAsyncContextManager[object] | None,
+        self, shutdown: asyncio.Task[None] | None,
     ) -> tuple[str, bool] | None:
-        if manager is None:
+        if shutdown is None:
             return None
         failure: tuple[str, bool] | None = None
         try:
             await asyncio.wait_for(
-                manager.__aexit__(None, None, None),
+                asyncio.shield(shutdown),
                 timeout=self.timeout_seconds,
             )
         except (TimeoutError, asyncio.CancelledError):
@@ -252,6 +281,15 @@ class ACPWorkerConnection:
         except Exception:
             failure = ("transport_disconnected", False)
         return failure
+
+    @staticmethod
+    async def _reap_owner(
+        manager: AbstractAsyncContextManager[object],
+        gate: asyncio.Event | None = None,
+    ) -> None:
+        if gate is not None:
+            await gate.wait()
+        await manager.__aexit__(None, None, None)
 
     async def _connect(self) -> object:
         if self._started or self._closed:

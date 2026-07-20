@@ -4,6 +4,25 @@
 
 ## 2026-07-20
 
+### Share ACP shutdown ownership
+
+- Published one connection-owned shutdown task while detaching the SDK manager
+  under the close lock. Prompt cleanup, explicit close, and concurrent cancel
+  now shield and join that same task, so caller cancellation cannot interrupt
+  the only reap and shutdown-in-progress is not misreported as a completed
+  `cancel_rejected` outcome.
+- Gated the cancel-owned shutdown task until notification settles, preserving
+  notification-before-reap order. Bounded join timeout leaves the shared task
+  alive with its manager reference and returns `cancel_timeout/false`; a later
+  close can join the same exactly-once reap without double shutdown.
+- Kept MemoryError and process-exit BaseExceptions outside transport
+  normalization at both connection and ACP Worker boundaries. Fatal
+  notification now opens the shutdown gate, completes or boundedly continues
+  owner cleanup, terminates local prompt work, and then propagates unchanged.
+  Review RED produced the expected `5 failed`; GREEN passes `12` ownership
+  integrity cases, `78` focused tests, and the full `159`-test ACP adapter gate
+  without a real provider or adapter process.
+
 ### Preserve ACP claim-timeout authority
 
 - Preserved the first closed cancellation outcome across claim-task settling.

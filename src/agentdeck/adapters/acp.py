@@ -8,16 +8,14 @@ from typing import Any, Final
 from acp import PROTOCOL_VERSION
 from acp.schema import (
     AgentMessageChunk, AllowedOutcome, DeniedOutcome, InitializeResponse,
-    NewSessionResponse, PermissionOption, PromptResponse,
-    RequestPermissionResponse, TextContentBlock, ToolCallProgress,
-    ToolCallStart, ToolCallUpdate,
+    NewSessionResponse, PermissionOption, PromptResponse, RequestPermissionResponse,
+    TextContentBlock, ToolCallProgress, ToolCallStart, ToolCallUpdate,
 )
 from agentdeck.kernel.diagnostics import Diagnostic, Severity
 from agentdeck.kernel.events import normalize_occurred_at
 from agentdeck.ports.clock import Clock
 from agentdeck.ports.worker import (
-    TaskRequest, WorkerCancellationError, WorkerEvent, WorkerHandle, WorkerResult,
-    validate_worker_reason,
+    TaskRequest, WorkerCancellationError, WorkerEvent, WorkerHandle, WorkerResult, validate_worker_reason,
 )
 _MAX_ACP_UPDATE_BYTES: Final = 64 * 1024
 _MAX_ACP_TOTAL_BYTES: Final = 1024 * 1024
@@ -29,7 +27,6 @@ _PERMISSION_EFFECTS: Final = {
 }
 class ACPWorkerError(RuntimeError):
     """Content-free typed failure at the ACP Worker boundary."""
-
     def __init__(self, diagnostic: Diagnostic) -> None:
         super().__init__(f"ACP Worker failed: {diagnostic.code}")
         self.diagnostic = diagnostic
@@ -59,7 +56,6 @@ class _Run:
     terminal: bool = False
 class ACPWorker:
     """One-task ACP Worker adapter; Task 26 supplies the real connection."""
-
     def __init__(
         self, *, agent: object, project_root: str, clock: Clock,
         max_update_bytes: int = _MAX_ACP_UPDATE_BYTES,
@@ -111,9 +107,8 @@ class ACPWorker:
             raise self._error("acp_session_failed", True, request) from None
         if type(session) is not NewSessionResponse or not session.session_id:
             raise self._error("acp_protocol_mismatch", True, request)
-        session_digest = sha256(
-            f"{session.session_id}:{request.agent_id}:{request.attempt_id}".encode()
-        ).hexdigest()[:32]
+        identity = f"{session.session_id}:{request.agent_id}:{request.attempt_id}"
+        session_digest = sha256(identity.encode()).hexdigest()[:32]
         handle = WorkerHandle(
             session_id=f"ses_{session_digest}", agent_id=request.agent_id,
             task_id=request.task_id, attempt_id=request.attempt_id,
@@ -168,8 +163,14 @@ class ACPWorker:
             await self._agent.cancel(run.raw_session_id)
         except WorkerCancellationError as caught:
             failure = (caught.code, caught.outcome_known)
-        except BaseException:
-            failure = ("transport_disconnected", False)
+        except asyncio.CancelledError:
+            failure = ("cancel_timeout", False)
+        except BaseException as caught:
+            if isinstance(caught, Exception) and not isinstance(caught, MemoryError):
+                failure = ("transport_disconnected", False)
+            else:
+                await self._cancel_prompt(run)
+                raise
         if failure is not None:
             error = WorkerCancellationError(code=failure[0], outcome_known=failure[1])
             await self._cancel_prompt(run)
@@ -315,13 +316,13 @@ class ACPWorker:
                 retryable=known and _is_recoverable_disconnect(error),
             ))
     async def _cancel_prompt(self, run: _Run) -> None:
+        self._cancel_pending_permission(run)
         task = run.prompt_task
         if task is not None and not task.done():
             task.cancel()
-            try:
-                await task
-            except asyncio.CancelledError:
-                pass
+            await asyncio.wait({task}, timeout=getattr(self._agent, "timeout_seconds", 1.0))
+            if task.done() and not task.cancelled():
+                task.exception()
     def _inspect_raw_update(self, run: _Run, update: object) -> None:
         serializer = getattr(update, "model_dump_json", None)
         if not callable(serializer):
@@ -395,7 +396,6 @@ class ACPWorker:
     def _fail_cancellation(self, run: _Run, error: WorkerCancellationError) -> None:
         if run.terminal:
             return
-        self._cancel_pending_permission(run)
         run.error = error
         run.terminal = True
         run.queue.put_nowait(None)

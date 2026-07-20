@@ -41,6 +41,9 @@ class _Connection:
     async def new_session(self, *, cwd: str) -> NewSessionResponse:
         return NewSessionResponse(session_id="raw_session")
 
+    async def prompt(self, *args, **kwargs) -> object:
+        return object()
+
     async def cancel(self, session_id: str) -> None:
         connection = self.owner.connection_owner
         self.owner.detach_snapshots.append((
@@ -52,6 +55,8 @@ class _Connection:
         self.owner.notification_entered.set()
         if self.owner.notification_blocks:
             await self.owner.notification_release.wait()
+        if self.owner.notification_failure is not None:
+            raise self.owner.notification_failure
 
 
 class _Owner:
@@ -61,7 +66,9 @@ class _Owner:
         self.notification_entered = asyncio.Event()
         self.notification_release = asyncio.Event()
         self.notification_blocks = False
+        self.notification_failure: BaseException | None = None
         self.reap_calls = 0
+        self.reap_completed = 0
         self.reap_entered = asyncio.Event()
         self.reap_release = asyncio.Event()
         self.reap_blocks = False
@@ -78,6 +85,7 @@ class _Owner:
                 self.reap_entered.set()
                 if self.reap_blocks:
                     await self.reap_release.wait()
+                self.reap_completed += 1
 
         connection = ACPWorkerConnection(
             ("/verified/adapter",), project_root=self.project_root,
@@ -333,7 +341,7 @@ async def test_claim_settle_memory_error_still_propagates(
 async def test_aclose_releases_lock_before_owner_reap(tmp_path: Path) -> None:
     owner = _Owner(tmp_path)
     owner.reap_blocks = True
-    connection = await owner.ready()
+    connection = await owner.ready(timeout_seconds=0.01)
     closing = asyncio.create_task(connection.aclose())
     await owner.reap_entered.wait()
     try:
@@ -341,9 +349,57 @@ async def test_aclose_releases_lock_before_owner_reap(tmp_path: Path) -> None:
         connection._close_lock.release()
         with pytest.raises(WorkerCancellationError) as captured:
             await connection.cancel("raw_session")
-        _assert_error(captured.value, "cancel_rejected", True)
+        _assert_error(captured.value, "cancel_timeout", False)
     finally:
         owner.reap_release.set()
         await closing
     assert owner.notification_calls == 0
+    assert owner.reap_calls == 1
+
+
+@_sync_test
+async def test_prompt_cancellation_cannot_cancel_shared_owner_reap(
+    tmp_path: Path,
+) -> None:
+    owner = _Owner(tmp_path)
+    owner.reap_blocks = True
+    connection = await owner.ready(timeout_seconds=0.01)
+    prompt = asyncio.create_task(connection.prompt("raw_session", []))
+    await owner.reap_entered.wait()
+
+    prompt.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await prompt
+    with pytest.raises(WorkerCancellationError) as captured:
+        await asyncio.wait_for(connection.cancel("raw_session"), timeout=0.2)
+    _assert_error(captured.value, "cancel_timeout", False)
+    assert owner.reap_calls == 1 and owner.reap_completed == 0
+
+    owner.reap_release.set()
+    await asyncio.wait_for(connection.aclose(), timeout=0.2)
+    assert owner.reap_calls == owner.reap_completed == 1
+    with pytest.raises(WorkerCancellationError) as repeated:
+        await connection.cancel("raw_session")
+    _assert_error(repeated.value, "cancel_rejected", True)
+    assert owner.reap_calls == 1
+
+
+@pytest.mark.parametrize("fatal", [MemoryError(), SystemExit(17)])
+@_sync_test
+async def test_notification_fatal_reaps_owner_and_propagates_exactly(
+    tmp_path: Path, fatal: BaseException,
+) -> None:
+    owner = _Owner(tmp_path)
+    owner.notification_failure = fatal
+    connection = await owner.ready(timeout_seconds=0.01)
+
+    with pytest.raises(type(fatal)) as captured:
+        await connection.cancel("raw_session")
+
+    assert captured.value is fatal
+    assert owner.notification_calls == 1
+    assert owner.reap_calls == owner.reap_completed == 1
+    assert connection.closed is True
+    assert connection._connection is None and connection._manager is None
+    await connection.aclose()
     assert owner.reap_calls == 1
