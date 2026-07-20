@@ -296,6 +296,62 @@ def test_projection_rejects_orphan_later_terminal_command_read_only(store):
     assert _table_snapshot(store) == before
 
 
+@pytest.mark.parametrize(
+    ("task_name", "state"), (("review", "started"), ("revision", "failed"))
+)
+def test_projection_rejects_noncompleted_later_terminal_command_read_only(
+    store, task_name, state,
+):
+    seed_closed_stage(store, "implementation")
+    task = next(
+        item for item in store._resume_draft.tasks if item.name == task_name
+    )
+    store._require_writer().execute(
+        "INSERT INTO commands VALUES (?,?,?,?,?,?)",
+        (
+            command_id("terminal", store._resume_confirmed, task, 1),
+            "execution_stage_committed", state, None, NOW.isoformat(), None,
+        ),
+    )
+    before = _table_snapshot(store)
+
+    with pytest.raises(ExecutionResumeProjectionError, match="resume_projection_malformed"):
+        store.load_execution_resume("ses_1")
+
+    assert _table_snapshot(store) == before
+
+
+def test_projection_ignores_unrelated_completed_command_history(store):
+    seed_closed_stage(store, "implementation")
+    unrelated_result = json.dumps(
+        {
+            "attempt_id": "att_unrelated_1",
+            "evidence_ids": ["ev_unrelated_1"],
+            "handoff_id": "hnd_unrelated_1",
+            "mission_id": "msn_unrelated",
+            "mission_version": 1,
+            "task_id": "tsk_unrelated",
+        },
+        sort_keys=True, separators=(",", ":"),
+    )
+    store._require_writer().executemany(
+        "INSERT INTO commands VALUES (?,?,'completed',?,?,?)",
+        (
+            (
+                f"cmd_unrelated_{index}", "execution_stage_committed",
+                unrelated_result, NOW.isoformat(), NOW.isoformat(),
+            )
+            for index in range(4097)
+        ),
+    )
+    before = _table_snapshot(store)
+
+    snapshot = store.load_execution_resume("ses_1")
+
+    assert snapshot.first_unclosed_task_id == "tsk_review"
+    assert _table_snapshot(store) == before
+
+
 def test_projection_counts_executing_mission_without_current_version(store):
     store._require_writer().execute(
         "INSERT INTO missions VALUES (?,?,?,?,?,?)",

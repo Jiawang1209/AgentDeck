@@ -4,6 +4,19 @@
 
 ## 2026-07-20
 
+### Scope resume command coverage to current execution authority
+
+- Replaced the global completed-command scan with exact deterministic command
+  ID lookups derived from each frozen Task's contiguous Attempt history and
+  precise next resumable ordinal. A current authority row in `started`,
+  `failed`, the wrong command kind, or any shape other than its represented
+  completed closed-stage bundle now fails before its result can be trusted.
+- Unrelated Mission history no longer consumes a global scan cap or blocks a
+  valid current-session resume projection. The focused RED produced the
+  expected `3 failed`; GREEN passes all `170` focused resume, Mission,
+  execution, and quality tests plus `16` architecture/schema authority checks
+  without schema or migration changes.
+
 ### Reject hidden resume authority after spec re-review
 
 - Replaced textual Mission-ID matching for terminal command discovery with a
