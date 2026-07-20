@@ -41,6 +41,11 @@
   now guaranteed to close once. Cleanup regressions were separated into a
   focused test module so the shell behavior tests remain reviewable without
   weakening the 500-line gate.
+- Corrected the R2 lexical legacy-authority gate to inspect production source
+  only. The previous command also scanned negative regression tests and
+  therefore rejected the test that explicitly proves recovery has no tmux
+  fallback; production remains free of every forbidden authority term while
+  tests retain readable assertions about the prohibited behavior.
 - TDD evidence: the recovery contract RED produced 18 failures and the async
   shell RED produced 9 failures; final audit REDs independently caught one
   oversized recovery command identity, one stale complete pending-exit group,

@@ -2315,14 +2315,17 @@ violations="$(git diff --name-only \
   done)"
 test -z "$violations"
 test -z "$(git diff 2a752ccda081b7a599a79f27773348802d570029 -- \
-  src/agentdeck tests/product_kernel | rg \
+  src/agentdeck | rg \
   '^\+.*(ConversationSession|tmux|PTY|jsonl state|raw exception|prompt output)' \
   || true)"
 ```
 
 Expected: no changed source/test file exceeds 500 lines and the Task 15B diff
-contains no forbidden legacy authority, nested event loop, raw exception
-persistence, or credential-shaped fixture.
+contains no forbidden legacy authority in production code, nested event loop,
+raw exception persistence, or credential-shaped fixture. Negative regression
+tests may name a forbidden authority while proving that production does not use
+it; therefore the lexical authority gate intentionally scans `src/agentdeck`
+rather than test descriptions or assertion data.
 
 - [ ] **Step 5: Perform independent two-stage review**
 
