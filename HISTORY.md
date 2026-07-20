@@ -4,6 +4,15 @@
 
 ## 2026-07-20
 
+### Correct the Task 15B.2 ACP regression gate filename
+
+- Replaced the nonexistent `test_acp_worker.py` entry in the authoritative
+  implementation plan with the repository's real
+  `test_acp_worker_contract.py`, which runs the shared ACP Worker contract.
+- This is a gate-name correction, not a coverage reduction: the corrected
+  connection, failure, worker-contract, transport, and preflight suite passes
+  all `145` tests without starting a real adapter or provider process.
+
 ### Close bounded ACP project cancellation
 
 - Defined ACP cancellation success as two ordered bounded phases: the cancel

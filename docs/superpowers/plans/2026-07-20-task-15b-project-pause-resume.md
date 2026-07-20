@@ -827,7 +827,7 @@ Run:
 conda run -n agentdeck env PYTHONPATH="$PWD/src" pytest \
   tests/product_kernel/test_acp_worker_connection.py \
   tests/product_kernel/test_acp_worker_failures.py \
-  tests/product_kernel/test_acp_worker.py \
+  tests/product_kernel/test_acp_worker_contract.py \
   tests/product_kernel/test_acp_transport.py \
   tests/product_kernel/test_real_adapter_preflight_contract.py -q
 ```
