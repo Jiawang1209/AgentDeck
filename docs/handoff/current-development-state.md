@@ -1,17 +1,34 @@
 # AgentDeck Current Development State
 
-Updated: 2026-07-20
+Updated: 2026-07-22
 
 ## Active goal
 
-R2, Task 15B, Task 27, and Task 28 are closed. Development is intentionally
-stopped before Task 29. The only next numerical task is Task 29, **Add explicit
-takeover and validated return-control**, from the approved
-[Product Kernel Rewrite TDD plan](../superpowers/plans/2026-07-18-agentdeck-product-kernel-rewrite.md).
+R2, Task 15B, Task 27, and Task 28 are closed. Task 29 (**Add explicit takeover
+and validated return-control**, implemented through the
+[Observer IPC and Takeover Closure plan](../superpowers/plans/2026-07-21-agentdeck-observer-ipc-takeover-closure.md))
+has its Tasks 1–7 implemented (HEAD before this session `8e58ccbe`). This
+session ran the plan's Task 8 verification gates and fixed two defects it
+surfaced (see the 2026-07-22 HISTORY entry): a real caller-cancellation
+regression in `await_operation_or_release` (`15ee9736`) and a stale v2→v3 schema
+assertion in a resume test (`90e32998`).
+
+Current test state at HEAD (conda env `agentdeck`): Product Kernel
+`1967 passed`, with one **pre-existing, out-of-scope** discovery timing flake
+(`test_selector_setup_failure_reaps_parent_and_descendant[constructor]`, fails
+at base `50f79a76` too); legacy suite `4461 passed, 3 skipped`; focused R5 `308`
+and architecture/firewall `50` green; static gates pass.
+
+Task 29 is **not yet formally closed**. Still pending before closure: the plan's
+independent specification review and code-quality review over the full Task 29
+range (`50f79a76..HEAD`), then a closure commit and handoff update. Only after
+that may Task 30 (per the
+[Product Kernel Rewrite TDD plan](../superpowers/plans/2026-07-18-agentdeck-product-kernel-rewrite.md))
+be dispatched. Task 30 is **not** unlocked by this session.
 
 Do not reopen M2/M2c, daemon, ConversationSession, autonomous, Skill, Memory,
-GUI, or historical architecture plans as active authority. Task 29 has not
-started, and this handoff does not authorize a real provider/tmux gate.
+GUI, or historical architecture plans as active authority. This handoff does not
+authorize a real provider/tmux/ACP gate. No push or merge has been performed.
 
 ## Verified implementation state
 

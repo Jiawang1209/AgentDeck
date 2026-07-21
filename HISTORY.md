@@ -2,6 +2,62 @@
 
 本文件记录 AgentDeck 每一次开发内容。约束：每次新增功能、文档规则、项目骨架、运行环境或用户可见行为变化，都必须同步更新本文件，并在同一次 commit 中提交。
 
+## 2026-07-22
+
+### Task 29 verification pass and two regression fixes
+
+- Ran the Task 29 (Observer IPC and Takeover Closure) verification gates after
+  Tasks 1–7 of
+  `docs/superpowers/plans/2026-07-21-agentdeck-observer-ipc-takeover-closure.md`
+  were already implemented (HEAD `8e58ccbe`). The focused R5 matrix (308) and
+  architecture/context firewalls (50) were green, but the full Product Kernel
+  suite surfaced three failures. Each was root-caused with systematic debugging
+  rather than blind rerun.
+- Fixed one real Task 29 regression (`15ee9736`,
+  `src/agentdeck/application/takeover_wait.py`): `await_operation_or_release`
+  awaited `asyncio.wait(...)` which does not cancel its child tasks when the
+  awaiting coroutine is itself cancelled, so on caller cancellation the ACP
+  worker bridge (`bridge_attempt`) was orphaned and its
+  `cancel_worker_for_caller` teardown — the path that invokes the ACP agent's
+  `cancel()` — never ran. The fix propagates the `CancelledError` into the
+  operation and release tasks before re-raising. Proven a genuine Task 29
+  regression by passing at the pre-Task-29 base `50f79a76` and failing at HEAD;
+  regression guard is
+  `tests/product_kernel/test_product_shell_caller_cancellation.py::test_caller_cancel_bounds_real_mission_and_retains_running_attempt`.
+  The `AutomaticAuthorityReleased` exit-release branch is unchanged; the 163
+  takeover/exit/cancellation regressions stay green. An independent adversarial
+  review APPROVED the fix. The structurally identical sibling
+  `wait_for_automatic_or_release` shares the orphan pattern but is not exercised
+  by any current failing test; it was left unchanged (no speculative fix without
+  a RED) and is flagged as a candidate follow-up hardening slice.
+- Fixed one stale test assertion (`90e32998`,
+  `tests/product_kernel/test_sqlite_execution_resume.py`): the authorized
+  Task 29 v2→v3 schema correction (`c08f8feb`, `2cc172ff`) advanced
+  `_SCHEMA_VERSION` to 3 and updated the sibling schema tests, but this resume
+  projection test still asserted `schema_version == (2,)`. Updated it to `(3,)`
+  and renamed it `test_resume_projection_preserves_current_schema_and_table_list`
+  so the name no longer contradicts the v3 authority. `SQLiteStore.open` creates
+  a v3 store and resume does not mutate the schema (the table-snapshot invariant
+  still passes), so this was a stale literal, not a resume defect.
+- Classified the remaining failure as pre-existing and out of scope:
+  `test_discovery_preflight_quality.py::test_selector_setup_failure_reaps_parent_and_descendant[constructor]`
+  polls only 1.0s for real probe subprocesses to report their PIDs and fails on
+  this machine's process timing. It fails at the pre-Task-29 base `50f79a76`
+  too and is outside the Task 29 diff, matching the previously documented
+  one-second PID-readiness discovery flake. Per plan constraints it was not
+  relaxed, skipped, or xfail'd.
+- Evidence at HEAD after fixes (conda env `agentdeck`): focused R5 matrix
+  `308 passed`; architecture + context firewalls `50 passed`; Product Kernel
+  full suite `1967 passed, 1 failed` (the pre-existing discovery flake only);
+  legacy suite `4461 passed, 3 skipped` (the three opt-in real ACP/preflight/
+  live nodes); `compileall` and `git diff --check` pass; every changed file is
+  ≤500 lines; no forbidden import/API in the changed kernel file.
+- Scope note: this session verified the suites and fixed two concrete defects.
+  It did NOT run the plan's full independent specification review and
+  code-quality review over the entire Task 29 commit range, and it does NOT
+  declare Task 29 formally closed or unlock Task 30. No real provider, ACP, tmux,
+  preflight, or live Mission ran. No push or merge was performed.
+
 ## 2026-07-21
 
 ### Correct Task 29 SQLite authority file map
