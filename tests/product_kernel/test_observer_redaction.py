@@ -64,8 +64,9 @@ class RecordingSink:
 
 
 def subscription(api: Any) -> object:
-    return api.ObserverSubscription(
-        session_id="ses_1", agent_id="agt_1", task_id="tsk_1", attempt_id="att_1",
+    return api.ObserverBinding(
+        project_id="prj_1", session_id="ses_1", agent_id="agt_1",
+        task_id="tsk_1", attempt_id="att_1",
         transport="acp",
     )
 
@@ -480,16 +481,15 @@ def test_product_observer_keeps_structural_firewall_and_no_raw_authority_api() -
     ).read_text(encoding="utf-8")
 
     for forbidden_import in (
-        "agentdeck.ports", "agentdeck.adapters", "agentdeck.store",
-        "agentdeck.state", "sqlite3",
+        "agentdeck.adapters", "agentdeck.store", "agentdeck.state", "sqlite3",
     ):
         assert forbidden_import not in source
+    assert "from agentdeck.ports.observer import" in source
     for forbidden_api in (
         "parse_acp", "raw_frame", "raw_protocol", "capture_pane", "extract_reply",
         "dispatch", "approve", "mark_completed", "return_control", "asyncio.run",
     ):
         assert not hasattr(api.ObserverStream, forbidden_api)
-
 
 def test_tmux_sink_has_no_dispatch_completion_persistence_or_takeover_api() -> None:
     sink = tmux_api().TmuxObservationSink

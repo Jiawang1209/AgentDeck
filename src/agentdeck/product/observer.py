@@ -8,9 +8,12 @@ import hashlib
 import json
 import re
 from types import MappingProxyType
-from typing import Protocol
 
 from agentdeck.kernel.events import normalize_occurred_at
+from agentdeck.ports.observer import (
+    ObservationSink, ObserverBinding, ObserverCursor, ObserverCursorStore,
+    ObserverSubscription,
+)
 
 
 _EVENT_FIELDS = (
@@ -91,60 +94,7 @@ class ObserverError(RuntimeError):
         super().__init__(f"{code}: {_ERROR_MESSAGES[code]}")
 
 
-@dataclass(frozen=True)
-class ObserverSubscription:
-    """Immutable identity expected from one read-only event subscription."""
-
-    session_id: str
-    agent_id: str
-    task_id: str
-    attempt_id: str
-    transport: str
-
-    def __post_init__(self) -> None:
-        try:
-            _typed_identity(self.session_id, "ses_")
-            _typed_identity(self.agent_id, "agt_")
-            _typed_identity(self.task_id, "tsk_")
-            _typed_identity(self.attempt_id, "att_")
-            if self.transport != "acp":
-                raise ValueError("invalid transport")
-        except Exception:
-            raise ObserverError("observer_subscription_invalid") from None
-
-@dataclass(frozen=True)
-class ObserverCursor:
-    """Last acknowledged immutable event identity and exact fingerprint."""
-
-    session_id: str
-    agent_id: str
-    task_id: str
-    attempt_id: str
-    transport: str
-    sequence: int
-    event_id: str
-    fingerprint: str
-
-    def __post_init__(self) -> None:
-        _typed_identity(self.session_id, "ses_")
-        _typed_identity(self.agent_id, "agt_")
-        _typed_identity(self.task_id, "tsk_")
-        _typed_identity(self.attempt_id, "att_")
-        _typed_identity(self.event_id, "evt_")
-        if self.transport != "acp":
-            raise ValueError("cursor transport must be acp")
-        if type(self.sequence) is not int or not 1 <= self.sequence <= _MAX_SEQUENCE:
-            raise ValueError("cursor sequence is invalid")
-        if type(self.fingerprint) is not str or not _HEX_64.fullmatch(self.fingerprint):
-            raise ValueError("cursor fingerprint is invalid")
-
-class CursorStore(Protocol):
-    def load(self) -> ObserverCursor | None: ...
-    def acknowledge(self, cursor: ObserverCursor) -> None: ...
-
-
-class ObservationSink(Protocol):
-    def emit(self, record: str) -> None: ...
+CursorStore = ObserverCursorStore
 
 
 @dataclass(frozen=True)
@@ -161,16 +111,16 @@ class _EventSnapshot:
     payload: dict[str, object]
     fingerprint: str
 
-    def cursor(self) -> ObserverCursor:
+    def cursor(self, project_id: str) -> ObserverCursor:
         return ObserverCursor(
-            session_id=self.session_id, agent_id=self.agent_id,
+            project_id=project_id, session_id=self.session_id, agent_id=self.agent_id,
             task_id=self.task_id, attempt_id=self.attempt_id,
             transport=self.transport, sequence=self.sequence,
             event_id=self.event_id, fingerprint=self.fingerprint,
         )
 
 
-def _lineage(value: ObserverSubscription | ObserverCursor | _EventSnapshot) -> tuple[str, ...]:
+def _lineage(value: ObserverBinding | ObserverCursor | _EventSnapshot) -> tuple[str, ...]:
     return value.session_id, value.agent_id, value.task_id, value.attempt_id, value.transport
 
 
@@ -397,10 +347,10 @@ class ObserverStream:
     """Render one immutable event lineage and acknowledge accepted cursors."""
 
     def __init__(
-        self, *, subscription: ObserverSubscription, cursor_store: CursorStore,
+        self, *, subscription: ObserverBinding, cursor_store: CursorStore,
         sink: ObservationSink | None = None,
     ) -> None:
-        if type(subscription) is not ObserverSubscription:
+        if type(subscription) is not ObserverBinding:
             raise ObserverError("observer_subscription_invalid")
         self._emit = _capability(sink, "emit", "observer_sink_failed")
         load = _capability(cursor_store, "load", "observer_cursor_load_failed")
@@ -413,7 +363,7 @@ class ObserverStream:
             raise ObserverError("observer_cursor_load_failed") from None
         if cursor is not None and type(cursor) is not ObserverCursor:
             raise ObserverError("observer_cursor_invalid")
-        if cursor is not None and _lineage(cursor) != _lineage(subscription):
+        if cursor is not None and cursor.binding != subscription:
             raise ObserverError("observer_identity_mismatch")
         self._subscription = subscription
         self._cursor = cursor
@@ -447,7 +397,7 @@ class ObserverStream:
                 self._emit(record)
             except Exception:
                 raise ObserverError("observer_sink_failed") from None
-            cursor = event.cursor()
+            cursor = event.cursor(self._subscription.project_id)
             try:
                 self._acknowledge(cursor)
             except Exception:
@@ -495,6 +445,7 @@ class ObserverStream:
 
 
 __all__ = [
-    "CursorStore", "ObservationSink", "ObserverCursor", "ObserverError", "ObserverStream",
-    "ObserverSubscription", "render_event", "render_system",
+    "CursorStore", "ObservationSink", "ObserverBinding", "ObserverCursor",
+    "ObserverError", "ObserverStream", "ObserverSubscription", "render_event",
+    "render_system",
 ]

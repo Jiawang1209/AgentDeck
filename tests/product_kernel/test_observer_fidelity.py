@@ -28,8 +28,8 @@ def subscription(
     attempt_id: object = "att_1",
     transport: object = "acp",
 ) -> object:
-    return api.ObserverSubscription(
-        session_id=session_id, agent_id=agent_id, task_id=task_id,
+    return api.ObserverBinding(
+        project_id="prj_1", session_id=session_id, agent_id=agent_id, task_id=task_id,
         attempt_id=attempt_id, transport=transport,
     )
 
@@ -399,13 +399,9 @@ def test_expected_subscription_rejects_hostile_values_content_free(
     api = observer_api()
     values = {field: value}
 
-    with pytest.raises(api.ObserverError) as raised:
+    with pytest.raises((TypeError, ValueError)) as raised:
         subscription(api, **values)
 
-    assert raised.value.code == "observer_subscription_invalid"
-    assert str(raised.value) == (
-        "observer_subscription_invalid: invalid observer subscription"
-    )
     assert "HOSTILE" not in str(raised.value)
 
 
@@ -491,5 +487,8 @@ def test_observer_api_exposes_no_domain_or_task29_authority() -> None:
         "capture_pane", "extract_reply", "takeover", "return_control",
     )
 
-    for owner in (api.ObserverStream, api.ObserverCursor, api.ObserverSubscription):
+    for owner in (
+        api.ObserverStream, api.ObserverCursor, api.ObserverSubscription,
+        api.ObserverBinding,
+    ):
         assert all(not hasattr(owner, name) for name in forbidden)
