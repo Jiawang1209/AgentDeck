@@ -4,6 +4,23 @@
 
 ## 2026-07-21
 
+### Approve Product-native Observer IPC and takeover closure design
+
+- Recorded the approved Task 29 review-closure design for a project-isolated,
+  Product Kernel-native Unix-socket Observer channel. Decoded Worker Events now
+  have an explicit production path to the real tmux Observer, whose sink must emit
+  successfully before it returns an acknowledgement to the foreground
+  Application cursor writer. Execution-side event consumption can never
+  impersonate successful human observation.
+- Defined the coupled takeover corrections: durable ownership-cycle
+  idempotency, commit-then-raise reconciliation, typed live Git project
+  evidence, ownership-gated automatic cancellation, and explicit Task 15B exit
+  settlement through a release signal. The design preserves Observer
+  non-authority and forbids legacy daemon reuse, raw protocol data, direct
+  Observer persistence, terminal completion inference, and tmux task transport.
+- This documentation commit performs no live tmux, provider, ACP Mission,
+  installation, authentication, push, merge, or Golden Product action.
+
 ### Add explicit human takeover and validated return-control
 
 - Added an Application-owned takeover controller for one exact foreground
