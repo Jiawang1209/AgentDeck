@@ -4,6 +4,23 @@
 
 ## 2026-07-21
 
+### Plan Task 29 Observer IPC and takeover review closure
+
+- Added the approved, executable TDD plan that closes the missing real tmux
+  Observer delivery/acknowledgement channel and all six independent Task 29
+  specification-review findings. The plan separates shared Ports, Application
+  Broker/cursor authority, bounded Unix-socket Adapter, read-only Product
+  Observer command, typed Git evidence, durable ownership cycles, exact exit
+  release, and production composition into serial RED/GREEN commits.
+- The plan explicitly avoids modifying the oversized legacy `cli.py`: a thin
+  entrypoint routes only `agentdeck observer` and delegates every other argv
+  unchanged, preserving the later Task 39 bare-entry cutover boundary. It also
+  locks full R5, Task 15B, ACP, SQLite, architecture/context, Product Kernel,
+  legacy, compile, diff, 500-line, and forbidden-authority gates before dual
+  independent review and Task 29 closure.
+- Planning performed no live tmux, provider, ACP Mission, installation,
+  authentication, push, merge, preflight, or Golden Product action.
+
 ### Approve Product-native Observer IPC and takeover closure design
 
 - Recorded the approved Task 29 review-closure design for a project-isolated,
