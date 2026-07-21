@@ -4,6 +4,22 @@
 
 ## 2026-07-21
 
+### Correct Task 29 SQLite authority file map
+
+- Corrected the approved Observer IPC/takeover closure plan after implementation
+  proved that the current SQLite Store rejects unknown aggregate types and has
+  no range query from which a rebuilt Broker or takeover controller could
+  discover current authority. Command-only storage therefore cannot satisfy the
+  approved cross-restart cursor and ownership-cycle contract.
+- Authorized the minimum v3 schema correction: two closed authority tables,
+  deterministic v2-to-v3 migration, an extracted SQLite helper that preserves
+  the 500-line `sqlite.py` gate, and focused schema/transaction tests. Existing
+  v1/v2 fixtures remain immutable; the correction adds no scheduling,
+  completion, approval, recovery, terminal, or legacy-daemon authority.
+- The correction was made from clean Task 1 commit `029eacac` and performed no
+  live tmux, provider, ACP Mission, installation, authentication, push, merge,
+  preflight, or Golden Product action.
+
 ### Plan Task 29 Observer IPC and takeover review closure
 
 - Added the approved, executable TDD plan that closes the missing real tmux

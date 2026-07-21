@@ -33,6 +33,12 @@
 - `src/agentdeck/application/takeover_records.py`: closed ownership-cycle and takeover command-result codecs.
 - `src/agentdeck/application/takeover_wait.py`: exact gate-or-runtime-release wait helper.
 
+**SQLite authority correction**
+
+- `src/agentdeck/adapters/sqlite_observer_authority.py`: closed save/load helpers for Observer cursor and takeover ownership aggregates.
+- `src/agentdeck/adapters/sqlite_schema.py`: deterministic v2-to-v3 migration adding only the two authority tables.
+- `src/agentdeck/adapters/sqlite.py`: bounded dispatch to the new helper without growing beyond 500 lines.
+
 **New Adapters and Product units**
 
 - `src/agentdeck/adapters/observer_ipc.py`: bounded project-local Unix-socket server/client; no business authority.
@@ -65,6 +71,8 @@
 - `tests/product_kernel/test_takeover_recovery.py`
 - `tests/product_kernel/test_takeover_exit.py`
 - `tests/product_kernel/test_takeover_composition.py`
+- `tests/product_kernel/test_sqlite_schema_v3.py`
+- `tests/product_kernel/test_sqlite_observer_authority.py`
 
 ## Task 1: Move Observer identity into a shared Port
 
@@ -175,7 +183,12 @@ git commit -m "refactor: share exact observer cursor authority"
 **Files:**
 - Create: `src/agentdeck/application/observer_records.py`
 - Create: `src/agentdeck/application/observer_broker.py`
+- Create: `src/agentdeck/adapters/sqlite_observer_authority.py`
+- Modify: `src/agentdeck/adapters/sqlite_schema.py`
+- Modify: `src/agentdeck/adapters/sqlite.py`
 - Create: `tests/product_kernel/test_observer_broker.py`
+- Create: `tests/product_kernel/test_sqlite_schema_v3.py`
+- Create: `tests/product_kernel/test_sqlite_observer_authority.py`
 - Modify: `src/agentdeck/application/approval_service.py`
 
 - [ ] **Step 1: Write RED cursor and publication tests**
@@ -210,7 +223,21 @@ conda run -n agentdeck pytest tests/product_kernel/test_observer_broker.py -q
 
 Expected: FAIL because Broker/writer and ApprovalService injection are absent.
 
-- [ ] **Step 3: Implement closed cursor persistence**
+- [ ] **Step 3: Add the minimal SQLite v3 authority tables**
+
+Add only `observer_cursors(cursor_id, canonical_cursor_facts, updated_at)` and
+`takeover_ownership(attempt_id, canonical_ownership_facts, updated_at)`. Bump
+the Product Kernel schema from v2 to v3 with an explicit, transactional,
+digest-verified v2-to-v3 migration. Fresh v3 creation and v1-to-v2-to-v3 upgrade
+must converge on the identical schema digest. Unknown, partial, extra-table,
+wrong-column, wrong-index, and failed-migration states fail closed. Existing v1
+and v2 fixtures remain immutable evidence; do not rewrite them.
+
+Keep `sqlite.py` at or below 500 lines by placing canonical save/load mechanics
+in `sqlite_observer_authority.py` and replacing existing dispatch branches
+rather than appending a second persistence implementation.
+
+- [ ] **Step 4: Implement closed cursor persistence**
 
 `observer_records.py` must define deterministic cursor aggregate identity and
 command identity from the full lineage and event fingerprint. The writer uses:
@@ -224,7 +251,7 @@ The transaction compare-checks the current cursor, saves one closed
 Replay returns the exact closed result. Sequence rollback, gap, identity drift,
 or conflicting replay writes nothing.
 
-- [ ] **Step 4: Implement the Broker**
+- [ ] **Step 5: Implement the Broker**
 
 The Broker snapshots only exact `WorkerEvent`, retains a bounded pending window,
 and calls an injected channel Adapter. `publish()` catches only the channel's
@@ -232,7 +259,7 @@ stable observation-degraded result and never changes Worker/Mission state.
 `acknowledge()` must match a pending exact fingerprint before invoking the
 Application writer.
 
-- [ ] **Step 5: Inject observational publication into ApprovalService**
+- [ ] **Step 6: Inject observational publication into ApprovalService**
 
 Add an optional no-op publisher dependency with a closed result shape. In
 `bridge_attempt`, publish every decoded event before permission interpretation.
@@ -240,24 +267,30 @@ Publication degradation is recorded by the Broker and does not skip permission
 handling or result collection. Arbitrary publisher exceptions fail through a
 stable Observer-degraded path without exposing the exception.
 
-- [ ] **Step 6: Run GREEN and permission regression**
+- [ ] **Step 7: Run GREEN and permission/schema regression**
 
 ```bash
 conda run -n agentdeck pytest \
   tests/product_kernel/test_observer_broker.py \
+  tests/product_kernel/test_sqlite_schema_v3.py \
+  tests/product_kernel/test_sqlite_observer_authority.py \
   tests/product_kernel/test_approval_service.py \
   tests/product_kernel/test_acp_worker_failures.py -q
 ```
 
 Expected: PASS.
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 8: Commit**
 
 ```bash
 git add src/agentdeck/application/observer_records.py \
   src/agentdeck/application/observer_broker.py \
+  src/agentdeck/adapters/sqlite_observer_authority.py \
+  src/agentdeck/adapters/sqlite_schema.py src/agentdeck/adapters/sqlite.py \
   src/agentdeck/application/approval_service.py \
-  tests/product_kernel/test_observer_broker.py
+  tests/product_kernel/test_observer_broker.py \
+  tests/product_kernel/test_sqlite_schema_v3.py \
+  tests/product_kernel/test_sqlite_observer_authority.py
 git commit -m "feat: persist acknowledged observer delivery"
 ```
 
