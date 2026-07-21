@@ -45,9 +45,18 @@ async def await_operation_or_release(
 ):
     operation_task = asyncio.create_task(operation)
     release_task = asyncio.create_task(runtime.wait_released(attempt_id, handle))
-    done, _ = await asyncio.wait(
-        (operation_task, release_task), return_when=asyncio.FIRST_COMPLETED,
-    )
+    try:
+        done, _ = await asyncio.wait(
+            (operation_task, release_task), return_when=asyncio.FIRST_COMPLETED,
+        )
+    except asyncio.CancelledError:
+        # Caller cancellation must propagate into the operation so its own
+        # cancellation teardown (e.g. cancel_worker_for_caller -> Worker.cancel)
+        # still runs; asyncio.wait does not cancel its child tasks when the
+        # awaiting coroutine is itself cancelled.
+        await _cancel(operation_task)
+        await _cancel(release_task)
+        raise
     if release_task in done:
         await _cancel(operation_task)
         release_task.result()
