@@ -12,7 +12,7 @@ authors = [{ name = "AgentDeck Contributors" }]
 dependencies = ["agent-client-protocol==0.11.0"]
 
 [project.scripts]
-agentdeck = "agentdeck.cli:main"
+agentdeck = "agentdeck.entrypoint:main"
 agentdeck-codex-acp = "agentdeck.adapters.codex_acp_server:main"
 
 [tool.setuptools.packages.find]
