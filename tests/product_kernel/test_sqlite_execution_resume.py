@@ -409,7 +409,7 @@ def test_resume_projection_failures_are_allowlisted_and_read_only(store, mutatio
     assert _table_snapshot(store) == before
 
 
-def test_resume_projection_preserves_v2_schema_and_table_list(store):
+def test_resume_projection_preserves_current_schema_and_table_list(store):
     before = _table_snapshot(store)
 
     store.load_execution_resume("ses_1")
@@ -417,7 +417,7 @@ def test_resume_projection_preserves_v2_schema_and_table_list(store):
     assert _table_snapshot(store) == before
     assert store._require_writer().execute(
         "SELECT schema_version FROM schema_metadata"
-    ).fetchone() == (2,)
+    ).fetchone() == (3,)
 
 
 @pytest.mark.parametrize(
