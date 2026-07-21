@@ -26,10 +26,9 @@ from agentdeck.product.presenter import (
     DiagnosisPresentation, ExitPresentation, SetupPresentation, StatusPresentation,
 )
 from agentdeck.product.renderer import render
+from agentdeck.product.observer_lifecycle import ProductObserverRunner
 from agentdeck.product.shell_async import (
-    AsyncTerminalReader,
-    collect_iteration_tasks,
-    settle_owned_after_caller_cancel,
+    AsyncTerminalReader, collect_iteration_tasks, settle_owned_after_caller_cancel,
 )
 from agentdeck.product.shell_projection import (
     EXECUTION_ADAPTER_UNAVAILABLE,
@@ -61,6 +60,7 @@ class ProductShell:
         write_line: Callable[[str], object], close: Callable[[], object],
         mission_service: MissionService | None = None,
         execution_service: ExecutionService | None = None,
+        observer_lifecycle: object | None = None,
         resume_snapshot_loader: Callable[[], ExecutionResumeSnapshot] | None = None,
         resume_planner: ExecutionResumePlanner | None = None,
         default_permission: str = _DEFAULT_PERMISSION,
@@ -96,8 +96,9 @@ class ProductShell:
         self._recovery, self._lifecycle = recovery_service, lifecycle
         self._available_leaders = copy_available_leaders(available_leaders)
         self._read_line, self._write_line = read_line, write_line
-        self._close, self._render = close, render_text
+        self._render = render_text
         self._mission, self._execution = mission_service, execution_service
+        self._observer = ProductObserverRunner(observer_lifecycle, close)
         self._load_resume = resume_snapshot_loader
         self._resume_planner = resume_planner or ExecutionResumePlanner()
         view = self._service.current()
@@ -107,9 +108,11 @@ class ProductShell:
         self._resume_plan: ExecutionResumePlan | None = None
         self._resume_blocker: str | None = None
         self._mission_child: asyncio.Task | None = None
-        self._closed = False
 
     async def run_async(self) -> int:
+        return await self._observer.run(self._run_foreground)
+
+    async def _run_foreground(self) -> int:
         loop = asyncio.get_running_loop()
         signal_installed = False
         caller_cancelled: asyncio.CancelledError | None = None
@@ -160,17 +163,17 @@ class ProductShell:
             caller_cancelled = error
             raise
         finally:
-            try:
-                if signal_installed:
-                    loop.remove_signal_handler(signal.SIGINT)
-                if caller_cancelled is not None:
-                    await settle_owned_after_caller_cancel(
-                        self._mission_child, caller_cancelled,
-                    )
-                else:
-                    await self._settle_owned_child()
-            finally:
-                self._close_once()
+            if signal_installed:
+                loop.remove_signal_handler(signal.SIGINT)
+            if caller_cancelled is not None:
+                await settle_owned_after_caller_cancel(
+                    self._mission_child, caller_cancelled,
+                )
+            else:
+                await self._settle_owned_child()
+
+    @property
+    def execution_service(self): return self._execution
 
     def _restore_resume_projection(self) -> None:
         self._resume_snapshot = self._resume_plan = None
@@ -492,9 +495,6 @@ class ProductShell:
         self._write_line(text)
 
     def _close_once(self) -> None:
-        if not self._closed:
-            self._closed = True
-            self._close()
-
+        self._observer.close_store()
 
 __all__ = ["AsyncTerminalReader", "ProductShell", "validate_mission_preview"]

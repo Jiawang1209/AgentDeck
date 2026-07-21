@@ -22,11 +22,13 @@ from agentdeck.adapters.discovery import (
     ReadinessState, ToolDiscovery, discover_tools,
 )
 from agentdeck.adapters.sqlite import SQLiteStore
+from agentdeck.adapters.project_evidence import GitProjectEvidenceSource
 from agentdeck.adapters.system_clock import SystemClock
 from agentdeck.application.approval_service import ApprovalService
 from agentdeck.application.async_exit_coordinator import AsyncExitCoordinator
 from agentdeck.application.execution_runtime import ForegroundExecutionRuntime
 from agentdeck.application.execution_service import ExecutionService
+from agentdeck.application.takeover_control import TakeoverControl
 from agentdeck.application.exit_service import ExitService
 from agentdeck.application.project_lifecycle_service import ProjectLifecycleService
 from agentdeck.application.recovery_service import RecoveryService
@@ -34,6 +36,10 @@ from agentdeck.application.session_service import SessionService
 from agentdeck.ports.clock import Clock
 from agentdeck.ports.transport import TransportPort
 from agentdeck.product.renderer import render
+from agentdeck.product.observer_lifecycle import (
+    ActivePermissionSnapshotSource, ProductObserverLifecycle,
+    RuntimeObserverCursorSource,
+)
 from agentdeck.product.shell import (
     AsyncTerminalReader, ProductShell, validate_mission_preview,
 )
@@ -180,6 +186,10 @@ def build_product_shell(
         lifecycle = lifecycle_factory(
             store=store, clock=clock, session_id=session_id,
         )
+        observer_lifecycle = ProductObserverLifecycle(
+            project_root=Path(project_root), project_id=store._project_id,
+            store=store, clock=clock,
+        )
         recovery = recovery_factory(
             store=store, clock=clock, session_id=session_id,
             recovery_run_id=recovery_run_id_factory(),
@@ -203,12 +213,29 @@ def build_product_shell(
                 readiness=adapter_readiness, project_root=project_root,
                 clock=clock,
             )
-            approval = approval_service_factory(store=store, clock=clock)
+            approval = approval_service_factory(
+                store=store, clock=clock,
+                event_publisher=observer_lifecycle.publisher,
+            )
             execution = execution_service_factory(
                 store=store, clock=clock, approval_service=approval,
                 worker_factory=lambda task: adapters.worker(task.backend),
                 runtime=runtime, lifecycle=lifecycle,
             )
+            if type(execution) is ExecutionService:
+                permission_source = ActivePermissionSnapshotSource()
+                control = TakeoverControl(
+                    store=store, clock=clock, runtime=runtime,
+                    project_evidence=GitProjectEvidenceSource(
+                        project_root=Path(project_root), project_id=store._project_id,
+                    ).capture,
+                    permission_snapshot=permission_source,
+                    observer_cursor=RuntimeObserverCursorSource(
+                        runtime=runtime, lifecycle=observer_lifecycle,
+                    ),
+                )
+                permission_source.bind(control)
+                execution.configure_takeover_control(control)
         exit_coordinator = exit_coordinator_factory(
             exit_service=exit_service, store=store, clock=clock,
             runtime=runtime, lifecycle=lifecycle, session_id=session_id,
@@ -224,6 +251,7 @@ def build_product_shell(
             lifecycle=lifecycle,
             mission_service=mission_service,
             execution_service=execution,
+            observer_lifecycle=observer_lifecycle,
             resume_snapshot_loader=lambda: store.load_execution_resume(session_id),
             available_leaders=available_leaders,
             read_line=reader,

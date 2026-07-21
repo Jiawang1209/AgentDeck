@@ -86,7 +86,7 @@ def _async_lines(*values: str):
 def _shell(
     root: Path, store: SQLiteStore, session: SessionService, *,
     mission: MissionService | None, execution: RecordingExecution | None,
-    lines: tuple[str, ...], output: list[str],
+    lines: tuple[str, ...], output: list[str], observer_lifecycle=None,
 ) -> ProductShell:
     clock = FrozenClock(NOW)
     runtime = ForegroundExecutionRuntime()
@@ -115,6 +115,7 @@ def _shell(
         ),
         available_leaders=AVAILABLE, read_line=_async_lines(*lines),
         write_line=output.append, close=store.close,
+        observer_lifecycle=observer_lifecycle,
     )
 
 
@@ -229,3 +230,30 @@ async def test_bootstrap_binds_only_injected_mission_factory(tmp_path: Path) -> 
 
     assert calls == ["mission"]
     await shell.run_async()
+
+
+@async_test
+async def test_shell_closes_observer_before_closing_store(tmp_path: Path) -> None:
+    store = SQLiteStore.open(tmp_path, clock=FrozenClock(NOW))
+    session = SessionService(
+        store=store, clock=FrozenClock(NOW), session_id="ses_product",
+        project_root=str(tmp_path), available_leaders=AVAILABLE,
+    )
+    calls: list[str] = []
+
+    class ObserverLifecycle:
+        async def start(self) -> None:
+            calls.append("observer.start")
+
+        async def close(self) -> None:
+            assert store.count("projects") == 1
+            calls.append("observer.close")
+
+    shell = _shell(
+        tmp_path, store, session, mission=None, execution=None,
+        lines=("/exit",), output=[], observer_lifecycle=ObserverLifecycle(),
+    )
+
+    await shell.run_async()
+
+    assert calls == ["observer.start", "observer.close"]
