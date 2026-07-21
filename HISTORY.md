@@ -2,6 +2,33 @@
 
 本文件记录 AgentDeck 每一次开发内容。约束：每次新增功能、文档规则、项目骨架、运行环境或用户可见行为变化，都必须同步更新本文件，并在同一次 commit 中提交。
 
+## 2026-07-22
+
+### Design the P1 Durable Mission Kernel task-level plan
+
+- Recorded human P0 exit approval and opened the P1 (Durable Mission Kernel)
+  planning step. Two approach decisions were frozen with the human before any
+  code: (1) integration strategy is **new kernel, then converge** — build the
+  SQLite-backed Mission authority as fresh `domain/`, `storage/`, `app/`
+  packages plus a new single-writer command loop, leaving the legacy JSON
+  `state.py` and `daemon/` untouched during P1; (2) scope is **P1 slices 1–8 to
+  the fake Golden exit gate**, deferring slice 9 (legacy JSON→SQLite migration)
+  and slice 10 (ProjectView v2) to their own later small plans.
+- Wrote `docs/superpowers/specs/2026-07-22-agentdeck-p1-durable-mission-kernel-design.md`:
+  the task-level design decomposing P1 into eight TDD vertical slices (schema +
+  atomic transaction, MissionVersion + authorization digest, Task/Attempt state
+  machine, command idempotency + revisions, daemon single-writer ownership,
+  fake Worker dispatch/handoff/evidence, client disconnect/reconnect, daemon
+  crash reconciliation + fake Golden), with module boundaries, the SQLite v1
+  schema responsibility set, the pure mission/governance/verification decision
+  services, fake adapters under `tests/support/`, and the deterministic fake
+  Golden Mission acceptance. Clarified that P1's daemon is an in-process
+  single-writer `ProjectDaemon` guarded by an OS project lock; real socket IPC
+  is P2.
+- No P1 production code is written by this commit. This is the design
+  deliverable that precedes the P1 implementation slices; work proceeds on an
+  isolated `p1-durable-mission-kernel` feature branch and is not pushed.
+
 ## 2026-07-18
 
 ### Complete AgentDeck P0 Product Reset
