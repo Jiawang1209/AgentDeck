@@ -13,18 +13,16 @@ from agentdeck.adapters.sqlite_execution import (
 from agentdeck.adapters.sqlite_execution_resume import load_execution_resume
 from agentdeck.adapters.sqlite_exit_authority import load_active_exit_authority
 from agentdeck.adapters.sqlite_mission import MISSION_AGGREGATE_TYPES, load_mission_aggregate, save_mission_aggregate
-from agentdeck.adapters.sqlite_migrations import migrate_schema, _validate_before_durability, _validate_existing_schema
+from agentdeck.adapters.sqlite_observer_authority import (
+    OBSERVER_AUTHORITY_TYPES, load_authority, migrate_schema as _migrate, save_authority,
+    validate_before_durability as _validate_before_durability,
+    validate_existing_schema as _validate_existing_schema,
+)
 from agentdeck.adapters.sqlite_schema import (
-    FileIdentity,
-    _REQUIRED_TABLES,
-    StoreCommandStateError,
-    StoreSchemaError,
+    FileIdentity, _V3_REQUIRED_TABLES, StoreCommandStateError, StoreSchemaError,
     StoreSerializationError,
-    _configure_durability,
-    _configure_local,
-    _connect_database,
-    _connect_inspection_database,
-    _database_path,
+    _configure_durability, _configure_local, _connect_database,
+    _connect_inspection_database, _database_path,
     _no_op_path_hook as _after_command_commit,
     _no_op_path_hook as _after_inspection_validation,
     _no_op_path_hook as _after_migrate,
@@ -82,8 +80,6 @@ def _validate_command_reference(command_id: object, command_kind: object | None)
     _validate_text_reference(command_id, "command_id", STORE_COMMAND_ID_MAX_BYTES)
     if command_kind is not None:
         _validate_text_reference(command_kind, "command_kind", STORE_COMMAND_KIND_MAX_BYTES)
-def _migrate(connection: sqlite3.Connection, root: Path) -> None:
-    migrate_schema(connection, root)
 def _open_inspection_connection(
     path: Path, expected: FileIdentity, root: Path
 ) -> sqlite3.Connection:
@@ -162,6 +158,8 @@ class _SQLiteCommandTransaction:
             return
         if aggregate_type in {"evidence", "handoffs"}:
             return _save_execution_aggregate(self._require_mutable(), aggregate_type, aggregate_id, snapshot, _timestamp(self._store._clock))
+        if aggregate_type in OBSERVER_AUTHORITY_TYPES:
+            return save_authority(self._require_mutable(), aggregate_type, aggregate_id, snapshot, _timestamp(self._store._clock))
         raise ValueError("unsupported aggregate type")
 
     def save_session(self, snapshot: Mapping[str, object]) -> None:
@@ -373,6 +371,8 @@ class SQLiteStore:
             return load_session_aggregate(connection, aggregate_id)
         if aggregate_type in {"attempts", "evidence", "handoffs"}:
             return load_execution_aggregate(connection, aggregate_type, aggregate_id)
+        if aggregate_type in OBSERVER_AUTHORITY_TYPES:
+            return load_authority(connection, aggregate_type, aggregate_id)
         specs = {
             "conversation_turns": ("turn_id", (
                 "turn_id", "session_id", "ordinal", "actor_role", "sanitized_content", "occurred_at",
@@ -413,7 +413,7 @@ class SQLiteStore:
         return list_active_exit_attempts(self._read_connection(), session_id)
 
     def count(self, table: str) -> int:
-        if table not in _REQUIRED_TABLES:
+        if table not in _V3_REQUIRED_TABLES:
             raise ValueError("count requires an authority table name")
         return self._read_connection().execute(f"SELECT count(*) FROM {table}").fetchone()[0]
 

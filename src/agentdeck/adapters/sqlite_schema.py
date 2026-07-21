@@ -6,9 +6,12 @@ import os
 from pathlib import Path
 import sqlite3
 import stat
+from hashlib import sha256
+from hmac import compare_digest
+import json
 from typing import Final
 
-_SCHEMA_VERSION: Final = 2
+_SCHEMA_VERSION: Final = 3
 _STATE_DIRECTORY: Final = ".agentdeck"
 _DATABASE_NAME: Final = "agentdeck.db"
 _REQUIRED_TABLES: Final = frozenset(
@@ -18,6 +21,9 @@ _REQUIRED_TABLES: Final = frozenset(
         "handoffs", "approvals", "evidence", "commands", "events",
     }
 )
+_V3_REQUIRED_TABLES: Final = _REQUIRED_TABLES | {
+    "observer_cursors", "takeover_ownership",
+}
 _METADATA_COLUMNS: Final = (
     ("singleton", "INTEGER", 0, 1),
     ("schema_version", "INTEGER", 1, 0),
@@ -251,6 +257,110 @@ V2_DDL: Final = (
          SELECT RAISE(ABORT, 'invalid product_sessions v2 closed shape');
        END""",
 )
+
+V3_DDL: Final = (
+    """CREATE TABLE observer_cursors (
+        cursor_id TEXT PRIMARY KEY,
+        canonical_cursor_facts TEXT NOT NULL,
+        updated_at TEXT NOT NULL CHECK (length(trim(updated_at)) > 0)
+    )""",
+    """CREATE TABLE takeover_ownership (
+        attempt_id TEXT PRIMARY KEY,
+        canonical_ownership_facts TEXT NOT NULL,
+        updated_at TEXT NOT NULL CHECK (length(trim(updated_at)) > 0)
+    )""",
+)
+V3_SCHEMA_FINGERPRINT: Final = (
+    "458a5debc217c97c0d2b2e995e90ba28fd5a02572e929950963fae929f7c9e30"
+)
+
+
+def _schema_objects(connection: sqlite3.Connection) -> tuple[tuple[str, ...], ...]:
+    return tuple(connection.execute(
+        """SELECT type,name,tbl_name,sql FROM sqlite_schema
+           WHERE sql IS NOT NULL AND name NOT LIKE 'sqlite_%'
+           ORDER BY type,name"""
+    ))
+
+
+def _schema_digest(objects: object) -> str:
+    return sha256(json.dumps(
+        objects, ensure_ascii=False, separators=(",", ":")
+    ).encode("utf-8", "strict")).hexdigest()
+
+
+def _v3_authority() -> tuple[tuple[tuple[str, ...], ...], str]:
+    connection = sqlite3.connect(":memory:", isolation_level=None)
+    try:
+        for statement in V1_DDL + V2_DDL + V3_DDL:
+            connection.execute(statement)
+        objects = _schema_objects(connection)
+        return objects, _schema_digest(objects)
+    finally:
+        connection.close()
+
+
+V3_SCHEMA_OBJECTS, _V3_COMPUTED_FINGERPRINT = _v3_authority()
+
+
+def _require_v3_pin() -> None:
+    if not compare_digest(_V3_COMPUTED_FINGERPRINT, V3_SCHEMA_FINGERPRINT):
+        raise StoreSchemaError("SQLite schema v3 fingerprint pin does not match DDL")
+
+
+def is_schema_v3(connection: sqlite3.Connection) -> bool:
+    if "schema_metadata" not in _table_names(connection):
+        return False
+    row = connection.execute(
+        "SELECT schema_version FROM schema_metadata WHERE singleton=1"
+    ).fetchone()
+    return row == (3,)
+
+
+def validate_schema_v3(connection: sqlite3.Connection, root: Path) -> None:
+    _require_v3_pin()
+    row = connection.execute(
+        """SELECT singleton,schema_version,schema_digest,project_root
+           FROM schema_metadata"""
+    ).fetchall()
+    objects = _schema_objects(connection)
+    if (
+        row != [(1, 3, V3_SCHEMA_FINGERPRINT, str(root))]
+        or _table_names(connection) != _V3_REQUIRED_TABLES
+        or objects != V3_SCHEMA_OBJECTS
+        or not compare_digest(_schema_digest(objects), V3_SCHEMA_FINGERPRINT)
+    ):
+        raise StoreSchemaError("live schema drifted from schema v3 authority")
+
+
+def migrate_schema_v3(connection: sqlite3.Connection, root: Path) -> None:
+    if is_schema_v3(connection):
+        validate_schema_v3(connection, root)
+        return
+    connection.execute("BEGIN IMMEDIATE")
+    try:
+        row = connection.execute(
+            """SELECT singleton,schema_version,project_root FROM schema_metadata"""
+        ).fetchall()
+        if row != [(1, 2, str(root))]:
+            raise StoreSchemaError("schema v3 migration requires exact schema v2")
+        for statement in V3_DDL:
+            connection.execute(statement)
+        _require_v3_pin()
+        objects = _schema_objects(connection)
+        if objects != V3_SCHEMA_OBJECTS:
+            raise StoreSchemaError("migration did not produce exact schema v3")
+        if connection.execute("PRAGMA foreign_key_check").fetchall():
+            raise StoreSchemaError("schema contains foreign-key violations")
+        connection.execute(
+            """UPDATE schema_metadata SET schema_version=3,schema_digest=?
+               WHERE singleton=1""", (V3_SCHEMA_FINGERPRINT,),
+        )
+        connection.execute("COMMIT")
+    except BaseException:
+        if connection.in_transaction:
+            connection.execute("ROLLBACK")
+        raise
 
 
 def _migration_statements() -> tuple[str, ...]:

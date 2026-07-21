@@ -21,6 +21,7 @@ from agentdeck.ports.approval import (
     ReviewerVerdict,
 )
 from agentdeck.ports.clock import Clock
+from agentdeck.ports.observer import ObserverEventPublisher
 from agentdeck.ports.store import Store
 from agentdeck.ports.worker import Worker, WorkerEvent, WorkerHandle, WorkerResult
 
@@ -37,11 +38,17 @@ class ApprovalService:
         clock: Clock,
         human_reviewer: ApprovalReviewer | None = None,
         independent_reviewer: ApprovalReviewer | None = None,
+        event_publisher: ObserverEventPublisher | None = None,
     ) -> None:
         self._store = store
         self._clock = clock
         self._human_reviewer = human_reviewer
         self._independent_reviewer = independent_reviewer
+        if event_publisher is not None and not callable(
+            getattr(event_publisher, "publish", None)
+        ):
+            raise TypeError("event_publisher must publish WorkerEvent values")
+        self._event_publisher = event_publisher
         self._decision_lock = _STORE_DECISION_LOCKS.setdefault(store, asyncio.Lock())
 
     async def handle_permission(
@@ -110,6 +117,7 @@ class ApprovalService:
         try:
             async for event in worker.stream_events(handle):
                 self._require_lineage(handle, event)
+                self._publish_event(event)
                 if event.kind == "permission_requested":
                     if len(approvals) >= _MAX_PERMISSION_REQUESTS:
                         raise ValueError("permission request budget exceeded")
@@ -146,6 +154,14 @@ class ApprovalService:
                 else self._diagnostic(diagnostic_code, handle, context)
             ),
         )
+
+    def _publish_event(self, event: WorkerEvent) -> None:
+        if self._event_publisher is None:
+            return
+        try:
+            self._event_publisher.publish(event)
+        except Exception:
+            return
 
     async def _decide(
         self, request: ApprovalRequest, scope: PermissionScope

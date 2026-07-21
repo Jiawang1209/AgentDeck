@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from hashlib import sha256
+import json
 import re
+from types import MappingProxyType
 from typing import Protocol
 
 from agentdeck.ports.worker import WorkerEvent
@@ -152,9 +155,38 @@ class ObservationSink(Protocol):
     def emit(self, record: str) -> None: ...
 
 
+def cursor_for_event(project_id: str, event: WorkerEvent) -> ObserverCursor:
+    if type(event) is not WorkerEvent:
+        raise TypeError("cursor source must be an exact WorkerEvent")
+
+    def thaw(value: object) -> object:
+        if type(value) is MappingProxyType:
+            return {key: thaw(value[key]) for key in value}
+        if type(value) is tuple:
+            return [thaw(item) for item in value]
+        return value
+
+    facts = {
+        "agent_id": event.agent_id, "attempt_id": event.attempt_id,
+        "event_id": event.event_id, "kind": event.kind,
+        "payload": thaw(event.payload), "sequence": event.sequence,
+        "session_id": event.session_id, "task_id": event.task_id,
+        "timestamp": event.timestamp, "transport": event.transport,
+    }
+    canonical = json.dumps(
+        facts, ensure_ascii=False, allow_nan=False, sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8", "strict")
+    return ObserverCursor(
+        project_id, event.session_id, event.agent_id, event.task_id,
+        event.attempt_id, event.transport, event.sequence, event.event_id,
+        sha256(canonical).hexdigest(),
+    )
+
+
 __all__ = [
     "ObservationSink", "ObserverAcknowledgement", "ObserverBinding",
     "ObserverChannel", "ObserverCursor", "ObserverCursorAcknowledger",
     "ObserverCursorReader", "ObserverCursorStore", "ObserverEventPublisher",
-    "ObserverPublication", "ObserverSubscription",
+    "ObserverPublication", "ObserverSubscription", "cursor_for_event",
 ]
