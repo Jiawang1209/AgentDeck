@@ -278,6 +278,7 @@ class ForegroundExecutionRuntime(ExitCancellationRuntimeMixin):
         self._reservation_handle: WorkerHandle | None = None
         self._quarantined = False
         self._exit_fence: ExitCancellationLease | None = None
+        self._release_future: asyncio.Future[tuple[str, WorkerHandle]] | None = None
 
     def is_empty(self) -> bool:
         return (
@@ -374,6 +375,7 @@ class ForegroundExecutionRuntime(ExitCancellationRuntimeMixin):
         self._binding = binding
         self._reservation = None
         self._reservation_handle = None
+        self._release_future = self._loop.create_future()
 
     def rollback(self, reservation: ExecutionReservation) -> None:
         self._require_reservation(reservation)
@@ -411,6 +413,7 @@ class ForegroundExecutionRuntime(ExitCancellationRuntimeMixin):
         self._used_workers.append(binding.worker)
         self._used_handles.append(binding.worker_handle)
         self._binding = binding
+        self._release_future = loop.create_future()
 
     def resolve_exact(
         self, snapshot: ExitAttemptSnapshot
@@ -434,6 +437,38 @@ class ForegroundExecutionRuntime(ExitCancellationRuntimeMixin):
             raise ExecutionBindingError("execution release lineage drifted")
         self._binding = None
         self._released = pair
+        self._notify_released(pair)
+
+    async def wait_released(
+        self, attempt_id: str, worker_handle: WorkerHandle,
+    ) -> tuple[str, WorkerHandle]:
+        self._require_loop()
+        pair = attempt_id, worker_handle
+        if self._released == pair:
+            return pair
+        if (
+            self._binding is None
+            or pair != (self._binding.attempt_id, self._binding.worker_handle)
+            or self._release_future is None
+        ):
+            raise ExecutionBindingError("execution release lineage drifted")
+        released = await asyncio.shield(self._release_future)
+        if released != pair:
+            raise ExecutionBindingError("execution release lineage drifted")
+        return released
+
+    def settle_exit_cancellation(
+        self, lease, key, worker_handle, *, quarantine: bool,
+    ) -> None:
+        super().settle_exit_cancellation(
+            lease, key, worker_handle, quarantine=quarantine,
+        )
+        self._notify_released((key.attempt_id, worker_handle))
+
+    def _notify_released(self, pair: tuple[str, WorkerHandle]) -> None:
+        future = self._release_future
+        if future is not None and not future.done():
+            future.set_result(pair)
 
     def _require_loop(self) -> None:
         try:
@@ -449,7 +484,6 @@ class ForegroundExecutionRuntime(ExitCancellationRuntimeMixin):
             self._reservation is not reservation
         ):
             raise ExecutionBindingError("exact execution reservation is unavailable")
-
 
 __all__ = [
     "ActiveExecutionBinding",

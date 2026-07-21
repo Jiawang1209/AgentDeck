@@ -29,6 +29,10 @@ _ATTEMPT_FIELDS = frozenset({
 })
 
 
+class TakeoverSourceFailure(RuntimeError):
+    pass
+
+
 def takeover_identity(value: object, prefix: str) -> bool:
     if type(value) is not str:
         return False
@@ -96,7 +100,7 @@ def cycle_id(attempt_id: str, generation: int) -> str:
 
 
 def command_id(operation: str, cycle: str) -> str:
-    if operation not in {"takeover", "return"} or not cycle.startswith("own_"):
+    if operation not in {"takeover", "return", "interrupt"} or not cycle.startswith("own_"):
         raise ValueError("takeover command identity is invalid")
     digest = sha256(f"{operation}\0{cycle}".encode("ascii", "strict")).hexdigest()
     return f"cmd_{operation}_{digest[:32]}"
@@ -188,7 +192,8 @@ def transition_result(value: TakeoverOwnership, state: str) -> dict[str, object]
 def ownership_event(
     *, kind: str, owner: str, occurred_at: str, product_session_id: str,
     confirmed: ConfirmedMissionVersion, task: TaskDefinition,
-    acp_session_id: str, ownership: TakeoverOwnership,
+    acp_session_id: str, acp_session_state: str,
+    ownership: TakeoverOwnership,
 ) -> DomainEvent:
     baseline = ownership.baseline
     cursor = baseline.cursor
@@ -203,7 +208,7 @@ def ownership_event(
             "task_id": task.task_id, "attempt_id": ownership.attempt_id,
             "agent_instance_id": task.agent_instance_id,
             "acp_session_id": acp_session_id,
-            "acp_session_state": "active", "owner": owner,
+            "acp_session_state": acp_session_state, "owner": owner,
             "ownership_cycle_id": ownership.cycle_id,
             "ownership_generation": ownership.generation,
             "project_evidence_provenance": project.provenance,
@@ -225,9 +230,54 @@ def ownership_event(
     )
 
 
+def record_interrupted_ownership(
+    *, store, ownership: TakeoverOwnership,
+    interrupted_attempt: dict[str, object], event: DomainEvent,
+) -> TakeoverOwnership:
+    if (
+        type(ownership) is not TakeoverOwnership or ownership.state != "human"
+        or type(interrupted_attempt) is not dict
+        or interrupted_attempt.get("attempt_id") != ownership.attempt_id
+        or interrupted_attempt.get("state") != "interrupted"
+        or type(event) is not DomainEvent
+    ):
+        raise ValueError("interrupted takeover authority is invalid")
+    interrupted = ownership_with_state(ownership, "interrupted")
+    result = transition_result(interrupted, "interrupted")
+    identity = command_id("interrupt", ownership.cycle_id)
+
+    def commit(transaction):
+        if (
+            transaction.load_aggregate("takeover_ownership", ownership.attempt_id)
+            != ownership_snapshot(ownership)
+            or transaction.load_aggregate("attempts", ownership.attempt_id)
+            != interrupted_attempt
+        ):
+            raise ValueError("exit interruption authority drifted")
+        transaction.save_aggregate(
+            "takeover_ownership", ownership.attempt_id,
+            ownership_snapshot(interrupted),
+        )
+        transaction.append_event(event)
+        return result
+
+    try:
+        durable = store.execute_once(identity, "human_takeover_interrupted", commit)
+    except Exception:
+        durable = store.lookup_command(identity, "human_takeover_interrupted")
+    if (
+        durable != result
+        or store.load_aggregate("takeover_ownership", ownership.attempt_id)
+        != ownership_snapshot(interrupted)
+    ):
+        raise ValueError("exit interruption did not become durable")
+    return interrupted
+
+
 __all__ = [
-    "TakeoverBaseline", "TakeoverOwnership", "command_id", "cycle_id",
+    "TakeoverBaseline", "TakeoverOwnership", "TakeoverSourceFailure",
+    "command_id", "cycle_id",
     "new_ownership", "ownership_from_snapshot", "ownership_snapshot",
-    "ownership_event", "ownership_with_state", "takeover_identity",
-    "transition_result",
+    "ownership_event", "ownership_with_state", "record_interrupted_ownership",
+    "takeover_identity", "transition_result",
 ]

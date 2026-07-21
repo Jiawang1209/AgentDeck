@@ -5,6 +5,8 @@ from collections.abc import Callable
 from agentdeck.application.approval_service import ApprovalContext, ApprovalService
 from agentdeck.application import execution_authority as _authority, execution_records as _records
 from agentdeck.application.takeover_control import TakeoverExecutionMixin
+from agentdeck.application.takeover_wait import (AutomaticAuthorityReleased,
+    await_operation_or_release, released_execution_result)
 from agentdeck.application.execution_resume import (
     ExecutionResult, ExecutionResumePlan, initial_execution_state, validate_execution_authority,
 )
@@ -214,21 +216,20 @@ class ExecutionService(TakeoverExecutionMixin):
                         reservation=reservation,
                     )
                 try:
-                    bridge = await self._approval_service.bridge_attempt(
-                        self._takeover_worker(worker, handle), handle,
-                        ApprovalContext(
-                            confirmed.mission_id, confirmed.version,
-                            effective_scope, confirmed.content_hash,
-                        ),
+                    bridge = await await_operation_or_release(
+                        self._approval_service.bridge_attempt(
+                            self._takeover_worker(worker, handle), handle,
+                            ApprovalContext(confirmed.mission_id, confirmed.version, effective_scope, confirmed.content_hash)),
+                        self._runtime, attempt.attempt_id, handle,
                     )
+                except AutomaticAuthorityReleased:
+                    return released_execution_result(self, confirmed, attempts,
+                        evidence, handoffs, revision_task, task, handle)
                 except Exception as error:
-                    condition = _records.exception_condition(
-                        error, task_id=task.task_id, attempt_id=attempt.attempt_id
-                    )
-                    can_reconnect = (
-                        condition == "transport_before_effect"
-                        and reconnects < min(draft.max_acp_reconnects, 1)
-                    )
+                    condition = _records.exception_condition(error,
+                        task_id=task.task_id, attempt_id=attempt.attempt_id)
+                    can_reconnect = (condition == "transport_before_effect" and
+                        reconnects < min(draft.max_acp_reconnects, 1))
                     if (can_reconnect or condition == "worker_schema_invalid") and retry_execution_attempt(
                         runtime=self._runtime, persist=self._persist_terminal_attempt,
                         policy=RetryPolicy.default(), condition=condition,
@@ -249,8 +250,7 @@ class ExecutionService(TakeoverExecutionMixin):
                         terminal = attempt.unknown_outcome("worker_bridge_failed")
                     return self._stop_attempt(
                         confirmed, attempts, evidence, handoffs, revision_task, task,
-                        terminal, condition or "worker_bridge_failed",
-                        "ACP Worker event bridge failed",
+                        terminal, condition or "worker_bridge_failed", "ACP Worker event bridge failed",
                         acp_session_id=handle.session_id, worker_handle=handle,
                     )
                 worker_result = bridge.worker_result

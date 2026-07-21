@@ -9,10 +9,12 @@ from types import MappingProxyType
 
 from agentdeck.application import execution_authority as _authority
 from agentdeck.application.takeover_records import (
-    TakeoverBaseline, TakeoverOwnership, new_ownership,
+    TakeoverBaseline, TakeoverOwnership, TakeoverSourceFailure, new_ownership,
     ownership_event, ownership_from_snapshot, ownership_snapshot,
-    ownership_with_state, takeover_identity, transition_result,
+    ownership_with_state, record_interrupted_ownership, takeover_identity,
+    transition_result,
 )
+from agentdeck.application.takeover_wait import ControlledWorker
 from agentdeck.kernel.diagnostics import Diagnostic, Severity
 from agentdeck.kernel.execution import Attempt, AttemptState
 from agentdeck.kernel.mission import ConfirmedMissionVersion, TaskDefinition
@@ -41,36 +43,9 @@ class _ActiveAuthority:
     acp_session_id: str
 
 
-class _SourceFailure(RuntimeError):
-    pass
-
-class _ControlledWorker:
-    """Worker facade that gates automatic ACP input."""
-
-    def __init__(self, control: "TakeoverControl", worker: Worker, handle: WorkerHandle) -> None:
-        self._control, self._worker, self._handle = control, worker, handle
-
-    async def start_task(self, _request):
-        raise RuntimeError("controlled Worker cannot start another task")
-
-    def stream_events(self, handle):
-        return self._worker.stream_events(handle)
-
-    async def respond_permission(self, handle, **response) -> None:
-        await self._control.wait_for_automatic_input(self._handle.attempt_id)
-        await self._worker.respond_permission(handle, **response)
-
-    async def cancel_task(self, handle, **request) -> None:
-        await self._worker.cancel_task(handle, **request)
-
-    async def collect_result(self, handle):
-        await self._control.wait_for_automatic_input(self._handle.attempt_id)
-        return await self._worker.collect_result(handle)
-
 
 class TakeoverControl:
     """One foreground writer with Store-backed per-Attempt ownership."""
-
     def __init__(
         self, *, store: Store, clock: Clock, runtime: object,
         project_evidence: Callable[[], ProjectEvidence] | None = None,
@@ -136,7 +111,7 @@ class TakeoverControl:
             or binding.worker is not worker or binding.worker_handle != handle
         ):
             raise ValueError("controlled Worker lineage is invalid")
-        return _ControlledWorker(self, worker, handle)
+        return ControlledWorker(self, self._runtime, worker, handle)
 
     def disarm(self, attempt_id: str) -> None:
         active = self._active
@@ -180,7 +155,7 @@ class TakeoverControl:
             return self._reject("takeover_attempt_drift", attempt_id, active)
         try:
             project, permission, cursor = self._sources(active, returning=False)
-        except _SourceFailure as error:
+        except TakeoverSourceFailure as error:
             return self._reject(str(error), attempt_id, active)
         if permission != active.permission:
             return self._reject("takeover_permission_drift", attempt_id, active)
@@ -238,7 +213,7 @@ class TakeoverControl:
         baseline = ownership.baseline
         try:
             project, permission, cursor = self._sources(active, returning=True)
-        except _SourceFailure as error:
+        except TakeoverSourceFailure as error:
             return self._reject(str(error), attempt_id, active)
         checks = (
             (project == baseline.project_evidence, "project_drift_before_return_control"),
@@ -280,6 +255,30 @@ class TakeoverControl:
             return self._reconcile_return(active, ownership, returned, result)
         self._gate.set()
         return TakeoverResult(True)
+
+    def interrupt_from_exit(self, attempt_id: str) -> None:
+        active = self._active
+        ownership = self._load_ownership(attempt_id)
+        interrupted = self._store.load_aggregate("attempts", attempt_id)
+        if (
+            active is None or active.attempt.attempt_id != attempt_id
+            or type(interrupted) is not dict or interrupted.get("state") != "interrupted"
+        ):
+            raise ValueError("exit interruption authority is invalid")
+        if ownership is None or ownership.state == "returned":
+            self._gate.clear()
+            return
+        if ownership.state != "human":
+            raise ValueError("exit interruption authority is invalid")
+        event = self._event(
+            "human_takeover_interrupted", "human", active, ownership,
+            acp_session_state="released",
+        )
+        record_interrupted_ownership(
+            store=self._store, ownership=ownership,
+            interrupted_attempt=interrupted, event=event,
+        )
+        self._gate.clear()
 
     def _reconcile_takeover(self, active, authority, prior, running, result):
         try:
@@ -404,13 +403,13 @@ class TakeoverControl:
         except Exception:
             project = None
         if type(project) is not ProjectEvidence:
-            raise _SourceFailure(codes[0])
+            raise TakeoverSourceFailure(codes[0])
         try:
             permission = None if self._permission_source is None else self._permission_source()
         except Exception:
             permission = None
         if type(permission) is not PermissionScope:
-            raise _SourceFailure(codes[1])
+            raise TakeoverSourceFailure(codes[1])
         try:
             cursor = None if self._cursor_source is None else self._cursor_source()
         except Exception:
@@ -422,15 +421,16 @@ class TakeoverControl:
             != (active.acp_session_id, active.task.agent_instance_id,
                 active.task.task_id, active.attempt.attempt_id, "acp")
         ):
-            raise _SourceFailure(codes[2])
+            raise TakeoverSourceFailure(codes[2])
         return project, permission, cursor
 
-    def _event(self, kind, owner, active, ownership):
+    def _event(self, kind, owner, active, ownership, *, acp_session_state="active"):
         return ownership_event(
             kind=kind, owner=owner, occurred_at=self._clock.now().isoformat(),
             product_session_id=active.product_session_id,
             confirmed=active.confirmed, task=active.task,
-            acp_session_id=active.acp_session_id, ownership=ownership,
+            acp_session_id=active.acp_session_id,
+            acp_session_state=acp_session_state, ownership=ownership,
         )
 
     def _reject(self, code, attempt_id, active=None) -> TakeoverResult:

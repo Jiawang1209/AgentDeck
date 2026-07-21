@@ -128,9 +128,11 @@ async def test_confirm_cancels_exact_worker_once_and_atomically_pauses_project(t
     harness = ExitHarness(tmp_path)
     try:
         harness.bind()
+        released = asyncio.create_task(harness.runtime.wait_released("att_1", harness.handle))
         first = await harness.coordinator.confirm(
             harness.request.request_id, harness.request.attempt_hash
         )
+        assert await released == ("att_1", harness.handle)
         second = await harness.coordinator.confirm(
             harness.request.request_id, harness.request.attempt_hash
         )
