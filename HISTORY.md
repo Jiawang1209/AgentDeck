@@ -25,9 +25,14 @@
   Golden Mission acceptance. Clarified that P1's daemon is an in-process
   single-writer `ProjectDaemon` guarded by an OS project lock; real socket IPC
   is P2.
-- No P1 production code is written by this commit. This is the design
-  deliverable that precedes the P1 implementation slices; work proceeds on an
-  isolated `p1-durable-mission-kernel` feature branch and is not pushed.
+- Wrote the matching task-level TDD plan
+  `docs/superpowers/plans/2026-07-22-agentdeck-p1-durable-mission-kernel.md`:
+  eight vertical slices decomposed into bite-sized RED→GREEN→commit steps with
+  concrete test code, module boundaries, and per-task file paths.
+- No P1 production code is written by these planning commits. These are the
+  design + plan deliverables that precede the P1 implementation slices; work
+  proceeds on an isolated `p1-durable-mission-kernel` feature branch and is not
+  pushed.
 
 ## 2026-07-18
 
