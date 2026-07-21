@@ -15,7 +15,7 @@ from agentdeck.ports.store import Store, StoreTransaction
 TABLES = {
     "schema_metadata", "projects", "product_sessions", "conversation_turns",
     "agent_instances", "missions", "mission_versions", "tasks", "attempts",
-    "handoffs", "approvals", "evidence", "commands", "events",
+    "handoffs", "approvals", "evidence", "commands", "events", "observer_cursors", "takeover_ownership",
 }
 
 
@@ -92,7 +92,7 @@ def test_store_binds_only_the_supplied_resolved_project(
         assert _tables(store.connection) == TABLES
         assert store.connection.execute(
             "SELECT singleton, schema_version, project_root FROM schema_metadata"
-        ).fetchall() == [(1, 2, str(project.resolve()))]
+        ).fetchall() == [(1, 3, str(project.resolve()))]
         assert not (elsewhere / ".agentdeck").exists()
         assert not (tmp_path / ".agentdeck").exists()
     finally:
@@ -169,7 +169,7 @@ def test_writer_and_read_only_open_keep_one_version_and_root_row(tmp_path: Path)
         assert first.path == second.path
         assert first.connection.execute(
             "SELECT singleton, schema_version, project_root FROM schema_metadata"
-        ).fetchall() == [(1, 2, str(tmp_path.resolve()))]
+        ).fetchall() == [(1, 3, str(tmp_path.resolve()))]
         assert second.connection.execute(
             "SELECT count(*) FROM schema_metadata"
         ).fetchone() == (1,)
@@ -226,11 +226,11 @@ def test_migration_failure_rolls_back_ddl_and_closes_writer(
         assert _tables(connection) == set()
     monkeypatch.setattr(migrations, "V2_DDL", original)
     recovered = SQLiteStore.open(tmp_path)
-    assert recovered.connection.execute("SELECT schema_version FROM schema_metadata").fetchone() == (2,)
+    assert recovered.connection.execute("SELECT schema_version FROM schema_metadata").fetchone() == (3,)
     recovered.close()
 
 
-def test_precreated_zero_byte_database_initializes_v2(tmp_path: Path) -> None:
+def test_precreated_zero_byte_database_initializes_current_schema(tmp_path: Path) -> None:
     database = tmp_path / ".agentdeck" / "agentdeck.db"
     database.parent.mkdir()
     database.touch()
@@ -263,7 +263,7 @@ def test_invalid_version_in_wal_fails_without_changing_database(
     database = _valid_database(tmp_path / damage)
     with _raw(database) as connection:
         assert connection.execute("PRAGMA journal_mode = WAL").fetchone() == ("wal",)
-        sql = ("UPDATE schema_metadata SET schema_version = 3" if damage == "higher"
+        sql = ("UPDATE schema_metadata SET schema_version = 4" if damage == "higher"
                else "DELETE FROM schema_metadata")
         connection.execute(sql)
     before = database.read_bytes()

@@ -13,7 +13,7 @@ from agentdeck.adapters.sqlite_migrations import (
     V2_SCHEMA_FINGERPRINT,
     migrate_schema,
 )
-from agentdeck.adapters.sqlite_schema import V1_DDL
+from agentdeck.adapters.sqlite_schema import V1_DDL, V3_SCHEMA_FINGERPRINT
 
 from .sqlite_v1_fixture import (
     authority_snapshot,
@@ -51,14 +51,14 @@ def test_known_schema_fingerprints_are_pinned_against_ddl_drift() -> None:
         )
 
 
-def test_fresh_database_is_exact_schema_v2(tmp_path: Path) -> None:
+def test_fresh_database_is_exact_current_schema(tmp_path: Path) -> None:
     store = SQLiteStore.open(tmp_path)
     try:
         metadata = store.connection.execute(
             "SELECT schema_version,schema_digest FROM schema_metadata"
         ).fetchone()
-        assert metadata is not None and metadata[0] == 2
-        assert metadata == (2, V2_SCHEMA_FINGERPRINT)
+        assert metadata is not None and metadata[0] == 3
+        assert metadata == (3, V3_SCHEMA_FINGERPRINT)
         columns = tuple(
             row[1] for row in store.connection.execute(
                 "PRAGMA table_info(product_sessions)"
@@ -326,7 +326,7 @@ def test_real_commit_failure_rolls_back_all_migration_authority(
     assert authority_snapshot(database) == before
 
 
-def test_valid_v2_reopen_has_exact_digest_and_zero_migration_writes(
+def test_valid_current_schema_reopen_has_exact_digest_and_zero_migration_writes(
     tmp_path: Path,
 ) -> None:
     created = SQLiteStore.open(tmp_path)
@@ -336,7 +336,7 @@ def test_valid_v2_reopen_has_exact_digest_and_zero_migration_writes(
         assert reopened._writer.total_changes == 0
         assert reopened.connection.execute(
             "SELECT schema_version,schema_digest FROM schema_metadata"
-        ).fetchone() == (2, V2_SCHEMA_FINGERPRINT)
+        ).fetchone() == (3, V3_SCHEMA_FINGERPRINT)
     finally:
         reopened.close()
 
@@ -352,7 +352,7 @@ def test_exact_configured_v1_migrates_and_backfills_identity(
     try:
         assert store.connection.execute(
             "SELECT schema_version FROM schema_metadata"
-        ).fetchone() == (2,)
+        ).fetchone() == (3,)
         assert store.connection.execute(
             "SELECT leader_backend,leader_model FROM product_sessions"
         ).fetchone() == ("codex-cli", "native-default")
@@ -360,7 +360,7 @@ def test_exact_configured_v1_migrates_and_backfills_identity(
         store.close()
 
 
-def test_fresh_and_migrated_databases_have_identical_v2_authority(
+def test_fresh_and_migrated_databases_have_identical_current_authority(
     tmp_path: Path,
 ) -> None:
     fresh_root = tmp_path / "fresh"
@@ -376,7 +376,7 @@ def test_fresh_and_migrated_databases_have_identical_v2_authority(
     migrated_snapshot = authority_snapshot(migrated_database)
     assert fresh_snapshot[0] == migrated_snapshot[0]
     assert fresh_snapshot[1][0][1:3] == migrated_snapshot[1][0][1:3] == (
-        2, V2_SCHEMA_FINGERPRINT,
+        3, V3_SCHEMA_FINGERPRINT,
     )
 
 
@@ -427,7 +427,7 @@ def test_exact_setup_v1_migrates_without_inventing_configuration(
     try:
         assert store.connection.execute(
             "SELECT schema_version FROM schema_metadata"
-        ).fetchone() == (2,)
+        ).fetchone() == (3,)
         assert store.connection.execute(
             "SELECT leader_backend,leader_model FROM product_sessions"
         ).fetchone() == (None, None)

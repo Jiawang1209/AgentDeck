@@ -323,6 +323,8 @@ def validate_schema_v3(connection: sqlite3.Connection, root: Path) -> None:
         """SELECT singleton,schema_version,schema_digest,project_root
            FROM schema_metadata"""
     ).fetchall()
+    if len(row) == 1 and row[0][3] != str(root):
+        raise StoreSchemaError("database project root does not match")
     objects = _schema_objects(connection)
     if (
         row != [(1, 3, V3_SCHEMA_FINGERPRINT, str(root))]
