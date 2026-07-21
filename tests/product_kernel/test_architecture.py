@@ -15,6 +15,9 @@ COMPOSITION_ROOT_ALLOWED_IMPORTS = (
     "agentdeck.adapters",
     "agentdeck.product",
 )
+OBSERVER_PRODUCT_ALLOWED_IMPORTS = (
+    "agentdeck.kernel", "agentdeck.ports", "agentdeck.product",
+)
 FORBIDDEN = {
     "agentdeck.cli",
     "agentdeck.state",
@@ -210,10 +213,10 @@ def test_only_adapters_may_import_admitted_legacy() -> None:
 def test_layer_dependency_direction() -> None:
     for layer, allowed in ALLOWED_LAYER_IMPORTS.items():
         for path in layer_python_files(PACKAGE_ROOT / layer):
-            path_allowed = (
-                COMPOSITION_ROOT_ALLOWED_IMPORTS
-                if path == PACKAGE_ROOT / "product" / "bootstrap.py"
-                else allowed
-            )
+            path_allowed = {
+                PACKAGE_ROOT / "product" / "bootstrap.py": COMPOSITION_ROOT_ALLOWED_IMPORTS,
+                PACKAGE_ROOT / "product" / "observer_command.py": COMPOSITION_ROOT_ALLOWED_IMPORTS,
+                PACKAGE_ROOT / "product" / "observer.py": OBSERVER_PRODUCT_ALLOWED_IMPORTS,
+            }.get(path, allowed)
             internal = {name for name in imported_modules(path) if is_in_namespace(name, "agentdeck")}
             assert all(is_allowed_layer_import(name, path_allowed) for name in internal), (path, internal)

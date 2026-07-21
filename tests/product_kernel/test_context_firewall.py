@@ -226,15 +226,15 @@ def validate_legacy_reuse_register(text: str, root: Path) -> None:
         ), "characterization test function must contain an assert"
 
 
-def test_only_one_rewrite_spec_and_plan() -> None:
+def test_only_approved_rewrite_specs_and_plans() -> None:
     specs = markdown_documents(ROOT / "docs/superpowers/specs")
     plans = markdown_documents(ROOT / "docs/superpowers/plans")
 
     assert [path.name for path in specs] == [
-        "2026-07-18-agentdeck-product-kernel-rewrite-design.md"
+        "2026-07-18-agentdeck-product-kernel-rewrite-design.md", "2026-07-21-agentdeck-observer-ipc-takeover-closure-design.md",
     ]
     assert [path.name for path in plans] == [
-        "2026-07-18-agentdeck-product-kernel-rewrite.md"
+        "2026-07-18-agentdeck-product-kernel-rewrite.md", "2026-07-21-agentdeck-observer-ipc-takeover-closure.md",
     ]
 
 

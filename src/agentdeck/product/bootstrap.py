@@ -21,6 +21,7 @@ from agentdeck.adapters.adapter_readiness import (
 from agentdeck.adapters.discovery import (
     ReadinessState, ToolDiscovery, discover_tools,
 )
+from agentdeck.adapters.observer_ipc import UnixObserverServer
 from agentdeck.adapters.sqlite import SQLiteStore
 from agentdeck.adapters.project_evidence import GitProjectEvidenceSource
 from agentdeck.adapters.system_clock import SystemClock
@@ -28,18 +29,18 @@ from agentdeck.application.approval_service import ApprovalService
 from agentdeck.application.async_exit_coordinator import AsyncExitCoordinator
 from agentdeck.application.execution_runtime import ForegroundExecutionRuntime
 from agentdeck.application.execution_service import ExecutionService
+from agentdeck.application.observer_broker import ObserverBroker
 from agentdeck.application.takeover_control import TakeoverControl
 from agentdeck.application.exit_service import ExitService
 from agentdeck.application.project_lifecycle_service import ProjectLifecycleService
 from agentdeck.application.recovery_service import RecoveryService
 from agentdeck.application.session_service import SessionService
 from agentdeck.ports.clock import Clock
+from agentdeck.kernel.permissions import PermissionScope
+from agentdeck.ports.observer import ObserverCursor
 from agentdeck.ports.transport import TransportPort
 from agentdeck.product.renderer import render
-from agentdeck.product.observer_lifecycle import (
-    ActivePermissionSnapshotSource, ProductObserverLifecycle,
-    RuntimeObserverCursorSource,
-)
+from agentdeck.product.observer_lifecycle import ProductObserverLifecycle
 from agentdeck.product.shell import (
     AsyncTerminalReader, ProductShell, validate_mission_preview,
 )
@@ -61,6 +62,34 @@ WorkerAgentFactory = Callable[
     [tuple[str, ...], str, tuple[tuple[str, str], ...]], object
 ]
 TransportFactory = Callable[..., TransportPort]
+
+
+class _ActivePermissionSnapshotSource:
+    def __init__(self) -> None:
+        self._control: TakeoverControl | None = None
+
+    def bind(self, control: TakeoverControl) -> None:
+        if type(control) is not TakeoverControl or self._control is not None:
+            raise ValueError("permission proof source binding is invalid")
+        self._control = control
+
+    def __call__(self) -> PermissionScope:
+        active = None if self._control is None else self._control._active
+        if active is None or type(active.permission) is not PermissionScope:
+            raise RuntimeError("permission snapshot is unavailable")
+        return active.permission
+
+
+class _RuntimeObserverCursorSource:
+    def __init__(self, *, runtime: object, lifecycle: ProductObserverLifecycle) -> None:
+        if not callable(getattr(runtime, "status", None)):
+            raise TypeError("Observer cursor source requires runtime status")
+        self._runtime, self._lifecycle = runtime, lifecycle
+
+    def __call__(self) -> ObserverCursor | None:
+        status = self._runtime.status()
+        attempt_id = status.attempt_id if status.state == "active" else None
+        return None if attempt_id is None else self._lifecycle.current_cursor(attempt_id)
 
 
 @dataclass(frozen=True)
@@ -186,10 +215,17 @@ def build_product_shell(
         lifecycle = lifecycle_factory(
             store=store, clock=clock, session_id=session_id,
         )
-        observer_lifecycle = ProductObserverLifecycle(
+        observer_lifecycle = ProductObserverLifecycle()
+        observer_server = UnixObserverServer(
             project_root=Path(project_root), project_id=store._project_id,
-            store=store, clock=clock,
+            acknowledge=observer_lifecycle.acknowledge,
+            cursor_reader=observer_lifecycle.read_cursor,
         )
+        observer_broker = ObserverBroker(
+            project_id=store._project_id, store=store, clock=clock,
+            channel=observer_server,
+        )
+        observer_lifecycle.bind(server=observer_server, publisher=observer_broker)
         recovery = recovery_factory(
             store=store, clock=clock, session_id=session_id,
             recovery_run_id=recovery_run_id_factory(),
@@ -223,14 +259,14 @@ def build_product_shell(
                 runtime=runtime, lifecycle=lifecycle,
             )
             if type(execution) is ExecutionService:
-                permission_source = ActivePermissionSnapshotSource()
+                permission_source = _ActivePermissionSnapshotSource()
                 control = TakeoverControl(
                     store=store, clock=clock, runtime=runtime,
                     project_evidence=GitProjectEvidenceSource(
                         project_root=Path(project_root), project_id=store._project_id,
                     ).capture,
                     permission_snapshot=permission_source,
-                    observer_cursor=RuntimeObserverCursorSource(
+                    observer_cursor=_RuntimeObserverCursorSource(
                         runtime=runtime, lifecycle=observer_lifecycle,
                     ),
                 )
