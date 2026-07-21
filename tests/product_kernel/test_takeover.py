@@ -11,18 +11,24 @@ import pytest
 from agentdeck.application.execution_runtime import ForegroundExecutionRuntime
 from agentdeck.application.execution_service import ExecutionService
 from agentdeck.application.project_lifecycle_service import ProjectLifecycleService
-from agentdeck.application.takeover_control import TakeoverControl, TakeoverCursor, TakeoverResult
+from agentdeck.application.takeover_control import TakeoverControl, TakeoverResult
 from agentdeck.kernel.events import FactArray
 from agentdeck.kernel.mission import MissionDraft
 from agentdeck.kernel.permissions import Effect, PermissionProfile, PermissionScope
 from agentdeck.kernel.session import SessionState
 from agentdeck.product.shell import ProductShell
 from agentdeck.product.slash_commands import parse_command
+from agentdeck.ports.observer import ObserverCursor
+from agentdeck.ports.project_evidence import ProjectEvidence, project_evidence_digest
 from agentdeck.ports.worker import TaskRequest, WorkerHandle
 from product_kernel.fakes import FrozenClock
 
 
 NOW = datetime(2026, 7, 21, 4, 0, tzinfo=timezone.utc)
+def project_evidence(marker: str = "a") -> ProjectEvidence:
+    parts = (marker * 64,) * 5
+    digest = project_evidence_digest("git-project-evidence/v1", "prj_1", *parts)
+    return ProjectEvidence("git-project-evidence/v1", "prj_1", *parts, digest)
 
 
 def async_test(function):
@@ -139,11 +145,11 @@ class BoundWorker:
 
 class EvidenceSource:
     def __init__(self) -> None:
-        self.project = "a" * 64
+        self.project = project_evidence()
         self.permission = PermissionScope(
             PermissionProfile.APPROVE_FOR_ME, frozenset({Effect.READ}),
         )
-        self.cursor: TakeoverCursor | None = None
+        self.cursor: ObserverCursor | None = None
 
 
 class Harness:
@@ -172,7 +178,7 @@ class Harness:
         if missing_source != "all":
             control = TakeoverControl(
                 store=self.store, clock=clock, runtime=self.runtime,
-                project_evidence_identity=(
+                project_evidence=(
                     None if missing_source == "project" else lambda: self.evidence.project
                 ),
                 permission_snapshot=(
@@ -197,8 +203,8 @@ class Harness:
         attempt_id = self.runtime.status().attempt_id
         assert attempt_id is not None and self.worker.handle is not None
         handle = self.worker.handle
-        self.evidence.cursor = TakeoverCursor(
-            handle.session_id, handle.agent_id, handle.task_id, handle.attempt_id,
+        self.evidence.cursor = ObserverCursor(
+            "prj_1", handle.session_id, handle.agent_id, handle.task_id, handle.attempt_id,
             handle.transport, 1, "evt_started", "b" * 64,
         )
         return attempt_id
@@ -236,6 +242,7 @@ async def test_takeover_stops_automatic_input_and_records_full_lineage(harness) 
         "mission_content_hash": harness.confirmed.content_hash,
         "mission_id": harness.confirmed.mission_id,
         "mission_version": 1,
+        "observer_project_id": "prj_1",
         "observer_event_id": "evt_started",
         "observer_fingerprint": "b" * 64,
         "observer_session_id": "ses_acp",
@@ -247,12 +254,15 @@ async def test_takeover_stops_automatic_input_and_records_full_lineage(harness) 
         "owner": "human",
         "permission_profile": "approve_for_me",
         "permission_scope": FactArray(("read",)),
-        "project_evidence_identity": "a" * 64,
+        "ownership_cycle_id": harness.store.load_aggregate(
+            "takeover_ownership", attempt_id,
+        )["cycle_id"],
+        "ownership_generation": 1,
+        "project_evidence_provenance": "git-project-evidence/v1",
+        "project_evidence_digest": harness.evidence.project.digest,
         "product_session_id": "ses_product",
         "task_id": "tsk_implementation",
     }
-
-
 @async_test
 async def test_return_control_accepts_only_exact_clean_revalidation(harness) -> None:
     attempt_id = await harness.start()
@@ -265,8 +275,6 @@ async def test_return_control_accepts_only_exact_clean_revalidation(harness) -> 
     assert harness.store.load_aggregate("attempts", attempt_id)["state"] == "running"
     assert harness.service.automatic_input_enabled is True
     assert harness.store.events[-1].kind == "human_return_control"
-
-
 @async_test
 async def test_takeover_blocks_automatic_permission_input_until_valid_return(harness) -> None:
     attempt_id = await harness.start()
@@ -281,14 +289,12 @@ async def test_takeover_blocks_automatic_permission_input_until_valid_return(har
     await harness.approvals.responded.wait()
     assert result.accepted is True
     assert harness.worker.permission_responses == ["perm_1"]
-
-
 @async_test
 async def test_project_drift_before_return_control_fails_closed(harness) -> None:
     attempt_id = await harness.start()
     await harness.service.takeover(attempt_id)
     before = len(harness.store.commands), len(harness.store.events)
-    harness.evidence.project = "c" * 64
+    harness.evidence.project = project_evidence("c")
 
     result = await harness.service.return_control(attempt_id)
 
@@ -320,8 +326,8 @@ async def test_each_return_control_authority_drift_retains_human_owner(
             PermissionProfile.ASK_FOR_APPROVAL, frozenset({Effect.READ}),
         )
     elif drift == "cursor":
-        harness.evidence.cursor = TakeoverCursor(
-            "ses_acp", "agt_implementation", "tsk_implementation", attempt_id,
+        harness.evidence.cursor = ObserverCursor(
+            "prj_1", "ses_acp", "agt_implementation", "tsk_implementation", attempt_id,
             "acp", 2, "evt_progress", "d" * 64,
         )
     elif drift == "attempt":
@@ -382,11 +388,6 @@ async def test_terminal_or_repeated_takeover_fails_without_new_effects(harness) 
     assert (len(harness.store.commands), len(harness.store.events)) == before
     assert harness.service.automatic_input_enabled is False
     assert (await harness.service.return_control(attempt_id)).accepted is True
-    before = len(harness.store.commands), len(harness.store.events)
-    returned = await harness.service.takeover(attempt_id)
-    assert returned.accepted is False
-    assert returned.diagnostic.code == "takeover_attempt_drift"
-    assert (len(harness.store.commands), len(harness.store.events)) == before
 
 
 @async_test

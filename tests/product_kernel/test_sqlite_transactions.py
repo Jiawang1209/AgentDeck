@@ -250,7 +250,7 @@ def test_second_writer_same_project_fails_promptly_and_lock_releases(tmp_path: P
     try:
         assert reopened.connection.execute(
             "SELECT singleton, schema_version, project_root FROM schema_metadata"
-        ).fetchall() == [(1, 2, str(tmp_path.resolve()))]
+        ).fetchall() == [(1, 3, str(tmp_path.resolve()))]
         assert reopened.connection.execute(
             "SELECT count(*) FROM schema_metadata"
         ).fetchone() == (1,)
