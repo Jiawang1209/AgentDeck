@@ -6,8 +6,15 @@ from dataclasses import dataclass
 from enum import StrEnum
 from hashlib import sha256
 
+from agentdeck.kernel.diagnostics import (
+    Diagnostic,
+    Severity,
+    diagnostic as _catalog_diagnostic,
+    recovery_actions as _recovery_actions,
+    recovery_diagnostic as _recovery_diagnostic,
+)
 from agentdeck.kernel.events import DomainEvent
-from agentdeck.kernel.execution import AttemptState
+from agentdeck.kernel.execution import Attempt, AttemptState
 from agentdeck.kernel.session import ExitAttemptSnapshot
 from agentdeck.ports.clock import Clock
 from agentdeck.ports.store import (
@@ -53,6 +60,116 @@ class RecoveryReport:
             *((identity, RecoveryOutcome.OUTCOME_UNKNOWN)
               for identity in self.outcome_unknown),
         )))
+
+
+@dataclass(frozen=True)
+class RecoveryAssessment:
+    """A pure classification of one closed recovery condition.
+
+    ``actions`` are the concrete, human-facing recovery actions sanctioned
+    for the condition. ``diagnostic`` is the paired Error Card fact, or
+    ``None`` when the condition (a single sanctioned reconnect) does not
+    warrant one. Producing this never retries, dispatches, spawns, inspects
+    the live terminal, or authenticates.
+    """
+
+    condition: str
+    actions: tuple[str, ...]
+    diagnostic: Diagnostic | None = None
+
+    def __post_init__(self) -> None:
+        if type(self.condition) is not str or not self.condition:
+            raise TypeError("condition must be a nonempty string")
+        if type(self.actions) is not tuple or not self.actions or any(
+            type(action) is not str for action in self.actions
+        ):
+            raise TypeError("actions must be a nonempty tuple of strings")
+        if self.diagnostic is not None and type(self.diagnostic) is not Diagnostic:
+            raise TypeError("diagnostic must be a Diagnostic or None")
+
+
+@dataclass(frozen=True)
+class ResumeDecision:
+    """Whether one durable Attempt may be resumed, and why.
+
+    A rejection changes nothing but the audit event: it never mutates the
+    Attempt's durable state, retries, or authenticates.
+    """
+
+    accepted: bool
+    diagnostic: Diagnostic
+
+    def __post_init__(self) -> None:
+        if type(self.accepted) is not bool:
+            raise TypeError("accepted must be a bool")
+        if type(self.diagnostic) is not Diagnostic:
+            raise TypeError("diagnostic must be a Diagnostic")
+
+
+def _resumable(attempt: Attempt) -> bool:
+    """Fail-closed: only the two sanctioned bounded-resume states qualify."""
+    if attempt.state is AttemptState.INTERRUPTED:
+        return True
+    if attempt.state is AttemptState.FAILED:
+        return attempt.retryable
+    return False
+
+
+def _resume_diagnostic(attempt: Attempt, occurred_at: str) -> Diagnostic:
+    if attempt.state is AttemptState.OUTCOME_UNKNOWN:
+        return _catalog_diagnostic(
+            "worker_outcome_unknown", occurred_at=occurred_at,
+            attempt_id=attempt.attempt_id,
+        )
+    if attempt.state is AttemptState.INTERRUPTED:
+        return Diagnostic.create(
+            code="attempt_safe_to_restart", stage="recovery",
+            severity=Severity.INFO, actor="agentdeck",
+            summary="The Attempt stopped before any effect was observed.",
+            cause=(
+                "The process ended with no effect observed, the sanctioned "
+                "safe-restart case."
+            ),
+            impact="No new Task attempt has started yet.",
+            protection="No unverified effect was assumed complete.",
+            recovery_actions=("Start a new Attempt for the same Task.",),
+            retryable=True, outcome_known=True, occurred_at=occurred_at,
+            attempt_id=attempt.attempt_id,
+        )
+    if attempt.state is AttemptState.FAILED and attempt.retryable:
+        return Diagnostic.create(
+            code="attempt_bounded_retry_sanctioned", stage="recovery",
+            severity=Severity.INFO, actor="agentdeck",
+            summary="The Attempt failed with a known, bounded retryable reason.",
+            cause=(
+                f"The failure reason '{attempt.reason}' is on the sanctioned "
+                "retry allowlist."
+            ),
+            impact="No new Task attempt has started yet.",
+            protection="Only an explicitly allowlisted failure reason may be retried.",
+            recovery_actions=("Retry the Task with a new Attempt.",),
+            retryable=True, outcome_known=True, occurred_at=occurred_at,
+            attempt_id=attempt.attempt_id,
+        )
+    return Diagnostic.create(
+        code="attempt_resume_not_sanctioned", stage="recovery",
+        severity=Severity.ERROR, actor="agentdeck",
+        summary="This Attempt does not have a sanctioned resume path.",
+        cause=(
+            f"The Attempt state '{attempt.state.value}' is not classified "
+            "as safely resumable."
+        ),
+        impact="No new Task attempt was started.",
+        protection="No ambiguous Attempt state was resumed without explicit reconciliation.",
+        recovery_actions=(
+            "Inspect and reconcile the durable Attempt before any new action.",
+        ),
+        retryable=False,
+        outcome_known=attempt.state in (
+            AttemptState.COMPLETED, AttemptState.FAILED, AttemptState.CANCELLED,
+        ),
+        occurred_at=occurred_at, attempt_id=attempt.attempt_id,
+    )
 
 
 def _run_identity(value: object) -> str:
@@ -229,7 +346,49 @@ class RecoveryService:
             self._session_id,
         )
 
+    def assess(self, condition: str) -> RecoveryAssessment:
+        """Pure classification of one closed recovery condition.
+
+        Never retries, dispatches, spawns, inspects the live terminal, or
+        authenticates.
+        Refuses an unknown condition rather than defaulting to any action.
+        """
+        if type(condition) is not str:
+            raise TypeError("condition must be a string")
+        actions = _recovery_actions(condition)
+        fact = _recovery_diagnostic(condition, occurred_at=self._clock.now().isoformat())
+        return RecoveryAssessment(condition=condition, actions=actions, diagnostic=fact)
+
+    def resume_attempt(self, attempt: Attempt) -> ResumeDecision:
+        """Decide whether one durable Attempt may be resumed.
+
+        The Attempt's own durable state is never mutated here: a rejection
+        changes nothing but an idempotent audit event.
+        """
+        if type(attempt) is not Attempt:
+            raise TypeError("attempt must be an Attempt")
+        occurred_at = self._clock.now().isoformat()
+        accepted = _resumable(attempt)
+        fact = _resume_diagnostic(attempt, occurred_at)
+        command_id = f"resume_attempt:{self._recovery_run_id}:{attempt.attempt_id}"
+        if len(command_id.encode("utf-8", "strict")) > STORE_COMMAND_ID_MAX_BYTES:
+            raise RecoveryError("resume decision command identity exceeds the Store limit")
+
+        def persist(transaction: StoreTransaction) -> CommandResult:
+            transaction.append_event(_event(
+                command_id, "resume_decision_recorded", "attempt",
+                attempt.attempt_id, (("accepted", accepted),), occurred_at,
+            ))
+            return {
+                "accepted": accepted, "attempt_id": attempt.attempt_id,
+                "mode": "resume_decision",
+            }
+
+        self._store.execute_once(command_id, "resume_decision", persist)
+        return ResumeDecision(accepted=accepted, diagnostic=fact)
+
 
 __all__ = [
-    "RecoveryError", "RecoveryOutcome", "RecoveryReport", "RecoveryService",
+    "RecoveryAssessment", "RecoveryError", "RecoveryOutcome", "RecoveryReport",
+    "RecoveryService", "ResumeDecision",
 ]

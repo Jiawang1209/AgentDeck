@@ -17,13 +17,28 @@ from agentdeck.application.execution_runtime import (
     start_reserved_worker, stop_execution_attempt, worker_failure_result,
 )
 from agentdeck.application.project_lifecycle_service import ProjectDispatchBlocked, ProjectLifecycleService
-from agentdeck.kernel.execution import Attempt, Evidence, Handoff
+from agentdeck.kernel.diagnostics import recovery_actions
+from agentdeck.kernel.execution import Attempt, AttemptState, Evidence, Handoff
 from agentdeck.kernel.execution_semantics import RetryPolicy, materialize_revision
 from agentdeck.kernel.mission import ConfirmedMissionVersion, MissionDraft, TaskDefinition
 from agentdeck.kernel.permissions import PermissionScope
 from agentdeck.ports.clock import Clock
 from agentdeck.ports.store import Store
 from agentdeck.ports.worker import TaskRequest, Worker
+
+
+# These two condition names are the exact vocabulary RecoveryService itself
+# classifies (see RecoveryService.assess / kernel.diagnostics.recovery_actions
+# and the kernel AttemptState this loop must never blind-retry past).
+# Anchoring them here, instead of scattering ad-hoc string literals through
+# the dispatch loop below, keeps this loop's two sanctioned exceptions -- a
+# single ACP reconnect before any effect, and a fail-closed outcome-unknown
+# Attempt -- from silently drifting apart from the recovery assessment.
+_RECONNECT_ONCE_CONDITION = "transport_before_effect"
+assert recovery_actions(_RECONNECT_ONCE_CONDITION) == ("reconnect_once",)
+_OUTCOME_UNKNOWN_CONDITION = AttemptState.OUTCOME_UNKNOWN.value
+
+
 class ExecutionService(TakeoverExecutionMixin):
     def __init__(
         self, *, store: Store, clock: Clock, approval_service: ApprovalService,
@@ -180,10 +195,10 @@ class ExecutionService(TakeoverExecutionMixin):
                     condition = _records.exception_condition(
                         error, task_id=task.task_id, attempt_id=attempt.attempt_id
                     )
-                    if reservation is not None and condition == "outcome_unknown":
+                    if reservation is not None and condition == _OUTCOME_UNKNOWN_CONDITION:
                         self._runtime.quarantine(reservation)
                     can_reconnect = (
-                        condition == "transport_before_effect"
+                        condition == _RECONNECT_ONCE_CONDITION
                         and reconnects < min(draft.max_acp_reconnects, 1)
                     )
                     if (can_reconnect or condition == "worker_schema_invalid") and retry_execution_attempt(
@@ -194,17 +209,17 @@ class ExecutionService(TakeoverExecutionMixin):
                         can_retry=attempt_number + 1 < attempt_budget,
                         acp_session_id=None, reservation=reservation,
                     ):
-                        reconnects += int(condition == "transport_before_effect")
+                        reconnects += int(condition == _RECONNECT_ONCE_CONDITION)
                         continue
                     code = condition or "worker_start_failed"
                     reason = (
                         "recoverable_transport_interruption"
-                        if condition == "transport_before_effect"
+                        if condition == _RECONNECT_ONCE_CONDITION
                         else condition or "worker_start_failed"
                     )
                     terminal = (
-                        attempt.unknown_outcome("outcome_unknown")
-                        if condition == "outcome_unknown"
+                        attempt.unknown_outcome(_OUTCOME_UNKNOWN_CONDITION)
+                        if condition == _OUTCOME_UNKNOWN_CONDITION
                         else attempt.fail(reason, retryable=False)
                     )
                     return self._stop_attempt(
@@ -226,7 +241,7 @@ class ExecutionService(TakeoverExecutionMixin):
                 except Exception as error:
                     condition = _records.exception_condition(error,
                         task_id=task.task_id, attempt_id=attempt.attempt_id)
-                    can_reconnect = (condition == "transport_before_effect" and
+                    can_reconnect = (condition == _RECONNECT_ONCE_CONDITION and
                         reconnects < min(draft.max_acp_reconnects, 1))
                     if (can_reconnect or condition == "worker_schema_invalid") and retry_execution_attempt(
                         runtime=self._runtime, persist=self._persist_terminal_attempt,
@@ -236,11 +251,11 @@ class ExecutionService(TakeoverExecutionMixin):
                         can_retry=attempt_number + 1 < attempt_budget,
                         acp_session_id=handle.session_id, worker_handle=handle,
                     ):
-                        reconnects += int(condition == "transport_before_effect")
+                        reconnects += int(condition == _RECONNECT_ONCE_CONDITION)
                         continue
-                    if condition == "outcome_unknown":
-                        terminal = attempt.unknown_outcome("outcome_unknown")
-                    elif condition == "transport_before_effect":
+                    if condition == _OUTCOME_UNKNOWN_CONDITION:
+                        terminal = attempt.unknown_outcome(_OUTCOME_UNKNOWN_CONDITION)
+                    elif condition == _RECONNECT_ONCE_CONDITION:
                         terminal = attempt.fail(
                             "recoverable_transport_interruption", retryable=False
                         )

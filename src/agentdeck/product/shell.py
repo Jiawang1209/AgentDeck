@@ -18,7 +18,7 @@ from agentdeck.application.mission_service import (
     MissionResult, MissionService, MissionServiceError,
 )
 from agentdeck.application.project_lifecycle_service import ProjectLifecycleService
-from agentdeck.application.recovery_service import RecoveryService
+from agentdeck.application.recovery_service import RecoveryError, RecoveryService
 from agentdeck.application.session_service import SessionService, SessionServiceError
 from agentdeck.application.support_service import SupportService, SupportServiceError
 from agentdeck.kernel.diagnostics import Diagnostic
@@ -129,10 +129,12 @@ class ProductShell:
         caller_cancelled: asyncio.CancelledError | None = None
         interrupted = asyncio.Event()
         try:
-            await self._recovery.reconcile()
+            report = await self._recovery.reconcile()
             self._service.resume()
             self._restore_resume_projection()
             self._show_initial_state()
+            if report.outcome_unknown:
+                self._show_recovery("transport_after_effect")
             loop.add_signal_handler(signal.SIGINT, interrupted.set)
             signal_installed = True
             while True:
@@ -511,6 +513,25 @@ class ProductShell:
     def _emit_diagnosis(self, fact: Diagnostic) -> None:
         self._latest_diagnostic = fact
         self._emit(self._render(DiagnosisPresentation(fact)))
+
+    def _show_recovery(self, condition: str) -> None:
+        """Present, but never run, the sanctioned recovery actions for a
+        condition RecoveryService classifies (RecoveryService.assess).
+        """
+        assess = getattr(self._recovery, "assess", None)
+        if not callable(assess):
+            return
+        try:
+            assessment = assess(condition)
+        except (TypeError, ValueError, RecoveryError):
+            self._emit("The recovery condition was not recognized.")
+            return
+        if assessment.diagnostic is not None:
+            self._emit_diagnosis(assessment.diagnostic)
+        self._emit(
+            "Recommended recovery action(s): "
+            + ", ".join(assessment.actions) + "."
+        )
 
     def _show_diagnose(self, argument: str | None) -> None:
         fact = self._latest_diagnostic

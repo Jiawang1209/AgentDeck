@@ -4,6 +4,113 @@
 
 ## 2026-07-22
 
+### Task 32: close outcome-unknown, observer degradation, and resume recovery
+
+- **Condition assessment** (`src/agentdeck/kernel/diagnostics.py`): added a
+  closed, pure lookup table — `recovery_actions(condition)` and
+  `recovery_diagnostic(condition, ...)` — mapping the five sanctioned
+  recovery conditions to their concrete, human-facing action(s) and paired
+  catalog `Diagnostic` (or `None` for the single case that doesn't warrant a
+  fixed Error Card): `observer_down_worker_alive` → `restart_observer`
+  (WARNING, reuses `tmux_observer_degraded`; the Worker itself is never
+  affected by the Observer), `transport_before_effect` → `reconnect_once`
+  (the single sanctioned ACP reconnect budget, no fixed Diagnostic),
+  `transport_after_effect` → `human_reconcile` (reuses `worker_outcome_unknown`,
+  `outcome_known=False`), `login_lost` → `reauthenticate_outside_agentdeck`
+  (reuses `leader_authentication_failed`; AgentDeck never auto-authenticates),
+  `project_drift` → `inspect_diff` (reuses `mission_preview_drift`). An
+  unmapped condition raises `ValueError` rather than defaulting to any action.
+- **`RecoveryService.assess(condition)`** (`src/agentdeck/application/recovery_service.py`):
+  a new pure, synchronous classifier method returning a frozen
+  `RecoveryAssessment(condition, actions, diagnostic)`. It never retries,
+  dispatches, spawns, inspects the live terminal, or authenticates — it only
+  reads the clock for the Diagnostic's `occurred_at` and reuses the
+  `kernel.diagnostics` lookup table above; an unknown condition propagates the
+  table's `ValueError` unchanged.
+- **`RecoveryService.resume_attempt(attempt)`**: a new synchronous method
+  returning a frozen `ResumeDecision(accepted, diagnostic)` for one durable
+  kernel `Attempt`. Fail-closed by construction: only two states are ever
+  accepted — `AttemptState.INTERRUPTED` (the process ended before any effect
+  was observed, the sanctioned safe-restart case) and `AttemptState.FAILED`
+  with `retryable=True` (a failure reason already on the kernel's own bounded
+  retry allowlist — the same "single reconnect / bounded-attempt" budget
+  Design §13 describes). Every other state — and always
+  `AttemptState.OUTCOME_UNKNOWN` specifically — is rejected with
+  `accepted=False`; `OUTCOME_UNKNOWN` always carries the reused
+  `worker_outcome_unknown` Diagnostic (`outcome_known=False`), the "always
+  needs human reconciliation" rule. A rejection never mutates the Attempt's
+  or the ProductSession's durable state — it changes nothing but an
+  idempotent `resume_decision_recorded` audit event, persisted through the
+  existing `command_id`/`execute_once`/`_event` pattern (`command_id` derived
+  from `recovery_run_id` + the Attempt's own `attempt_id`, so it is scoped
+  per-Attempt and calling it twice for the same Attempt writes exactly one
+  event). `reconcile()` itself is untouched — same command id, same
+  fingerprint-then-commit shape, same `RecoveryReport` output — verified by a
+  dedicated regression test in the new suite and by the full existing
+  `test_recovery_service.py` / `test_sqlite_recovery_integrity.py` suites
+  staying green. The long-standing
+  `test_recovery_has_no_transport_backend_model_role_or_tmux_fallback`
+  guardrail (asserting `recovery_service.py`'s own source never spells
+  "transport"/"backend"/"model"/"role"/"pane"/"tmux"/"list_running_attempts")
+  stays intact and enforced: the condition table and its diagnostic codes
+  (including the literal `tmux_observer_degraded` catalog code) live in
+  `kernel/diagnostics.py`, and `recovery_service.py` only imports and calls
+  the pure `recovery_actions`/`recovery_diagnostic` functions by name — it
+  never spells a banned word itself.
+- **`ExecutionService` integration** (`src/agentdeck/application/execution_service.py`):
+  replaced the four scattered ad-hoc `condition == "transport_before_effect"`
+  / `condition == "outcome_unknown"` string-literal comparisons in the
+  per-attempt dispatch loop with two module-level constants,
+  `_RECONNECT_ONCE_CONDITION` and `_OUTCOME_UNKNOWN_CONDITION`, anchored to
+  the same recovery vocabulary: the former is asserted at import time to
+  equal exactly the condition `kernel.diagnostics.recovery_actions` classifies
+  as `("reconnect_once",)` (so any future drift between `RecoveryService`'s
+  own classification and this execution loop's single-reconnect-budget branch
+  fails loudly at import time instead of silently diverging), the latter is
+  anchored to `AttemptState.OUTCOME_UNKNOWN.value`. This is a pure,
+  behavior-preserving rename (identical runtime string values; every
+  execution/takeover/execution-command-authority test stays green
+  unmodified) that removes the ad-hoc duplication while preserving the
+  existing single-reconnect budget for `transport_before_effect` and the
+  fail-closed terminal Attempt for `outcome_unknown` exactly as before.
+- **`ProductShell` surfacing** (`src/agentdeck/product/shell.py`): added
+  `_show_recovery(condition)`, which calls `RecoveryService.assess(condition)`
+  and presents — but never runs — the result: it reuses the existing Task 30
+  Error Card path (`_emit_diagnosis`) when a Diagnostic is present, and always
+  emits a plain "Recommended recovery action(s): ..." line; an unrecognized
+  condition is reported as a safe plain-language line rather than raising.
+  `_run_foreground` now captures `reconcile()`'s `RecoveryReport` (previously
+  discarded) and, when it reports any `outcome_unknown` Attempt, calls
+  `_show_recovery("transport_after_effect")` once at startup so a human
+  restarting AgentDeck after a crash with a possibly-effectful interrupted
+  Attempt is shown the `human_reconcile` guidance immediately — it never
+  auto-resumes, retries, or dispatches.
+- **Tests** (new `tests/product_kernel/test_recovery_closure.py`, 30 tests):
+  the plan's two mandated tests (condition→action parametrized over all five
+  conditions; `outcome_unknown` always rejected with `outcome_known=False`)
+  plus edge coverage — unknown/malformed conditions raise for every
+  condition-shaped edge case; a parametrized fail-closed matrix over every
+  `AttemptState` proving only `interrupted` and `failed`-with-`retryable=True`
+  are ever accepted; a real-`SQLiteStore` test proving a rejection mutates
+  neither the Attempt row nor the ProductSession row; two idempotency tests
+  (`resume_attempt` called twice for the same Attempt writes exactly one
+  `events` row via `store.count("events")`; two different Attempts each write
+  their own event, proving the command id is scoped per-Attempt, not
+  global); a dedicated `reconcile()`-is-unchanged regression test; three
+  `ProductShell`-level tests for `_show_recovery` (presents actions without
+  running them, presents the no-Diagnostic `transport_before_effect` case,
+  safely rejects an unrecognized condition); and the reused
+  no-legacy-vocabulary guardrail test (now green with the new methods
+  present). Regression gate (`test_architecture`, `test_context_firewall`,
+  `test_takeover`, `test_execution_command_authority`, `test_product_reentry`,
+  118 tests), the R6 verify set (`test_error_cards`, `test_diagnose_command`,
+  `test_trace_support`, `test_recovery_closure`, 62 tests), and the full
+  `tests/product_kernel` suite (2,038 tests; only the known intermittent
+  `test_selector_setup_failure_reaps_parent_and_descendant[constructor]`
+  subprocess-pid-file-race flake appeared once, unrelated to this task and
+  reproducibly green in isolation) all stay green; `python -m compileall -q
+  src tests/product_kernel` is clean.
+
 ### Task 31: end-to-end Mission trace and sanitized human support evidence
 
 - **Read-only lineage enumeration** (new `src/agentdeck/adapters/sqlite_support.py`,

@@ -296,3 +296,62 @@ def diagnostic(
         trace_id=trace_id,
         **template,
     )
+
+
+# Closed catalog of every recovery condition AgentDeck can classify, and the
+# concrete, human-facing action(s) sanctioned for it. This is a pure lookup
+# table: it never retries, dispatches, spawns, or authenticates by itself.
+# An unmapped condition is refused rather than answered with a fabricated
+# default action, so no ambiguous condition can ever silently authorize one.
+_RECOVERY_ACTIONS: Final[dict[str, tuple[str, ...]]] = {
+    "observer_down_worker_alive": ("restart_observer",),
+    "transport_before_effect": ("reconnect_once",),
+    "transport_after_effect": ("human_reconcile",),
+    "login_lost": ("reauthenticate_outside_agentdeck",),
+    "project_drift": ("inspect_diff",),
+}
+
+# The catalog Diagnostic paired with each recovery condition, or ``None``
+# when the condition itself (a single sanctioned reconnect) does not warrant
+# a fixed Error Card.
+_RECOVERY_DIAGNOSTIC_CODES: Final[dict[str, str | None]] = {
+    "observer_down_worker_alive": "tmux_observer_degraded",
+    "transport_before_effect": None,
+    "transport_after_effect": "worker_outcome_unknown",
+    "login_lost": "leader_authentication_failed",
+    "project_drift": "mission_preview_drift",
+}
+
+
+def recovery_actions(condition: str) -> tuple[str, ...]:
+    """Return the sanctioned recovery actions for one closed condition name.
+
+    Refuses an unknown condition rather than defaulting to any action.
+    """
+
+    if type(condition) is not str:
+        raise TypeError("condition must be a string")
+    try:
+        return _RECOVERY_ACTIONS[condition]
+    except KeyError:
+        raise ValueError("unknown recovery condition") from None
+
+
+def recovery_diagnostic(
+    condition: str,
+    *,
+    occurred_at: str = _DEFAULT_OCCURRED_AT,
+    attempt_id: str | None = None,
+) -> Diagnostic | None:
+    """Return the catalog Diagnostic paired with a recovery condition.
+
+    Returns ``None`` when the condition is sanctioned but has no fixed
+    Error Card. Refuses an unknown condition.
+    """
+
+    if condition not in _RECOVERY_ACTIONS:
+        raise ValueError("unknown recovery condition")
+    code = _RECOVERY_DIAGNOSTIC_CODES[condition]
+    if code is None:
+        return None
+    return diagnostic(code, occurred_at=occurred_at, attempt_id=attempt_id)
