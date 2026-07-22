@@ -41,6 +41,7 @@ from agentdeck.application.execution_service import ExecutionService
 from agentdeck.application.observer_broker import ObserverBroker
 from agentdeck.application.takeover_control import TakeoverControl
 from agentdeck.application.exit_service import ExitService
+from agentdeck.application.golden_acceptance import assemble_golden_report
 from agentdeck.application.leader_service import LeaderService
 from agentdeck.application.mission_service import MissionService
 from agentdeck.application.project_lifecycle_service import ProjectLifecycleService
@@ -796,9 +797,58 @@ class GoldenRunner:
             store.close()
 
 
+def build_golden_report(
+    *,
+    run_result: GoldenRunResult,
+    browser_report: object,
+    frozen_commit: str,
+    authority_digest: str,
+    leader_backend: str,
+    build_evidence: object,
+    test_evidence: object,
+    findings_resolution: object,
+    permission_lineage: object,
+    tmux_fidelity: object,
+    diagnostics: object,
+    exit_reentry: object,
+    final_result: str,
+    human_acceptance: object,
+) -> dict:
+    """Fuse a `GoldenRunResult` and a Task 34 browser report into a validated
+    acceptance report. Composition-root glue: it reads the run's real ACP
+    identity and integrity and the browser evidence's per-viewport hashes,
+    interactions, visual diff, and structure, then delegates to
+    `assemble_golden_report` (which fails closed on any gap)."""
+    screenshot_hashes = {
+        shot.viewport: shot.content_hash for shot in browser_report.screenshots
+    }
+    return assemble_golden_report(
+        frozen_commit=frozen_commit,
+        authority_digest=authority_digest,
+        leader_backend=leader_backend,
+        worker_backends=list(run_result.worker_backends),
+        agent_instance_ids=list(run_result.agent_instance_ids),
+        acp_session_ids=list(run_result.acp_session_ids),
+        build_evidence=build_evidence,
+        test_evidence=test_evidence,
+        screenshot_hashes=screenshot_hashes,
+        visual_diff=dict(browser_report.visual_diff),
+        module_checks=dict(browser_report.structure),
+        interaction_checks=dict(browser_report.interactions),
+        findings_resolution=findings_resolution,
+        sqlite_integrity=run_result.sqlite_integrity,
+        permission_lineage=permission_lineage,
+        tmux_fidelity=tmux_fidelity,
+        diagnostics=diagnostics,
+        exit_reentry=exit_reentry,
+        final_result=final_result,
+        human_acceptance=human_acceptance,
+    )
+
+
 __all__ = [
     "ACPAdapterComposition", "build_acp_adapter_composition",
     "build_product_shell", "run_product_dev",
     "RealPreflightProbe", "run_product_preflight",
-    "GoldenRunner", "GoldenRunResult",
+    "GoldenRunner", "GoldenRunResult", "build_golden_report",
 ]

@@ -4,6 +4,27 @@
 
 ## 2026-07-22
 
+### Golden-run browser-evidence fusion (golden-run orchestration, slice d)
+
+- **Report fusion** (`src/agentdeck/product/bootstrap.py` `build_golden_report`):
+  composition-root glue that fuses a `GoldenRunResult` (real ACP identity —
+  worker backends, four distinct agent-instance/ACP-session ids — and SQLite
+  integrity) with a Task 34 browser `BrowserEvidenceReport` (per-viewport
+  screenshot hashes, interactions, visual diff, structure) and delegates to
+  `assemble_golden_report`, which fails closed on any gap.
+- **End-to-end test** (`tests/product_kernel/test_golden_report_build.py`): the
+  deterministic `GoldenRunner` (fake ACP boundaries) completes a four-stage
+  Mission, the `DeterministicBrowser` verifies the local reference homepage, and
+  `build_golden_report` produces a report that passes `validate_golden_report`
+  with both viewport hashes, the three interaction checks, the run's real ACP
+  ids, and `sqlite_integrity == "ok"`. This is the first time a full run + its
+  browser evidence yield a contract-valid Golden acceptance report. Green with
+  the architecture/context-firewall guards.
+- **Remaining golden-run slices**: real Agent-Instance provisioning, real ACP
+  adapter composition (swap the fake factories for `build_acp_adapter_composition`),
+  and the `agentdeck _product golden run` CLI — then a fresh preflight and
+  explicit live authorization.
+
 ### Golden-run driver (golden-run orchestration, slice a)
 
 - **Reusable driver** (`src/agentdeck/product/bootstrap.py` `GoldenRunner` +
