@@ -90,3 +90,77 @@ def test_preview_without_legacy_state_raises(tmp_path: Path) -> None:
     (tmp_path / ".agentdeck").mkdir()
     with pytest.raises(MigrationError, match="no legacy"):
         _service().preview(tmp_path)
+
+
+# --- slice 37.3: confirmed apply (backup / import / verify / rename) --------
+
+import sqlite3
+
+from agentdeck.application.migration_service import ImportOutcome
+
+
+def _real_importer(target_path: Path, legacy) -> ImportOutcome:
+    """A real (test) importer: build the new project row in a fresh SQLite DB."""
+    connection = sqlite3.connect(target_path)
+    try:
+        connection.execute(
+            "CREATE TABLE projects (project_id TEXT PRIMARY KEY, "
+            "resolved_root TEXT NOT NULL, created_at TEXT NOT NULL)"
+        )
+        connection.execute(
+            "INSERT INTO projects VALUES (?,?,?)",
+            (legacy.project_id, legacy.resolved_root, legacy.created_at),
+        )
+        connection.commit()
+        (integrity,) = connection.execute("PRAGMA integrity_check").fetchone()
+    finally:
+        connection.close()
+    return ImportOutcome(imported_counts={"projects": 1}, integrity=integrity)
+
+
+def _apply_service() -> MigrationService:
+    return MigrationService(legacy_reader=parse_legacy_state, db_importer=_real_importer)
+
+
+def test_confirmed_migration_backs_up_verifies_and_reports(tmp_path: Path) -> None:
+    project = _legacy_project(tmp_path)
+    service = _apply_service()
+    preview = service.preview(project)
+    report = service.apply(preview.preview_id, preview.content_hash, confirm=True)
+    assert report.backup_hash.startswith("sha256:")
+    assert report.database_integrity == "ok"
+    assert report.imported_counts["projects"] == 1
+    assert report.skipped_items
+    assert report.rollback_command
+    assert (project / ".agentdeck" / "agentdeck.db").exists()
+    assert service.authority(project) == "migrated"
+
+
+def test_apply_requires_explicit_confirm(tmp_path: Path) -> None:
+    project = _legacy_project(tmp_path)
+    service = _apply_service()
+    preview = service.preview(project)
+    with pytest.raises(MigrationError, match="confirm"):
+        service.apply(preview.preview_id, preview.content_hash, confirm=False)
+    assert not (project / ".agentdeck" / "agentdeck.db").exists()
+
+
+def test_drift_after_preview_leaves_legacy_authority(tmp_path: Path) -> None:
+    project = _legacy_project(tmp_path)
+    service = _apply_service()
+    preview = service.preview(project)
+    state_json = project / ".agentdeck" / "state.json"
+    state_json.write_text(
+        state_json.read_text(encoding="utf-8").replace("prj_legacy0001", "prj_x"),
+        encoding="utf-8",
+    )
+    with pytest.raises(MigrationError, match="drift"):
+        service.apply(preview.preview_id, preview.content_hash, confirm=True)
+    assert not (project / ".agentdeck" / "agentdeck.db").exists()
+    assert service.authority(project) == "legacy"
+
+
+def test_apply_unknown_preview_id_raises(tmp_path: Path) -> None:
+    _legacy_project(tmp_path)
+    with pytest.raises(MigrationError, match="preview"):
+        _apply_service().apply("mgp_unknown", "sha256:" + "0" * 64, confirm=True)

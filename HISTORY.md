@@ -4,6 +4,26 @@
 
 ## 2026-07-23
 
+### Task 37 slice 3: confirmed migration apply (backup / verify / atomic install)
+
+- **Apply** (`MigrationService.apply(preview_id, content_hash, confirm=True)` +
+  `ImportOutcome`/`MigrationReport`): the service is now stateful across
+  preview→apply. Apply fails closed — leaving legacy authority and writing no new
+  DB — on a missing `confirm=True`, an unknown preview id, a supplied-hash
+  mismatch, or legacy content **drift** since the preview. On success it backs up
+  the legacy sources (content-addressed `backup_hash`), imports through the
+  injected `db_importer` into a fresh temp DB, verifies integrity and the project
+  count, atomically `os.replace`s it to `.agentdeck/agentdeck.db`, and returns a
+  report (`backup_hash`, `database_integrity`, `imported_counts`, `skipped_items`,
+  `rollback_command`). Still application-pure (importer injected; no adapter import).
+- **Tests** (`test_legacy_migration.py`): confirmed apply backs up, verifies, and
+  reports with `projects:1` and flips authority to `migrated`; `confirm=False`,
+  drift after preview, and an unknown preview id all fail closed and leave no new
+  DB / keep authority `legacy`. Green with the architecture/context-firewall guards.
+- **Next**: wire the real SQLite `db_importer` at the composition root + a
+  migration entry point, then docs (`docs/migrations/product-kernel-state-migration.md`
+  + reuse register).
+
 ### Task 37 slice 2: migration preview + authority (read-only)
 
 - **Migration service** (`src/agentdeck/application/migration_service.py`
