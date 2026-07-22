@@ -4,6 +4,35 @@
 
 ## 2026-07-22
 
+### Golden-run driver (golden-run orchestration, slice a)
+
+- **Reusable driver** (`src/agentdeck/product/bootstrap.py` `GoldenRunner` +
+  `GoldenRunResult`): productionizes the Task 33 fake-Golden harness into the
+  composition root. It composes the same real Application graph (`SessionService`
+  / `MissionService` / `ExecutionService` / `ApprovalService` /
+  `ProjectLifecycleService` / real `SQLiteStore`) and drives one goal through
+  say → configure → preview → confirm → a completed four-stage Mission via
+  `ExecutionService.run_confirmed_mission` — no human script advances stages. The
+  Leader and the per-stage Worker **factory are injected**, so the identical
+  driver runs with fake ACP boundaries (deterministic tests) or the real ACP
+  adapters (the live Golden run). It returns status/roles/acceptance/handoff
+  count, the four distinct agent-instance and ACP-session ids, evidence
+  criteria, and SQLite integrity. MissionService is built only after
+  `configure()` (it validates setup authority at construction). Agent-Instance
+  seeding uses the established SQLite convention; real domain provisioning is a
+  later slice.
+- **Tests** (`tests/product_kernel/test_golden_runner.py`): with the fake ACP
+  Leader/Workers the driver completes the exact four stages
+  (implementer→reviewer→reviser→acceptance_reviewer), records three handoffs and
+  a passed acceptance, `sqlite_integrity == "ok"`, and four distinct
+  agent-instance/ACP-session ids. Green with the architecture/context-firewall
+  guards (the new composition-root `ports.leader` import is allowed).
+- **Next golden-run slices**: real Agent-Instance provisioning, real ACP adapter
+  composition (swap the fake factories for `build_acp_adapter_composition`),
+  browser-evidence integration into `assemble_golden_report`, and the
+  `agentdeck _product golden run` CLI — then a fresh preflight and explicit live
+  authorization.
+
 ### Golden report assembler (golden-run orchestration, slice 1)
 
 - **Report assembler** (`src/agentdeck/application/golden_acceptance.py`

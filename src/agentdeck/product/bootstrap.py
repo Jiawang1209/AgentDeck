@@ -41,6 +41,8 @@ from agentdeck.application.execution_service import ExecutionService
 from agentdeck.application.observer_broker import ObserverBroker
 from agentdeck.application.takeover_control import TakeoverControl
 from agentdeck.application.exit_service import ExitService
+from agentdeck.application.leader_service import LeaderService
+from agentdeck.application.mission_service import MissionService
 from agentdeck.application.project_lifecycle_service import ProjectLifecycleService
 from agentdeck.application.recovery_service import RecoveryService
 from agentdeck.application.preflight_service import (
@@ -48,6 +50,11 @@ from agentdeck.application.preflight_service import (
 )
 from agentdeck.application.session_service import SessionService
 from agentdeck.ports.clock import Clock
+from agentdeck.ports.leader import (
+    AvailableAgent, LeaderRequest, ProjectContext, ResolvedLeaderModel,
+)
+from agentdeck.kernel.execution import EvidenceKind
+from agentdeck.kernel.mission import MissionDraft
 from agentdeck.kernel.permissions import PermissionProfile, PermissionScope
 from agentdeck.ports.observer import ObserverCursor
 from agentdeck.ports.transport import TransportPort
@@ -577,8 +584,221 @@ def run_product_preflight(
     return 0 if result.ready else 1
 
 
+# --- Golden-run orchestration (driver) -------------------------------------
+
+
+class _NullEventPublisher:
+    def publish(self, _event: object) -> None:
+        return None
+
+
+@dataclass(frozen=True)
+class GoldenRunResult:
+    status: str
+    started_roles: tuple[str, ...]
+    acceptance: str
+    handoff_count: int
+    evidence_criteria: frozenset[str]
+    mission_id: str
+    worker_backends: tuple[str, ...]
+    agent_instance_ids: tuple[str, ...]
+    acp_session_ids: tuple[str, ...]
+    sqlite_integrity: str
+    execution_result: object
+
+
+class GoldenRunner:
+    """Drive one goal through the real four-stage Mission via injectable Ports.
+
+    Composes the same real Application graph ``build_product_shell`` composes
+    (real ``SessionService`` / ``MissionService`` / ``ExecutionService`` /
+    ``ApprovalService`` / ``ProjectLifecycleService`` / ``SQLiteStore``) and
+    drives say -> configure -> preview -> confirm -> a completed four-stage
+    Mission. The Leader and the per-stage Worker factory are injected, so the
+    same driver runs with fake ACP boundaries (deterministic tests) or the real
+    ACP adapters (the live Golden run). It advances all stages through
+    ``ExecutionService.run_confirmed_mission``; no human script advances stages.
+    """
+
+    def __init__(
+        self,
+        *,
+        project_root: Path,
+        leader: object,
+        worker_factory: Callable[[object], object],
+        available_leaders: Mapping[str, tuple[str, ...]],
+        clock: object | None = None,
+        session_id: str = "ses_golden_run",
+        event_publisher: object | None = None,
+    ) -> None:
+        self._project_root = Path(project_root)
+        self._leader = leader
+        self._worker_factory = worker_factory
+        self._available_leaders = dict(available_leaders)
+        self._clock = clock if clock is not None else SystemClock()
+        self._session_id = session_id
+        self._event_publisher = (
+            event_publisher if event_publisher is not None else _NullEventPublisher()
+        )
+
+    def _seed_agent_instances(self, store, tasks) -> None:
+        # Register the four distinct Agent Instances the confirmed Mission's
+        # Tasks name before any Attempt starts. Real domain-level provisioning is
+        # a later slice; this mirrors the established SQLite seeding convention.
+        now = self._clock.now().isoformat()
+        connection = store._require_writer()
+        for task in tasks:
+            connection.execute(
+                "INSERT INTO agent_instances VALUES (?,?,?,?,?,?,?,?,?,?)",
+                (
+                    task.agent_instance_id, self._session_id, task.backend, "acp",
+                    "1", task.role.value, None, "active", now, now,
+                ),
+            )
+        connection.commit()
+
+    async def run(
+        self,
+        *,
+        goal: str,
+        leader_backend: str,
+        leader_model: str,
+        permission_profile: PermissionProfile,
+    ) -> GoldenRunResult:
+        store = SQLiteStore.open(self._project_root, clock=self._clock)
+        try:
+            session = SessionService(
+                store=store, clock=self._clock, session_id=self._session_id,
+                project_root=str(self._project_root),
+                available_leaders=self._available_leaders,
+            )
+            probe = MissionDraft.coding_default(
+                "drf_probe", "probe objective", str(self._project_root),
+                leader_backend, leader_model, permission_profile,
+            )
+            self._seed_agent_instances(store, probe.tasks)
+            runtime = ForegroundExecutionRuntime()
+            lifecycle = ProjectLifecycleService(
+                store=store, clock=self._clock, session_id=self._session_id,
+            )
+            approval = ApprovalService(
+                store=store, clock=self._clock,
+                event_publisher=self._event_publisher,
+            )
+            execution = ExecutionService(
+                store=store, clock=self._clock, approval_service=approval,
+                worker_factory=self._worker_factory, runtime=runtime,
+                lifecycle=lifecycle,
+            )
+            available_agents = tuple(
+                AvailableAgent(
+                    instance_id=task.agent_instance_id, role=task.role,
+                    backend_id=task.backend, acp_route_id=task.acp_route,
+                )
+                for task in probe.tasks
+            )
+            request_template = LeaderRequest(
+                user_goal="placeholder goal",
+                project_context=ProjectContext(
+                    project_root=str(self._project_root),
+                    summary="golden product mission",
+                ),
+                available_agents=available_agents,
+                permission_ceiling=permission_profile,
+                resolved_model=ResolvedLeaderModel(
+                    backend_id=leader_backend, adapter_id="acp",
+                    model_id=leader_model, version="unreported",
+                ),
+            )
+            if not session.accept_text(goal).accepted:
+                raise RuntimeError("golden goal was not accepted")
+            configured = session.configure(
+                leader=leader_backend, model=leader_model,
+                permission=permission_profile.value,
+            )
+            if not configured.accepted:
+                raise RuntimeError("golden configure was rejected")
+            # MissionService validates the Leader/model/permission setup
+            # authority at construction, so it is built only after configure().
+            mission = MissionService(
+                store=store, clock=self._clock, session_id=self._session_id,
+                leader_service=LeaderService(self._leader),
+                request_template=request_template, session_authority=session,
+                preview_validator=validate_mission_preview,
+            )
+            resumed = session.resume()
+            if resumed.goal is not None:
+                proposal = mission.propose(resumed.goal)
+                if proposal.preview is None:
+                    raise RuntimeError("golden mission proposal failed")
+            preview = mission.current_preview()
+            if preview is None:
+                raise RuntimeError("no golden Mission Preview is available")
+            draft = preview.draft
+            confirmation = mission.confirm(preview.preview_id, preview.content_hash)
+            if confirmation.mission is None:
+                raise RuntimeError("golden mission confirmation failed")
+            confirmed = confirmation.mission
+            execution_result = await execution.run_confirmed_mission(
+                session_id=session.current().session_id, confirmed=confirmed,
+                draft=draft,
+                permission_scope=PermissionScope.for_profile(draft.permission_profile),
+            )
+            if execution_result.diagnostic is None:
+                lifecycle.complete_mission()
+
+            role_by_task = {task.task_id: task.role.value for task in draft.tasks}
+            backend_by_task = {task.task_id: task.backend for task in draft.tasks}
+            started_roles = tuple(
+                role_by_task[attempt.task_id]
+                for attempt in execution_result.attempts
+            )
+            worker_backends = tuple(
+                backend_by_task[attempt.task_id]
+                for attempt in execution_result.attempts
+            )
+            agent_instance_ids = tuple(
+                store.load_aggregate("attempts", attempt.attempt_id)[
+                    "agent_instance_id"
+                ]
+                for attempt in execution_result.attempts
+            )
+            acp_session_ids = tuple(
+                store.load_aggregate("attempts", attempt.attempt_id)["acp_session_id"]
+                for attempt in execution_result.attempts
+            )
+            acceptance_evidence = next(
+                (
+                    item for item in execution_result.evidence
+                    if item.kind is EvidenceKind.ACCEPTANCE_RESULT
+                ),
+                None,
+            )
+            evidence_criteria: frozenset[str] = frozenset()
+            if acceptance_evidence is not None:
+                payload = json.loads(acceptance_evidence.canonical_content)
+                evidence_criteria = frozenset(payload["evidence_by_criterion"])
+            passed = execution_result.diagnostic is None
+            return GoldenRunResult(
+                status="completed" if passed else "failed",
+                started_roles=started_roles,
+                acceptance="passed" if passed else "failed",
+                handoff_count=len(execution_result.handoffs),
+                evidence_criteria=evidence_criteria,
+                mission_id=confirmed.mission_id,
+                worker_backends=worker_backends,
+                agent_instance_ids=agent_instance_ids,
+                acp_session_ids=acp_session_ids,
+                sqlite_integrity=store.integrity_check(),
+                execution_result=execution_result,
+            )
+        finally:
+            store.close()
+
+
 __all__ = [
     "ACPAdapterComposition", "build_acp_adapter_composition",
     "build_product_shell", "run_product_dev",
     "RealPreflightProbe", "run_product_preflight",
+    "GoldenRunner", "GoldenRunResult",
 ]
