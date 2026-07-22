@@ -730,7 +730,9 @@ class GoldenRunner:
                 permission=permission_profile.value,
             )
             if not configured.accepted:
-                raise RuntimeError("golden configure was rejected")
+                raise RuntimeError(
+                    f"golden configure was rejected: {configured.diagnostic}"
+                )
             # MissionService validates the Leader/model/permission setup
             # authority at construction, so it is built only after configure().
             mission = MissionService(
@@ -743,14 +745,18 @@ class GoldenRunner:
             if resumed.goal is not None:
                 proposal = mission.propose(resumed.goal)
                 if proposal.preview is None:
-                    raise RuntimeError("golden mission proposal failed")
+                    raise RuntimeError(
+                        f"golden mission proposal failed: {proposal.diagnostic}"
+                    )
             preview = mission.current_preview()
             if preview is None:
                 raise RuntimeError("no golden Mission Preview is available")
             draft = preview.draft
             confirmation = mission.confirm(preview.preview_id, preview.content_hash)
             if confirmation.mission is None:
-                raise RuntimeError("golden mission confirmation failed")
+                raise RuntimeError(
+                    f"golden mission confirmation failed: {confirmation.diagnostic}"
+                )
             confirmed = confirmation.mission
             execution_result = await execution.run_confirmed_mission(
                 session_id=session.current().session_id, confirmed=confirmed,

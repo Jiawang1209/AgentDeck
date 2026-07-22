@@ -13,11 +13,20 @@ from datetime import datetime, timezone
 from functools import wraps
 from pathlib import Path
 
+import pytest
+
 from agentdeck.kernel.mission import MissionDraft
 from agentdeck.kernel.permissions import PermissionProfile
 from agentdeck.product.bootstrap import GoldenRunner
 
 from .fakes import FakeACPLeader, FrozenClock, ScriptedACPWorker
+
+
+class _EmptyProposalLeader:
+    """A Leader whose proposal fails validation (empty payload)."""
+
+    def propose_mission(self, request) -> dict:
+        return {}
 
 NOW = datetime(2026, 7, 22, 9, 0, tzinfo=timezone.utc)
 GOLDEN_GOAL = (
@@ -87,3 +96,25 @@ async def test_golden_runner_reports_four_distinct_agents_and_sessions(
     assert len(set(result.agent_instance_ids)) == 4
     assert len(set(result.acp_session_ids)) == 4
     assert len(result.worker_backends) == 4
+
+
+@async_test
+async def test_golden_runner_surfaces_proposal_diagnostic(tmp_path: Path) -> None:
+    # A failed Leader proposal must carry its diagnostic into the error, not a
+    # bare "proposal failed" (the gap that hid the first live run's real reason).
+    runner = GoldenRunner(
+        project_root=tmp_path,
+        leader=_EmptyProposalLeader(),
+        worker_factory=lambda task: ScriptedACPWorker(task.name, ()),
+        available_leaders={_LEADER_BACKEND: (_LEADER_MODEL,)},
+        clock=FrozenClock(NOW),
+    )
+    with pytest.raises(RuntimeError) as excinfo:
+        await runner.run(
+            goal=GOLDEN_GOAL, leader_backend=_LEADER_BACKEND,
+            leader_model=_LEADER_MODEL,
+            permission_profile=PermissionProfile.APPROVE_FOR_ME,
+        )
+    message = str(excinfo.value)
+    assert "proposal failed:" in message
+    assert message.strip() != "golden mission proposal failed:"

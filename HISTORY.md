@@ -4,6 +4,29 @@
 
 ## 2026-07-23
 
+### Golden live run attempt 1 — failed at Leader proposal; observability fix
+
+- **Live run (authorized diagnostic run) at frozen `5165d2e1`** (Leader
+  `codex-cli`, model `gpt-5.5`, permission `full-access`, disposable project)
+  **failed fast** at the real Codex ACP Leader's mission proposal:
+  `GoldenRunner.run` raised `golden mission proposal failed` because
+  `proposal.preview is None`. Durable evidence in the disposable
+  `agentdeck.db` shows only session_created → goal recorded → session_configured;
+  **no mission proposed, no worker execution** — so essentially no model budget
+  was spent. Cleanup: disposable project and process/ACP residue removed (no
+  leftover `agentdeck-codex-acp`/`claude-agent-acp`/app-server processes). This
+  authority is consumed; per Task 36 rules it is NOT retried automatically.
+- **Root observability gap fixed** (`GoldenRunner.run`): the configure /
+  proposal / confirmation error paths discarded their `MissionResult.diagnostic`,
+  hiding *why* the real Leader proposal failed. They now append the diagnostic
+  (`golden mission proposal failed: <diagnostic>`), so the next authorized run
+  reveals the actual blocker. Regression `test_golden_runner.py::
+  test_golden_runner_surfaces_proposal_diagnostic` proves a failed proposal
+  carries its diagnostic into the error; the happy-path runner tests stay green.
+- **Next**: a new human-authorized diagnostic run at the post-fix commit will
+  surface the real Leader-proposal diagnostic; then write deterministic RED for
+  that actual blocker and repair. No auto-retry, no evidence rewrite.
+
 ### Task 37 slice 5: migration docs (Task 37 flow complete)
 
 - **Migration guide** (`docs/migrations/product-kernel-state-migration.md`):
