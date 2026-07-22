@@ -4,6 +4,40 @@
 
 ## 2026-07-22
 
+### Task 34: define the frozen website target and Browser evidence adapter
+
+- **Frozen Golden target** (`tests/product_kernel/fixtures/reference_homepage/`):
+  a license-clean, original `index.html` fixture reproducing only a generic
+  research-institute homepage layout (navigation, hero carousel, responsive
+  menu, content modules) — explicitly **not** the official `iae.cas.cn` site and
+  copying no markup/text/media — plus `target-manifest.json` freezing fixed
+  viewports `(1440,1200)`/`(390,844)`, required structure selectors, interaction
+  checks, allowed tolerances (`pixel_ratio`, `layout_shift_px`), and an empty
+  `source_assets` list.
+- **Browser evidence adapter** (`src/agentdeck/adapters/browser.py`): a
+  `BrowserPort` with two implementations. `DeterministicBrowser` (default,
+  stdlib-only) parses the local fixture, grades the manifest's structure and
+  `navigation`/`carousel`/`responsive_menu` interaction rules against the DOM,
+  and content-addresses each viewport over a normalized structure snapshot — no
+  browser, no network, fully reproducible. `PlaywrightBrowser` is the optional
+  real pixel-capture path for the authorized live Golden gates only; Playwright
+  is imported lazily inside the adapter behind a new optional `browser` extra in
+  `pyproject.toml`, so the deterministic suite never requires it.
+- **Evidence-contract tests** (`tests/product_kernel/test_browser_evidence.py`):
+  verify fixed viewports/interactions and per-screenshot content hashes against
+  the local fixture, assert the manifest carries no copyrighted reference
+  assets, and add focused regressions proving interactions are really evaluated
+  (a stripped fixture fails only the carousel), hashes are deterministic and
+  distinct per viewport, structure facts cover every required selector, and the
+  visual diff stays within declared tolerances. `test_browser_evidence.py`
+  passes with `test_four_stage_e2e.py` (`8 passed`); the architecture and
+  context-firewall guards stay green (`50 passed`).
+- **Validation note**: `docs/validation/product-kernel-golden-gate.md` records
+  the license posture (repository stores rules/selectors/tolerances/hashes only;
+  real captures and copyrighted assets stay outside Git) and the deterministic
+  vs. optional-live adapter split. No real browser, Playwright install, network,
+  or live Mission ran.
+
 ### Task 33: prove the deterministic Fake four-stage product journey end-to-end
 
 - **New E2E proof** (`tests/product_kernel/test_four_stage_e2e.py` +

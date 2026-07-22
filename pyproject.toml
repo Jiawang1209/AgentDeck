@@ -11,6 +11,11 @@ requires-python = ">=3.11"
 authors = [{ name = "AgentDeck Contributors" }]
 dependencies = ["agent-client-protocol==0.11.0"]
 
+# Optional real pixel-capture path for the live Golden gates only. The
+# deterministic test suite and the default DeterministicBrowser never need it.
+[project.optional-dependencies]
+browser = ["playwright>=1.40"]
+
 [project.scripts]
 agentdeck = "agentdeck.entrypoint:main"
 agentdeck-codex-acp = "agentdeck.adapters.codex_acp_server:main"

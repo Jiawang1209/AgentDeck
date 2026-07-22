@@ -1,0 +1,43 @@
+{
+  "target_id": "local-frozen-homepage",
+  "description": "Lawful local reproduction target for the Golden Product Gate. Structure and interaction rules only; NOT the official iae.cas.cn site. No copyrighted markup, text, media, or assets are stored in this repository.",
+  "provenance": {
+    "note": "Interaction and structure targets describe a generic research-institute homepage layout. Real reference captures and any copyrighted assets are kept outside Git; this manifest stores only rules, selectors, tolerances, and hashes.",
+    "frozen_at": "2026-07-22T00:00:00+00:00"
+  },
+  "viewports": [
+    {"name": "desktop", "width": 1440, "height": 1200},
+    {"name": "mobile", "width": 390, "height": 844}
+  ],
+  "structure": {
+    "required_selectors": [
+      "header.site-header",
+      "nav.primary-nav",
+      "section.hero-carousel",
+      "button.menu-toggle",
+      "main#content",
+      "footer.site-footer"
+    ]
+  },
+  "interactions": {
+    "navigation": {
+      "selector": "nav.primary-nav a",
+      "min_count": 3
+    },
+    "carousel": {
+      "selector": "section.hero-carousel [data-slide]",
+      "min_count": 2,
+      "control_selector": "section.hero-carousel [data-carousel-control]"
+    },
+    "responsive_menu": {
+      "viewport": "mobile",
+      "toggle_selector": "button.menu-toggle",
+      "collapsible_selector": "nav.primary-nav[data-collapsible]"
+    }
+  },
+  "tolerances": {
+    "pixel_ratio": 0.02,
+    "layout_shift_px": 8
+  },
+  "source_assets": []
+}
