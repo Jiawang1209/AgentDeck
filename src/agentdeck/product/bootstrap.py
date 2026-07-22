@@ -8,7 +8,10 @@ from hashlib import sha256
 import json
 from pathlib import Path
 import platform
+import re
+import shutil
 import sqlite3
+import subprocess
 import sys
 from types import MappingProxyType
 from uuid import uuid4
@@ -19,11 +22,13 @@ from agentdeck.adapters.acp_leader import ACPLeader
 from agentdeck.adapters.acp_transport import ACPStdioTransport
 from agentdeck.adapters.acp_worker_connection import create_worker_connection
 from agentdeck.adapters.adapter_readiness import (
-    AdapterReadiness, canonical_project_root, execution_command,
-    verified_readiness,
+    AdapterReadiness, blocked_readiness, canonical_project_root,
+    execution_command, verified_readiness,
 )
+from agentdeck.adapters.codex_app_server_probe import probe_codex_bridge
 from agentdeck.adapters.discovery import (
-    ReadinessState, ToolDiscovery, discover_tools,
+    ClaudeAdapterFacts, CodexAdapterFacts, ReadinessState, ToolDiscovery,
+    classify_claude, classify_codex, discover_tools,
 )
 from agentdeck.adapters.observer_ipc import UnixObserverServer
 from agentdeck.adapters.sqlite import SQLiteStore
@@ -341,44 +346,140 @@ def _tool_summary(fact: ToolDiscovery | None) -> str:
     return f"{fact.resolved_path}@{fact.version or 'unknown'}"
 
 
-def _acp_summary(fact: ToolDiscovery | None) -> str:
-    if fact is None:
-        return "missing"
-    return "acp_available" if fact.acp_available else "unavailable"
+def _acp_summary(readiness: AdapterReadiness) -> str:
+    return "acp_available" if readiness.ready else "unavailable"
+
+
+def _readiness_summary(readiness: AdapterReadiness) -> str:
+    if readiness.ready:
+        return f"{readiness.cli_path}@{readiness.cli_version}"
+    code = readiness.diagnostic.code if readiness.diagnostic else "not_ready"
+    return f"not_ready:{code}"
+
+
+def _cli_semver(path: str | None, argument: str = "--version") -> str | None:
+    if path is None:
+        return None
+    try:
+        completed = subprocess.run(
+            [path, argument], capture_output=True, text=True, timeout=15
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    match = re.search(r"\d+\.\d+(?:\.\d+)?", completed.stdout or completed.stderr or "")
+    return match.group(0) if match else None
+
+
+def _real_codex_readiness() -> AdapterReadiness:
+    """Classify real Codex ACP facts via the bounded, read-only bridge probe."""
+    codex = shutil.which("codex")
+    bridge = shutil.which("agentdeck-codex-acp")
+    if codex is None or bridge is None:
+        return classify_codex(
+            CodexAdapterFacts(
+                cli_path=codex, cli_version=None, app_server_available=False,
+                app_server_version=None, bridge_path=bridge, schema_digest=None,
+            )
+        )
+    try:
+        probe = probe_codex_bridge([codex, "app-server"])
+    except (OSError, ValueError, subprocess.SubprocessError, RuntimeError):
+        return blocked_readiness("codex-cli", "codex_app_server_probe_failed")
+    version = probe.version or ""
+    app_server_version = version.removeprefix("codex-cli ").strip() or None
+    return classify_codex(
+        CodexAdapterFacts(
+            cli_path=codex, cli_version=probe.version,
+            app_server_available=probe.ready,
+            app_server_version=app_server_version, bridge_path=bridge,
+            schema_digest=probe.schema_digest,
+        )
+    )
+
+
+def _claude_authenticated(claude: str | None) -> bool:
+    """Passive login check via ``claude auth status`` (no prompt, read-only)."""
+    if claude is None:
+        return False
+    try:
+        completed = subprocess.run(
+            [claude, "auth", "status"], capture_output=True, text=True, timeout=15
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    text = completed.stdout.strip()
+    if not text.startswith("{"):
+        return False
+    try:
+        return json.loads(text).get("loggedIn") is True
+    except json.JSONDecodeError:
+        return False
+
+
+def _real_claude_readiness() -> AdapterReadiness:
+    """Classify real Claude ACP facts from passive CLI/auth/adapter checks."""
+    claude = shutil.which("claude")
+    adapter = shutil.which("claude-agent-acp")
+    cli_semver = _cli_semver(claude)
+    adapter_semver = _cli_semver(adapter)
+    return classify_claude(
+        ClaudeAdapterFacts(
+            cli_path=claude,
+            cli_version=f"claude-cli {cli_semver}" if cli_semver else None,
+            authenticated=_claude_authenticated(claude),
+            adapter_path=adapter,
+            adapter_version=(
+                f"claude-agent-acp {adapter_semver}" if adapter_semver else None
+            ),
+        )
+    )
 
 
 class RealPreflightProbe:
     """Read-only environment probe for the authorized real preflight.
 
-    Composes the existing tool discovery (real PATH lookup plus passive
-    version/auth/ACP probes) with a read-only SQLite integrity check. It
+    ACP readiness comes from the real adapter classifiers (``classify_codex`` /
+    ``classify_claude`` over facts gathered by the bounded ``probe_codex_bridge``
+    and passive CLI/auth checks) — never from bare ``discover_tools`` PATH
+    lookup, which cannot observe ACP availability without passive probes. It
     installs nothing, authenticates nothing, selects no fallback, generates no
-    source, and sends no model prompt.
+    source, and sends no model prompt. Discovery and the two readiness sources
+    are injectable so the probe is deterministically testable.
     """
 
-    def __init__(self, project_root: str) -> None:
+    def __init__(
+        self,
+        project_root: str,
+        *,
+        discovery: Callable[[], Mapping[str, ToolDiscovery]] = discover_tools,
+        codex_readiness: Callable[[], AdapterReadiness] = _real_codex_readiness,
+        claude_readiness: Callable[[], AdapterReadiness] = _real_claude_readiness,
+    ) -> None:
         self._project_root = Path(project_root)
+        self._discovery = discovery
+        self._codex_readiness = codex_readiness
+        self._claude_readiness = claude_readiness
 
     def inspect(self) -> EnvironmentReport:
-        discovered = discover_tools()
-        codex = discovered.get("codex")
-        claude = discovered.get("claude")
+        discovered = self._discovery()
         tmux = discovered.get("tmux")
+        codex = self._codex_readiness()
+        claude = self._claude_readiness()
         facts = {
             "python_version": platform.python_version(),
             "python_executable": sys.executable,
-            "codex_cli": _tool_summary(codex),
-            "claude_cli": _tool_summary(claude),
+            "codex_cli": _readiness_summary(codex),
+            "claude_cli": _readiness_summary(claude),
             "codex_acp": _acp_summary(codex),
             "claude_acp": _acp_summary(claude),
-            "codex_app_server_schema": _acp_summary(codex),
+            "codex_app_server_schema": codex.schema_digest or "unavailable",
             "tmux": _tool_summary(tmux),
             "sqlite": self._sqlite_summary(),
         }
         blockers: list[str] = []
-        if codex is None or codex.readiness is not ReadinessState.READY:
+        if not codex.ready:
             blockers.append("codex_not_ready")
-        if claude is None or claude.readiness is not ReadinessState.READY:
+        if not claude.ready:
             blockers.append("claude_not_ready")
         if tmux is None or tmux.resolved_path is None:
             blockers.append("tmux_unavailable")

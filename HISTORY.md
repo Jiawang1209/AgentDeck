@@ -4,6 +4,33 @@
 
 ## 2026-07-22
 
+### Task 35 fix: consume the real ACP readiness signal in RealPreflightProbe
+
+- **Defect**: the first authorized real preflight run returned `ready=false`
+  with `codex_not_ready` / `claude_not_ready` even though codex, claude, and
+  tmux were installed. Root cause: `RealPreflightProbe` read bare
+  `discover_tools()`, whose `authenticated`/`acp_available` are always `False`
+  when no passive probes are supplied (`_probe_boolean(None) -> False`), so codex
+  and claude could never classify above `DISCOVERED`. The verdict reflected a
+  probe gap, not a real environment gap.
+- **Fix** (`src/agentdeck/product/bootstrap.py`): `RealPreflightProbe` now
+  derives ACP readiness from the real adapter classifiers
+  `classify_codex` / `classify_claude` over facts gathered by the bounded,
+  read-only `probe_codex_bridge` (codex app-server version + schema digest) and
+  passive CLI/auth checks (`claude auth status` JSON `loggedIn`, resolved
+  `agentdeck-codex-acp` / `claude-agent-acp` paths and versions). Discovery and
+  the two readiness sources are injectable so the probe is deterministically
+  testable; the real defaults install nothing, authenticate nothing, select no
+  fallback, generate no source, and send no model prompt.
+- **Tests** (`tests/product_kernel/test_preflight_real_probe.py`): inject fake
+  ready / blocked `AdapterReadiness` and assert the probe surfaces
+  `codex_acp`/`claude_acp` facts, the codex schema digest, and
+  `codex_not_ready`/`claude_not_ready`/`tmux_unavailable` blockers from the real
+  signal rather than bare discovery. Green with the preflight service/read-only
+  tests and the architecture/firewall/dev-entry guards.
+- **Boundary**: still deterministic; running the authorized real preflight at a
+  frozen commit remains an explicit human-authorized step.
+
 ### Task 35: implement the read-only real product preflight (deterministic slice)
 
 - **Preflight service** (`src/agentdeck/application/preflight_service.py`): a
