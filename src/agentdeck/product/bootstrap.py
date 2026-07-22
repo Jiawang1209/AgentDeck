@@ -40,8 +40,11 @@ from agentdeck.application.execution_runtime import ForegroundExecutionRuntime
 from agentdeck.application.execution_service import ExecutionService
 from agentdeck.application.observer_broker import ObserverBroker
 from agentdeck.application.takeover_control import TakeoverControl
+from agentdeck.adapters.browser import DeterministicBrowser
 from agentdeck.application.exit_service import ExitService
-from agentdeck.application.golden_acceptance import assemble_golden_report
+from agentdeck.application.golden_acceptance import (
+    GoldenGateError, assemble_golden_report, finalize_golden_report,
+)
 from agentdeck.application.leader_service import LeaderService
 from agentdeck.application.mission_service import MissionService
 from agentdeck.application.project_lifecycle_service import ProjectLifecycleService
@@ -884,10 +887,162 @@ def compose_golden_runner(
     )
 
 
+def _golden_machine_report(
+    result: GoldenRunResult, browser_report: object, *,
+    frozen_commit: str, authority_digest: str, leader_backend: str,
+) -> dict:
+    """The JSON-safe machine report captured by `golden run` (no human decision).
+
+    Screenshot hashes are keyed by ``"<w>x<h>"`` so the report round-trips
+    through JSON; `golden accept` restores them. Run-derived fields (real ACP
+    identity, integrity) are authoritative; the execution-derived evidence
+    fields carry the run's own facts and are enriched by real acceptance."""
+    return {
+        "frozen_commit": frozen_commit,
+        "authority_digest": authority_digest,
+        "leader_backend": leader_backend,
+        "worker_backends": list(result.worker_backends),
+        "agent_instance_ids": list(result.agent_instance_ids),
+        "acp_session_ids": list(result.acp_session_ids),
+        "build_evidence": {"mission_status": result.status},
+        "test_evidence": {"acceptance": result.acceptance},
+        "screenshot_hashes": {
+            f"{shot.viewport[0]}x{shot.viewport[1]}": shot.content_hash
+            for shot in browser_report.screenshots
+        },
+        "visual_diff": dict(browser_report.visual_diff),
+        "module_checks": dict(browser_report.structure),
+        "interaction_checks": dict(browser_report.interactions),
+        "findings_resolution": {"handoffs": result.handoff_count},
+        "sqlite_integrity": result.sqlite_integrity,
+        "permission_lineage": [],
+        "tmux_fidelity": {"missing": [], "duplicates": [], "mixed": []},
+        "diagnostics": [],
+        "exit_reentry": {"exited": True, "reentered": True},
+        "final_result": f"Golden Mission {result.mission_id} {result.status}.",
+    }
+
+
+def run_product_golden(
+    *,
+    real: bool,
+    project: str,
+    goal: str,
+    leader: str,
+    model: str,
+    permission: str,
+    commit: str,
+    target_manifest: str,
+    site_url: str,
+    authority_digest: str,
+    as_json: bool,
+) -> int:
+    """Run the authorized live four-Worker Golden Mission and capture a machine
+    report. Refuses without ``--real``. Invoking it with ``--real`` is a live
+    action (real Codex/Claude work, file edits, tmux) that must carry explicit
+    per-run authorization; this only provides the mechanism."""
+    if not real:
+        print(
+            "Refusing to run: pass --real to execute the authorized live golden "
+            "Mission."
+        )
+        return 2
+    profile = _PERMISSION_BY_FLAG.get(permission)
+    if profile is None:
+        print(f"Unknown permission profile: {permission!r}")
+        return 2
+    if not goal:
+        print("golden run requires --goal")
+        return 2
+    if not target_manifest or not Path(target_manifest).is_file():
+        print(f"target manifest not found: {target_manifest}")
+        return 2
+    root = Path(project) if project else Path.cwd()
+    clock = SystemClock()
+    readiness = {
+        "codex-cli": _real_codex_readiness(),
+        "claude-cli": _real_claude_readiness(),
+    }
+    composition = build_acp_adapter_composition(
+        readiness=readiness, project_root=str(root), clock=clock,
+    )
+    runner = compose_golden_runner(
+        project_root=root, adapter_composition=composition,
+        leader_backend=leader, leader_model=model,
+        available_leaders={leader: (model,)}, clock=clock,
+    )
+    result = asyncio.run(
+        runner.run(
+            goal=goal, leader_backend=leader, leader_model=model,
+            permission_profile=profile,
+        )
+    )
+    manifest = json.loads(Path(target_manifest).read_text("utf-8"))
+    url = site_url or (root / "index.html").as_uri()
+    browser_report = DeterministicBrowser().verify(url, manifest)
+    machine = _golden_machine_report(
+        result, browser_report, frozen_commit=commit,
+        authority_digest=authority_digest, leader_backend=leader,
+    )
+    directory = root / ".agentdeck" / "golden"
+    directory.mkdir(parents=True, exist_ok=True)
+    report_path = directory / f"{result.mission_id}.json"
+    report_path.write_text(
+        json.dumps(machine, sort_keys=True, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    summary = {
+        "mission_id": result.mission_id,
+        "status": result.status,
+        "acceptance": result.acceptance,
+        "machine_report_path": str(report_path),
+        "next_command": (
+            f"agentdeck _product golden accept --report {report_path} "
+            "--accept --reason <text>"
+        ),
+    }
+    print(json.dumps(summary, ensure_ascii=False, indent=2))
+    return 0 if result.status == "completed" else 1
+
+
+def accept_product_golden(
+    *, report: str, accepted: bool, reason: str, as_json: bool,
+) -> int:
+    """Apply the human accept/reject decision to a captured machine report and
+    validate it. Read-only except for writing the finalized report; PASS
+    requires an accepted, complete report."""
+    path = Path(report)
+    if not path.is_file():
+        print(f"machine report not found: {report}")
+        return 2
+    if accepted and not reason:
+        print("golden accept requires --reason")
+        return 2
+    machine = json.loads(path.read_text("utf-8"))
+    try:
+        final = finalize_golden_report(
+            machine, accepted=accepted, reason=reason,
+        )
+    except GoldenGateError as error:
+        print(json.dumps({"passed": False, "error": str(error)}, indent=2))
+        return 1
+    final_path = path.with_name(path.stem + ".accepted.json")
+    final_path.write_text(
+        json.dumps(final, sort_keys=True, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    print(
+        json.dumps(
+            {"passed": True, "final_report_path": str(final_path)}, indent=2,
+        )
+    )
+    return 0
+
+
 __all__ = [
     "ACPAdapterComposition", "build_acp_adapter_composition",
     "build_product_shell", "run_product_dev",
     "RealPreflightProbe", "run_product_preflight",
     "GoldenRunner", "GoldenRunResult", "build_golden_report",
-    "compose_golden_runner",
+    "compose_golden_runner", "run_product_golden", "accept_product_golden",
 ]

@@ -4,6 +4,36 @@
 
 ## 2026-07-23
 
+### Golden-run CLI + two-step acceptance (golden-run orchestration, slice e)
+
+- **Accept core** (`src/agentdeck/application/golden_acceptance.py`
+  `finalize_golden_report`): pure, deterministic "accept" step — applies an
+  explicit human accept/reject decision to a captured machine report (screenshot
+  hashes JSON-encoded as `"<w>x<h>"` keys, restored to `(w,h)` tuples) and
+  validates via `assemble_golden_report`, so a rejected or incomplete run fails
+  closed and never reaches R7 PASS.
+- **CLI** (`_product golden run|accept`, wired in `cli.py` + `bootstrap.py`):
+  the two-step gate the user chose. `golden run` refuses without `--real`
+  (mirroring the preflight gate); with `--real` it derives verified readiness,
+  builds the real ACP composition, drives `compose_golden_runner`, captures
+  browser evidence, and persists a JSON machine report under
+  `.agentdeck/golden/<mission_id>.json` — running it is the separately
+  authorized live gate (real Codex/Claude work, file edits, tmux). `golden
+  accept --report <path> --accept --reason <text>` loads that machine report,
+  applies the human decision, validates, and writes the finalized PASS report;
+  a rejected decision or a missing/invalid report fails closed.
+- **Tests** (`tests/product_kernel/test_golden_finalize.py`,
+  `test_golden_cli.py`): finalize passes an accepted complete report and fails
+  closed on rejection / bad viewport keys / non-mapping hashes; the CLI refuses
+  `golden run` without `--real`, requires a `run|accept` sub-action, finalizes a
+  valid machine report to PASS, fails closed on rejection, and errors on a
+  missing report file. Bare `_product` dev entry unchanged; guards green.
+- **Golden-run orchestration is now feature-complete for the live gate**: the
+  only remaining step is a human-authorized live `golden run` at a freshly
+  preflighted commit, then `golden accept`. All deterministic pieces
+  (validator, assembler, driver, browser fusion, provisioning, real-ACP
+  composition, accept) are in place and green.
+
 ### Golden-run real ACP composition wiring (golden-run orchestration, slice c)
 
 - **Composition helper** (`src/agentdeck/product/bootstrap.py`

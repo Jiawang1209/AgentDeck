@@ -180,9 +180,42 @@ def validate_golden_report(report: object) -> None:
         )
 
 
+def finalize_golden_report(
+    machine_report: object, *, accepted: bool, reason: str
+) -> dict:
+    """Apply an explicit human decision to a machine report and validate it.
+
+    This is the "accept" step of the two-step Golden gate: the `golden run`
+    command captures the machine evidence (everything except the human
+    decision), and a human — after watching the Product journey — records
+    accepted/rejected plus a reason here. `screenshot_hashes` arrive JSON-encoded
+    as ``"<w>x<h>"`` string keys and are restored to `(w, h)` tuples. The result
+    is validated by `assemble_golden_report`, so a rejected run (or any gap)
+    fails closed and never reaches R7 PASS.
+    """
+    if not isinstance(machine_report, Mapping):
+        raise GoldenGateError("machine_report must be a mapping")
+    raw = dict(machine_report)
+    hashes = raw.pop("screenshot_hashes", None)
+    if not isinstance(hashes, Mapping):
+        raise GoldenGateError("machine_report screenshot_hashes must be a mapping")
+    screenshot_hashes: dict[tuple[int, int], str] = {}
+    for key, value in hashes.items():
+        parts = key.split("x") if isinstance(key, str) else ()
+        if len(parts) != 2 or not all(p.isdigit() for p in parts):
+            raise GoldenGateError(f"invalid screenshot viewport key: {key!r}")
+        screenshot_hashes[(int(parts[0]), int(parts[1]))] = value
+    return assemble_golden_report(
+        **raw,
+        screenshot_hashes=screenshot_hashes,
+        human_acceptance={"accepted": bool(accepted), "reason": reason},
+    )
+
+
 __all__ = [
     "GOLDEN_REQUIRED_FIELDS",
     "GoldenGateError",
     "assemble_golden_report",
+    "finalize_golden_report",
     "validate_golden_report",
 ]

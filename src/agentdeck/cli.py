@@ -18388,7 +18388,8 @@ def run_loop_command(args: argparse.Namespace) -> int:
 
 
 def product_dev_command(args: argparse.Namespace) -> int:
-    if getattr(args, "product_action", None) == "preflight":
+    action = getattr(args, "product_action", None)
+    if action == "preflight":
         from agentdeck.product.bootstrap import run_product_preflight
 
         return run_product_preflight(
@@ -18401,6 +18402,35 @@ def product_dev_command(args: argparse.Namespace) -> int:
             target_manifest=args.target_manifest,
             as_json=bool(args.as_json),
         )
+    if action == "golden":
+        golden = getattr(args, "golden_action", None)
+        if golden == "run":
+            from agentdeck.product.bootstrap import run_product_golden
+
+            return run_product_golden(
+                real=bool(args.real),
+                project=args.project,
+                goal=args.goal,
+                leader=args.leader,
+                model=args.model,
+                permission=args.permission,
+                commit=args.commit,
+                target_manifest=args.target_manifest,
+                site_url=args.site_url,
+                authority_digest=args.authority_digest,
+                as_json=bool(args.as_json),
+            )
+        if golden == "accept":
+            from agentdeck.product.bootstrap import accept_product_golden
+
+            return accept_product_golden(
+                report=args.report,
+                accepted=bool(args.golden_accept),
+                reason=args.reason,
+                as_json=bool(args.as_json),
+            )
+        print("golden requires a sub-action: run|accept")
+        return 2
     from agentdeck.product.bootstrap import run_product_dev
 
     return run_product_dev(diagnostic=bool(args.diagnostic))
@@ -19249,7 +19279,10 @@ def build_parser() -> argparse.ArgumentParser:
     product_dev = subparsers.add_parser("_product", help=argparse.SUPPRESS)
     product_dev.add_argument("--diagnostic", action="store_true")
     product_dev.add_argument(
-        "product_action", nargs="?", choices=("preflight",), default=None
+        "product_action", nargs="?", choices=("preflight", "golden"), default=None
+    )
+    product_dev.add_argument(
+        "golden_action", nargs="?", choices=("run", "accept"), default=None
     )
     product_dev.add_argument("--real", action="store_true")
     product_dev.add_argument("--commit", default="")
@@ -19258,6 +19291,12 @@ def build_parser() -> argparse.ArgumentParser:
     product_dev.add_argument("--permission", default="approve-for-me")
     product_dev.add_argument("--authority-digest", default="")
     product_dev.add_argument("--target-manifest", default="")
+    product_dev.add_argument("--project", default="")
+    product_dev.add_argument("--goal", default="")
+    product_dev.add_argument("--site-url", default="")
+    product_dev.add_argument("--report", default="")
+    product_dev.add_argument("--accept", dest="golden_accept", action="store_true")
+    product_dev.add_argument("--reason", default="")
     product_dev.add_argument("--json", dest="as_json", action="store_true")
     product_dev.set_defaults(func=product_dev_command)
     subparsers._choices_actions[:] = [
