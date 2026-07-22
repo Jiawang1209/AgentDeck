@@ -4,27 +4,35 @@ Updated: 2026-07-22
 
 ## Active goal
 
-R2, Task 15B, Task 27, and Task 28 are closed. Task 29 (**Add explicit takeover
-and validated return-control**, implemented through the
+R2, Task 15B, Task 27, Task 28, and Task 29 are closed. Task 29 (**Add explicit
+takeover and validated return-control**, implemented through the
 [Observer IPC and Takeover Closure plan](../superpowers/plans/2026-07-21-agentdeck-observer-ipc-takeover-closure.md))
-has its Tasks 1–7 implemented (HEAD before this session `8e58ccbe`). This
-session ran the plan's Task 8 verification gates and fixed two defects it
-surfaced (see the 2026-07-22 HISTORY entry): a real caller-cancellation
-regression in `await_operation_or_release` (`15ee9736`) and a stale v2→v3 schema
-assertion in a resume test (`90e32998`).
+had its Tasks 1–7 implemented earlier (HEAD `8e58ccbe`). An earlier session ran
+the plan's Task 8 verification gates and fixed two defects (`15ee9736` caller
+cancellation, `90e32998` stale v2→v3 schema assertion; see HISTORY). This session
+ran the plan's Task 8 Steps 5–8: the independent specification review APPROVED
+(`✅ spec compliant`) over `50f79a76..accb44c1`, the independent code-quality
+review returned two Critical (Observer ack false-conflict; a raised ack killing
+the pump and leaking the socket) and two Important findings, all fixed with
+strict RED/GREEN TDD in `2eea7f21` (see the 2026-07-22 HISTORY entry), and the
+independent code-quality re-review then APPROVED (`✅ code quality approved`).
 
-Current test state at HEAD (conda env `agentdeck`): Product Kernel
-`1967 passed`, with one **pre-existing, out-of-scope** discovery timing flake
-(`test_selector_setup_failure_reaps_parent_and_descendant[constructor]`, fails
-at base `50f79a76` too); legacy suite `4461 passed, 3 skipped`; focused R5 `308`
-and architecture/firewall `50` green; static gates pass.
+**Reviewed and closed Task 29 HEAD: `2eea7f21`.** Final test state at that HEAD
+(conda env `agentdeck`): Product Kernel `1975 passed`, with one **pre-existing,
+out-of-scope** discovery timing flake
+(`test_selector_setup_failure_reaps_parent_and_descendant[constructor]`, green in
+isolation and fails at base `50f79a76` too); legacy suite `4461 passed, 3
+skipped`; focused observer + takeover + execution suites `91 passed`; `compileall`
+and the working-tree `git diff --check` clean. The user has waived the
+≤500-line-per-file convention, so `execution_runtime.py` (502) and
+`test_takeover.py` (540) intentionally exceed it; `takeover_control.py` and
+`takeover_records.py` remain ≤500 (still test-enforced).
 
-Task 29 is **not yet formally closed**. Still pending before closure: the plan's
-independent specification review and code-quality review over the full Task 29
-range (`50f79a76..HEAD`), then a closure commit and handoff update. Only after
-that may Task 30 (per the
+Task 29 is now **formally closed**. Task 30 (per the
 [Product Kernel Rewrite TDD plan](../superpowers/plans/2026-07-18-agentdeck-product-kernel-rewrite.md))
-be dispatched. Task 30 is **not** unlocked by this session.
+is the sole next numerical Task, but is **not** started by this session — it
+requires a fresh explicit `/goal` or user instruction. No push or merge was
+performed.
 
 Do not reopen M2/M2c, daemon, ConversationSession, autonomous, Skill, Memory,
 GUI, or historical architecture plans as active authority. This handoff does not
@@ -33,19 +41,23 @@ authorize a real provider/tmux/ACP gate. No push or merge has been performed.
 ## Verified implementation state
 
 - Verified Task 28 implementation HEAD: `bb506ae949b019e77daeb68874c0f396cdba3f2a`.
+- Reviewed and closed Task 29 HEAD: `2eea7f21`.
 - Branch: `codex/product-kernel-rewrite`.
 - R2 exit: complete.
 - Task 15B.1 through Task 15B.5: complete.
 - Task 27 Observer Runtime Port and deterministic tmux layout: complete.
 - Task 28 faithful cursor-safe, redacted Agent streams: complete.
+- Task 29 explicit takeover and validated return-control: complete.
 - Final integrated spec review: `✅ Final Task 15B spec compliant`.
 - Final integrated quality review: `✅ Final Task 15B code quality approved`.
 - Task 27 spec review: `✅ Task 27 spec compliant`.
 - Task 27 quality review: `✅ Task 27 code quality approved`.
 - Task 28 spec review: `✅ Task 28 spec compliant`.
 - Task 28 quality review: `✅ Task 28 code quality approved`.
-- Immediately before this handoff-only edit, `git status --short` returned no
-  output.
+- Task 29 spec review: `✅ Task 29 spec compliant`.
+- Task 29 code-quality review (after RED/GREEN fixes): `✅ Task 29 code quality approved`.
+- The Task 29 quality-review fixes were committed in `2eea7f21`; this handoff and
+  the closure commit contain no further code changes.
 - No push or merge was performed.
 
 Task 15B now provides one ProductSession-scoped lifecycle authority for:
@@ -214,15 +226,19 @@ requirements.
 
 ## Next gate
 
-1. Do not start Task 29 without a new explicit `/goal` or user instruction.
-2. When authorized, Task 29 must consume the closed Task 27 Runtime Port and
-   Task 28 decoded Observer stream; it must not redesign cursor or workspace
-   authority.
-3. Task 29 owns only explicit takeover and validated return-control. It must
-   preserve the rule that tmux/PTY pixels are observation, never lifecycle,
-   approval, result, completion, or recovery authority.
-4. Preserve closed R2/Task 15B and Task 27/28 invariants and rerun their focused
-   gates when Task 29 touches shared Observer composition.
+1. Task 29 is closed. Do not start Task 30 without a new explicit `/goal` or user
+   instruction; it must follow the main Product Kernel Rewrite TDD plan.
+2. When authorized, Task 30 must consume the closed Task 27 Runtime Port, Task 28
+   decoded Observer stream, and Task 29 takeover/return-control authority; it must
+   not redesign cursor, workspace, observation-containment, or takeover authority.
+3. Preserve the closed Task 29 invariants: the durable `ObserverCursorWriter` is
+   the sole ack arbiter; a stale/future/drift/failed ack is contained observation
+   degradation, never lifecycle authority and never a pump-killing raise; the
+   acknowledgement pump and `close()` always unlink the socket; and tmux/PTY
+   pixels remain observation, never lifecycle, approval, result, completion, or
+   recovery authority.
+4. Preserve closed R2/Task 15B and Task 27/28/29 invariants and rerun their
+   focused gates when Task 30 touches shared Observer or takeover composition.
 5. Real provider, ACP/tmux, and Golden Product gates still require their exact
    later Task authorization; this handoff does not authorize them.
 
