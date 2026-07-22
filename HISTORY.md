@@ -4,6 +4,32 @@
 
 ## 2026-07-22
 
+### Task 36 Step 1-3: Golden acceptance report validator (deterministic)
+
+- **Closed acceptance contract** (`src/agentdeck/application/golden_acceptance.py`):
+  pure `validate_golden_report(report)` + `GOLDEN_REQUIRED_FIELDS` +
+  `GoldenGateError`. It gates what a completed four-Worker Golden Product Mission
+  report must contain before R7 PASS — build/test/browser evidence,
+  desktop/mobile screenshot hashes, visual diff, module/interaction checks, real
+  distinct ACP identity (four Instances across `{codex-cli, claude-cli}`, four
+  distinct `agent_instance_ids` and `acp_session_ids`), the fixed
+  implementation→review→revision→acceptance lineage, findings resolution, SQLite
+  integrity `ok`, permission lineage, tmux fidelity, diagnostics, exit/re-entry,
+  a human-readable final result, and an explicit `human_acceptance.accepted=true`.
+  It runs no Mission, calls no provider/ACP/tmux, and reads no state.
+- **Tests** (`tests/product_kernel/test_golden_acceptance_contract.py`): every
+  required field's absence fails the gate; four real distinct ACP sessions are
+  required; wrong backends, non-distinct sessions, unaccepted reports, broken
+  four-stage lineage, and non-mapping reports are all rejected. Green with the
+  architecture/context-firewall guards.
+- **Boundary (hard STOP)**: the live run (Steps 4-6) is NOT started here. It
+  requires a fresh preflight at the post-validator commit (this source change
+  invalidates the earlier `da8d7a8c` preflight), explicit human live
+  authorization with acknowledged consequences (real Codex/Claude model usage,
+  network per profile, file edits in a disposable project, tmux sessions), and —
+  critically — the real `agentdeck _product golden run` orchestration, which does
+  not yet exist in this branch.
+
 ### Task 35 Step 5-6: authorized real preflight PASS
 
 - Ran the authorized read-only real preflight at frozen commit
