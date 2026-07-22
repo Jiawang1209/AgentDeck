@@ -4,6 +4,23 @@
 
 ## 2026-07-22
 
+### Task 35 Step 5-6: authorized real preflight PASS
+
+- Ran the authorized read-only real preflight at frozen commit
+  `da8d7a8c30c27fc81ad1c9b26182b126f4990b01` with human-named inputs (Leader
+  `codex-cli`, model `gpt-5.5`, permission `full-access`, the local target
+  manifest, and a deterministic authority digest derived from those inputs).
+  Verdict: **`ready=true`, blockers `[]`**. codex and claude classified
+  `acp_available` (codex app-server schema digest matched the frozen value,
+  claude `loggedIn=true` with `claude-agent-acp 0.58.1`), tmux resolved, SQLite
+  absent on the fresh worktree. HEAD integrity and resolved non-secret values
+  were verified before execution.
+- Recorded redacted PASS evidence in
+  `docs/validation/product-kernel-real-preflight.md` (paths, versions, booleans,
+  and content hashes only — no secrets/tokens/email/prompt text). This proves
+  environment readiness only; the real four-Worker Golden Product Mission
+  (Task 36) is a separate, explicitly human-authorized step and was NOT started.
+
 ### Task 35 fix: consume the real ACP readiness signal in RealPreflightProbe
 
 - **Defect**: the first authorized real preflight run returned `ready=false`
