@@ -4,7 +4,11 @@ import asyncio
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from functools import partial
+from hashlib import sha256
+import json
 from pathlib import Path
+import platform
+import sqlite3
 import sys
 from types import MappingProxyType
 from uuid import uuid4
@@ -34,9 +38,12 @@ from agentdeck.application.takeover_control import TakeoverControl
 from agentdeck.application.exit_service import ExitService
 from agentdeck.application.project_lifecycle_service import ProjectLifecycleService
 from agentdeck.application.recovery_service import RecoveryService
+from agentdeck.application.preflight_service import (
+    EnvironmentReport, PreflightService,
+)
 from agentdeck.application.session_service import SessionService
 from agentdeck.ports.clock import Clock
-from agentdeck.kernel.permissions import PermissionScope
+from agentdeck.kernel.permissions import PermissionProfile, PermissionScope
 from agentdeck.ports.observer import ObserverCursor
 from agentdeck.ports.transport import TransportPort
 from agentdeck.product.renderer import render
@@ -325,7 +332,152 @@ def run_product_dev(*, diagnostic: bool = False) -> int:
     return asyncio.run(shell.run_async())
 
 
+# --- Read-only real preflight (Task 35) ------------------------------------
+
+
+def _tool_summary(fact: ToolDiscovery | None) -> str:
+    if fact is None or fact.resolved_path is None:
+        return "missing"
+    return f"{fact.resolved_path}@{fact.version or 'unknown'}"
+
+
+def _acp_summary(fact: ToolDiscovery | None) -> str:
+    if fact is None:
+        return "missing"
+    return "acp_available" if fact.acp_available else "unavailable"
+
+
+class RealPreflightProbe:
+    """Read-only environment probe for the authorized real preflight.
+
+    Composes the existing tool discovery (real PATH lookup plus passive
+    version/auth/ACP probes) with a read-only SQLite integrity check. It
+    installs nothing, authenticates nothing, selects no fallback, generates no
+    source, and sends no model prompt.
+    """
+
+    def __init__(self, project_root: str) -> None:
+        self._project_root = Path(project_root)
+
+    def inspect(self) -> EnvironmentReport:
+        discovered = discover_tools()
+        codex = discovered.get("codex")
+        claude = discovered.get("claude")
+        tmux = discovered.get("tmux")
+        facts = {
+            "python_version": platform.python_version(),
+            "python_executable": sys.executable,
+            "codex_cli": _tool_summary(codex),
+            "claude_cli": _tool_summary(claude),
+            "codex_acp": _acp_summary(codex),
+            "claude_acp": _acp_summary(claude),
+            "codex_app_server_schema": _acp_summary(codex),
+            "tmux": _tool_summary(tmux),
+            "sqlite": self._sqlite_summary(),
+        }
+        blockers: list[str] = []
+        if codex is None or codex.readiness is not ReadinessState.READY:
+            blockers.append("codex_not_ready")
+        if claude is None or claude.readiness is not ReadinessState.READY:
+            blockers.append("claude_not_ready")
+        if tmux is None or tmux.resolved_path is None:
+            blockers.append("tmux_unavailable")
+        if facts["sqlite"] == "corrupt":
+            blockers.append("sqlite_corrupt")
+        return EnvironmentReport(facts=facts, blockers=tuple(blockers))
+
+    def _sqlite_summary(self) -> str:
+        database = self._project_root / ".agentdeck" / "state.db"
+        if not database.exists():
+            return "absent"
+        try:
+            connection = sqlite3.connect(f"file:{database}?mode=ro", uri=True)
+            try:
+                row = connection.execute("PRAGMA integrity_check").fetchone()
+            finally:
+                connection.close()
+        except sqlite3.Error:
+            return "corrupt"
+        return "ok" if row and row[0] == "ok" else "corrupt"
+
+
+_PERMISSION_BY_FLAG = {
+    "ask-for-approval": PermissionProfile.ASK_FOR_APPROVAL,
+    "approve-for-me": PermissionProfile.APPROVE_FOR_ME,
+    "full-access": PermissionProfile.FULL_ACCESS,
+}
+
+
+def run_product_preflight(
+    *,
+    real: bool,
+    commit: str,
+    leader: str,
+    model: str,
+    permission: str,
+    authority_digest: str,
+    target_manifest: str,
+    as_json: bool,
+    project_root: str | None = None,
+) -> int:
+    """Run the read-only real preflight; return 0 only when ready.
+
+    Authorization is never inferred: this command records redacted facts and a
+    verdict, but starting a real Golden Mission remains a separate, explicitly
+    authorized step.
+    """
+    if not real:
+        print(
+            "Refusing to run: pass --real to execute the authorized read-only "
+            "preflight."
+        )
+        return 2
+    profile = _PERMISSION_BY_FLAG.get(permission)
+    if profile is None:
+        print(f"Unknown permission profile: {permission!r}")
+        return 2
+    root = Path(project_root) if project_root else Path.cwd()
+    target_manifest_hash = ""
+    if target_manifest:
+        manifest_path = Path(target_manifest)
+        if not manifest_path.is_file():
+            print(f"target manifest not found: {target_manifest}")
+            return 2
+        target_manifest_hash = "sha256:" + sha256(
+            manifest_path.read_bytes()
+        ).hexdigest()
+    leader_model = f"{leader}/{model}" if leader and model else (model or leader)
+
+    service = PreflightService(
+        project_root=root,
+        probe=RealPreflightProbe(str(root)),
+        clock=SystemClock(),
+    )
+    result = service.run(
+        commit=commit,
+        leader_model=leader_model,
+        authority_digest=authority_digest,
+        target_manifest_hash=target_manifest_hash,
+        permission_profile=profile,
+    )
+    payload = {
+        "ready": result.ready,
+        "blockers": list(result.blockers),
+        "facts": {key: result.facts[key] for key in sorted(result.facts)},
+        "evidence_path": result.evidence_path,
+    }
+    if as_json:
+        print(json.dumps(payload, sort_keys=True, ensure_ascii=False, indent=2))
+    else:
+        print(f"ready={result.ready}")
+        print("blockers: " + (", ".join(result.blockers) or "(none)"))
+        for key in sorted(result.facts):
+            print(f"  {key}: {result.facts[key]}")
+    return 0 if result.ready else 1
+
+
 __all__ = [
     "ACPAdapterComposition", "build_acp_adapter_composition",
     "build_product_shell", "run_product_dev",
+    "RealPreflightProbe", "run_product_preflight",
 ]

@@ -4,6 +4,43 @@
 
 ## 2026-07-22
 
+### Task 35: implement the read-only real product preflight (deterministic slice)
+
+- **Preflight service** (`src/agentdeck/application/preflight_service.py`): a
+  pure `application`-layer `PreflightService` composes frozen human
+  authorization inputs (commit, leader model, authority digest, target-manifest
+  hash, permission profile) with read-only environment facts from an injected
+  `PreflightProbe` **port** — the layer never imports adapters. Missing frozen
+  `commit`/`leader_model`/`authority_digest` yield ordered blockers
+  (`frozen_commit_missing`, `leader_model_missing`, `authority_digest_missing`);
+  malformed probe facts fail closed (`environment_facts_invalid`); a ready result
+  exposes the full fixed `PREFLIGHT_FACT_FIELDS` surface and writes one redacted
+  evidence file under `.agentdeck/preflight/<commit>.json` — the only write.
+- **Deterministic tests** (`tests/product_kernel/test_preflight_service.py`,
+  `test_preflight_read_only.py`): contract blockers, full fact surface,
+  environment-blocker flow-through with preserved input order, fail-closed on
+  malformed facts, redacted-evidence-only write, and a `tree_identity`
+  before/after proof that project source is untouched (excluding
+  `.agentdeck/preflight`). All green (`7 passed`); architecture and
+  context-firewall guards stay green (`50 passed`).
+- **Authorized CLI surface** (`_product preflight`): `agentdeck _product
+  preflight --real --commit ... --leader ... --model ... --permission ...
+  --authority-digest ... --target-manifest ... --json` extends the hidden
+  `_product` subparser in `cli.py`; the composition root `product/bootstrap.py`
+  adds a read-only `RealPreflightProbe` (reuses `discover_tools` PATH/version/
+  auth/ACP discovery plus a `mode=ro` SQLite integrity check — installs nothing,
+  authenticates nothing, selects no fallback, generates no source) and
+  `run_product_preflight`, which prints redacted facts and returns non-zero
+  unless ready. Without `--real` it refuses (exit 2); bare `_product` still
+  launches the dev entry unchanged. The `/slash` parser cannot carry the frozen
+  authorization flags, so the authorized preflight is a CLI subcommand (matching
+  the plan's Step 5 command) rather than an interactive slash.
+- **Boundary**: this slice is deterministic only. Running the authorized real
+  preflight against real Codex/Claude CLIs, ACP, and tmux naming an exact
+  commit/model/authority digest/target-manifest hash is a separate, explicitly
+  human-authorized step (plan Task 35 Steps 4-6); it is NOT run here and
+  authorization is never inferred from plan approval.
+
 ### Task 34: define the frozen website target and Browser evidence adapter
 
 - **Frozen Golden target** (`tests/product_kernel/fixtures/reference_homepage/`):

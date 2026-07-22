@@ -18388,6 +18388,19 @@ def run_loop_command(args: argparse.Namespace) -> int:
 
 
 def product_dev_command(args: argparse.Namespace) -> int:
+    if getattr(args, "product_action", None) == "preflight":
+        from agentdeck.product.bootstrap import run_product_preflight
+
+        return run_product_preflight(
+            real=bool(args.real),
+            commit=args.commit,
+            leader=args.leader,
+            model=args.model,
+            permission=args.permission,
+            authority_digest=args.authority_digest,
+            target_manifest=args.target_manifest,
+            as_json=bool(args.as_json),
+        )
     from agentdeck.product.bootstrap import run_product_dev
 
     return run_product_dev(diagnostic=bool(args.diagnostic))
@@ -19235,6 +19248,17 @@ def build_parser() -> argparse.ArgumentParser:
 
     product_dev = subparsers.add_parser("_product", help=argparse.SUPPRESS)
     product_dev.add_argument("--diagnostic", action="store_true")
+    product_dev.add_argument(
+        "product_action", nargs="?", choices=("preflight",), default=None
+    )
+    product_dev.add_argument("--real", action="store_true")
+    product_dev.add_argument("--commit", default="")
+    product_dev.add_argument("--leader", default="")
+    product_dev.add_argument("--model", default="")
+    product_dev.add_argument("--permission", default="approve-for-me")
+    product_dev.add_argument("--authority-digest", default="")
+    product_dev.add_argument("--target-manifest", default="")
+    product_dev.add_argument("--json", dest="as_json", action="store_true")
     product_dev.set_defaults(func=product_dev_command)
     subparsers._choices_actions[:] = [
         action for action in subparsers._choices_actions if action.dest != "_product"
