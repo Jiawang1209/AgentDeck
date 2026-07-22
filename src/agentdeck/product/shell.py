@@ -20,12 +20,14 @@ from agentdeck.application.mission_service import (
 from agentdeck.application.project_lifecycle_service import ProjectLifecycleService
 from agentdeck.application.recovery_service import RecoveryService
 from agentdeck.application.session_service import SessionService, SessionServiceError
+from agentdeck.kernel.diagnostics import Diagnostic
 from agentdeck.kernel.permissions import PermissionScope
 from agentdeck.kernel.session import SessionState
 from agentdeck.product.presenter import (
     DiagnosisPresentation, ExitPresentation, SetupPresentation, StatusPresentation,
+    diagnostic_json, present_diagnostic,
 )
-from agentdeck.product.renderer import render
+from agentdeck.product.renderer import render, render_error_card
 from agentdeck.product.observer_lifecycle import ProductObserverRunner
 from agentdeck.product.shell_async import (
     AsyncTerminalReader, collect_iteration_tasks, settle_owned_after_caller_cancel,
@@ -108,6 +110,7 @@ class ProductShell:
         self._resume_plan: ExecutionResumePlan | None = None
         self._resume_blocker: str | None = None
         self._mission_child: asyncio.Task | None = None
+        self._latest_diagnostic: Diagnostic | None = None
 
     async def run_async(self) -> int:
         return await self._observer.run(self._run_foreground)
@@ -252,7 +255,10 @@ class ProductShell:
                 self._emit("No active Mission can accept takeover.")
             else:
                 result = await operation(command.argument)
-                self._emit(f"Human control recorded for Attempt {command.argument}." if result.accepted else self._render(DiagnosisPresentation(result.diagnostic)))
+                if result.accepted:
+                    self._emit(f"Human control recorded for Attempt {command.argument}.")
+                else:
+                    self._emit_diagnosis(result.diagnostic)
             return False
         if kind is CommandKind.HELP:
             self._emit(HELP_TEXT)
@@ -274,7 +280,7 @@ class ProductShell:
         elif kind is CommandKind.MISSION:
             self._emit("No Mission is active.")
         elif kind is CommandKind.DIAGNOSE:
-            self._emit("No ProductSession diagnostic is active.")
+            self._show_diagnose(command.argument)
         else:
             self._emit("No active Mission can accept that command.")
         return False
@@ -366,7 +372,7 @@ class ProductShell:
         if type(result) is not ExitResult:
             raise TypeError("exit coordinator returned an invalid result")
         if result.diagnostic is not None:
-            self._emit(self._render(DiagnosisPresentation(result.diagnostic)))
+            self._emit_diagnosis(result.diagnostic)
             return False
         if result.request is not None:
             request = result.request
@@ -418,11 +424,10 @@ class ProductShell:
             self._emit("Setup could not be applied safely.")
             return
         if not result.accepted:
-            self._emit(
-                "Setup could not be applied safely."
-                if result.diagnostic is None
-                else self._render(DiagnosisPresentation(result.diagnostic))
-            )
+            if result.diagnostic is None:
+                self._emit("Setup could not be applied safely.")
+            else:
+                self._emit_diagnosis(result.diagnostic)
             return
         resumed = self._service.resume()
         if resumed.goal is None:
@@ -449,7 +454,7 @@ class ProductShell:
     def _show_initial_state(self) -> None:
         view = self._service.current()
         if view.reentry_diagnostic is not None:
-            self._emit(self._render(DiagnosisPresentation(view.reentry_diagnostic)))
+            self._emit_diagnosis(view.reentry_diagnostic)
         preview = None if self._mission is None else self._mission.current_preview()
         if preview is not None:
             self._emit(self._render(preview_presentation(preview)))
@@ -485,9 +490,23 @@ class ProductShell:
                 f"v{result.mission.version}."
             )
         elif result.diagnostic is not None:
-            self._emit(self._render(DiagnosisPresentation(result.diagnostic)))
+            self._emit_diagnosis(result.diagnostic)
         else:
             self._emit("The Mission request could not be applied safely.")
+
+    def _emit_diagnosis(self, fact: Diagnostic) -> None:
+        self._latest_diagnostic = fact
+        self._emit(self._render(DiagnosisPresentation(fact)))
+
+    def _show_diagnose(self, argument: str | None) -> None:
+        fact = self._latest_diagnostic
+        if fact is None:
+            self._emit("No ProductSession diagnostic is active.")
+            return
+        if argument == "--json":
+            self._emit(diagnostic_json(fact))
+        else:
+            self._emit(render_error_card(present_diagnostic(fact)))
 
     def _emit(self, text: str) -> None:
         if type(text) is not str:

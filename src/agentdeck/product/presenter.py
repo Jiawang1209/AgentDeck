@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
 import re
 from typing import Final
 
@@ -38,6 +39,10 @@ _PROHIBITED_TEXT: Final = re.compile(
     r"|\bssh-ed25519\s+[A-Za-z0-9+/]{32,}={0,3}"
     r")"
 )
+# Absolute filesystem paths, only when not embedded inside a URL or other
+# non-whitespace-delimited token (so "acp://host/path" is left alone).
+_ABSOLUTE_PATH: Final = re.compile(r"(?<!\S)/(?:[A-Za-z0-9_.-]+/)*[A-Za-z0-9_.-]+")
+_RAW_STDERR: Final = re.compile(r"(?i)raw stderr")
 
 
 def _human_text(value: object, field: str) -> str:
@@ -203,6 +208,121 @@ class DiagnosisPresentation:
         _human_items(
             fact.recovery_actions, "diagnostic.recovery_actions", nonempty=True
         )
+
+
+@dataclass(frozen=True)
+class ErrorCard:
+    """A complete, human-facing Error Card derived from one Diagnostic."""
+
+    what_happened: str
+    why: str
+    completed: str
+    not_completed: str
+    protection: str
+    recovery_actions: tuple[str, ...]
+    identity: str
+
+    def __post_init__(self) -> None:
+        for field in (
+            "what_happened", "why", "completed", "not_completed",
+            "protection", "identity",
+        ):
+            _human_text(getattr(self, field), field)
+        object.__setattr__(
+            self, "recovery_actions",
+            _human_items(self.recovery_actions, "recovery_actions", nonempty=True),
+        )
+
+
+def present_diagnostic(fact: Diagnostic) -> ErrorCard:
+    """Derive the complete Error Card for one Diagnostic fact."""
+
+    if type(fact) is not Diagnostic:
+        raise TypeError("fact must be a Diagnostic")
+    completed = (
+        "AgentDeck recorded a definite outcome for the affected step."
+        if fact.outcome_known
+        else (
+            "AgentDeck completed a safe stop and preserved the affected "
+            "step for reconciliation."
+        )
+    )
+    identity_parts = [
+        f"{label} {value}"
+        for label, value in (
+            ("mission", fact.mission_id),
+            ("task", fact.task_id),
+            ("attempt", fact.attempt_id),
+            ("trace", fact.trace_id),
+        )
+        if value
+    ]
+    identity = (
+        ", ".join(identity_parts) if identity_parts
+        else "No mission, task, attempt, or trace identity was bound."
+    )
+    return ErrorCard(
+        what_happened=fact.summary,
+        why=fact.cause,
+        completed=completed,
+        not_completed=fact.impact,
+        protection=fact.protection,
+        recovery_actions=fact.recovery_actions,
+        identity=identity,
+    )
+
+
+DIAGNOSTIC_SCHEMA_VERSION: Final = "diagnostic/v1"
+DIAGNOSTIC_JSON_FIELDS: Final = frozenset(
+    {
+        "schema_version", "code", "stage", "severity", "actor", "summary",
+        "cause", "impact", "protection", "recovery_actions", "retryable",
+        "outcome_known", "occurred_at", "mission_id", "task_id",
+        "attempt_id", "trace_id",
+    }
+)
+
+
+def _redact_text(value: str) -> str:
+    redacted = _PROHIBITED_TEXT.sub("[redacted]", value)
+    redacted = _ABSOLUTE_PATH.sub("[redacted]", redacted)
+    redacted = _RAW_STDERR.sub("[redacted]", redacted)
+    return redacted
+
+
+def _redact_optional(value: str | None) -> str | None:
+    return None if value is None else _redact_text(value)
+
+
+def diagnostic_json(fact: Diagnostic) -> str:
+    """Render the redacted, closed-field JSON contract for one Diagnostic."""
+
+    if type(fact) is not Diagnostic:
+        raise TypeError("fact must be a Diagnostic")
+    payload: dict[str, object] = {
+        "schema_version": DIAGNOSTIC_SCHEMA_VERSION,
+        "code": _redact_text(fact.code),
+        "stage": _redact_text(fact.stage),
+        "severity": fact.severity.value,
+        "actor": _redact_text(fact.actor),
+        "summary": _redact_text(fact.summary),
+        "cause": _redact_text(fact.cause),
+        "impact": _redact_text(fact.impact),
+        "protection": _redact_text(fact.protection),
+        "recovery_actions": tuple(
+            _redact_text(action) for action in fact.recovery_actions
+        ),
+        "retryable": fact.retryable,
+        "outcome_known": fact.outcome_known,
+        "occurred_at": fact.occurred_at,
+        "mission_id": _redact_optional(fact.mission_id),
+        "task_id": _redact_optional(fact.task_id),
+        "attempt_id": _redact_optional(fact.attempt_id),
+        "trace_id": _redact_optional(fact.trace_id),
+    }
+    if set(payload) != DIAGNOSTIC_JSON_FIELDS:
+        raise ValueError("diagnostic json payload fields are not the closed set")
+    return json.dumps(payload, sort_keys=True)
 
 
 @dataclass(frozen=True)

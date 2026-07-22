@@ -7,6 +7,7 @@ from typing import Final
 from agentdeck.product.presenter import (
     ApprovalPresentation,
     DiagnosisPresentation,
+    ErrorCard,
     ExitPresentation,
     FinalPresentation,
     MissionPreviewPresentation,
@@ -257,6 +258,25 @@ def _render_final(value: FinalPresentation) -> str:
             _section("Completed", value.completed),
             _section("Not completed", value.incomplete),
             _section("Evidence", value.evidence),
+        )
+    )
+
+
+def render_error_card(card: ErrorCard) -> str:
+    """Render one complete Error Card in plain language, never JSON."""
+
+    if type(card) is not ErrorCard:
+        raise RenderError("unsupported presentation")
+    return "\n".join(
+        (
+            "AgentDeck stopped safely.",
+            f"What happened: {card.what_happened}",
+            f"Why: {card.why}",
+            f"Completed: {card.completed}",
+            f"Not completed: {card.not_completed}",
+            f"Protected: {card.protection}",
+            _section("Next actions", card.recovery_actions),
+            f"Identity: {card.identity}",
         )
     )
 

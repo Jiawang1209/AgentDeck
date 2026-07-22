@@ -4,6 +4,66 @@
 
 ## 2026-07-22
 
+### Task 30: complete Error Cards and deterministic redacted `/diagnose` output
+
+- **Diagnostic catalog + factory** (`src/agentdeck/kernel/diagnostics.py`): added
+  a canonical `_CATALOG` mapping 9 real failure codes — `leader_authentication_failed`,
+  `acp_protocol_mismatch`, `mission_preview_drift`, `worker_outcome_unknown`,
+  `review_scope_invalid`, `acceptance_evidence_missing`, `permission_denied`,
+  `storage_recovery_failed`, `tmux_observer_degraded` — to complete, honest
+  Diagnostic templates (stage/severity/actor/summary/cause/impact/protection/
+  recovery_actions/retryable/outcome_known), plus a `diagnostic(code, ...)`
+  factory. Unknown codes raise `ValueError` rather than fabricating a generic
+  card; the default `occurred_at` placeholder is only for templated/test use,
+  real callers pass a real timestamp and identity.
+- **Error Card presenter** (`src/agentdeck/product/presenter.py`): added the
+  frozen `ErrorCard` dataclass (what_happened/why/completed/not_completed/
+  protection/recovery_actions/identity, all validated through the existing
+  `_human_text`/`_human_items` bounded-text gate) and `present_diagnostic(fact)`,
+  which derives `completed` from `outcome_known` ("recorded a definite outcome"
+  vs "completed a safe stop and preserved the affected step for
+  reconciliation") and `identity` from whichever of mission/task/attempt/trace
+  are bound (never empty — falls back to an explicit "no identity was bound"
+  sentence).
+- **Redacted JSON diagnostic contract** (same file): added
+  `DIAGNOSTIC_SCHEMA_VERSION = "diagnostic/v1"`, the closed
+  `DIAGNOSTIC_JSON_FIELDS` frozenset, and `diagnostic_json(fact)`, which builds
+  exactly those 17 keys (asserting the closed field set before serializing —
+  refuses to print a half-bad contract), redacts every string field and each
+  recovery action against the existing secret regex plus two new patterns
+  (`_ABSOLUTE_PATH` for standalone absolute filesystem paths, `_RAW_STDERR` for
+  the literal phrase "raw stderr"), and returns stable `sort_keys=True` JSON.
+- **Plain-text renderer** (`src/agentdeck/product/renderer.py`): added
+  `render_error_card(card)`, a dedicated plain-language renderer (What
+  happened / Why / Completed / Not completed / Protected / Next actions /
+  Identity) reusing `_section`; interactive `/diagnose` never prints JSON.
+- **Shell wiring** (`src/agentdeck/product/shell.py`): added
+  `self._latest_diagnostic: Diagnostic | None` and a single `_emit_diagnosis`
+  helper that both records it and renders the existing `DiagnosisPresentation`
+  form; every place the shell already surfaced a terminal Diagnostic (exit,
+  takeover rejection, reentry, setup failure, Mission result) now routes
+  through it, so `/diagnose` reflects the real latest failure. `/diagnose`
+  (no argument) renders the plain-language Error Card via `present_diagnostic`
+  + `render_error_card`; `/diagnose --json` renders the redacted
+  `diagnostic_json` contract; with no active diagnostic both forms keep the
+  existing "No ProductSession diagnostic is active." message.
+- **Tests**: new `tests/product_kernel/test_error_cards.py` (catalog
+  completeness across all 9 codes, unknown-code rejection, `present_diagnostic`
+  field derivation and non-empty identity, `diagnostic_json` closed field set,
+  path/raw-stderr redaction, and a monkeypatch-driven guard test for the
+  closed-field-set rejection) and new
+  `tests/product_kernel/test_diagnose_command.py` (stable redacted
+  `/diagnose --json`, plain-language `/diagnose` with no raw JSON, and the
+  no-active-diagnostic message), built by driving a real `ProductShell` via
+  `build_product_shell` with a `FrozenClock`.
+- **Verification**: focused
+  `pytest tests/product_kernel/test_error_cards.py tests/product_kernel/test_diagnose_command.py tests/product_kernel/test_product_renderer.py`
+  → 71 passed. Full `pytest tests/product_kernel` → 1993 passed, 2 pre-existing
+  process-timing flakes not touched by this change (both confirmed green in
+  isolation on repeated runs, including the documented
+  `test_selector_setup_failure_reaps_parent_and_descendant[constructor]`).
+  `python -m compileall -q src tests/product_kernel` → clean.
+
 ### Task 29 independent quality review fixes (Observer ack containment and takeover rejection)
 
 - The Task 29 closure spec review APPROVED (`✅ spec compliant`) over the full
