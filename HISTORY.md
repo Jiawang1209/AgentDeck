@@ -4,6 +4,29 @@
 
 ## 2026-07-22
 
+### Golden report assembler (golden-run orchestration, slice 1)
+
+- **Report assembler** (`src/agentdeck/application/golden_acceptance.py`
+  `assemble_golden_report`): pure glue that maps captured evidence parts —
+  including Task 34 browser screenshot hashes keyed by viewport — into a report
+  and validates it with `validate_golden_report` before return. It extracts the
+  two frozen viewport hashes `(1440,1200)`/`(390,844)`, fixes the four-stage
+  lineage, and fails closed on a missing viewport, a non-mapping screenshot map,
+  or any contract gap. Application-pure: no Mission, no adapters, no state.
+- **Tests** (`tests/product_kernel/test_golden_report_assembly.py`): a valid
+  assembly passes the contract and carries both viewport hashes; missing
+  desktop/mobile screenshot, non-mapping screenshot input, and an unaccepted
+  human decision all fail closed. Green with the acceptance-contract and
+  architecture/firewall guards.
+- **Context**: this is the first slice of the golden-run orchestration that the
+  live Golden Mission (Task 36 Steps 4-6) needs. The real four-stage engine
+  already exists and is proven by the Task 33 fake Golden (real graph, fake ACP
+  boundaries); remaining slices before a live run are the reusable driver
+  (productionizing the fake harness with injectable Leader/Worker factories),
+  real Agent-Instance provisioning, real ACP adapter composition into a Mission,
+  browser-evidence integration, and the `agentdeck _product golden run` CLI —
+  then a fresh preflight and explicit live authorization.
+
 ### Task 36 Step 1-3: Golden acceptance report validator (deterministic)
 
 - **Closed acceptance contract** (`src/agentdeck/application/golden_acceptance.py`):

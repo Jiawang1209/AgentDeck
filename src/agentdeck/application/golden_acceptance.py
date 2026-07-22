@@ -48,6 +48,83 @@ class GoldenGateError(Exception):
     """Raised when a Golden acceptance report fails a required gate."""
 
 
+# The two frozen viewports the Golden browser evidence must cover.
+_DESKTOP_VIEWPORT = (1440, 1200)
+_MOBILE_VIEWPORT = (390, 844)
+
+
+def assemble_golden_report(
+    *,
+    frozen_commit: str,
+    authority_digest: str,
+    leader_backend: str,
+    worker_backends: object,
+    agent_instance_ids: object,
+    acp_session_ids: object,
+    build_evidence: object,
+    test_evidence: object,
+    screenshot_hashes: Mapping[tuple[int, int], str],
+    visual_diff: object,
+    module_checks: object,
+    interaction_checks: object,
+    findings_resolution: object,
+    sqlite_integrity: str,
+    permission_lineage: object,
+    tmux_fidelity: object,
+    diagnostics: object,
+    exit_reentry: object,
+    final_result: str,
+    human_acceptance: object,
+) -> dict:
+    """Assemble a validated Golden acceptance report from its evidence parts.
+
+    ``screenshot_hashes`` maps each captured viewport to its content hash (the
+    composition root derives it from a Task 34 ``BrowserEvidenceReport``); the
+    two frozen viewports must both be present. The assembled report is validated
+    with :func:`validate_golden_report` before return, so a partial or drifted
+    report fails closed rather than reaching R7.
+    """
+    if not isinstance(screenshot_hashes, Mapping):
+        raise GoldenGateError("screenshot_hashes must be a mapping of viewport hashes")
+    desktop = screenshot_hashes.get(_DESKTOP_VIEWPORT)
+    mobile = screenshot_hashes.get(_MOBILE_VIEWPORT)
+    if not desktop:
+        raise GoldenGateError(
+            "desktop_screenshot_hash missing from browser evidence"
+        )
+    if not mobile:
+        raise GoldenGateError(
+            "mobile_screenshot_hash missing from browser evidence"
+        )
+
+    report = {
+        "frozen_commit": frozen_commit,
+        "authority_digest": authority_digest,
+        "leader_backend": leader_backend,
+        "worker_backends": worker_backends,
+        "agent_instance_ids": agent_instance_ids,
+        "acp_session_ids": acp_session_ids,
+        "build_evidence": build_evidence,
+        "test_evidence": test_evidence,
+        "desktop_screenshot_hash": desktop,
+        "mobile_screenshot_hash": mobile,
+        "visual_diff": visual_diff,
+        "module_checks": module_checks,
+        "interaction_checks": interaction_checks,
+        "lineage": list(_REQUIRED_LINEAGE),
+        "findings_resolution": findings_resolution,
+        "sqlite_integrity": sqlite_integrity,
+        "permission_lineage": permission_lineage,
+        "tmux_fidelity": tmux_fidelity,
+        "diagnostics": diagnostics,
+        "exit_reentry": exit_reentry,
+        "final_result": final_result,
+        "human_acceptance": human_acceptance,
+    }
+    validate_golden_report(report)
+    return report
+
+
 def _distinct_count(value: object) -> int:
     if not isinstance(value, (list, tuple)):
         return -1
@@ -106,5 +183,6 @@ def validate_golden_report(report: object) -> None:
 __all__ = [
     "GOLDEN_REQUIRED_FIELDS",
     "GoldenGateError",
+    "assemble_golden_report",
     "validate_golden_report",
 ]
