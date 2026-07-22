@@ -4,6 +4,27 @@
 
 ## 2026-07-23
 
+### Task 37 slice 1: legacy state parser (inert external data)
+
+- **Read-only legacy parser** (`src/agentdeck/adapters/legacy_state.py`
+  `parse_legacy_state` → `LegacyState`/`LegacySource`/`LegacyStateError`): parses
+  the old `.agentdeck/state.json` + `events.jsonl` strictly as inert external
+  data with bounded reading and content hashes — project id/root/created_at plus
+  agent/message/job/event counts and per-source hashes. It never imports
+  `state.py`/`models.py`, never writes, and its content hash is path-independent
+  so the same legacy content hashes identically anywhere. Absent state returns
+  `None`.
+- **Fixtures** (`tests/product_kernel/fixtures/legacy_state/state.json` +
+  `events.jsonl`, stored outside `.agentdeck/` since the repo ignores that dir;
+  tests copy them into a tmp `.agentdeck/`) and tests
+  (`tests/product_kernel/test_legacy_migration.py`): inert counts, absent →
+  None, content-addressed hash stability. Green with the context-firewall and
+  architecture guards (no forbidden legacy imports).
+- **Next Task 37 slices**: `application/migration_service.py` preview (writes
+  nothing, requires confirmation) → apply (backup/import/verify/report/atomic
+  rename) → drift/failed-verify leaves legacy authority → slash/shell wiring →
+  docs.
+
 ### Golden-run CLI + two-step acceptance (golden-run orchestration, slice e)
 
 - **Accept core** (`src/agentdeck/application/golden_acceptance.py`

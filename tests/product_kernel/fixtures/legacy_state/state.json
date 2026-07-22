@@ -1,0 +1,19 @@
+{
+  "schema_version": "state/v1",
+  "project": {
+    "project_id": "prj_legacy0001",
+    "root": "/legacy/example/project",
+    "created_at": "2026-07-01T00:00:00+00:00"
+  },
+  "agents": {
+    "planner": {"role": "planning"},
+    "coder": {"role": "implementation"}
+  },
+  "messages": [
+    {"message_id": "msg_1", "text": "sanitized"},
+    {"message_id": "msg_2", "text": "sanitized"}
+  ],
+  "jobs": [
+    {"job_id": "job_1", "status": "done"}
+  ]
+}

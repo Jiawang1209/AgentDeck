@@ -1,0 +1,3 @@
+{"event_id": "ev_1", "type": "project_initialized"}
+{"event_id": "ev_2", "type": "agent_registered"}
+{"event_id": "ev_3", "type": "message_sent"}
