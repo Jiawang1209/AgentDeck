@@ -4,6 +4,25 @@
 
 ## 2026-07-23
 
+### Task 37 slice 2: migration preview + authority (read-only)
+
+- **Migration service** (`src/agentdeck/application/migration_service.py`
+  `MigrationService` + `MigrationPreview`/`MigrationError`): application-pure,
+  depends only on an injected `legacy_reader` (no adapter/`state.py` import).
+  `preview(project)` describes exactly what an apply would do — project mapping
+  (`projects: 1`), skipped unsupported legacy items (agents/messages/jobs/events),
+  source hashes, backup target, a content-addressed `preview_id`/`content_hash`,
+  `requires_confirmation=True` — and **writes nothing** (`writes == ()`, no
+  `agentdeck.db` created). `authority(project)` reports `migrated` (new DB
+  present) / `legacy` (legacy state present) / `none`, read-only. No legacy state
+  → `MigrationError`.
+- **Tests** (`test_legacy_migration.py`): preview writes nothing and requires
+  confirmation, exposes the project mapping + skipped items, and creates no DB;
+  authority is `legacy`/`none`; missing legacy raises. Green with the
+  architecture/context-firewall guards.
+- **Next**: apply (backup → import → verify counts/FK/integrity → atomic rename →
+  report; drift/failed-verify leaves legacy authority) → slash/shell wiring → docs.
+
 ### Task 37 slice 1: legacy state parser (inert external data)
 
 - **Read-only legacy parser** (`src/agentdeck/adapters/legacy_state.py`

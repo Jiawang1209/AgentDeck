@@ -47,3 +47,46 @@ def test_parse_legacy_state_hash_is_content_addressed(tmp_path: Path) -> None:
     other.mkdir()
     second = parse_legacy_state(_legacy_project(other))
     assert first.content_hash == second.content_hash
+
+
+# --- slice 37.2: preview + authority (read-only) ---------------------------
+
+import pytest
+
+from agentdeck.application.migration_service import (
+    MigrationError,
+    MigrationPreview,
+    MigrationService,
+)
+
+
+def _service() -> MigrationService:
+    return MigrationService(legacy_reader=parse_legacy_state)
+
+
+def test_preview_writes_nothing_and_requires_confirmation(tmp_path: Path) -> None:
+    project = _legacy_project(tmp_path)
+    preview = _service().preview(project)
+    assert isinstance(preview, MigrationPreview)
+    assert preview.writes == ()
+    assert preview.requires_confirmation is True
+    assert preview.mappings["projects"] == 1
+    assert preview.skipped_items  # legacy agents/messages/jobs are unsupported
+    assert preview.content_hash.startswith("sha256:")
+    assert preview.preview_id.startswith("mgp_")
+    assert not (project / ".agentdeck" / "agentdeck.db").exists()
+
+
+def test_authority_is_legacy_before_migration(tmp_path: Path) -> None:
+    assert _service().authority(_legacy_project(tmp_path)) == "legacy"
+
+
+def test_authority_is_none_without_legacy_or_migrated_db(tmp_path: Path) -> None:
+    (tmp_path / ".agentdeck").mkdir()
+    assert _service().authority(tmp_path) == "none"
+
+
+def test_preview_without_legacy_state_raises(tmp_path: Path) -> None:
+    (tmp_path / ".agentdeck").mkdir()
+    with pytest.raises(MigrationError, match="no legacy"):
+        _service().preview(tmp_path)
