@@ -2,6 +2,31 @@
 
 本文件记录 AgentDeck 每一次开发内容。约束：每次新增功能、文档规则、项目骨架、运行环境或用户可见行为变化，都必须同步更新本文件，并在同一次 commit 中提交。
 
+## 2026-07-23
+
+### Golden-run domain Agent-Instance provisioning (golden-run orchestration, slice b)
+
+- **Store provisioning path** (`src/agentdeck/adapters/sqlite.py`
+  `SQLiteStore.provision_agent_instances`): the domain-typed replacement for the
+  legacy raw-SQL `agent_instances` seed. Callers pass validated `AgentInstance`
+  values (which self-validate id/backend/role/session) instead of positional
+  tuples; duplicate instance ids fail closed with `AgentIdentityError`, non
+  `AgentInstance` values raise `TypeError`, the four roles share the one product
+  session, and ACP session binding stays `NULL` until an Attempt starts.
+- **Driver rewired** (`GoldenRunner._seed_agent_instances`): builds
+  `AgentInstance`/`AgentBackend` values from the confirmed Mission's Tasks and
+  calls `store.provision_agent_instances` — no more `store._require_writer()`
+  raw INSERT in the composition root.
+- **Tests** (`tests/product_kernel/test_agent_provisioning.py`): provisioning
+  persists the exact backend/transport/version/role/state rows, rejects
+  duplicate instance ids, and rejects non-domain values. The golden run + report
+  chain stays green through the new path; architecture/context-firewall guards
+  green.
+- **Remaining golden-run slices**: real ACP adapter composition (swap the fake
+  Leader/Worker factories for `build_acp_adapter_composition`) and the
+  `agentdeck _product golden run` CLI — then a fresh preflight and explicit live
+  authorization.
+
 ## 2026-07-22
 
 ### Golden-run browser-evidence fusion (golden-run orchestration, slice d)

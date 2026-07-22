@@ -6,6 +6,7 @@ from hashlib import sha256
 import os
 from pathlib import Path
 import sqlite3
+from agentdeck.kernel.agents import AgentIdentityError, AgentInstance
 from agentdeck.adapters.sqlite_approval import _save_approval
 from agentdeck.adapters.sqlite_execution import (
     _save_execution_aggregate, load_execution_aggregate,
@@ -424,6 +425,37 @@ class SQLiteStore:
 
     def list_task_attempts(self, task_id: str):
         return list_task_attempts(self._read_connection(), task_id)
+
+    def provision_agent_instances(self, *, instances, state: str, now: str) -> None:
+        """Persist validated ``AgentInstance`` domain values for a Mission's
+        roles. This is the domain-typed replacement for the legacy raw-SQL
+        ``agent_instances`` seed: callers pass ``AgentInstance`` values (which
+        self-validate their fields) instead of positional tuples, duplicate
+        instance ids fail closed, and the four roles share the one product
+        session. ACP session binding stays ``NULL`` until an Attempt starts."""
+        validated = tuple(instances)
+        for instance in validated:
+            if type(instance) is not AgentInstance:
+                raise TypeError("instances must contain AgentInstance values")
+        seen: set[str] = set()
+        for instance in validated:
+            if instance.instance_id in seen:
+                raise AgentIdentityError(
+                    f"duplicate instance_id: {instance.instance_id}"
+                )
+            seen.add(instance.instance_id)
+        connection = self._require_writer()
+        for instance in validated:
+            connection.execute(
+                "INSERT INTO agent_instances VALUES (?,?,?,?,?,?,?,?,?,?)",
+                (
+                    instance.instance_id, instance.session_id,
+                    instance.backend.backend_id, instance.backend.transport,
+                    instance.backend.version, instance.role.value,
+                    None, state, now, now,
+                ),
+            )
+        connection.commit()
 
     def list_attempt_handoffs(self, attempt_id: str):
         return list_attempt_handoffs(self._read_connection(), attempt_id)

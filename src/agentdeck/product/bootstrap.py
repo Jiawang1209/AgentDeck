@@ -54,6 +54,7 @@ from agentdeck.ports.clock import Clock
 from agentdeck.ports.leader import (
     AvailableAgent, LeaderRequest, ProjectContext, ResolvedLeaderModel,
 )
+from agentdeck.kernel.agents import AgentBackend, AgentInstance, AgentRole
 from agentdeck.kernel.execution import EvidenceKind
 from agentdeck.kernel.mission import MissionDraft
 from agentdeck.kernel.permissions import PermissionProfile, PermissionScope
@@ -644,19 +645,23 @@ class GoldenRunner:
 
     def _seed_agent_instances(self, store, tasks) -> None:
         # Register the four distinct Agent Instances the confirmed Mission's
-        # Tasks name before any Attempt starts. Real domain-level provisioning is
-        # a later slice; this mirrors the established SQLite seeding convention.
-        now = self._clock.now().isoformat()
-        connection = store._require_writer()
-        for task in tasks:
-            connection.execute(
-                "INSERT INTO agent_instances VALUES (?,?,?,?,?,?,?,?,?,?)",
-                (
-                    task.agent_instance_id, self._session_id, task.backend, "acp",
-                    "1", task.role.value, None, "active", now, now,
+        # Tasks name before any Attempt starts, through the domain-typed store
+        # provisioning path (no raw SQL). ACP session binding follows at dispatch.
+        instances = tuple(
+            AgentInstance(
+                instance_id=task.agent_instance_id,
+                backend=AgentBackend(
+                    backend_id=task.backend, transport="acp", version="1",
                 ),
+                role=AgentRole(task.role.value),
+                session_id=self._session_id,
             )
-        connection.commit()
+            for task in tasks
+        )
+        store.provision_agent_instances(
+            instances=instances, state="active",
+            now=self._clock.now().isoformat(),
+        )
 
     async def run(
         self,
