@@ -20,6 +20,7 @@ HELP_TEXT = (
     "Select Leader with /leader <name>.\nSelect Model with /model <name>.\n"
     "/agents\nSelect Permission with /permissions <profile>.\n/mission\n"
     "/pause\n/resume\n/takeover <attempt>\n/diagnose [--json]\n"
+    "/support [mission_id]\n/trace <mission_id>\n"
     "Exit safely with /exit."
 )
 _SUPPORTED_PERMISSIONS = frozenset({

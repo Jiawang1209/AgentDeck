@@ -4,6 +4,96 @@
 
 ## 2026-07-22
 
+### Task 31: end-to-end Mission trace and sanitized human support evidence
+
+- **Read-only lineage enumeration** (new `src/agentdeck/adapters/sqlite_support.py`,
+  wired into `src/agentdeck/adapters/sqlite.py` and the `Store` Protocol in
+  `src/agentdeck/ports/store.py`): added `list_mission_tasks`,
+  `list_task_attempts`, `list_attempt_handoffs`, `list_mission_approvals`, and
+  `list_attempt_evidence` — deterministic, read-only projections (`ordinal`,
+  `created_at`+id tie-breaks) over the existing `tasks`/`attempts`/`handoffs`/
+  `approvals`/`evidence` tables, run through `self._read_connection()` exactly
+  like the existing `list_running_attempts` pattern. They never mutate state
+  and never read secrets; an unknown mission or task simply yields an empty
+  tuple rather than raising, matching the codebase's existing
+  `load_aggregate` "return nothing" convention.
+- **`SupportService`** (new `src/agentdeck/application/support_service.py`,
+  application layer — imports only `agentdeck.kernel`/`agentdeck.ports`, no
+  adapters): `trace(mission_id)` walks the Mission's Tasks in ordinal order,
+  follows each Attempt's outgoing Handoffs to the next Task, and returns a
+  frozen `MissionTrace(path, permissions)` — the identity walk
+  `mission_id, task_id, attempt_id, handoff_id, task_id, attempt_id, ...` plus
+  the Mission's Approvals as frozen `Permission` records. Every Handoff and
+  every Attempt's Evidence is re-verified by recomputing
+  `sha256(canonical_facts).hexdigest()` against the stored `content_hash`
+  before it is trusted as part of the lineage; any mismatch, an out-of-mission
+  Handoff target, or a lineage cycle raises `SupportServiceError` (a `ValueError`
+  subclass) instead of emitting an unverified trace. An unknown or task-less
+  Mission also raises `SupportServiceError`. `support_bundle(mission_id)`
+  builds a bounded (`byte_count <= 256_000`, hard-truncated with an explicit
+  "... support bundle truncated ..." notice if needed), sanitized, human-
+  readable summary — environment identity (Python version tag, resolved
+  planned backends by name only), per-Task/per-Attempt diagnostics (reusing
+  the Task 30 `agentdeck.kernel.diagnostics.diagnostic(code, ...)` catalog to
+  turn a matching Attempt `reason` into a real Error Card summary line, falling
+  back to the raw reason for unknown codes), Evidence identities
+  (`evidence_id`+`kind`+`content_hash` only — canonical facts/content are never
+  included), and Approval decisions. A local redactor (no import of
+  `agentdeck.product.presenter`, which the application layer is not allowed to
+  reach) hard-strips `raw_protocol`/`terminal_output`/`API_KEY` literals and
+  regex-redacts secret-shaped tokens (`api_key=`, `token:`, `bearer ...`, etc.)
+  and `/home`, `/Users`, `/root` absolute paths to `[redacted]` before the byte
+  bound is enforced.
+- **Shell wiring** (`src/agentdeck/product/slash_commands.py`,
+  `src/agentdeck/product/shell.py`, `src/agentdeck/product/shell_projection.py`):
+  added `CommandKind.SUPPORT` (`/support [mission_id]`, optional argument —
+  defaults to the most recently confirmed/resumed Mission tracked in
+  `self._current_mission_id`) and `CommandKind.TRACE` (`/trace <mission_id>`,
+  required argument, added to `_REQUIRED_ARGUMENT`); `HELP_TEXT` documents
+  both. `ProductShell` takes an optional `support_service: SupportService |
+  None` constructor parameter (same optionality pattern as `mission_service`/
+  `execution_service`); `_current_mission_id` is set from the Mission
+  confirmation and Mission resume paths right before the Mission child starts.
+  `/support` with no active Mission and no argument, or with no
+  `support_service` configured, emits a clear plain-language line rather than
+  failing; on success it emits the sanitized bundle text verbatim. `/trace`
+  emits the verified lineage path joined with `" -> "`; any `SupportServiceError`
+  (unknown Mission, tampered hash, cycle) is caught and reported as a safe
+  plain-language line, never a raw exception. Bootstrap composition (wiring a
+  real `SupportService` into `build_product_shell`) is left to the composition
+  root and out of this task's scope; the shell already accepts an injected one.
+- **Tests** (new `tests/product_kernel/test_trace_support.py`, 16 tests): the
+  two plan-mandated tests (`test_trace_links_mission_task_attempt_permission_handoff_evidence`,
+  `test_support_bundle_is_bounded_and_contains_no_raw_frames`) against a real
+  seeded `SQLiteStore` (`mis_1` → `tsk_impl`/`tsk_review` → `att_impl_1`/
+  `att_review_1` → `hnd_impl` → one Approval on `att_impl_1` → one Evidence on
+  `att_impl_1`), plus edge coverage: unknown Mission raises for both `trace`
+  and `support_bundle`; a tampered `handoffs.content_hash` and a tampered
+  `evidence.content_hash` (mutated via raw SQL after seeding) each make
+  `trace` raise with a matching message; an injected evidence row whose id
+  contains `API_KEY` proves bundle redaction; a synthetic in-memory fake
+  `Store` returning 80 Tasks × 40 Evidence rows each (3,200 Evidence lines)
+  proves the byte bound and truncation notice without a slow real-DB seed;
+  slash-command parsing tests for `/support` (optional argument) and `/trace`
+  (required argument, `None` without one); and three `ProductShell`-level
+  tests (built directly, not through `bootstrap.py`, following the existing
+  `test_product_preview_flow.py::_shell` harness pattern) covering
+  no-active-Mission `/support`, missing-`support_service` `/support`, and a
+  working `/trace` emitting the exact verified path.
+- **Verification**: focused
+  `pytest tests/product_kernel/test_trace_support.py tests/product_kernel/test_sqlite_transactions.py`
+  → 38 passed (RED confirmed first by temporarily reverting the new/modified
+  source files and observing `ModuleNotFoundError: No module named
+  'agentdeck.application.support_service'`, then restoring and turning GREEN).
+  `pytest tests/product_kernel/test_architecture.py tests/product_kernel/test_context_firewall.py`
+  → 50 passed (confirms `support_service.py` imports no `agentdeck.adapters.*`).
+  Full `pytest tests/product_kernel` → 2005 passed, 1 pre-existing
+  process-timing flake not touched by this change
+  (`test_selector_setup_failure_reaps_parent_and_descendant`, confirmed to
+  flap pass/fail across repeated isolated runs with and without this change,
+  same as the previously documented flake). `python -m compileall -q src
+  tests/product_kernel` → clean.
+
 ### Task 30: complete Error Cards and deterministic redacted `/diagnose` output
 
 - **Diagnostic catalog + factory** (`src/agentdeck/kernel/diagnostics.py`): added

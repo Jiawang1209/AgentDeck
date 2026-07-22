@@ -36,6 +36,13 @@ from agentdeck.adapters.sqlite_session import (
     save_session,
     select_latest_nonterminal_session,
 )
+from agentdeck.adapters.sqlite_support import (
+    list_attempt_evidence,
+    list_attempt_handoffs,
+    list_mission_approvals,
+    list_mission_tasks,
+    list_task_attempts,
+)
 from agentdeck.adapters.sqlite_validation import (
     StateIdentity,
     StoreWriterBusyError,
@@ -411,6 +418,21 @@ class SQLiteStore:
 
     def list_active_exit_attempts(self, session_id: str):
         return list_active_exit_attempts(self._read_connection(), session_id)
+
+    def list_mission_tasks(self, mission_id: str):
+        return list_mission_tasks(self._read_connection(), mission_id)
+
+    def list_task_attempts(self, task_id: str):
+        return list_task_attempts(self._read_connection(), task_id)
+
+    def list_attempt_handoffs(self, attempt_id: str):
+        return list_attempt_handoffs(self._read_connection(), attempt_id)
+
+    def list_mission_approvals(self, mission_id: str):
+        return list_mission_approvals(self._read_connection(), mission_id)
+
+    def list_attempt_evidence(self, attempt_id: str):
+        return list_attempt_evidence(self._read_connection(), attempt_id)
 
     def count(self, table: str) -> int:
         if table not in _V3_REQUIRED_TABLES:

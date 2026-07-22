@@ -25,6 +25,8 @@ class CommandKind(StrEnum):
     RESUME = "resume"
     TAKEOVER = "takeover"
     DIAGNOSE = "diagnose"
+    SUPPORT = "support"
+    TRACE = "trace"
     EXIT = "exit"
 
 
@@ -77,6 +79,7 @@ _REQUIRED_ARGUMENT: Final = frozenset(
         CommandKind.MODEL,
         CommandKind.PERMISSIONS,
         CommandKind.TAKEOVER,
+        CommandKind.TRACE,
     }
 )
 _PERMISSIONS: Final = frozenset(

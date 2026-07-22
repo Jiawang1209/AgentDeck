@@ -20,6 +20,7 @@ from agentdeck.application.mission_service import (
 from agentdeck.application.project_lifecycle_service import ProjectLifecycleService
 from agentdeck.application.recovery_service import RecoveryService
 from agentdeck.application.session_service import SessionService, SessionServiceError
+from agentdeck.application.support_service import SupportService, SupportServiceError
 from agentdeck.kernel.diagnostics import Diagnostic
 from agentdeck.kernel.permissions import PermissionScope
 from agentdeck.kernel.session import SessionState
@@ -62,6 +63,7 @@ class ProductShell:
         write_line: Callable[[str], object], close: Callable[[], object],
         mission_service: MissionService | None = None,
         execution_service: ExecutionService | None = None,
+        support_service: SupportService | None = None,
         observer_lifecycle: object | None = None,
         resume_snapshot_loader: Callable[[], ExecutionResumeSnapshot] | None = None,
         resume_planner: ExecutionResumePlanner | None = None,
@@ -85,6 +87,10 @@ class ProductShell:
         if execution_service is not None and not callable(getattr(
             execution_service, "run_confirmed_mission", None)):
             raise TypeError("execution_service does not satisfy the Product Shell")
+        if support_service is not None and any(
+            not callable(getattr(support_service, name, None))
+            for name in ("trace", "support_bundle")):
+            raise TypeError("support_service does not satisfy the Product Shell")
         for dependency, label in (
             (read_line, "read_line"), (write_line, "write_line"),
             (close, "close"), (render_text, "render_text")):
@@ -100,6 +106,8 @@ class ProductShell:
         self._read_line, self._write_line = read_line, write_line
         self._render = render_text
         self._mission, self._execution = mission_service, execution_service
+        self._support = support_service
+        self._current_mission_id: str | None = None
         self._observer = ProductObserverRunner(observer_lifecycle, close)
         self._load_resume = resume_snapshot_loader
         self._resume_planner = resume_planner or ExecutionResumePlanner()
@@ -281,6 +289,10 @@ class ProductShell:
             self._emit("No Mission is active.")
         elif kind is CommandKind.DIAGNOSE:
             self._show_diagnose(command.argument)
+        elif kind is CommandKind.SUPPORT:
+            self._show_support(command.argument)
+        elif kind is CommandKind.TRACE:
+            self._show_trace(command.argument)
         else:
             self._emit("No active Mission can accept that command.")
         return False
@@ -299,6 +311,7 @@ class ProductShell:
             or confirmed.canonical_content != preview.preview.canonical_content
         ):
             return
+        self._current_mission_id = confirmed.mission_id
         await self._start_mission_child(
             confirmed, preview.draft,
             PermissionScope.for_profile(preview.draft.permission_profile), None,
@@ -332,6 +345,7 @@ class ProductShell:
             return
         self._service.resume()
         plan = self._resume_plan
+        self._current_mission_id = plan.confirmed.mission_id
         await self._start_mission_child(
             plan.confirmed, plan.draft,
             PermissionScope.for_profile(plan.draft.permission_profile), plan,
@@ -507,6 +521,34 @@ class ProductShell:
             self._emit(diagnostic_json(fact))
         else:
             self._emit(render_error_card(present_diagnostic(fact)))
+
+    def _show_support(self, mission_id: str | None) -> None:
+        target = mission_id or self._current_mission_id
+        if target is None:
+            self._emit(
+                "No Mission is active. Provide a mission id: /support <mission_id>."
+            )
+            return
+        if self._support is None:
+            self._emit("Support bundle is not available.")
+            return
+        try:
+            bundle = self._support.support_bundle(target)
+        except (SupportServiceError, TypeError, ValueError):
+            self._emit("The support bundle could not be built safely.")
+            return
+        self._emit(bundle.text)
+
+    def _show_trace(self, mission_id: str | None) -> None:
+        if self._support is None:
+            self._emit("Support bundle is not available.")
+            return
+        try:
+            trace = self._support.trace(mission_id)
+        except (SupportServiceError, TypeError, ValueError):
+            self._emit("The Mission trace could not be verified safely.")
+            return
+        self._emit(" -> ".join(trace.path))
 
     def _emit(self, text: str) -> None:
         if type(text) is not str:
