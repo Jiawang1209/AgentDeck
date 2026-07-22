@@ -4,6 +4,30 @@
 
 ## 2026-07-23
 
+### Golden-run real ACP composition wiring (golden-run orchestration, slice c)
+
+- **Composition helper** (`src/agentdeck/product/bootstrap.py`
+  `compose_golden_runner`): builds a `GoldenRunner` whose Leader and per-stage
+  Worker factory delegate to an ACP adapter composition's `.leader(...)` /
+  `.worker(...)`. The Leader is minted once from the composition for the chosen
+  backend; each stage's Worker is constructed lazily per Task backend at dispatch
+  (no Worker connection opens at compose time). Passing the real
+  `build_acp_adapter_composition(...)` result over preflight-verified readiness
+  makes the same runner drive REAL ACP sessions — running THAT is the separately
+  authorized live Golden gate.
+- **Tests** (`tests/product_kernel/test_golden_compose.py`): a fake composition
+  proves the wiring deterministically — the Leader is minted exactly once for the
+  chosen backend/model, no Worker is constructed at compose time, and the
+  worker factory delegates to `composition.worker(task.backend,
+  model="native-default")` per Task. No real ACP session is opened.
+  Architecture/context-firewall guards green.
+- **Remaining before live**: slice (e) — the `agentdeck _product golden run` CLI
+  that derives verified readiness, builds the real composition, runs
+  `compose_golden_runner`, captures browser evidence, and builds the acceptance
+  report. Its live body can only be exercised under explicit human live
+  authorization (fresh preflight first). Its human-acceptance flow is an open
+  product decision.
+
 ### Golden-run domain Agent-Instance provisioning (golden-run orchestration, slice b)
 
 - **Store provisioning path** (`src/agentdeck/adapters/sqlite.py`

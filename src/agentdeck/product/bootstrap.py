@@ -851,9 +851,43 @@ def build_golden_report(
     )
 
 
+def compose_golden_runner(
+    *,
+    project_root: Path,
+    adapter_composition: object,
+    leader_backend: str,
+    leader_model: str,
+    available_leaders: Mapping[str, tuple[str, ...]],
+    worker_model: str = "native-default",
+    clock: object | None = None,
+    session_id: str = "ses_golden_run",
+    event_publisher: object | None = None,
+) -> GoldenRunner:
+    """Build a `GoldenRunner` whose Leader and per-stage Worker factory delegate
+    to an ACP adapter composition. Pass the real
+    `build_acp_adapter_composition(...)` result (over preflight-verified
+    readiness) and the runner drives REAL ACP sessions — running THAT is the
+    separately authorized live Golden gate. The Leader is minted once from the
+    composition; each stage's Worker is constructed lazily per Task backend when
+    the run dispatches it (no Worker connection is opened at compose time)."""
+    leader = adapter_composition.leader(leader_backend, model=leader_model)
+    return GoldenRunner(
+        project_root=project_root,
+        leader=leader,
+        worker_factory=lambda task: adapter_composition.worker(
+            task.backend, model=worker_model,
+        ),
+        available_leaders=available_leaders,
+        clock=clock,
+        session_id=session_id,
+        event_publisher=event_publisher,
+    )
+
+
 __all__ = [
     "ACPAdapterComposition", "build_acp_adapter_composition",
     "build_product_shell", "run_product_dev",
     "RealPreflightProbe", "run_product_preflight",
     "GoldenRunner", "GoldenRunResult", "build_golden_report",
+    "compose_golden_runner",
 ]
