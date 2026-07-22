@@ -18402,8 +18402,19 @@ def product_dev_command(args: argparse.Namespace) -> int:
             target_manifest=args.target_manifest,
             as_json=bool(args.as_json),
         )
+    if action == "migrate":
+        from agentdeck.product.bootstrap import run_product_migrate
+
+        return run_product_migrate(
+            action=getattr(args, "sub_action", None) or "",
+            project=args.project,
+            preview_id=args.preview_id,
+            content_hash=args.content_hash,
+            confirm=bool(args.confirm),
+            as_json=bool(args.as_json),
+        )
     if action == "golden":
-        golden = getattr(args, "golden_action", None)
+        golden = getattr(args, "sub_action", None)
         if golden == "run":
             from agentdeck.product.bootstrap import run_product_golden
 
@@ -19279,11 +19290,16 @@ def build_parser() -> argparse.ArgumentParser:
     product_dev = subparsers.add_parser("_product", help=argparse.SUPPRESS)
     product_dev.add_argument("--diagnostic", action="store_true")
     product_dev.add_argument(
-        "product_action", nargs="?", choices=("preflight", "golden"), default=None
+        "product_action", nargs="?",
+        choices=("preflight", "golden", "migrate"), default=None,
     )
     product_dev.add_argument(
-        "golden_action", nargs="?", choices=("run", "accept"), default=None
+        "sub_action", nargs="?",
+        choices=("run", "accept", "preview", "apply"), default=None,
     )
+    product_dev.add_argument("--preview-id", default="")
+    product_dev.add_argument("--content-hash", default="")
+    product_dev.add_argument("--confirm", action="store_true")
     product_dev.add_argument("--real", action="store_true")
     product_dev.add_argument("--commit", default="")
     product_dev.add_argument("--leader", default="")

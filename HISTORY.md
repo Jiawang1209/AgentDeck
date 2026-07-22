@@ -4,6 +4,28 @@
 
 ## 2026-07-23
 
+### Task 37 slice 4: real migration importer + `_product migrate` CLI
+
+- **Real importer + CLI** (`src/agentdeck/product/bootstrap.py`
+  `_real_migration_importer` + `run_product_migrate`; dispatch in `cli.py`): the
+  composition root wires a real SQLite importer that builds the imported
+  `projects` row into a fresh DB and verifies integrity, and exposes
+  `agentdeck _product migrate preview|apply`. `preview` writes nothing and prints
+  the mapping/skip/backup summary plus the exact `apply` command; `apply` requires
+  `--confirm` + the exact `--preview-id`/`--content-hash`, re-previews against
+  current legacy (correct cross-process drift detection), and stages the migrated
+  DB at `.agentdeck/agentdeck.db` (making it the live authority is the separate
+  Task 38 cutover). Wrong hash / missing confirm fail closed with no DB. The
+  second `_product` positional generalized to `run|accept|preview|apply` (golden
+  CLI unchanged).
+- **Tests** (`tests/product_kernel/test_migration_cli.py`): deterministic
+  end-to-end over the local legacy fixture — preview writes nothing, a confirmed
+  apply builds a migrated DB reporting `projects:1` + integrity `ok`, and
+  missing-confirm / wrong-hash fail closed. Golden CLI, dev entry, and
+  architecture/context-firewall guards stay green.
+- **Next**: Task 37 slice 5 — migration docs
+  (`docs/migrations/product-kernel-state-migration.md` + reuse register).
+
 ### Task 37 slice 3: confirmed migration apply (backup / verify / atomic install)
 
 - **Apply** (`MigrationService.apply(preview_id, content_hash, confirm=True)` +

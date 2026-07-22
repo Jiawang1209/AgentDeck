@@ -41,11 +41,15 @@ from agentdeck.application.execution_service import ExecutionService
 from agentdeck.application.observer_broker import ObserverBroker
 from agentdeck.application.takeover_control import TakeoverControl
 from agentdeck.adapters.browser import DeterministicBrowser
+from agentdeck.adapters.legacy_state import parse_legacy_state
 from agentdeck.application.exit_service import ExitService
 from agentdeck.application.golden_acceptance import (
     GoldenGateError, assemble_golden_report, finalize_golden_report,
 )
 from agentdeck.application.leader_service import LeaderService
+from agentdeck.application.migration_service import (
+    ImportOutcome, MigrationError, MigrationService,
+)
 from agentdeck.application.mission_service import MissionService
 from agentdeck.application.project_lifecycle_service import ProjectLifecycleService
 from agentdeck.application.recovery_service import RecoveryService
@@ -1039,10 +1043,115 @@ def accept_product_golden(
     return 0
 
 
+# --- Legacy migration (Task 37) --------------------------------------------
+
+_MIGRATION_PROJECTS_DDL = (
+    "CREATE TABLE projects (project_id TEXT PRIMARY KEY, "
+    "resolved_root TEXT NOT NULL UNIQUE, "
+    "created_at TEXT NOT NULL CHECK (length(trim(created_at)) > 0))"
+)
+
+
+def _real_migration_importer(target_path: Path, legacy: object) -> ImportOutcome:
+    """Build the imported project into a fresh SQLite database at ``target_path``.
+
+    Task 37 stages the migrated database as `.agentdeck/agentdeck.db`; making it
+    the live authority is the separate cutover (Task 38). The importer creates
+    the new-schema `projects` row and verifies integrity."""
+    connection = sqlite3.connect(target_path)
+    try:
+        connection.execute("PRAGMA foreign_keys=ON")
+        connection.execute(_MIGRATION_PROJECTS_DDL)
+        connection.execute(
+            "INSERT INTO projects (project_id, resolved_root, created_at) "
+            "VALUES (?, ?, ?)",
+            (legacy.project_id, legacy.resolved_root, legacy.created_at),
+        )
+        connection.commit()
+        (integrity,) = connection.execute("PRAGMA integrity_check").fetchone()
+    finally:
+        connection.close()
+    return ImportOutcome(imported_counts={"projects": 1}, integrity=integrity)
+
+
+def run_product_migrate(
+    *,
+    action: str,
+    project: str,
+    preview_id: str,
+    content_hash: str,
+    confirm: bool,
+    as_json: bool,
+) -> int:
+    """Explicit legacy-migration CLI: `preview` (writes nothing) then a
+    confirmed `apply` (backup/verify/atomic install). Read-only legacy parsing;
+    failure leaves legacy authority unchanged."""
+    root = Path(project) if project else Path.cwd()
+    service = MigrationService(
+        legacy_reader=parse_legacy_state, db_importer=_real_migration_importer,
+    )
+    if action == "preview":
+        try:
+            preview = service.preview(root)
+        except MigrationError as error:
+            print(json.dumps({"error": str(error)}, indent=2))
+            return 2
+        print(
+            json.dumps(
+                {
+                    "mode": "migrate_preview",
+                    "preview_id": preview.preview_id,
+                    "content_hash": preview.content_hash,
+                    "project_id": preview.project_id,
+                    "mappings": preview.mappings,
+                    "skipped_items": list(preview.skipped_items),
+                    "backup_target": preview.backup_target,
+                    "requires_confirmation": preview.requires_confirmation,
+                    "apply_command": (
+                        f"agentdeck _product migrate apply --project {root} "
+                        f"--preview-id {preview.preview_id} "
+                        f"--content-hash {preview.content_hash} --confirm"
+                    ),
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+        return 0
+    if action == "apply":
+        if not confirm:
+            print("migrate apply requires --confirm")
+            return 2
+        try:
+            service.preview(root)  # repopulate pending against current legacy
+            report = service.apply(preview_id, content_hash, confirm=True)
+        except MigrationError as error:
+            print(json.dumps({"error": str(error)}, indent=2))
+            return 1
+        print(
+            json.dumps(
+                {
+                    "mode": "migrate_apply",
+                    "backup_hash": report.backup_hash,
+                    "database_integrity": report.database_integrity,
+                    "imported_counts": report.imported_counts,
+                    "skipped_items": list(report.skipped_items),
+                    "rollback_command": report.rollback_command,
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+        return 0
+    print("migrate requires a sub-action: preview|apply")
+    return 2
+
+
 __all__ = [
     "ACPAdapterComposition", "build_acp_adapter_composition",
     "build_product_shell", "run_product_dev",
     "RealPreflightProbe", "run_product_preflight",
     "GoldenRunner", "GoldenRunResult", "build_golden_report",
     "compose_golden_runner", "run_product_golden", "accept_product_golden",
+    "run_product_migrate",
 ]
