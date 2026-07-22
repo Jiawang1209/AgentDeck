@@ -4,6 +4,23 @@
 
 ## 2026-07-23
 
+### Task 37 slice 5: migration docs (Task 37 flow complete)
+
+- **Migration guide** (`docs/migrations/product-kernel-state-migration.md`):
+  documents the explicit preview → confirm → backup → verify → report flow, the
+  inert-external-data boundary (no `state.py`/`models.py` import), the
+  application-pure service + injected importer, the fail-closed guarantees
+  (missing confirm / unknown preview / hash mismatch / drift / failed verify →
+  no DB, authority stays `legacy`), and that live cutover is Task 38.
+- **Reuse register** (`docs/migrations/product-kernel-legacy-reuse-register.md`):
+  records the sanitized legacy fixture shapes with paths + content hashes and the
+  Adapter-only rationale (no Kernel/Application import, no write authority).
+- **Task 37 is functionally complete** across parser → preview/authority → apply
+  → real importer + `_product migrate` CLI → docs; the migration surface is a
+  flag-bearing CLI (consistent with the preflight/golden CLIs) rather than a
+  `/slash` command, since apply needs exact `--preview-id`/`--content-hash`. Full
+  suite green.
+
 ### Task 37 slice 4: real migration importer + `_product migrate` CLI
 
 - **Real importer + CLI** (`src/agentdeck/product/bootstrap.py`
