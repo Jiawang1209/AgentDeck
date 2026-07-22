@@ -439,6 +439,16 @@ class SQLiteStore:
             raise ValueError("count requires an authority table name")
         return self._read_connection().execute(f"SELECT count(*) FROM {table}").fetchone()[0]
 
+    def integrity_check(self) -> str:
+        """Read-only structural and foreign-key consistency check."""
+        connection = self._read_connection()
+        rows = connection.execute("PRAGMA integrity_check").fetchall()
+        if rows != [("ok",)]:
+            return "; ".join(str(row[0]) for row in rows)
+        if connection.execute("PRAGMA foreign_key_check").fetchall():
+            return "foreign_key_violation"
+        return "ok"
+
     @contextmanager
     def command(
         self, command_id: str, command_kind: str

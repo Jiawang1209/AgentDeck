@@ -12,6 +12,8 @@ import pytest
 
 from agentdeck.adapters.discovery import ReadinessState, ToolDiscovery
 from agentdeck.adapters.sqlite import SQLiteStore
+from agentdeck.application.execution_records import AuthoritativeRevisionTask
+from agentdeck.application.execution_resume import ExecutionResult
 from agentdeck.application.recovery_service import RecoveryService
 from agentdeck.application.session_service import SessionService
 from agentdeck.product.bootstrap import build_product_shell
@@ -354,6 +356,72 @@ def test_bootstrap_preserves_an_injected_falsey_async_reader(
     )
     try:
         assert shell._read_line is reader
+    finally:
+        shell._close_once()
+
+
+@async_test
+async def test_await_child_completes_session_after_diagnostic_free_execution_result(
+    tmp_path: Path,
+) -> None:
+    _seed_resume(tmp_path)
+    store = SQLiteStore.open(tmp_path, clock=FrozenClock(NOW))
+    store._require_writer().execute(
+        "UPDATE product_sessions SET state='running' WHERE session_id='ses_1'"
+    )
+    store._require_writer().commit()
+    shell = build_product_shell(
+        project_root=str(tmp_path), read_line=AsyncLines("/exit"),
+        write_line=lambda _: None, clock_factory=lambda: FrozenClock(NOW),
+        discovery_factory=_discovery, config_factory=_config,
+        store_factory=lambda *args, **kwargs: store,
+    )
+    try:
+        async def succeed() -> ExecutionResult:
+            return ExecutionResult(
+                (), (), (),
+                AuthoritativeRevisionTask("tsk_probe", "agentdeck", "project", ()),
+                None,
+            )
+
+        await shell._await_child(asyncio.create_task(succeed()))
+
+        assert store.load_aggregate(
+            "product_sessions", "ses_1"
+        )["state"] == "completed"
+    finally:
+        shell._close_once()
+
+
+@async_test
+async def test_await_child_does_not_complete_session_on_diagnostic(
+    tmp_path: Path,
+) -> None:
+    _seed_resume(tmp_path)
+    store = SQLiteStore.open(tmp_path, clock=FrozenClock(NOW))
+    store._require_writer().execute(
+        "UPDATE product_sessions SET state='running' WHERE session_id='ses_1'"
+    )
+    store._require_writer().commit()
+    shell = build_product_shell(
+        project_root=str(tmp_path), read_line=AsyncLines("/exit"),
+        write_line=lambda _: None, clock_factory=lambda: FrozenClock(NOW),
+        discovery_factory=_discovery, config_factory=_config,
+        store_factory=lambda *args, **kwargs: store,
+    )
+    try:
+        async def fail() -> ExecutionResult:
+            return ExecutionResult(
+                (), (), (),
+                AuthoritativeRevisionTask("tsk_probe", "agentdeck", "project", ()),
+                object(),
+            )
+
+        await shell._await_child(asyncio.create_task(fail()))
+
+        assert store.load_aggregate(
+            "product_sessions", "ses_1"
+        )["state"] == "running"
     finally:
         shell._close_once()
 

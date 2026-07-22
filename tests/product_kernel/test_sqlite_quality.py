@@ -475,3 +475,28 @@ def test_command_kind_has_smaller_bound_than_command_identity(tmp_path: Path) ->
             store.execute_once("cmd_kind", "k" * 200, lambda transaction: {"bad": True})
     finally:
         store.close()
+
+
+def test_integrity_check_is_read_only_ok_then_detects_foreign_key_violation(
+    tmp_path: Path,
+) -> None:
+    store = _open(tmp_path)
+    try:
+        _seed_task(store)
+        assert store.integrity_check() == "ok"
+
+        connection = store._writer
+        connection.execute("PRAGMA foreign_keys=OFF")
+        connection.execute(
+            "INSERT INTO evidence VALUES (?,?,?,?,?,?,?)",
+            (
+                "ev_orphan", "tsk_missing", "att_missing", "artifact_hash",
+                '{"artifact_reference":"x","content_hash":"' + "a" * 64 + '"}',
+                "b" * 64, NOW_TEXT,
+            ),
+        )
+        connection.execute("PRAGMA foreign_keys=ON")
+
+        assert store.integrity_check() == "foreign_key_violation"
+    finally:
+        store.close()

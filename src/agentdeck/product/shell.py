@@ -9,7 +9,7 @@ from typing import Final
 
 from agentdeck.application.async_exit_coordinator import AsyncExitCoordinator
 from agentdeck.application.execution_resume import (
-    ExecutionResumePlan, ExecutionResumePlanner,
+    ExecutionResult, ExecutionResumePlan, ExecutionResumePlanner,
     ExecutionResumeProjectionError, ExecutionResumeSnapshot,
 )
 from agentdeck.application.execution_service import ExecutionService
@@ -420,11 +420,17 @@ class ProductShell:
 
     async def _await_child(self, child: asyncio.Task) -> None:
         try:
-            await child
+            result = await child
         except asyncio.CancelledError:
             raise
         except Exception:
             self._emit("Mission execution stopped with a safe diagnostic.")
+            return
+        if type(result) is ExecutionResult and result.diagnostic is None:
+            try:
+                self._lifecycle.complete_mission()
+            except (TypeError, ValueError, RuntimeError):
+                pass
 
     def _confirm_setup(self) -> None:
         if self._leader is None or self._model is None:

@@ -4,6 +4,93 @@
 
 ## 2026-07-22
 
+### Task 33: prove the deterministic Fake four-stage product journey end-to-end
+
+- **New E2E proof** (`tests/product_kernel/test_four_stage_e2e.py` +
+  `tests/product_kernel/fixtures/golden_goal.txt`): a `ProductHarness`
+  composes the *same real Application graph* `build_product_shell` composes
+  — real `SessionService`, `MissionService`, `ExecutionService`,
+  `ApprovalService`, `ProjectLifecycleService`, real `SQLiteStore` — with
+  exactly two FAKE ACP boundaries: a `FakeACPLeader` (`fakes.py`) that
+  proposes the frozen `MissionDraft.coding_default` four-stage Mission for
+  whatever goal it is given, and a fresh `ScriptedACPWorker` (`fakes.py`)
+  per stage that mints its own `ses_acp_<task>` ACP session and returns a
+  schema-valid, evidence-linked result (reading the prior stage's verified
+  evidence IDs and accepted-finding lineage straight off the Task
+  instruction's embedded incoming Handoff / authoritative revision task —
+  the same authoritative facts a real ACP Worker receives). `say` →
+  `configure` → `current_preview` → `confirm` drives one natural-language
+  goal (`golden_goal.txt`) through implementer → reviewer → reviser →
+  acceptance_reviewer to `status="completed"`, `acceptance="passed"`,
+  `handoff_count=3`, and `evidence_criteria` matching every acceptance
+  criterion. A second test exits (closes the store), recreates the
+  composition root over the same project with a fresh `SQLiteStore` +
+  `SessionService`, confirms the restored `ProductSession` is
+  `SessionState.COMPLETED`, walks its `SupportService.trace`, and asserts
+  all four Attempts bound four distinct `agent_instance_id`s and four
+  distinct `acp_session_id`s.
+- **Integration correction 1 — session completion was never wired**
+  (`src/agentdeck/application/project_lifecycle_service.py`,
+  `src/agentdeck/product/shell.py`): nothing in the codebase ever
+  transitioned a `ProductSession` from `running` to the already-declared
+  `completed` state after a Mission finished successfully — the four-stage
+  machinery (Tasks 20–32) only ever proved `ExecutionResult.diagnostic is
+  None`, and `ProductShell._await_child` silently discarded that result.
+  Added `ProjectLifecycleService.complete_mission()` — a small, `execute_once`
+  idempotent, fail-closed (`ProjectDispatchBlocked` unless the session is
+  exactly `running` with no pending exit) command that flips the session to
+  `completed` and appends one `project_completed` event — and wired
+  `ProductShell._await_child` to call it exactly when the awaited child
+  returns an `ExecutionResult` with `diagnostic is None`. This is
+  orchestration-layer wiring, not a widened `ExecutionService` responsibility:
+  it never touches the pure four-stage graph runner itself, so every existing
+  `Harness`/`MemoryStore`-based `ExecutionService` unit test (which never
+  routes through `ProductShell`) is unaffected. Regressions:
+  `test_complete_mission_transitions_running_to_completed` +
+  `test_complete_mission_rejects_a_session_that_is_not_running`
+  (`tests/product_kernel/test_project_lifecycle_service.py`),
+  `test_await_child_completes_session_after_diagnostic_free_execution_result` +
+  `test_await_child_does_not_complete_session_on_diagnostic`
+  (`tests/product_kernel/test_product_shell.py`).
+- **Integration correction 2 — no read-only store integrity check existed**
+  (`src/agentdeck/adapters/sqlite.py`): added `SQLiteStore.integrity_check()`
+  — read-only `PRAGMA integrity_check` plus `PRAGMA foreign_key_check` over
+  the live connection, returning `"ok"` or a content-free failure string.
+  Regression: `test_integrity_check_is_read_only_ok_then_detects_foreign_key_violation`
+  (`tests/product_kernel/test_sqlite_quality.py`).
+- **Fidelity report is test-harness-only, reusing Task 27/28 machinery
+  unweakened** (`tests/product_kernel/fakes.py`): `RecordingFidelityObserver`
+  records every decoded `WorkerEvent` `ApprovalService` publishes (wired as
+  its `event_publisher`, exactly like the real `ObserverBroker`) and, on
+  `fidelity_report()`, groups them by `attempt_id` and replays each group
+  through the real, unmodified Task 27/28 `ObserverStream` cursor/identity
+  validator (`agentdeck.product.observer`) — it only *observes* what that
+  validator already rejects (`observer_sequence_gap`/`rollback` → `missing`,
+  `observer_sequence_conflict`/`cursor_conflict` → `duplicates`, any other
+  identity mismatch, or one `attempt_id` spanning more than one
+  `(session_id, agent_id, task_id, transport)` lineage → `mixed`); no
+  Observer invariant was loosened. Regressions:
+  `test_fidelity_report_is_empty_on_a_faithful_multi_attempt_stream`,
+  `test_fidelity_report_flags_a_sequence_gap_as_missing`,
+  `test_fidelity_report_flags_a_conflicting_repeated_sequence_as_duplicate`,
+  `test_fidelity_report_flags_one_attempt_bound_to_two_agents_as_mixed`
+  (`tests/product_kernel/test_observer_fidelity.py`).
+- **Agent Instance registration remains explicit harness/test setup, not a
+  new integration gap**: `attempts.agent_instance_id` is a real SQLite
+  foreign key to `agent_instances`, and no production code path yet
+  registers that row automatically (every existing SQLite-backed execution
+  test, e.g. `test_takeover_composition.py`, already seeds it by hand); the
+  harness does the same, seeding the four fixed `agent_instances` rows from
+  `MissionDraft.coding_default`'s own Task specifications before confirming.
+- **Verification**: focused `pytest tests/product_kernel/test_four_stage_e2e.py`
+  — 2 passed. `pytest tests/product_kernel/test_architecture.py
+  tests/product_kernel/test_context_firewall.py` — 50 passed. Full
+  `pytest tests/product_kernel` — 2046 passed, 3 deselected (the pre-existing,
+  unrelated, environment-timing-flaky
+  `test_selector_setup_failure_reaps_parent_and_descendant[constructor/first/second]`,
+  confirmed to pass reliably in isolation; discovery code was not touched).
+  `python -m compileall -q src tests/product_kernel` — clean.
+
 ### Task 32: close outcome-unknown, observer degradation, and resume recovery
 
 - **Condition assessment** (`src/agentdeck/kernel/diagnostics.py`): added a

@@ -299,6 +299,45 @@ class ProjectLifecycleService:
             should_start=False, snapshot_hash=authority.content_hash,
         )
 
+    def complete_mission(self) -> ProjectLifecycleResult:
+        session = self._store.load_aggregate("product_sessions", self._session_id)
+        if not _exact_running_null(session, self._session_id):
+            raise ProjectDispatchBlocked("project dispatch is paused")
+        command_id = f"project:complete:{self._session_id}"
+
+        def persist(transaction: StoreTransaction) -> CommandResult:
+            live = transaction.load_aggregate("product_sessions", self._session_id)
+            if not _exact_running_null(live, self._session_id):
+                raise ProjectDispatchBlocked("project dispatch is paused")
+            completed = dict(live)
+            completed["state"] = "completed"
+            transaction.save_aggregate(
+                "product_sessions", self._session_id, completed
+            )
+            transaction.append_event(_event(
+                command_id, "project_completed", self._session_id, {},
+                _now(self._clock),
+            ))
+            return {
+                "mode": "project_completed",
+                "session_id": self._session_id,
+                "should_start": False,
+                "snapshot_hash": None,
+            }
+
+        result = self._store.execute_once(
+            command_id, "complete_project", persist
+        )
+        expected = {
+            "mode": "project_completed", "session_id": self._session_id,
+            "should_start": False, "snapshot_hash": None,
+        }
+        if result != expected:
+            raise ProjectDispatchBlocked("project completion authority is invalid")
+        return ProjectLifecycleResult(
+            "project_completed", self._session_id, False, snapshot_hash=None,
+        )
+
     async def resume(
         self, snapshot: ExecutionResumeSnapshot
     ) -> ProjectLifecycleResult:

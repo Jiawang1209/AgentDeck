@@ -480,6 +480,68 @@ def test_cursor_load_failure_and_malformed_value_are_content_free() -> None:
     assert cursor.acknowledged == []
 
 
+def test_fidelity_report_is_empty_on_a_faithful_multi_attempt_stream() -> None:
+    from product_kernel.fakes import RecordingFidelityObserver
+
+    observer = RecordingFidelityObserver(project_id="prj_1")
+    for sequence in (1, 2):
+        observer.publish(event(sequence, attempt_id="att_1"))
+    for sequence in (1, 2):
+        observer.publish(
+            event(sequence, agent_id="agt_2", task_id="tsk_2", attempt_id="att_2")
+        )
+
+    report = observer.fidelity_report()
+
+    assert report.missing == ()
+    assert report.duplicates == ()
+    assert report.mixed == ()
+
+
+def test_fidelity_report_flags_a_sequence_gap_as_missing() -> None:
+    from product_kernel.fakes import RecordingFidelityObserver
+
+    observer = RecordingFidelityObserver(project_id="prj_1")
+    observer.publish(event(1, attempt_id="att_gap"))
+    observer.publish(event(3, attempt_id="att_gap"))
+
+    report = observer.fidelity_report()
+
+    assert report.missing == ("att_gap",)
+    assert report.duplicates == ()
+    assert report.mixed == ()
+
+
+def test_fidelity_report_flags_a_conflicting_repeated_sequence_as_duplicate() -> None:
+    from product_kernel.fakes import RecordingFidelityObserver
+
+    observer = RecordingFidelityObserver(project_id="prj_1")
+    observer.publish(event(1, attempt_id="att_dup"))
+    observer.publish(
+        event(1, attempt_id="att_dup", event_id="evt_conflict", payload={"detail": "other"})
+    )
+
+    report = observer.fidelity_report()
+
+    assert report.duplicates == ("att_dup",)
+    assert report.missing == ()
+    assert report.mixed == ()
+
+
+def test_fidelity_report_flags_one_attempt_bound_to_two_agents_as_mixed() -> None:
+    from product_kernel.fakes import RecordingFidelityObserver
+
+    observer = RecordingFidelityObserver(project_id="prj_1")
+    observer.publish(event(1, attempt_id="att_mixed", agent_id="agt_1"))
+    observer.publish(event(2, attempt_id="att_mixed", agent_id="agt_2"))
+
+    report = observer.fidelity_report()
+
+    assert report.mixed == ("att_mixed",)
+    assert report.missing == ()
+    assert report.duplicates == ()
+
+
 def test_observer_api_exposes_no_domain_or_task29_authority() -> None:
     api = observer_api()
     forbidden = (

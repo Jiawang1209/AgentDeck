@@ -43,6 +43,36 @@ def lifecycle(store) -> ProjectLifecycleService:
     )
 
 
+def test_complete_mission_transitions_running_to_completed(store):
+    service = lifecycle(store)
+    store._require_writer().execute(
+        "UPDATE product_sessions SET state='running' WHERE session_id='ses_1'"
+    )
+
+    result = service.complete_mission()
+
+    assert result.mode == "project_completed"
+    assert result.should_start is False
+    assert store.load_aggregate("product_sessions", "ses_1")["state"] == "completed"
+    assert store._require_writer().execute(
+        "SELECT count(*) FROM events WHERE kind='project_completed'"
+    ).fetchone() == (1,)
+    # Completion is a terminal transition: a session that is already
+    # completed is no longer running, so a second call fails closed rather
+    # than silently repeating (or no-op-ing) the transition.
+    with pytest.raises(ProjectDispatchBlocked):
+        service.complete_mission()
+
+
+def test_complete_mission_rejects_a_session_that_is_not_running(store):
+    service = lifecycle(store)
+
+    with pytest.raises(ProjectDispatchBlocked):
+        service.complete_mission()
+
+    assert store.load_aggregate("product_sessions", "ses_1")["state"] == "paused"
+
+
 @async_test
 async def test_dispatch_lease_requires_running_and_null_pending_exit(store):
     service = lifecycle(store)

@@ -1,7 +1,10 @@
 from dataclasses import dataclass
 from datetime import datetime
+import json
 
 from agentdeck.application.approval_service import ApprovalService
+from agentdeck.kernel.mission import MissionDraft
+from agentdeck.product.observer import ObserverBinding, ObserverError, ObserverStream
 from agentdeck.ports.worker import (
     TaskRequest, WorkerEvent, WorkerHandle, WorkerResult, validate_worker_reason,
 )
@@ -180,3 +183,224 @@ class _FakeEventStream:
 
     async def __anext__(self) -> WorkerEvent:
         return self._worker._next_event(self._handle)
+
+
+def _incoming_evidence_ids(request: TaskRequest) -> tuple[str, ...]:
+    """Read the prior stage's verified evidence IDs straight off the Task
+    instruction's embedded incoming Handoff -- the exact same authoritative
+    lineage `ExecutionService` itself hands to the real ACP Worker."""
+    incoming = json.loads(request.instruction)["incoming_handoff"]
+    if incoming is None:
+        return ()
+    canonical = json.loads(incoming["canonical_content"])
+    return tuple(canonical["verification_evidence_ids"])
+
+
+def stage_worker_result(
+    task_name: str, request: TaskRequest, acceptance_criteria: tuple[str, ...],
+) -> dict[str, object]:
+    """The deterministic, schema-valid result payload for one four-stage Task."""
+    if task_name == "implementation":
+        return {
+            "summary": "implementation complete",
+            "artifact_reference": "workspace patch",
+            "content_hash": "a" * 64,
+        }
+    if task_name == "review":
+        evidence_ids = _incoming_evidence_ids(request)
+        return {
+            "summary": "review complete",
+            "findings": [{
+                "finding_id": "rfn_1", "scope": "project", "severity": "warning",
+                "summary": "verified finding", "criterion": "approved scope",
+                "evidence_ids": list(evidence_ids),
+            }],
+        }
+    if task_name == "revision":
+        authority = json.loads(request.instruction)["authoritative_revision_task"]
+        findings = authority["accepted_findings"]
+        return {
+            "summary": "revision complete", "base": "base", "head": "head",
+            "diff_hash": "b" * 64,
+            "resolved_finding_ids": [item["finding_id"] for item in findings],
+            "evidence_ids": [
+                item["evidence_lineage"]["review_evidence_id"] for item in findings
+            ],
+        }
+    evidence_ids = _incoming_evidence_ids(request)
+    return {
+        "summary": "accepted", "criteria": list(acceptance_criteria),
+        "evidence_by_criterion": {
+            criterion: list(evidence_ids) for criterion in acceptance_criteria
+        },
+        "accepted": True, "failure_reason": None,
+    }
+
+
+class ScriptedACPWorker:
+    """Deterministic per-stage ACP Worker fake bound to its own ACP session.
+
+    Every stage gets a fresh instance from the harness's worker factory, and
+    every instance mints its own `ses_acp_<task>` session id so the four
+    roles of one Mission are never bound to the same Agent Instance or the
+    same ACP session.
+    """
+
+    def __init__(self, task_name: str, acceptance_criteria: tuple[str, ...]) -> None:
+        self._task_name = task_name
+        self._acceptance_criteria = acceptance_criteria
+        self._handle: WorkerHandle | None = None
+        self._request: TaskRequest | None = None
+
+    async def start_task(self, request: TaskRequest) -> WorkerHandle:
+        self._request = request
+        self._handle = WorkerHandle(
+            session_id=f"ses_acp_{request.task_id.removeprefix('tsk_')}",
+            agent_id=request.agent_id, task_id=request.task_id,
+            attempt_id=request.attempt_id,
+        )
+        return self._handle
+
+    async def _events(self):
+        assert self._handle is not None
+        yield WorkerEvent(
+            event_id=f"evt_{self._task_name}", session_id=self._handle.session_id,
+            agent_id=self._handle.agent_id, task_id=self._handle.task_id,
+            attempt_id=self._handle.attempt_id, transport="acp", sequence=1,
+            kind="completed", timestamp="2026-07-22T00:00:00+00:00",
+            payload={"status": "done"},
+        )
+
+    def stream_events(self, handle: WorkerHandle):
+        assert handle == self._handle
+        return self._events()
+
+    async def respond_permission(self, *_args, **_kwargs) -> None:
+        raise AssertionError("the golden fake journey issues no permission requests")
+
+    async def cancel_task(self, *_args, **_kwargs) -> None:
+        raise AssertionError("the golden fake journey is never cancelled")
+
+    async def collect_result(self, handle: WorkerHandle) -> WorkerResult:
+        assert handle == self._handle
+        assert self._request is not None
+        payload = stage_worker_result(
+            self._task_name, self._request, self._acceptance_criteria,
+        )
+        return WorkerResult(
+            session_id=handle.session_id, agent_id=handle.agent_id,
+            task_id=handle.task_id, attempt_id=handle.attempt_id,
+            status="completed", payload=payload,
+        )
+
+
+class FakeACPLeader:
+    """Deterministic Leader Port fake proposing the frozen four-stage Mission."""
+
+    def __init__(
+        self, project_root: str, *, leader_backend: str, leader_model: str,
+        leader_version: str = "unreported", leader_adapter: str = "acp",
+    ) -> None:
+        self._project_root = project_root
+        self._leader_backend = leader_backend
+        self._leader_model = leader_model
+        self._leader_version = leader_version
+        self._leader_adapter = leader_adapter
+
+    def propose_mission(self, request) -> dict[str, object]:
+        draft = MissionDraft.coding_default(
+            draft_id="drf_fake_product_journey",
+            objective=request.user_goal,
+            project_root=self._project_root,
+            leader_backend=self._leader_backend,
+            leader_model=self._leader_model,
+            permission_profile=request.permission_ceiling,
+            leader_adapter=self._leader_adapter,
+            leader_version=self._leader_version,
+        )
+        payload = json.loads(draft.preview(1).canonical_content)
+        payload.pop("version")
+        return payload
+
+
+class _MemoryCursorStore:
+    def __init__(self) -> None:
+        self._cursor = None
+
+    def load(self):
+        return self._cursor
+
+    def acknowledge(self, cursor) -> None:
+        self._cursor = cursor
+
+
+class _NullSink:
+    def emit(self, _record: str) -> None:
+        return None
+
+
+@dataclass(frozen=True)
+class FidelityReport:
+    missing: tuple[str, ...]
+    duplicates: tuple[str, ...]
+    mixed: tuple[str, ...]
+
+
+class RecordingFidelityObserver:
+    """A read-only decoded-event fidelity summary for one Mission journey.
+
+    It records every decoded `WorkerEvent` `ApprovalService` publishes (the
+    same events a real Observer channel would receive) and, on demand,
+    replays each Attempt's own event group through the exact Task 27/28
+    `ObserverStream` cursor/identity validator to *observe* whether the
+    per-Attempt sequence was faithful. It never loosens that validator's
+    invariants -- it only classifies what the validator already rejects.
+    """
+
+    def __init__(self, *, project_id: str) -> None:
+        self._project_id = project_id
+        self._events: list[WorkerEvent] = []
+
+    def publish(self, event: WorkerEvent) -> None:
+        self._events.append(event)
+
+    def fidelity_report(self) -> FidelityReport:
+        grouped: dict[str, list[WorkerEvent]] = {}
+        for event in self._events:
+            grouped.setdefault(event.attempt_id, []).append(event)
+        missing: list[str] = []
+        duplicates: list[str] = []
+        mixed: list[str] = []
+        for attempt_id, events in grouped.items():
+            lineages = {
+                (event.session_id, event.agent_id, event.task_id, event.transport)
+                for event in events
+            }
+            if len(lineages) > 1:
+                mixed.append(attempt_id)
+                continue
+            first = events[0]
+            subscription = ObserverBinding(
+                project_id=self._project_id, session_id=first.session_id,
+                agent_id=first.agent_id, task_id=first.task_id,
+                attempt_id=first.attempt_id, transport=first.transport,
+            )
+            try:
+                ObserverStream(
+                    subscription=subscription, cursor_store=_MemoryCursorStore(),
+                    sink=_NullSink(),
+                ).render(events)
+            except ObserverError as error:
+                if error.code in {
+                    "observer_sequence_gap", "observer_sequence_rollback",
+                }:
+                    missing.append(attempt_id)
+                elif error.code in {
+                    "observer_sequence_conflict", "observer_cursor_conflict",
+                }:
+                    duplicates.append(attempt_id)
+                else:
+                    mixed.append(attempt_id)
+        return FidelityReport(
+            tuple(sorted(missing)), tuple(sorted(duplicates)), tuple(sorted(mixed)),
+        )
