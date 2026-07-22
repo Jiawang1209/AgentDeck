@@ -4,6 +4,60 @@
 
 ## 2026-07-22
 
+### Task 29 independent quality review fixes (Observer ack containment and takeover rejection)
+
+- The Task 29 closure spec review APPROVED (`✅ spec compliant`) over the full
+  range `50f79a76..accb44c1`. The subsequent independent code-quality review
+  returned two Critical and two Important findings; each was verified against the
+  source before implementing, then fixed with strict RED/GREEN TDD.
+- **C1 (Critical) — Observer Broker ack false conflicts**
+  (`src/agentdeck/application/observer_broker.py`): `acknowledge` gated
+  ack-ability on membership in a bounded `_pending` deque that was only populated
+  when the transport reported `delivered is True`. The `UnixObserverServer`
+  replays from its own independent `_history`, so legitimate acks — for events
+  published before a subscriber connected (`delivered False`), for a second
+  subscriber on one binding, or after `_pending` eviction beyond 256 — raised
+  `observer_ack_conflict`. Removed the `_pending` gate (and the now-dead deque)
+  so the durable `ObserverCursorWriter` is the sole arbiter; it already rejects
+  gaps/drift and replays exact duplicates idempotently. A stale/future/drifted
+  cursor (writer `ValueError`) is now contained as observation degradation, never
+  a raise. RED/GREEN guards in `tests/product_kernel/test_observer_broker.py`.
+- **C2 (Critical) — one raised ack killed the pump and leaked the socket**
+  (`src/agentdeck/adapters/observer_ipc.py`,
+  `src/agentdeck/product/observer_lifecycle.py`): a raising acknowledgement
+  propagated out of `drain_acknowledgements` and the lifecycle `_drain` pump,
+  killing the pump task; `close()` then re-raised it via `await self._pump`
+  before `server.close()` ran, so the Unix socket was never unlinked and the
+  next launch failed with `observer_endpoint_replaced`. Contained each ack in
+  `drain_acknowledgements` (counted via `contained_acknowledgement_count`) so one
+  failure never aborts draining the rest, and guarded `_drain`/`close()` so the
+  socket is always unlinked. New `tests/product_kernel/test_observer_lifecycle.py`
+  plus a drain-containment test in `test_observer_ipc.py`.
+- **I1 (Important) — crash paths were untested and one test cemented the bug**:
+  added the missing publish-before-subscribe, multi-ack, future-ack, and
+  pump-survives-a-raising-ack coverage, and rewrote
+  `test_future_socket_ack_never_advances_cursor` /
+  `test_invalid_ack_never_writes_or_advances` to assert containment (no raise,
+  no cursor advance, degradation counted) instead of the previous propagation
+  contract.
+- **I2 (Important) — takeover activation-failure double teardown and swallowed
+  binding error** (`src/agentdeck/application/execution_service.py`,
+  `execution_runtime.py`): when takeover `arm` failed after `activate` consumed
+  the reservation, the caller called `reject_reserved_worker` (which would
+  `quarantine` the already-consumed reservation and crash if the worker cancel
+  raised) and passed `reservation=` into `_stop_attempt`, forcing a `rollback`
+  on the consumed reservation that always raised into a swallowed
+  `except ExecutionBindingError: pass`. Replaced this path with a single
+  contained teardown `reject_activated_worker(binding)` (a sibling of
+  `reject_reserved_worker`) and dropped the meaningless rollback. RED/GREEN
+  guards in `tests/product_kernel/test_takeover.py`.
+- Verification: focused observer + takeover + execution suites green (91);
+  full Product Kernel `1975 passed` with only the pre-existing, out-of-scope
+  discovery-timing flake
+  (`test_selector_setup_failure_reaps_parent_and_descendant[constructor]`, green
+  in isolation and at base `50f79a76`); `compileall` and my `git diff --check`
+  clean. No live provider/tmux/ACP action occurred.
+
 ### Task 29 verification pass and two regression fixes
 
 - Ran the Task 29 (Observer IPC and Takeover Closure) verification gates after

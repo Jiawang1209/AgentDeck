@@ -8,7 +8,9 @@ from types import SimpleNamespace
 
 import pytest
 
-from agentdeck.application.execution_runtime import ForegroundExecutionRuntime
+from agentdeck.application.execution_runtime import (
+    ForegroundExecutionRuntime, reject_activated_worker,
+)
 from agentdeck.application.execution_service import ExecutionService
 from agentdeck.application.project_lifecycle_service import ProjectLifecycleService
 from agentdeck.application.takeover_control import TakeoverControl, TakeoverResult
@@ -25,6 +27,47 @@ from product_kernel.fakes import FrozenClock
 
 
 NOW = datetime(2026, 7, 21, 4, 0, tzinfo=timezone.utc)
+
+
+class _CancelSpyWorker:
+    def __init__(self, fail: bool = False) -> None:
+        self.calls: list[tuple[object, str]] = []
+        self._fail = fail
+
+    async def cancel_task(self, handle, reason):
+        self.calls.append((handle, reason))
+        if self._fail:
+            raise RuntimeError("cancel failed")
+
+
+def test_reject_activated_worker_cancels_bound_worker_exactly_once() -> None:
+    async def scenario() -> None:
+        handle = WorkerHandle("ses_1", "agt_1", "tsk_1", "att_1")
+        worker = _CancelSpyWorker()
+        binding = SimpleNamespace(worker=worker, worker_handle=handle)
+
+        await reject_activated_worker(binding)
+
+        assert worker.calls == [(handle, "execution_binding_rejected")]
+
+    asyncio.run(scenario())
+
+
+def test_reject_activated_worker_contains_a_failing_cancel() -> None:
+    async def scenario() -> None:
+        handle = WorkerHandle("ses_1", "agt_1", "tsk_1", "att_1")
+        worker = _CancelSpyWorker(fail=True)
+        binding = SimpleNamespace(worker=worker, worker_handle=handle)
+
+        # A worker that raises during teardown must not crash the fail-closed
+        # rejection path, and it must be cancelled exactly once.
+        await reject_activated_worker(binding)
+
+        assert len(worker.calls) == 1
+
+    asyncio.run(scenario())
+
+
 def project_evidence(marker: str = "a") -> ProjectEvidence:
     parts = (marker * 64,) * 5
     digest = project_evidence_digest("git-project-evidence/v1", "prj_1", *parts)

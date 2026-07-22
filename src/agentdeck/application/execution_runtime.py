@@ -121,6 +121,15 @@ async def reject_reserved_worker(
     return True
 
 
+async def reject_activated_worker(binding: ActiveExecutionBinding) -> None:
+    # The reservation is consumed and the binding released; cancel the ACP Worker
+    # exactly once. A cancel failure leaves the fail-closed Attempt as authority.
+    try:
+        await binding.worker.cancel_task(binding.worker_handle, reason="execution_binding_rejected")
+    except Exception:
+        pass
+
+
 async def start_reserved_worker(
     runtime: "ForegroundExecutionRuntime",
     reservation: ExecutionReservation,
@@ -486,15 +495,8 @@ class ForegroundExecutionRuntime(ExitCancellationRuntimeMixin):
             raise ExecutionBindingError("exact execution reservation is unavailable")
 
 __all__ = [
-    "ActiveExecutionBinding",
-    "ExecutionBindingError",
-    "ExecutionReservation",
-    "ExecutionRuntimeStatus",
-    "ForegroundExecutionRuntime",
-    "execution_diagnostic",
-    "reject_reserved_worker",
-    "retry_execution_attempt",
-    "start_reserved_worker",
-    "stop_execution_attempt",
-    "worker_failure_result",
+    "ActiveExecutionBinding", "ExecutionBindingError", "ExecutionReservation",
+    "ExecutionRuntimeStatus", "ForegroundExecutionRuntime", "execution_diagnostic",
+    "reject_activated_worker", "reject_reserved_worker", "retry_execution_attempt",
+    "start_reserved_worker", "stop_execution_attempt", "worker_failure_result",
 ]

@@ -173,13 +173,40 @@ def test_future_socket_ack_never_advances_cursor(
         future = replace(cursor_for_event(store._project_id, value), sequence=2)
         client.acknowledge(future)
         _wait(lambda: server.pending_acknowledgement_count == 1)
-        with pytest.raises(ObserverBrokerError, match="observer_ack_conflict"):
-            server.drain_acknowledgements()
+        assert server.drain_acknowledgements() == 1
         assert broker.current_cursor("att_1") is None
+        assert broker.degradation_count == 1
     finally:
         client.close()
         server.close()
         store.close()
+
+
+def test_drain_contains_a_raising_acknowledgement_and_drains_the_rest(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    handled: list[object] = []
+
+    def ack(value: object) -> None:
+        handled.append(value)
+        if value == "boom":
+            raise ObserverBrokerError("observer_cursor_write_failed")
+
+    server = UnixObserverServer(
+        project_root=tmp_path, project_id="prj_1",
+        acknowledge=ack, cursor_reader=lambda binding: None,
+    )
+    server._acknowledgements.put_nowait("boom")
+    server._acknowledgements.put_nowait("ok")
+
+    drained = server.drain_acknowledgements()
+
+    # One failing acknowledgement must never stop the pump from draining the
+    # rest of the queue; both are consumed and the good one still runs.
+    assert drained == 2
+    assert handled == ["boom", "ok"]
+    assert server.contained_acknowledgement_count == 1
 
 
 def test_reconnect_replays_exact_cursor_before_next_event(

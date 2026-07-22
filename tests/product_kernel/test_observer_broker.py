@@ -18,12 +18,13 @@ NOW = datetime(2026, 7, 21, 6, 0, tzinfo=timezone.utc)
 
 
 class Channel:
-    def __init__(self) -> None:
+    def __init__(self, delivered: bool = True) -> None:
         self.items = []
+        self._delivered = delivered
 
     def publish(self, publication) -> bool:
         self.items.append(publication)
-        return True
+        return self._delivered
 
 
 def event(sequence: int = 1) -> WorkerEvent:
@@ -33,9 +34,9 @@ def event(sequence: int = 1) -> WorkerEvent:
     )
 
 
-def _broker(root: Path):
+def _broker(root: Path, delivered: bool = True):
     store = SQLiteStore.open(root, clock=FrozenClock(NOW))
-    channel = Channel()
+    channel = Channel(delivered)
     broker = ObserverBroker(
         project_id=store._project_id, store=store, clock=FrozenClock(NOW),
         channel=channel,
@@ -57,17 +58,60 @@ def test_cursor_is_written_only_after_exact_acknowledgement(tmp_path: Path) -> N
         store.close()
 
 
-def test_invalid_ack_never_writes_or_advances(tmp_path: Path) -> None:
+def test_future_ack_is_contained_without_write_or_advance(tmp_path: Path) -> None:
     store, channel, broker = _broker(tmp_path)
     try:
         broker.publish(event())
         cursor = replace(channel.items[-1].cursor, sequence=2, event_id="evt_2")
 
-        with pytest.raises(ObserverBrokerError, match="observer_ack_conflict"):
-            broker.acknowledge(ObserverAcknowledgement(cursor))
+        broker.acknowledge(ObserverAcknowledgement(cursor))
 
         assert broker.current_cursor("att_1") is None
         assert store.count("commands") == 0
+        assert broker.degradation_count == 1
+    finally:
+        store.close()
+
+
+def test_malformed_ack_is_rejected_without_write(tmp_path: Path) -> None:
+    store, channel, broker = _broker(tmp_path)
+    try:
+        broker.publish(event())
+
+        with pytest.raises(ObserverBrokerError, match="observer_ack_conflict"):
+            broker.acknowledge(object())
+
+        assert broker.current_cursor("att_1") is None
+        assert store.count("commands") == 0
+    finally:
+        store.close()
+
+
+def test_ack_persists_even_when_delivery_was_degraded(tmp_path: Path) -> None:
+    store, channel, broker = _broker(tmp_path, delivered=False)
+    try:
+        broker.publish(event())
+        publication = channel.items[-1]
+        assert broker.degradation_count == 1
+
+        broker.acknowledge(ObserverAcknowledgement(publication.cursor))
+
+        assert broker.current_cursor("att_1") == publication.cursor
+    finally:
+        store.close()
+
+
+def test_duplicate_exact_ack_is_idempotent(tmp_path: Path) -> None:
+    store, channel, broker = _broker(tmp_path)
+    try:
+        broker.publish(event())
+        publication = channel.items[-1]
+
+        broker.acknowledge(ObserverAcknowledgement(publication.cursor))
+        broker.acknowledge(ObserverAcknowledgement(publication.cursor))
+
+        assert broker.current_cursor("att_1") == publication.cursor
+        assert store.count("commands") == 1
     finally:
         store.close()
 

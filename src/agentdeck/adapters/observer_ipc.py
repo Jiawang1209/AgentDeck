@@ -158,6 +158,11 @@ class UnixObserverServer:
         )
         self._owner_thread = threading.get_ident()
         self._history: dict[ObserverBinding, list[ObserverPublication]] = {}
+        self._contained_acknowledgements = 0
+
+    @property
+    def contained_acknowledgement_count(self) -> int:
+        return self._contained_acknowledgements
 
     @property
     def subscriber_count(self) -> int:
@@ -261,7 +266,14 @@ class UnixObserverServer:
                 acknowledgement = self._acknowledgements.get_nowait()
             except queue.Empty:
                 break
-            self._acknowledge(acknowledgement)
+            try:
+                self._acknowledge(acknowledgement)
+            except Exception:
+                # One acknowledgement's failure is observation degradation; it
+                # must never abort draining the rest of the queue or crash the
+                # foreground pump. The durable cursor writer remains the sole
+                # authority, so a contained failure simply never advances it.
+                self._contained_acknowledgements += 1
             drained += 1
         return drained
 

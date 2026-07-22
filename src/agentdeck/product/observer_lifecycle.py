@@ -63,18 +63,30 @@ class ProductObserverLifecycle:
     async def close(self) -> None:
         self._stopping.set()
         if self._pump is not None:
-            await self._pump
+            try:
+                await self._pump
+            except Exception:
+                pass
             self._pump = None
         if self._available:
-            self._server.drain_acknowledgements()
+            self._safe_drain()
             self._server.close()
             self._available = False
 
     async def _drain(self) -> None:
         while not self._stopping.is_set():
-            self._server.drain_acknowledgements()
+            self._safe_drain()
             await asyncio.sleep(0.01)
-        self._server.drain_acknowledgements()
+        self._safe_drain()
+
+    def _safe_drain(self) -> None:
+        try:
+            self._server.drain_acknowledgements()
+        except Exception:
+            # A single acknowledgement failure is observation degradation. It
+            # must never kill the pump or block the deterministic shutdown that
+            # unlinks the socket and joins the listener threads.
+            pass
 
 class ProductObserverRunner:
     """Wrap the shell so Observer closes before the Store on every exit path."""

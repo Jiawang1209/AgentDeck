@@ -13,7 +13,7 @@ from agentdeck.application.execution_resume import (
 from agentdeck.application.execution_records import AuthoritativeRevisionTask
 from agentdeck.application.execution_runtime import (
     ExecutionReservation, ForegroundExecutionRuntime, execution_diagnostic,
-    reject_reserved_worker, retry_execution_attempt,
+    reject_activated_worker, reject_reserved_worker, retry_execution_attempt,
     start_reserved_worker, stop_execution_attempt, worker_failure_result,
 )
 from agentdeck.application.project_lifecycle_service import ProjectDispatchBlocked, ProjectLifecycleService
@@ -143,15 +143,13 @@ class ExecutionService(TakeoverExecutionMixin):
                         try:
                             self._takeover_activate(reservation, binding, (session_id, confirmed, task, attempt, effective_scope))
                         except Exception:
-                            await reject_reserved_worker(
-                                self._runtime, reservation, handle)
+                            await reject_activated_worker(binding)
                             return self._stop_attempt(
                                 confirmed, attempts, evidence, handoffs, revision_task,
                                 task, attempt.unknown_outcome("acp_session_binding_failed"),
                                 "acp_session_binding_failed",
                                 "the validated ACP session did not bind durably",
                                 acp_session_id=handle.session_id,
-                                reservation=reservation,
                             )
                 except ProjectDispatchBlocked:
                     if attempts and attempts[-1] == attempt:

@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from collections import deque
-
 from agentdeck.application.observer_records import ObserverCursorWriter, cursor_id
 from agentdeck.ports.clock import Clock
 from agentdeck.ports.observer import (
@@ -12,9 +10,6 @@ from agentdeck.ports.observer import (
 )
 from agentdeck.ports.store import Store
 from agentdeck.ports.worker import WorkerEvent
-
-
-_MAX_PENDING = 256
 
 
 class ObserverBrokerError(RuntimeError):
@@ -39,7 +34,6 @@ class ObserverBroker:
         if not callable(getattr(channel, "publish", None)):
             raise TypeError("Observer Broker requires a channel")
         self._channel = channel
-        self._pending: deque[ObserverPublication] = deque(maxlen=_MAX_PENDING)
         self._bindings: dict[str, ObserverBinding] = {}
         self.degradation_count = 0
 
@@ -51,25 +45,22 @@ class ObserverBroker:
             delivered = self._channel.publish(publication)
         except Exception:
             delivered = False
-        if delivered is True:
-            self._pending.append(publication)
-        else:
+        if delivered is not True:
             self.degradation_count += 1
 
     def acknowledge(self, acknowledgement: ObserverAcknowledgement) -> None:
         if type(acknowledgement) is not ObserverAcknowledgement:
             raise ObserverBrokerError("observer_ack_conflict")
         cursor = acknowledgement.cursor
-        match = next(
-            (item for item in self._pending if item.cursor == cursor), None,
-        )
-        if match is None:
-            raise ObserverBrokerError("observer_ack_conflict")
         try:
             self._writer.acknowledge(cursor)
+        except ValueError:
+            # A stale, future, gap, or drifted cursor is never authority. The
+            # durable writer is the sole arbiter and has rejected it; contain it
+            # as observation degradation instead of crashing the ack pump.
+            self.degradation_count += 1
         except Exception:
             raise ObserverBrokerError("observer_cursor_write_failed") from None
-        self._pending.remove(match)
 
     def current_cursor(self, attempt_id: str) -> ObserverCursor | None:
         binding = self._bindings.get(attempt_id)
