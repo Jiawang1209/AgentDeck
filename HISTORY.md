@@ -4,6 +4,22 @@
 
 ## 2026-07-23
 
+### Record first co-pilot Line 1 live attempt and the step-count finding
+
+- **Type**: data
+- **Motivation**: 首次用真实 DeepSeek Leader 跑 Line 1,把真实结果与撞到的缺口留证。
+- **What**: 新增 `docs/validation/2026-07-23-copilot-line1-live-finding.md`。真实
+  DeepSeek Leader 可达且返回了计划,但被本项目自己的 plan 校验器拒绝
+  (`provider plan must include exactly 3 steps`) —— 强制“每个配置 agent 正好一步”,
+  DeepSeek 对 slugify 很可能自然拆成 2 步而被打回。诊断定位到
+  `plan_schema.py` 的 `leader_plan_authority`/`build_leader_plan_schema`
+  (`minItems==maxItems==step_count`)与 `:383` 精确计数断言。human 决定停在此,把
+  “放松步数约束为 1..N 范围、保留安全不变量”作为下一个正经 TDD 切片(只动
+  legacy/非 semantic 路径)。
+- **Impact**: 廉价复现“刚性约束拧反 agent 天性”这一核心诊断;确立下一个切片。无代码
+  改动。
+- **Verification**: live stderr 证据;诊断对照源码行号核实。
+
 ### Write the co-pilot Line 1 live runbook
 
 - **Type**: docs
