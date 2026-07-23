@@ -49,8 +49,22 @@
   fix. Golden runner/compose/report tests green.
 - **Follow-up noted**: `leader_service` mislabels non-transport leader errors as
   `leader_transport` (diagnostic-accuracy gap) — a separate improvement.
-- **Next**: a new authorized live run at the fixed commit to see whether the real
-  Codex ACP Leader now proceeds past identity into a real proposal.
+- **Post-fix live run** confirmed the version fix works: the identity check now
+  passes (a temporary, reverted `[DEBUG-IDENTITY]` print did NOT fire). The real
+  Codex ACP Leader proceeds INTO the real ACP session (transport initialized,
+  `embedded_context` present, session created) and fails at the **prompt** step
+  with `TransportFailureCode.PROMPT_FAILED`. Deeper reverted instrumentation of
+  `ACPTransport._invoke` captured the raw cause: the Codex ACP app-server returns
+  a JSON-RPC `acp.exceptions.RequestError('Internal error')` on
+  `conn.send_request("prompt", ...)`. So the current blocker is **Codex-side**:
+  the app-server errors internally when handling AgentDeck's leader-propose
+  prompt (a generic "Internal error", no detail). All temporary instrumentation
+  was reverted (clean `git diff`); disposable projects and ACP residue removed.
+- **Assessment**: the golden orchestration bug is fixed; the remaining blocker is
+  real ACP-protocol/Codex-app-server integration (leader-propose prompt →
+  "Internal error"), which needs focused human-in-the-loop ACP work (Codex
+  app-server logs / prompt-format comparison / an isolation of whether claude-cli
+  now proceeds past the prompt), not an autonomous fix.
 
 ### Golden live diagnosis — real blocker is a common ACP Leader `leader_transport`
 
