@@ -27,6 +27,31 @@
   surface the real Leader-proposal diagnostic; then write deterministic RED for
   that actual blocker and repair. No auto-retry, no evidence rewrite.
 
+### Golden live diagnosis — real blocker is a common ACP Leader `leader_transport`
+
+- **Authorized diagnostic run 2** at `cacb67af` (Leader `codex-cli`) surfaced the
+  real reason: `Diagnostic(code='leader_transport', stage='mission_preview',
+  summary='The Leader did not produce a valid Mission Preview.')`. The failure is
+  immediate (seconds, well under the 30s Leader timeout), so it is not a timeout.
+- **Provider-isolation run** (Leader `claude-cli`, native-default) failed with the
+  **identical** `leader_transport` diagnostic. So the blocker is **NOT
+  Codex-specific** — BOTH real ACP Leaders fail at transport when producing a
+  Mission Preview. Both disposable projects + process/ACP residue were cleaned.
+- **Localized to `ACPLeader._propose`**: `leader_transport` maps from
+  `TransportFailure`, whose only sub-codes are `INITIALIZATION_FAILED` (transport
+  factory/process could not start — Leader command construction), `CAPABILITY_MISSING`
+  (`transport.initialize()` did not advertise `embedded_context`), or
+  `UNEXPECTED_SIDE_EFFECT` (Leader attempted tools/permissions). The real ACP
+  Leader-propose session (embedded-context capability + a structured proposal
+  resource) was never validated end-to-end before — only fakes and the Phase 2
+  ACP **worker** path. The sanitized diagnostic hides which sub-code fired.
+- **Assessment**: this is a real, deep ACP Leader integration blocker (common to
+  both providers), not the golden orchestration (now proven green with fakes and
+  correctly surfacing the diagnostic). Root-causing the exact sub-code needs a raw
+  debug probe outside the sanitized product path, or code-level ACP-Leader work —
+  a focused human-in-the-loop effort, not an autonomous fix. The Live Golden Gate
+  remains BLOCKED; the deterministic kernel/orchestration/migration work is done.
+
 ### Task 37 slice 5: migration docs (Task 37 flow complete)
 
 - **Migration guide** (`docs/migrations/product-kernel-state-migration.md`):
