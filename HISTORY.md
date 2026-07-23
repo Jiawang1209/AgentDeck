@@ -4,6 +4,14 @@
 
 ## 2026-07-23
 
+### Write the co-pilot Line 1 live runbook
+
+- **Type**: docs
+- **Motivation**: 给 Line 1 的真实 API Leader + 真实 coding-agent worker 跑通提供人工授权手册。
+- **What**: 新增 `docs/validation/2026-07-23-copilot-line1-runbook.md`,列出前置、逐步确认的一整轮结对命令序列和成功判据,并标注全部 live 步骤为人工授权门。
+- **Impact**: 真实验证有据可依;不改代码、不执行 live。
+- **Verification**: 文档自查;无占位符。
+
 ### Lock the co-pilot natural loop with a deterministic end-to-end test
 
 - **Type**: test
