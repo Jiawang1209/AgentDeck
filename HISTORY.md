@@ -4,6 +4,25 @@
 
 ## 2026-07-23
 
+### Write the co-pilot natural Line 1 implementation plan
+
+- **Type**: docs
+- **Motivation**: Line 1 设计经 human 批准后,需要一份零上下文可执行的 TDD 实现
+  计划,把"锁定已有结对循环 + 人工授权真实验证"拆成 bite-sized 步骤。
+- **What**: 写入 `docs/superpowers/plans/2026-07-23-copilot-natural-line-1.md`:
+  Task 1 用 fake Leader + 内存 FakeTmuxBackend 写确定性端到端锁定测试
+  (`tests/test_copilot_line1.py`,驱动 leader plan → approval → dispatch →
+  capture-reply → leader review 一整轮,并断言 review 只读不自动派发);
+  Task 2 写真实 API Leader + 真实 coding-agent worker 的 live runbook;
+  Task 3 是人工授权门(不自动执行)下的 live 采证。计划里的测试代码与命令均与
+  `cli.py` / `config.py` / `providers` / `state.py` 源码逐一核对(fake plan 产出
+  planner/coder/reviewer 三步、dispatch/capture-reply 输出键、running binding
+  形状)。
+- **Impact**: 确立 Line 1 的可执行施工图;确定性侧可自动跑,真实/live 侧全是人工
+  授权门。无生产代码改动。
+- **Verification**: 计划自查(spec 覆盖 / 无占位符 / 类型一致);测试断言对照现有
+  `tests/test_leader_cli.py:1118` 的 fake plan 形状确认无误。
+
 ### Design the co-pilot natural Line 1 (顺着 agent 天性的第一根真实线)
 
 - **Type**: docs
