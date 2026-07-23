@@ -4,6 +4,14 @@
 
 ## 2026-07-23
 
+### Lock the co-pilot natural loop with a deterministic end-to-end test
+
+- **Type**: test
+- **Motivation**: Line 1 要把 Desktop 已有的自然结对循环端到端锁死,防止后续拧旋钮时回退。
+- **What**: 新增 `tests/test_copilot_line1.py`,用 fake Leader + 内存 FakeTmuxBackend 驱动 leader plan → approval create/approve/dispatch → capture-reply → leader review 一整轮,断言计划为 planner/coder/reviewer 三步且全需审批、dispatch 恰好向 pane 发一次、review 只读不自动派发。
+- **Impact**: 确定性锁定结对循环契约;真实 API/agent 验证走 Task 2/3 的人工授权 runbook。
+- **Verification**: `pytest tests/test_copilot_line1.py -q` PASS;全量套件保持全绿。
+
 ### Write the co-pilot natural Line 1 implementation plan
 
 - **Type**: docs
