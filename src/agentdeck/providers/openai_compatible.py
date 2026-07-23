@@ -29,7 +29,7 @@ from .base import (
     leader_skill_context_prompt_lines,
     validate_provider_plan_schema,
 )
-from .plan_schema import build_leader_generation_provenance
+from .plan_schema import build_leader_generation_provenance, leader_plan_authority
 from .semantic_plan_schema import (
     SemanticPlanSchemaAuthorityError,
     resolve_semantic_leader_plan_context,
@@ -501,6 +501,7 @@ class OpenAICompatibleProvider:
             }
             for agent in request.config.agents
         ]
+        _, step_count = leader_plan_authority(request)
         lines = [
             "You are the AgentDeck Leader Agent.",
             "Return only a JSON object plan. Do not dispatch work.",
@@ -508,6 +509,7 @@ class OpenAICompatibleProvider:
             "Required schema: goal, summary, steps, approval_required, dispatch_ready.",
             "Each step must include: step, agent_id, role, task, risk, requires_approval.",
             "Step numbers must be 1..n without duplicates or gaps.",
+            f"Plan between 1 and {step_count} steps; use only as many steps as the task actually needs.",
             "Use only listed worker agent_id values and copy each worker role exactly.",
             f"Available workers: {json.dumps(workers, ensure_ascii=False)}",
         ]

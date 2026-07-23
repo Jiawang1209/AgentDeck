@@ -4,6 +4,22 @@
 
 ## 2026-07-23
 
+### Tell real Leader providers the plan step bound in the planning prompt
+
+- **Type**: fix
+- **Motivation**: 步数放松为 1..N 后重跑 live,DeepSeek 这次拆了 4+ 步被上界拒
+  (`between 1 and 3 steps`)。根因:planning prompt 从未告诉模型步数上限——校验器
+  在拦一个模型不知道的约束。
+- **What**: `openai_compatible.py::_system_prompt` 与 `cli_subprocess.py::_prompt`
+  (legacy 非 semantic 路径)各加一行
+  `Plan between 1 and {N} steps; use only as many steps as the task actually
+  needs.`,N 来自 `leader_plan_authority(request)`。CLI 两个子类 `_prompt` 继承基类,
+  一并生效;semantic prompt 路径未动。
+- **Impact**: 真实 Leader 知道边界后自然收敛;live 复跑中 DeepSeek 自拆 3 步
+  (planner→coder→reviewer)首次通过校验入账(`pln_679ef6e24a26`)。
+- **Verification**: TDD——3 处 prompt 断言先 RED 后 GREEN;
+  provider/structured-output/gateway 295 passed;全量 4465 passed, 3 skipped。
+
 ### Relax leader plan step count from exactly-N to 1..N range
 
 - **Type**: feat

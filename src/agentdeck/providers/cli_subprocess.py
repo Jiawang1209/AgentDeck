@@ -502,6 +502,7 @@ class CliLeaderProvider:
             }
             for agent in request.config.agents
         ]
+        _, step_count = leader_plan_authority(request)
         lines = [
             "You are the AgentDeck Leader Agent.",
             "You are the logical Leader Agent with agent_id=leader.",
@@ -512,6 +513,7 @@ class CliLeaderProvider:
             "Required schema: goal, summary, steps, approval_required, dispatch_ready.",
             "Each step must include: step, agent_id, role, task, risk, requires_approval.",
             "Step numbers must be 1..n without duplicates or gaps.",
+            f"Plan between 1 and {step_count} steps; use only as many steps as the task actually needs.",
             "Use only listed worker agent_id values and copy each worker role exactly.",
             f"Available worker agents: {json.dumps(workers, ensure_ascii=False)}",
         ]
