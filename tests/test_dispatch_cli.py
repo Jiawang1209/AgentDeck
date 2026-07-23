@@ -407,6 +407,38 @@ verification:
     assert '"event_type": "reply_captured"' in events
 
 
+def test_capture_reply_tolerates_codex_bullet_decorated_status_line(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    bind_planner(root)
+    fake = FakeTmuxBackend()
+    monkeypatch.setattr(cli, "TmuxBackend", lambda: fake)
+    cli.main(["dispatch", "--from-agent", "coder", "--agent", "planner", "--task", "分析首页布局"])
+    message_id = json.loads(capsys.readouterr().out)["message_id"]
+    # 2026-07-24 live finding: codex TUI 渲染回复首行为 "• status: completed"，
+    # 装饰符导致 startswith("status:") 匹配失败（round 2 两个 codex worker 均复现）。
+    fake.output = """codex ui noise
+  请按以下格式返回:
+  status: completed | blocked | failed
+
+• status: completed
+  summary: 已完成首页布局分析
+  files_written: iae-homepage-analysis.md
+  full_output_path: /tmp/iae-homepage-analysis.md
+"""
+
+    exit_code = cli.main(["capture-reply", "--agent", "planner", "--message-id", message_id])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
+
+    state = StateStore(root).load()
+    reply = state["replies"][0]
+    assert reply["text"].splitlines()[0] == "status: completed"
+    assert "summary: 已完成首页布局分析" in reply["text"]
+    assert state["messages"][0]["status"] == "replied"
+
+
 def test_capture_reply_rejects_output_without_structured_status(tmp_path, monkeypatch, capsys) -> None:
     root = prepare_project(tmp_path, monkeypatch)
     bind_planner(root)

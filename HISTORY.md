@@ -4,6 +4,25 @@
 
 ## 2026-07-24
 
+### Tolerate agent TUI bullet decoration when extracting structured replies
+
+- **Type**: fix
+- **Motivation**: Line 1 live round 2 发现 `capture-reply` 对真实 codex worker 全线失效：
+  codex TUI 把回复首行渲染成 `• status: completed`，`_extract_structured_reply` 的
+  `strip().startswith("status:")` 匹配不上；且当 prompt 回显模板行
+  `status: completed | blocked | failed` 在捕获窗口内时，旧代码会误把模板行当回复起点，
+  抓到垃圾内容入账。两个 codex worker 均复现，两次靠手动 `agentdeck reply` 兜底。
+- **What**: `cli.py` 新增 `_strip_tui_reply_decoration()`（剥离首行 `•` 装饰符），
+  `_extract_structured_reply` 用它做 status 行识别，并把命中的首行归一化后再入账，
+  使装饰后的真实回复行参与"最后一条 status 行胜出"的选择，自然压过更早的模板回显。
+- **Impact**: codex 系 worker 的 `capture-reply` 恢复可用；纯净格式（fake/Claude 无装饰）
+  路径行为不变。Claude Code 清滚动区导致回复不可恢复的问题不在本切片内
+  （方向=文件通道回复，见 live round 2 validation 记录）。
+- **Verification**: TDD——新测试
+  `test_capture_reply_tolerates_codex_bullet_decorated_status_line` 用 live 实录格式
+  先 RED（现有代码抓到模板行）后 GREEN；dispatch 测试文件 16 passed；
+  `python -m compileall src` 通过；全量 4466 passed / 3 skipped。
+
 ### Record co-pilot Line 1 live round 2: full natural loop PASS on a real task
 
 - **Type**: data

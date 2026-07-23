@@ -10130,15 +10130,22 @@ def _reply_success_payload(reply: dict[str, object], store: StateStore) -> dict[
     return payload
 
 
+def _strip_tui_reply_decoration(line: str) -> str:
+    # 真实 agent TUI（如 codex）会把回复首行渲染成 "• status: ..."。
+    return line.strip().lstrip("•").strip()
+
+
 def _extract_structured_reply(output: str) -> str | None:
     lines = output.splitlines()
     start_index = None
     for index, line in enumerate(lines):
-        if line.strip().startswith("status:"):
+        if _strip_tui_reply_decoration(line).startswith("status:"):
             start_index = index
     if start_index is None:
         return None
-    return "\n".join(lines[start_index:]).strip()
+    tail = lines[start_index:]
+    tail[0] = _strip_tui_reply_decoration(tail[0])
+    return "\n".join(tail).strip()
 
 
 def capture_reply_command(args: argparse.Namespace) -> int:
