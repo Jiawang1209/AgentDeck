@@ -4,6 +4,25 @@
 
 ## 2026-07-24
 
+### Add file-channel reply path for worker structured replies
+
+- **Type**: feat
+- **Motivation**: Line 1 live round 2 发现 Claude Code TUI 会清滚动区，结构化回复滚出
+  可视区后 pane 刮取**永久失败**（round 2 reviewer 回复只能靠人工从报告文件重建）。
+  pane 刮取天然脆弱，需要一条不依赖终端渲染的可靠回收通道。
+- **What**: dispatch 与 approval dispatch 现在先生成 message_id，把回复文件绝对路径
+  `.agentdeck/replies/<message_id>.reply.txt` 通过 prompt 尾部新增"回复通道"段落告知
+  worker（并预创建目录；绝对路径兼容 worktree worker），`create_dispatch_records` 支持
+  外部传入 message_id。`capture-reply` 优先读取回复文件（存在且能解析出合法 `status:`
+  行即用，`captured_from=file`），文件缺失或无效时回退既有 pane 刮取
+  （`captured_from=pane`），两个来源都失败才报错；`reply_captured` 审计事件与成功响应
+  均新增 `captured_from` 来源标记。pane 路径行为逐字节兼容。
+- **Impact**: worker 按约定写回复文件后，TUI 清屏/装饰/滚动都不再影响回收；捕获来源
+  进入审计链。人工授权语义不变：capture-reply 仍由人类显式触发，不自动轮询。
+- **Verification**: TDD——3 条新 RED 测试（dispatch prompt 声明回复通道并预创建目录、
+  capture 优先文件通道、坏文件回退 pane）先失败后 GREEN；dispatch 测试文件 19 passed；
+  `python -m compileall src` 通过；全量 4469 passed / 3 skipped。
+
 ### Tolerate agent TUI bullet decoration when extracting structured replies
 
 - **Type**: fix

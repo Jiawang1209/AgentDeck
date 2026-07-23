@@ -9903,34 +9903,52 @@ def agent_assign_role_command(args: argparse.Namespace) -> int:
     return 0
 
 
-def build_dispatch_prompt(agent: AgentSpec, task: str, skill_loads: list[dict[str, object]] | None = None) -> str:
+def _reply_file_path(root: str | Path, message_id: str) -> Path:
+    return Path(root) / ".agentdeck" / "replies" / f"{message_id}.reply.txt"
+
+
+def build_dispatch_prompt(
+    agent: AgentSpec,
+    task: str,
+    skill_loads: list[dict[str, object]] | None = None,
+    reply_file: str | None = None,
+) -> str:
     skill_lines = _dispatch_skill_prompt_lines(skill_loads or [])
-    return "\n".join(
-        [
-            "# AgentDeck dispatch",
-            "",
-            f"Agent: {agent.agent_id}",
-            f"Provider: {agent.provider}",
-            f"角色: {agent.role}",
-            "",
-            "角色说明:",
-            agent.role_prompt or "请按该 agent 的配置角色完成任务。",
-            "",
-            "当前任务:",
-            task,
-            *skill_lines,
-            "",
-            "请按以下格式返回:",
-            "status: completed | blocked | failed",
-            "summary:",
-            "files_read:",
-            "files_written:",
-            "verification:",
-            "risks:",
-            "next_steps:",
-            "full_output_path:",
-        ]
-    )
+    lines = [
+        "# AgentDeck dispatch",
+        "",
+        f"Agent: {agent.agent_id}",
+        f"Provider: {agent.provider}",
+        f"角色: {agent.role}",
+        "",
+        "角色说明:",
+        agent.role_prompt or "请按该 agent 的配置角色完成任务。",
+        "",
+        "当前任务:",
+        task,
+        *skill_lines,
+        "",
+        "请按以下格式返回:",
+        "status: completed | blocked | failed",
+        "summary:",
+        "files_read:",
+        "files_written:",
+        "verification:",
+        "risks:",
+        "next_steps:",
+        "full_output_path:",
+    ]
+    if reply_file:
+        # 真实 agent TUI 会清滚动区导致 pane 刮取失败，文件通道是可靠回收路径。
+        lines.extend(
+            [
+                "",
+                "回复通道:",
+                "除了在终端输出上述结构化回复，还必须把同一份内容原样写入该文件（覆盖写）:",
+                reply_file,
+            ]
+        )
+    return "\n".join(lines)
 
 
 def _dispatch_skill_prompt_lines(skill_loads: list[dict[str, object]]) -> list[str]:
@@ -9989,7 +10007,10 @@ def dispatch_command(args: argparse.Namespace) -> int:
     pane_id = str(binding["pane_id"])
     skill_loads = _loaded_skill_records_for_agent(store, agent.agent_id)
     prompt_skill_context = _dispatch_prompt_skill_context(skill_loads)
-    prompt = build_dispatch_prompt(agent, args.task, skill_loads=skill_loads)
+    message_id = new_id("msg")
+    reply_file = _reply_file_path(config.root, message_id)
+    reply_file.parent.mkdir(parents=True, exist_ok=True)
+    prompt = build_dispatch_prompt(agent, args.task, skill_loads=skill_loads, reply_file=str(reply_file))
     records = store.create_dispatch_records(
         args.from_agent,
         agent.agent_id,
@@ -9997,6 +10018,7 @@ def dispatch_command(args: argparse.Namespace) -> int:
         prompt,
         pane_id,
         prompt_skill_context=prompt_skill_context,
+        message_id=message_id,
     )
     message = records["message"]
     TmuxBackend().send_input(config.runtime, pane_id, prompt)
@@ -10159,8 +10181,20 @@ def capture_reply_command(args: argparse.Namespace) -> int:
     if binding is None:
         return exit_code
     pane_id = str(binding["pane_id"])
-    output = TmuxBackend().capture_output(config.runtime, pane_id, args.lines)
-    text = _extract_structured_reply(output)
+    text = None
+    captured_from = "pane"
+    reply_file = _reply_file_path(config.root, args.message_id)
+    if reply_file.is_file():
+        try:
+            file_text = reply_file.read_text(encoding="utf-8")
+        except OSError:
+            file_text = ""
+        text = _extract_structured_reply(file_text)
+        if text is not None:
+            captured_from = "file"
+    if text is None:
+        output = TmuxBackend().capture_output(config.runtime, pane_id, args.lines)
+        text = _extract_structured_reply(output)
     if text is None:
         print(f"no structured reply found for agent: {args.agent}", file=sys.stderr)
         return 1
@@ -10177,6 +10211,7 @@ def capture_reply_command(args: argparse.Namespace) -> int:
                 "message_id": reply["message_id"],
                 "from_agent": args.agent,
                 "pane_id": pane_id,
+                "captured_from": captured_from,
                 "captured_lines": len(text.splitlines()),
                 "artifact_count": len(reply.get("artifacts", [])) if isinstance(reply.get("artifacts"), list) else 0,
             },
@@ -10186,6 +10221,7 @@ def capture_reply_command(args: argparse.Namespace) -> int:
     if payload is None:
         return 1
     payload["pane_id"] = pane_id
+    payload["captured_from"] = captured_from
     payload["captured_lines"] = len(text.splitlines())
     _print_json(payload)
     return 0
@@ -17504,7 +17540,10 @@ def _dispatch_approved_approval(
     task = str(approval.get("task", ""))
     skill_loads = _loaded_skill_records_for_agent(store, agent.agent_id)
     prompt_skill_context = _dispatch_prompt_skill_context(skill_loads)
-    prompt = build_dispatch_prompt(agent, task, skill_loads=skill_loads)
+    message_id = new_id("msg")
+    reply_file = _reply_file_path(config.root, message_id)
+    reply_file.parent.mkdir(parents=True, exist_ok=True)
+    prompt = build_dispatch_prompt(agent, task, skill_loads=skill_loads, reply_file=str(reply_file))
     records = store.create_dispatch_records(
         "leader",
         agent.agent_id,
@@ -17512,6 +17551,7 @@ def _dispatch_approved_approval(
         prompt,
         pane_id,
         prompt_skill_context=prompt_skill_context,
+        message_id=message_id,
     )
     message = records["message"]
     attempt = records["attempt"]

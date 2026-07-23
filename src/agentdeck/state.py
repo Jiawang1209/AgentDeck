@@ -9657,10 +9657,11 @@ class StateStore:
         prompt: str,
         pane_id: str,
         prompt_skill_context: dict[str, Any] | None = None,
+        message_id: str | None = None,
     ) -> dict[str, dict[str, Any]]:
         state = self.load()
         message = {
-            "message_id": new_id("msg"),
+            "message_id": message_id or new_id("msg"),
             "from_actor": from_actor,
             "to_agent": to_agent,
             "task": task,

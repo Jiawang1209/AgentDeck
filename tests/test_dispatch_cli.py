@@ -407,6 +407,72 @@ verification:
     assert '"event_type": "reply_captured"' in events
 
 
+def test_dispatch_prompt_declares_reply_file_channel(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    bind_planner(root)
+    fake = FakeTmuxBackend()
+    monkeypatch.setattr(cli, "TmuxBackend", lambda: fake)
+
+    exit_code = cli.main(["dispatch", "--agent", "planner", "--task", "分析首页布局"])
+
+    assert exit_code == 0
+    message_id = json.loads(capsys.readouterr().out)["message_id"]
+    reply_file = root / ".agentdeck" / "replies" / f"{message_id}.reply.txt"
+    prompt = StateStore(root).load()["messages"][0]["prompt"]
+    assert "回复通道:" in prompt
+    assert str(reply_file) in prompt
+    assert reply_file.parent.is_dir()
+
+
+def test_capture_reply_prefers_reply_file_channel_over_pane(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    bind_planner(root)
+    fake = FakeTmuxBackend()
+    monkeypatch.setattr(cli, "TmuxBackend", lambda: fake)
+    cli.main(["dispatch", "--agent", "planner", "--task", "分析首页布局"])
+    message_id = json.loads(capsys.readouterr().out)["message_id"]
+    # 2026-07-24 live finding: Claude Code TUI 清滚动区，回复滚出可视区后 pane 刮取永久失败；
+    # worker 按约定把同一份结构化回复写进 reply 文件，capture 必须优先读文件。
+    reply_file = root / ".agentdeck" / "replies" / f"{message_id}.reply.txt"
+    reply_file.parent.mkdir(parents=True, exist_ok=True)
+    reply_file.write_text(
+        "status: completed\nsummary: 来自文件通道\nfull_output_path: /tmp/report.md\n",
+        encoding="utf-8",
+    )
+    fake.output = "tui noise without any structured block"
+
+    exit_code = cli.main(["capture-reply", "--agent", "planner", "--message-id", message_id])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
+    assert payload["captured_from"] == "file"
+    reply = StateStore(root).load()["replies"][0]
+    assert reply["text"].splitlines()[0] == "status: completed"
+    assert "summary: 来自文件通道" in reply["text"]
+
+
+def test_capture_reply_falls_back_to_pane_when_reply_file_has_no_status(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    bind_planner(root)
+    fake = FakeTmuxBackend()
+    monkeypatch.setattr(cli, "TmuxBackend", lambda: fake)
+    cli.main(["dispatch", "--agent", "planner", "--task", "分析首页布局"])
+    message_id = json.loads(capsys.readouterr().out)["message_id"]
+    reply_file = root / ".agentdeck" / "replies" / f"{message_id}.reply.txt"
+    reply_file.parent.mkdir(parents=True, exist_ok=True)
+    reply_file.write_text("还在干活，没有结构化回复\n", encoding="utf-8")
+    fake.output = "shell noise\nstatus: completed\nsummary: 来自 pane\n"
+
+    exit_code = cli.main(["capture-reply", "--agent", "planner", "--message-id", message_id])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["captured_from"] == "pane"
+    reply = StateStore(root).load()["replies"][0]
+    assert "summary: 来自 pane" in reply["text"]
+
+
 def test_capture_reply_tolerates_codex_bullet_decorated_status_line(tmp_path, monkeypatch, capsys) -> None:
     root = prepare_project(tmp_path, monkeypatch)
     bind_planner(root)
