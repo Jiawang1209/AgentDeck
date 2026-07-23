@@ -60,11 +60,25 @@
   the app-server errors internally when handling AgentDeck's leader-propose
   prompt (a generic "Internal error", no detail). All temporary instrumentation
   was reverted (clean `git diff`); disposable projects and ACP residue removed.
-- **Assessment**: the golden orchestration bug is fixed; the remaining blocker is
-  real ACP-protocol/Codex-app-server integration (leader-propose prompt →
-  "Internal error"), which needs focused human-in-the-loop ACP work (Codex
-  app-server logs / prompt-format comparison / an isolation of whether claude-cli
-  now proceeds past the prompt), not an autonomous fix.
+- **Claude-cli Leader isolation (post-fix)**: with the version fix in place, the
+  claude-cli Leader ALSO fails the leader-propose — but with a DIFFERENT
+  transport sub-code, `TransportFailureCode.TIMEOUT` (reverted instrumentation),
+  i.e. it reached and sent the prompt but did not return the expected structured
+  Mission proposal within the 30s Leader budget. So the two real adapters fail
+  the SAME leader-propose step in different ways: codex → immediate
+  `RequestError('Internal error')` (`PROMPT_FAILED`); claude → `TIMEOUT`.
+- **Assessment (updated)**: not Codex-specific. The real ACP **leader-propose**
+  flow — asking a real Codex/Claude over ACP to return a structured Mission
+  proposal as an embedded ACP resource — does not work end-to-end with either
+  installed adapter (only fakes + the Phase 2 ACP *worker* path were ever
+  validated). This is a real protocol/design integration gap needing focused
+  human-in-the-loop ACP work (e.g. whether the adapters can emit the expected
+  structured proposal resource at all, prompt-format/timeout review), not an
+  autonomous fix. The Live Golden Gate remains BLOCKED at leader-propose; the
+  golden orchestration and all deterministic kernel/migration work are done and
+  green. Follow-up: `leader_service` mislabels non-transport leader errors as
+  `leader_transport` (it collapsed the earlier identity ValueError), worth fixing
+  for diagnostic accuracy.
 
 ### Golden live diagnosis — real blocker is a common ACP Leader `leader_transport`
 
