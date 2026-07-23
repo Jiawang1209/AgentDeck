@@ -27,6 +27,23 @@
   surface the real Leader-proposal diagnostic; then write deterministic RED for
   that actual blocker and repair. No auto-retry, no evidence rewrite.
 
+### Fix leader diagnostic accuracy — unexpected errors are `internal`, not `transport`
+
+- **Diagnostic-accuracy fix** (`#3` from the golden live diagnosis): `LeaderService`
+  and `MissionService` collapsed EVERY non-`LeaderFailure` exception to
+  `LeaderFailureCode.TRANSPORT` → a `leader_transport` diagnostic. That is exactly
+  what mislabeled the golden request-version `ValueError` as `leader_transport`
+  and sent the whole live investigation down the wrong path. Added
+  `LeaderFailureCode.INTERNAL = "internal"`; unexpected non-Leader exceptions now
+  sanitize to `INTERNAL` (`leader_internal` diagnostic) instead of `transport`.
+  Explicit `LeaderFailure`/`TransportFailure` categories (transport, timeout,
+  schema, semantic, …) are unchanged, and raw-error sanitization is preserved
+  (no marker leak).
+- **Test** (`test_leader_service.py::test_unexpected_non_leader_exception_is_internal_not_transport`):
+  a leader raising a raw `ValueError(marker)` now yields `LeaderFailure(INTERNAL)`
+  with the marker absent from the traceback. The existing category-preservation
+  and marker-sanitization tests stay green.
+
 ### Golden live root cause + fix — Leader request used a placeholder version
 
 - **Root cause found** (via a reverted temporary `leader_service` debug print on

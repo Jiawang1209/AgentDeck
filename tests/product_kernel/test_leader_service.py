@@ -127,6 +127,20 @@ def test_non_schema_diagnostic_categories_are_preserved(
     assert len(leader.requests) == 1
 
 
+def test_unexpected_non_leader_exception_is_internal_not_transport() -> None:
+    # A non-LeaderFailure exception (e.g. a composition/identity programming
+    # error) must be sanitized to INTERNAL, not mislabeled TRANSPORT — the exact
+    # mislabel that hid the golden request-version bug as `leader_transport`.
+    marker = "attacker-controlled-internal-marker"
+    leader = FakeLeader([ValueError(marker)])
+
+    with pytest.raises(LeaderFailure) as error:
+        LeaderService(leader).propose(request())
+
+    assert error.value.code is LeaderFailureCode.INTERNAL
+    assert marker not in "".join(traceback.format_exception(error.value))
+
+
 def test_port_schema_failure_receives_exactly_one_repair() -> None:
     first = LeaderFailure(LeaderFailureCode.SCHEMA)
     leader = FakeLeader([first, valid_proposal()])

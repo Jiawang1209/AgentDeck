@@ -256,10 +256,10 @@ class MissionService:
         try:
             return self._leader.propose(request).proposal
         except LeaderFailure as error:
-            code = error.code.value if hasattr(error, "code") else "transport"
+            code = error.code.value if hasattr(error, "code") else "internal"
             return self._leader_diagnostic(code)
         except Exception:
-            return self._leader_diagnostic("transport")
+            return self._leader_diagnostic("internal")
 
     def _request_for(self, goal: str) -> LeaderRequest:
         return replace(self._request, user_goal=_goal(goal), schema_repair=None)

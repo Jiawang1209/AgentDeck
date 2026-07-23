@@ -29,6 +29,9 @@ class LeaderFailureCode(StrEnum):
     SEMANTIC = "semantic"
     CANCELLATION = "cancellation"
     OVERSIZE = "oversize"
+    # Unexpected non-Leader exceptions (e.g. a composition/programming error)
+    # are sanitized to this category rather than mislabeled as TRANSPORT.
+    INTERNAL = "internal"
 
 
 _FAILURE_CODES = {item.value: item for item in LeaderFailureCode}

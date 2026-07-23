@@ -46,7 +46,10 @@ class LeaderService:
                     else LeaderFailureCode.TRANSPORT
                 )
             except Exception:
-                failure_code = LeaderFailureCode.TRANSPORT
+                # A non-LeaderFailure exception is an unexpected internal error
+                # (e.g. a composition/identity programming bug), not a transport
+                # failure. Sanitize it to INTERNAL so it is not mislabeled.
+                failure_code = LeaderFailureCode.INTERNAL
             if failure_code is not None:
                 if failure_code is LeaderFailureCode.SCHEMA and repair_count == 0:
                     current = request.for_schema_repair()
