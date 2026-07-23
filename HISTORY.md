@@ -27,6 +27,31 @@
   surface the real Leader-proposal diagnostic; then write deterministic RED for
   that actual blocker and repair. No auto-retry, no evidence rewrite.
 
+### Golden live root cause + fix — Leader request used a placeholder version
+
+- **Root cause found** (via a reverted temporary `leader_service` debug print on
+  an authorized run): the `leader_transport` diagnostic was a **misreport**. The
+  real exception was `ValueError('request does not match the frozen resolved
+  Leader identity')` from `ACPLeader.propose_mission` — `leader_service`'s generic
+  `except Exception` collapses ANY leader error to `LeaderFailureCode.TRANSPORT`.
+- **The actual bug (deterministic, in the golden orchestration):**
+  `GoldenRunner.run` built the Leader request's `ResolvedLeaderModel` with a
+  hard-coded `version="unreported"`, but the real `ACPLeader` requires the
+  request identity `(backend_id, adapter_id, model_id, version)` to equal its
+  frozen identity, where `version = ready.version` (the real adapter version).
+  Fakes never validated identity, so all fake tests passed and hid it — exactly
+  why both codex-cli and claude-cli failed identically live.
+- **Fix**: `GoldenRunner` now uses the Leader's actual version
+  (`getattr(self._leader, "version", "unreported")`) in the request. Regression
+  `test_golden_runner_request_carries_the_leader_version` uses a
+  `_VersionCheckingLeader` mimicking the real frozen-identity check — it
+  reproduced the exact `leader_transport` failure (RED) and completes after the
+  fix. Golden runner/compose/report tests green.
+- **Follow-up noted**: `leader_service` mislabels non-transport leader errors as
+  `leader_transport` (diagnostic-accuracy gap) — a separate improvement.
+- **Next**: a new authorized live run at the fixed commit to see whether the real
+  Codex ACP Leader now proceeds past identity into a real proposal.
+
 ### Golden live diagnosis — real blocker is a common ACP Leader `leader_transport`
 
 - **Authorized diagnostic run 2** at `cacb67af` (Leader `codex-cli`) surfaced the

@@ -720,7 +720,11 @@ class GoldenRunner:
                 permission_ceiling=permission_profile,
                 resolved_model=ResolvedLeaderModel(
                     backend_id=leader_backend, adapter_id="acp",
-                    model_id=leader_model, version="unreported",
+                    model_id=leader_model,
+                    # The real ACPLeader rejects a request whose resolved-model
+                    # identity (including version) does not match its own frozen
+                    # version; use the Leader's actual version, not a placeholder.
+                    version=getattr(self._leader, "version", "unreported"),
                 ),
             )
             if not session.accept_text(goal).accepted:

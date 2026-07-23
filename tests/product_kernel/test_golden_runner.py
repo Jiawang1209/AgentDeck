@@ -28,6 +28,25 @@ class _EmptyProposalLeader:
     def propose_mission(self, request) -> dict:
         return {}
 
+
+class _VersionCheckingLeader:
+    """Mimics the real ACPLeader frozen-identity check: the request's resolved
+    model version must equal the Leader's own version, else identity mismatch."""
+
+    def __init__(self, project_root: str, version: str) -> None:
+        self.version = version
+        self._inner = FakeACPLeader(
+            project_root, leader_backend=_LEADER_BACKEND, leader_model=_LEADER_MODEL,
+            leader_version=version,
+        )
+
+    def propose_mission(self, request):
+        if request.resolved_model.version != self.version:
+            raise ValueError(
+                "request does not match the frozen resolved Leader identity"
+            )
+        return self._inner.propose_mission(request)
+
 NOW = datetime(2026, 7, 22, 9, 0, tzinfo=timezone.utc)
 GOLDEN_GOAL = (
     Path(__file__).parent / "fixtures" / "golden_goal.txt"
@@ -118,3 +137,29 @@ async def test_golden_runner_surfaces_proposal_diagnostic(tmp_path: Path) -> Non
     message = str(excinfo.value)
     assert "proposal failed:" in message
     assert message.strip() != "golden mission proposal failed:"
+
+
+@async_test
+async def test_golden_runner_request_carries_the_leader_version(
+    tmp_path: Path,
+) -> None:
+    # The real ACPLeader rejects a request whose resolved-model version does not
+    # equal the Leader's frozen version; the runner must use the Leader's actual
+    # version, not a placeholder, or every real Leader proposal fails identity.
+    criteria = MissionDraft.coding_default(
+        "drf_probe", "probe objective", str(tmp_path),
+        _LEADER_BACKEND, _LEADER_MODEL, PermissionProfile.APPROVE_FOR_ME,
+    ).acceptance_criteria
+    runner = GoldenRunner(
+        project_root=tmp_path,
+        leader=_VersionCheckingLeader(str(tmp_path), version="codex-cli 0.131.0"),
+        worker_factory=lambda task: ScriptedACPWorker(task.name, criteria),
+        available_leaders={_LEADER_BACKEND: (_LEADER_MODEL,)},
+        clock=FrozenClock(NOW),
+    )
+    result = await runner.run(
+        goal=GOLDEN_GOAL, leader_backend=_LEADER_BACKEND,
+        leader_model=_LEADER_MODEL,
+        permission_profile=PermissionProfile.APPROVE_FOR_ME,
+    )
+    assert result.status == "completed"
