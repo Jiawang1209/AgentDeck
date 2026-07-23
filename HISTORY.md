@@ -2,6 +2,27 @@
 
 本文件记录 AgentDeck 每一次开发内容。约束：每次新增功能、文档规则、项目骨架、运行环境或用户可见行为变化，都必须同步更新本文件，并在同一次 commit 中提交。
 
+## 2026-07-24
+
+### Record co-pilot Line 1 live round 2: full natural loop PASS on a real task
+
+- **Type**: data
+- **Motivation**: 用真实有肉的任务（复刻中科院沈阳应用生态所首页）把 Line 1 一整轮
+  自然循环在真实环境跑穿，并把撞到的缺口留证。
+- **What**: 新增 `docs/validation/2026-07-24-copilot-line1-live-round2-iae-homepage.md`。
+  真实 DeepSeek Leader 自然拆 3 步（planner→coder→reviewer），每步人工 approve/dispatch，
+  三个真实 CLI worker（codex×2 + Claude Code）在可见 tmux 完成分析/实现/审查，
+  3 replies + 3 artifacts 全部入账，`leader summary` 达 `status: ready`。核心发现：
+  `capture-reply` 的 pane 解析对真实 agent TUI 全线失效（codex `• ` 装饰符差两字符、
+  Claude Code 清滚动区致回复不可恢复），两次靠手动 `reply` 兜底；worker 内部授权框是
+  真实交互层；`leader review` 对部分派发迟钝；spawn 默认布局不可见；reviewer 越界修 bug
+  再证 agent 天性。
+- **Impact**: Line 1 成功判据达成（真实 Leader、无 fake、无刚性协议、全程可审计）。
+  确立下一切片优先级：capture 容错/文件通道回复 > worker 等待态显性化 > review 部分
+  派发感知 > spawn 默认 tiled+标签布局。无代码改动。
+- **Verification**: live 账本证据（plan `pln_1c1536be2374`、3 replies、3 artifacts）；
+  `leader summary` 输出 `status: ready`、`3 dispatched step has replies; 3 artifact recorded.`
+
 ## 2026-07-23
 
 ### Tell real Leader providers the plan step bound in the planning prompt
