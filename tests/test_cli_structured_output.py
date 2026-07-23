@@ -792,7 +792,7 @@ def test_codex_plan_result_uses_native_schema_file_and_cleans_temp_files(
         seen["result_path"] = result_path
         schema = json.loads(schema_path.read_text(encoding="utf-8"))
         seen["schema"] = schema
-        assert schema["properties"]["steps"]["minItems"] == 4
+        assert schema["properties"]["steps"]["minItems"] == 1
         assert schema["properties"]["steps"]["maxItems"] == 4
         assert stat.S_IMODE(schema_path.stat().st_mode) == 0o600
         assert stat.S_IMODE(schema_path.parent.stat().st_mode) == 0o700
@@ -1823,7 +1823,16 @@ def test_codex_native_regeneration_matrix_is_bounded_and_same_identity(
             result_path.write_text(raw_secret, encoding="utf-8")
         elif outcome == "schema":
             invalid = _valid_plan()
-            invalid["steps"] = invalid["steps"][:-1]
+            invalid["steps"].append(
+                {
+                    "step": 5,
+                    "agent_id": "planner",
+                    "role": "planning",
+                    "task": "extra step beyond authority",
+                    "risk": "needs review",
+                    "requires_approval": True,
+                }
+            )
             result_path.write_text(json.dumps(invalid), encoding="utf-8")
         else:
             result_path.write_text(json.dumps(_valid_plan()), encoding="utf-8")
@@ -2290,7 +2299,16 @@ def test_claude_regeneration_matrix_preserves_exact_native_identity(
             kwargs["stdout"].write(raw_secret.encode("utf-8"))
         elif outcome == "schema":
             invalid = _valid_plan()
-            invalid["steps"] = invalid["steps"][:-1]
+            invalid["steps"].append(
+                {
+                    "step": 5,
+                    "agent_id": "planner",
+                    "role": "planning",
+                    "task": "extra step beyond authority",
+                    "risk": "needs review",
+                    "requires_approval": True,
+                }
+            )
             kwargs["stdout"].write(
                 json.dumps(_claude_envelope(invalid)).encode("utf-8")
             )

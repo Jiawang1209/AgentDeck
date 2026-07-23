@@ -4,6 +4,29 @@
 
 ## 2026-07-23
 
+### Relax leader plan step count from exactly-N to 1..N range
+
+- **Type**: feat
+- **Motivation**: 首次 Line 1 live 发现真实 DeepSeek Leader 返回的计划被自家校验器以
+  `provider plan must include exactly 3 steps` 拒绝——`plan_schema.py` 强制"每个配置
+  agent 正好一步",拧反 agent 天性。human 决定把步数约束放松为 1..N 范围。
+- **What**: 只动 legacy/非 semantic 路径:`build_leader_plan_schema` 的 steps
+  `minItems` 从 `step_count` 改为 `1`(`maxItems` 保持 `step_count` 上界);
+  `validate_provider_plan_schema` 的精确计数断言 `len(steps) != step_count` 改为
+  `len(steps) > step_count`,消息改为 `provider plan must include between 1 and N
+  steps`。全部安全不变量保留:每步 `agent_id` ∈ authority 选定 agent、每步
+  `requires_approval=True`、步号 1..k 连续无缝、非空 steps、有上界。semantic
+  authority 路径(`semantic_plan_schema.py`)逐字节未动。
+- **Impact**: 真实 Leader 可按任务自然拆 1..N 步(如 slugify 拆 2 步)不再被打回;
+  legacy schema 内容变化导致 canonical schema hash 随之改变(provenance 语义不变,
+  hash 本就派生自 schema 内容)。超上限、空 steps、未知 agent、缺审批等仍硬拒。
+- **Verification**: TDD——3 条新 RED 测试(schema 1..N 边界、少于 N 步接受、超 N 步
+  拒绝)先失败后 GREEN;同步更新 4 处旧 exactly-N 断言(freeze hash/minItems、
+  `_wrong_step_count` 变异改为超上限、gateway 两处)。
+  `tests/test_leader_plan_schema.py` + `tests/test_conversation_leader_gateway.py`
+  共 211 passed;`python -m compileall src` 通过;全量套件全绿(PYTHONPATH 钉到
+  Desktop `src`,因 conda env 的 editable install 指向 rewrite worktree)。
+
 ### Record first co-pilot Line 1 live attempt and the step-count finding
 
 - **Type**: data

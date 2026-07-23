@@ -134,7 +134,7 @@ def build_leader_plan_schema(request: LeaderPlanRequest) -> dict[str, object]:
                     ],
                     "additionalProperties": False,
                 },
-                "minItems": step_count,
+                "minItems": 1,
                 "maxItems": step_count,
             },
         },
@@ -377,10 +377,10 @@ def validate_provider_plan_schema(
             "invalid_step_count",
             "provider plan must include non-empty steps",
         )
-    if step_count is not None and len(steps) != step_count:
+    if step_count is not None and len(steps) > step_count:
         raise ProviderPlanValidationError(
             "invalid_step_count",
-            f"provider plan must include exactly {step_count} steps",
+            f"provider plan must include between 1 and {step_count} steps",
         )
     configured_agent_roles = {
         agent.agent_id: agent.role for agent in config.agents

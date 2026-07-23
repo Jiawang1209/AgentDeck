@@ -330,12 +330,13 @@ def test_schema_freezes_worker_order_step_count_and_approval() -> None:
 
     assert schema["$id"] == LEADER_PLAN_SCHEMA_VERSION == "leader-plan/v1"
     assert canonical_leader_plan_schema_hash(schema) == (
-        "sha256:5b43467ee5cbf4f407c1c58b628b90bf03f2c30eaa4fa59cf660cc1aaa7da0a4"
+        "sha256:22221f53a89c90bd26b85c846c4f01f7d11739a37cf0e4ce1d9a43c67ed6567b"
     )
     assert schema["required"] == ["goal", "summary", "steps"]
     assert schema["additionalProperties"] is False
     steps = schema["properties"]["steps"]
-    assert steps["minItems"] == steps["maxItems"] == 2
+    assert steps["minItems"] == 1
+    assert steps["maxItems"] == 2
     step_schema = steps["items"]
     assert step_schema["required"] == [
         "step",
@@ -1158,7 +1159,16 @@ def _empty_steps(plan: dict[str, object]) -> None:
 
 
 def _wrong_step_count(plan: dict[str, object]) -> None:
-    plan["steps"] = plan["steps"][:1]
+    plan["steps"].append(
+        {
+            "step": 3,
+            "agent_id": "reviewer",
+            "role": "review",
+            "task": "Run an extra review pass",
+            "risk": "Human approval remains required",
+            "requires_approval": True,
+        }
+    )
 
 
 def _unknown_agent(plan: dict[str, object]) -> None:
@@ -1779,3 +1789,54 @@ def test_semantic_schema_and_provenance_are_bounded_and_repeatable() -> None:
     assert first_provenance == second_provenance
     assert len(json.dumps(first, separators=(",", ":"))) < 100_000
     assert len(json.dumps(first_provenance, separators=(",", ":"))) < 2_000
+
+
+def test_legacy_schema_allows_between_one_and_step_count_steps() -> None:
+    schema = build_leader_plan_schema(_request())
+
+    steps = schema["properties"]["steps"]
+    assert steps["minItems"] == 1
+    assert steps["maxItems"] == 2
+
+
+def test_validate_accepts_fewer_steps_than_authority_step_count() -> None:
+    plan = _valid_plan()
+    plan["steps"] = plan["steps"][:1]
+
+    validated = validate_provider_plan_schema(
+        plan,
+        config=_config(),
+        selected_agent_ids=("reviewer", "planner"),
+        step_count=2,
+    )
+
+    assert len(validated["steps"]) == 1
+    assert validated["approval_required"] is True
+    assert validated["dispatch_ready"] is False
+
+
+def test_validate_rejects_more_steps_than_authority_step_count() -> None:
+    plan = _valid_plan()
+    plan["steps"].append(
+        {
+            "step": 3,
+            "agent_id": "reviewer",
+            "role": "review",
+            "task": "Run an extra review pass",
+            "risk": "Human approval remains required",
+            "requires_approval": True,
+        }
+    )
+
+    with pytest.raises(
+        ProviderPlanValidationError,
+        match="provider plan must include between 1 and 2 steps",
+    ) as raised:
+        validate_provider_plan_schema(
+            plan,
+            config=_config(),
+            selected_agent_ids=("reviewer", "planner"),
+            step_count=2,
+        )
+
+    assert raised.value.code == "invalid_step_count"

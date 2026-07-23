@@ -652,8 +652,21 @@ def test_gateway_uses_native_plan_result_once_without_legacy_fallback(tmp_path: 
         (["not", "a", "plan"], "provider plan content must be a JSON object"),
         ({"goal": "incomplete"}, "provider plan missing required field: summary"),
         (
-            {**_plan(), "steps": _plan()["steps"][:1]},
-            "provider plan must include exactly 2 steps",
+            {
+                **_plan(),
+                "steps": [
+                    *_plan()["steps"],
+                    {
+                        "step": 3,
+                        "agent_id": "planner",
+                        "role": "planning",
+                        "task": "extra step beyond authority",
+                        "risk": "review",
+                        "requires_approval": True,
+                    },
+                ],
+            },
+            "provider plan must include between 1 and 2 steps",
         ),
         (
             {
@@ -838,12 +851,30 @@ def test_orchestrator_resolves_legacy_authority_before_validating_plan(tmp_path:
 
         def plan(self, _request: LeaderPlanRequest) -> dict[str, object]:
             plan = _plan()
-            plan["steps"] = plan["steps"][:1]
+            plan["steps"] = [
+                *plan["steps"],
+                {
+                    "step": 3,
+                    "agent_id": "planner",
+                    "role": "planning",
+                    "task": "extra plan pass",
+                    "risk": "review",
+                    "requires_approval": True,
+                },
+                {
+                    "step": 4,
+                    "agent_id": "reviewer",
+                    "role": "review",
+                    "task": "extra review pass",
+                    "risk": "review",
+                    "requires_approval": True,
+                },
+            ]
             return plan
 
     with pytest.raises(
         ProviderPlanValidationError,
-        match="provider plan must include exactly 3 steps",
+        match="provider plan must include between 1 and 3 steps",
     ):
         LeaderOrchestrator(config, LegacyProvider()).plan_result(
             "structured mission task"
