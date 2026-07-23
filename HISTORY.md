@@ -2,6 +2,32 @@
 
 本文件记录 AgentDeck 每一次开发内容。约束：每次新增功能、文档规则、项目骨架、运行环境或用户可见行为变化，都必须同步更新本文件，并在同一次 commit 中提交。
 
+## 2026-07-23
+
+### Design the co-pilot natural Line 1 (顺着 agent 天性的第一根真实线)
+
+- **Type**: docs
+- **Motivation**: `codex/product-kernel-rewrite` 的刚性 leader-propose 协议
+  (自定义 ACP artifact、禁 agent 用工具、逐字冻结 Leader 身份)在真实 live
+  验证时崩溃 —— 真实 coding agent 天性是动手执行(发起 tool call),不是返回
+  结构化提案。复盘认定这是**规划顺序错误**(把最 risky 的真实 agent 假设推迟
+  到最后才验证),human 认同要**顺着 agent 天性重新规划**。
+- **What**: 与 human 经 brainstorming 冻结第一根线的设计并写入
+  `docs/superpowers/specs/2026-07-23-copilot-natural-line-1-design.md`:
+  锁定"结对 / 逐步确认 + 真实 API Leader + 2 个真实 coding-agent Worker(可见
+  tmux)+ 每次派活前确认",实现路线选 **A**(在 Desktop 原线 `leader chat/plan`
+  · `approval` · `dispatch` · `capture-reply` · `trace` · tmux 已有的自然结对
+  循环上"点活",而非在重写线里从头造)。关键洞察:三种角色 / 四种确认粒度 /
+  两种 Leader 不是三个产品,而是同一根主线 + 三个旋钮(自主度 `approval_mode`、
+  确认粒度 `requires_approval`、Leader provider 插槽);纪律是**第一根线只锁一档、
+  用真实 agent 跑通,其余随后拧旋钮**。开新分支 `copilot-line-1`(基于
+  `p1-durable-mission-kernel`)。
+- **Impact**: 确立顺着 agent 天性的开发主线;真实部分(API 调用、真实
+  coding-agent 派进 tmux、live 一整轮)均为人工授权门。无生产代码改动,仅设计
+  存档;不 push。
+- **Verification**: 设计经 human 逐问确认后批准(角色/Leader/粒度/路线/验证
+  任务),spec 自查无占位符、前后一致、范围收敛在 Line 1。
+
 ## 2026-07-22
 
 ### Design the P1 Durable Mission Kernel task-level plan
