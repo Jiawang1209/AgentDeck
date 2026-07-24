@@ -15849,7 +15849,7 @@ def leader_chat_command(args: argparse.Namespace) -> int:
         }
         return _print_leader_chat_payload_or_error(payload, store, task=args.message)
 
-    if _chat_wants_artifacts(args.message):
+    if _chat_wants_artifacts(args.message) and _chat_task_assignment_intent(args.message, config) is None:
         next_command = "agentdeck artifacts"
         turn = store.record_chat_turn(
             mode="artifacts",

@@ -4,6 +4,25 @@
 
 ## 2026-07-24
 
+### Stop artifacts keyword sniffing from hijacking natural-language task assignment
+
+- **Type**: fix
+- **Motivation**: round 3 live 新发现 ①：`leader chat --message "让 coder 按
+  .agentdeck/artifacts/review-….md 的改进清单完成收尾"` 被 `_chat_wants_artifacts`
+  的纯子串嗅探（路径里的 "artifacts"）劫持进只读 `mode=artifacts`,任务指派意图
+  根本没被检查到,live 只能改写措辞绕过（hardening loop 计划切片 E）。
+- **What**: `cli.py` artifacts 分支条件补 `_chat_task_assignment_intent(...) is None`
+  守卫：消息命中任务指派模式（让/指派/ask/assign + 已知 agent + 非空 task）时不再
+  进 artifacts 模式,照常路由到 `mode=approval` 创建
+  `source=leader_chat_task_assignment` 的 pending approval。不重排其它路由分支。
+  同步 `docs/contracts/leader-chat-schema.md` artifacts-mode 节增补指派优先级说明;
+  计划文件新增切片 E（本切片）与切片 F（其余名词嗅探分支同类劫持审计,待做）。
+- **Impact**: 任务文本可以自然引用 `.agentdeck/artifacts/...` 路径或含
+  "artifacts"/"产物" 字样而不再被劫持;纯 `查看产物` 类只读意图行为不变。
+- **Verification**: RED 用例先复现劫持（断言 `mode=approval` 实得 `artifacts`）;
+  GREEN 后该用例与既有 artifacts/任务指派用例全过,`tests/test_leader_cli.py`
+  228 passed,全量 `pytest tests/ -q` 绿（见 commit）,`python -m compileall src` 通过。
+
 ### Add co-pilot Line 1 round 3 rework runbook (human-authorized)
 
 - **Type**: docs

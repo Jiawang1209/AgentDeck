@@ -5523,6 +5523,35 @@ def test_validate_leader_chat_contract_requires_role_registry_card(
     }
 
 
+def test_leader_chat_task_assignment_wins_over_artifacts_keyword_sniffing(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    prepare_project(tmp_path, monkeypatch)
+    message = (
+        "让 coder 按 .agentdeck/artifacts/review-index-html-2026-07-23.md "
+        "的改进清单完成收尾"
+    )
+
+    exit_code = cli.main(["leader", "chat", "--message", message])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["mode"] == "approval"
+    assert payload.get("artifacts_card") is None
+    approval = payload["approval_card"]["approvals"][0]
+    assert approval["agent_id"] == "coder"
+    assert approval["role"] == "implementation"
+    assert approval["task"] == (
+        "按 .agentdeck/artifacts/review-index-html-2026-07-23.md 的改进清单完成收尾"
+    )
+    assert approval["status"] == "pending"
+    assert approval["source"] == "leader_chat_task_assignment"
+    assert payload["leader_explanation"]["action_kind"] == "approval_create"
+    assert payload["next_command"] == (
+        f"agentdeck approval approve --approval-id {approval['approval_id']}"
+    )
+
+
 def test_leader_chat_task_assignment_intent_creates_pending_approval_without_dispatching(
     tmp_path, monkeypatch, capsys
 ) -> None:

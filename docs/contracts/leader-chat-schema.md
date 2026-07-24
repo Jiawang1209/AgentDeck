@@ -489,7 +489,7 @@ Ledger-mode responses are returned when the human asks to inspect the communicat
 
 When `ledger_card` or `lineage_card` is present, `validate_leader_chat_contract()` checks the same ledger and lineage field lists exposed by `agentdeck contract workbench`. Live ledger-mode responses also include a `control_registry_card` filtered to `scope=ledger` / `card=ledger_card`; its selection points at the card-level `kind=inspect` control whose command is `agentdeck workbench`, while the top-level `next_command` may still point at the first concrete `agentdeck trace --id <id>` when traces exist. `intent_card.secondary_embedded_cards[]` lists `control_registry_card` so GUI clients can render the ledger card and the matching command-palette entry from one response. Ledger-mode records a chat turn for history, but it must not create plans/actions/approvals/messages/jobs/inbox items, acknowledge inbox items, dispatch work, capture replies, read pane output, execute trace/workbench commands, or send tmux input.
 
-Artifacts-mode responses are returned when the human asks to inspect worker artifacts, outputs, deliverables, or `产物`. They return `artifacts_card`, reusing the same shape as `agentdeck artifacts`:
+Artifacts-mode responses are returned when the human asks to inspect worker artifacts, outputs, deliverables, or `产物`. Explicit task assignment takes precedence: when the message also matches the task-assignment pattern (`让`/`指派`/`ask`/`assign` + a known agent id + a non-empty task, e.g. a task whose text merely contains an `.agentdeck/artifacts/...` path), the response must route to `mode=approval` task assignment instead of read-only artifacts mode. Otherwise they return `artifacts_card`, reusing the same shape as `agentdeck artifacts`:
 
 ```json
 {

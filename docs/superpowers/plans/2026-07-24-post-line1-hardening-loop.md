@@ -64,6 +64,25 @@ round 3 返工）都不在本 loop 内，必须人类在场另行授权。
   （dispatch 任务模板引用报告路径、验证文件通道回复是否被真实 worker 遵守的观察点、
   成功判据）。不执行任何 live 步骤。
 
+### [x] E. 任务指派意图不被 artifacts 关键词嗅探劫持（round 3 live 新发现 ①）
+
+- 现象：round 3 live 中 `leader chat --message "让 coder 按 .agentdeck/artifacts/review-….md 的改进清单完成收尾"`
+  被 `_chat_wants_artifacts` 的纯子串嗅探（路径里的 "artifacts"）劫持进只读
+  `mode=artifacts`，任务指派意图（`cli.py` 中 `_chat_task_assignment_intent`）根本没被检查到。
+  Live 靠改写措辞绕过。
+- 目标：当消息命中任务指派模式（让/指派 + 已知 agent + 非空 task）时，artifacts
+  关键词嗅探不得劫持路由；该消息必须照常进入 `mode=approval` 创建
+  `source=leader_chat_task_assignment` 的 pending approval。最小实现：artifacts 分支
+  条件补 `_chat_task_assignment_intent(...) is None` 守卫，不重排其它路由。
+- 测试：RED=含 "artifacts" 路径子串的指派消息断言 `mode=approval`；既有
+  `查看产物` artifacts 意图用例不回归。
+
+### [ ] F. 审计其余关键词嗅探分支的同类劫持（跟进切片）
+
+- 同类缺陷类：ledger（通信/链路）、audit（事件）等纯名词嗅探分支同样排在任务指派
+  之前，任务文本含这些名词时会被劫持。逐分支审计 + 同样的守卫 + 用例；
+  注意不得重排既有路由顺序、不得回归契约测试。
+
 ## 阻塞
 
 （loop 运行中如遇 fork 决策，在此记录后跳下一切片）
