@@ -4,6 +4,25 @@
 
 ## 2026-07-24
 
+### Extend task-assignment precedence to the whole keyword-sniffing family
+
+- **Type**: fix
+- **Motivation**: 切片 E 修掉 artifacts 劫持后，同类缺陷仍在其余纯子串嗅探分支：
+  "让 coder 检查失败的测试"（检查→setup）、"让 planner 写一份进度总结"（总结→summary）、
+  "让 coder 优化通信模块"（通信→ledger）等任务指派消息都会被只读查看模式劫持
+  （hardening loop 计划切片 F）。
+- **What**: 逐分支审计任务指派检查之前的全部 ~19 个意图分支；对 6 个高风险纯子串
+  名词嗅探分支（`leader_status`/`summary`/`setup`/`workbench`/`audit`/`ledger`）加
+  与切片 E 相同的 `_chat_task_assignment_intent(...) is None` 守卫，不重排路由顺序。
+  低风险精确短语分支（help、skill/memory context、review_gate、release_preview、
+  role_topology 等）经审计确认与合法指派句不碰撞，保持原样；审计结论记入计划文件
+  切片 F。同步 `docs/contracts/leader-chat-schema.md` 任务指派节的优先级规则。
+- **Impact**: 任务文本可自然含 "检查/总结/汇总/总览/控制台/审计/事件/通信/链路/
+  leader 状态" 等常用词而不再被劫持；纯查看类消息（无指派模式）行为不变。
+- **Verification**: 6 例参数化 RED 先各自复现劫持模式（leader_status/summary/setup/
+  workbench/audit/ledger），GREEN 后 6 例全过；`tests/test_leader_cli.py` 234 passed；
+  全量 `pytest tests/ -q` 绿 + `python -m compileall src` 通过（见 commit）。
+
 ### Stop artifacts keyword sniffing from hijacking natural-language task assignment
 
 - **Type**: fix

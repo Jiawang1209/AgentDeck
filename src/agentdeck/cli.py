@@ -14787,7 +14787,7 @@ def leader_chat_command(args: argparse.Namespace) -> int:
         }
         return _print_leader_chat_payload_or_error(payload, store, task=args.message)
 
-    if _chat_wants_leader_status(args.message):
+    if _chat_wants_leader_status(args.message) and _chat_task_assignment_intent(args.message, config) is None:
         initial_status_card = _leader_status_payload(project_view)
         next_command = initial_status_card.get("next_command")
         turn = store.record_chat_turn(
@@ -14971,7 +14971,7 @@ def leader_chat_command(args: argparse.Namespace) -> int:
         }
         return _print_leader_chat_payload_or_error(payload, store, task=args.message)
 
-    if _chat_wants_summary(args.message):
+    if _chat_wants_summary(args.message) and _chat_task_assignment_intent(args.message, config) is None:
         plans = store.list_plans()
         if not plans:
             print("no saved plans to summarize", file=sys.stderr)
@@ -15302,7 +15302,7 @@ def leader_chat_command(args: argparse.Namespace) -> int:
         }
         return _print_leader_chat_payload_or_error(payload, store, task=args.message)
 
-    if _chat_wants_setup(args.message):
+    if _chat_wants_setup(args.message) and _chat_task_assignment_intent(args.message, config) is None:
         next_command = "agentdeck doctor"
         turn = store.record_chat_turn(
             mode="setup",
@@ -15716,7 +15716,7 @@ def leader_chat_command(args: argparse.Namespace) -> int:
         }
         return _print_leader_chat_payload_or_error(payload, store, task=args.message)
 
-    if _chat_wants_workbench(args.message):
+    if _chat_wants_workbench(args.message) and _chat_task_assignment_intent(args.message, config) is None:
         initial_workbench = _workbench_snapshot_payload(project_view, store, since_event_id=None)
         next_command = initial_workbench.get("next_command")
         turn = store.record_chat_turn(
@@ -15773,7 +15773,7 @@ def leader_chat_command(args: argparse.Namespace) -> int:
         }
         return _print_leader_chat_payload_or_error(payload, store, task=args.message)
 
-    if _chat_wants_audit(args.message):
+    if _chat_wants_audit(args.message) and _chat_task_assignment_intent(args.message, config) is None:
         next_command = "agentdeck events --limit 20"
         turn = store.record_chat_turn(
             mode="audit",
@@ -16363,7 +16363,7 @@ def leader_chat_command(args: argparse.Namespace) -> int:
         }
         return _print_leader_chat_payload_or_error(payload, store, task=args.message)
 
-    if _chat_wants_ledger(args.message):
+    if _chat_wants_ledger(args.message) and _chat_task_assignment_intent(args.message, config) is None:
         refreshed_project_view = _project_view_payload_or_error(config, store)
         if refreshed_project_view is None:
             return 1

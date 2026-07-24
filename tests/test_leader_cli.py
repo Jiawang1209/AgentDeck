@@ -5523,6 +5523,36 @@ def test_validate_leader_chat_contract_requires_role_registry_card(
     }
 
 
+@pytest.mark.parametrize(
+    ("message", "agent_id", "role", "task"),
+    [
+        ("让 coder 修复 leader 状态卡渲染", "coder", "implementation", "修复 leader 状态卡渲染"),
+        ("让 planner 写一份进度总结", "planner", "planning", "写一份进度总结"),
+        ("让 coder 检查失败的测试并修复", "coder", "implementation", "检查失败的测试并修复"),
+        ("让 coder 优化控制台日志格式", "coder", "implementation", "优化控制台日志格式"),
+        ("让 coder 排查审计事件重复问题", "coder", "implementation", "排查审计事件重复问题"),
+        ("让 coder 优化通信模块重试逻辑", "coder", "implementation", "优化通信模块重试逻辑"),
+    ],
+)
+def test_leader_chat_task_assignment_wins_over_keyword_sniffing_family(
+    tmp_path, monkeypatch, capsys, message, agent_id, role, task
+) -> None:
+    prepare_project(tmp_path, monkeypatch)
+
+    exit_code = cli.main(["leader", "chat", "--message", message])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["mode"] == "approval"
+    approval = payload["approval_card"]["approvals"][0]
+    assert approval["agent_id"] == agent_id
+    assert approval["role"] == role
+    assert approval["task"] == task
+    assert approval["status"] == "pending"
+    assert approval["source"] == "leader_chat_task_assignment"
+    assert payload["leader_explanation"]["action_kind"] == "approval_create"
+
+
 def test_leader_chat_task_assignment_wins_over_artifacts_keyword_sniffing(
     tmp_path, monkeypatch, capsys
 ) -> None:

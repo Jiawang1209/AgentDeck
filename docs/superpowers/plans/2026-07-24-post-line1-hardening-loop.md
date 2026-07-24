@@ -77,11 +77,16 @@ round 3 返工）都不在本 loop 内，必须人类在场另行授权。
 - 测试：RED=含 "artifacts" 路径子串的指派消息断言 `mode=approval`；既有
   `查看产物` artifacts 意图用例不回归。
 
-### [ ] F. 审计其余关键词嗅探分支的同类劫持（跟进切片）
+### [x] F. 审计其余关键词嗅探分支的同类劫持（跟进切片）
 
-- 同类缺陷类：ledger（通信/链路）、audit（事件）等纯名词嗅探分支同样排在任务指派
-  之前，任务文本含这些名词时会被劫持。逐分支审计 + 同样的守卫 + 用例；
-  注意不得重排既有路由顺序、不得回归契约测试。
+- 审计结论（2026-07-24）：任务指派检查之前共 ~19 个意图分支。高风险=纯子串名词嗅探：
+  `leader_status`（leader+状态/刷新）、`summary`（总结/汇总）、`setup`（检查/provider）、
+  `workbench`（总览/控制台）、`audit`（审计/事件）、`ledger`（通信/链路），全部加
+  与切片 E 相同的 `_chat_task_assignment_intent(...) is None` 守卫 + 6 个参数化
+  RED→GREEN 用例。低风险=精确短语/复合词匹配（help、skill/memory context、
+  learning_review、review_gate、release_preview、role_topology、frontdesk），与
+  合法指派句不会碰撞，保持原样。capture/trace 等带 agent/id 语义的分支属另一类
+  显式意图，未纳入本切片。不重排任何路由顺序。
 
 ## 阻塞
 
