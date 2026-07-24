@@ -2309,6 +2309,14 @@ AGENT_RUNTIME_AGENT_ITEM_FIELDS = (
     "runtime",
 )
 
+AGENT_RUNTIME_RELEASE_RESPONSE_FIELDS = (
+    "ok",
+    "mode",
+    "agent_id",
+    "pane_id",
+    "status",
+)
+
 AGENT_RUNTIME_CAPTURE_RESPONSE_FIELDS = (
     "agent_id",
     "pane_id",
@@ -7059,6 +7067,8 @@ def agent_runtime_contract_payload(contract_path: Path) -> dict[str, object]:
         "capture_command_template": "agentdeck agent capture --agent <id> --lines 200",
         "send_command_template": "agentdeck agent send --agent <id> --text <text>",
         "stop_command_template": "agentdeck agent stop --agent <id>",
+        "release_command_template": "agentdeck agent release --agent <id> --confirm",
+        "release_response_fields": list(AGENT_RUNTIME_RELEASE_RESPONSE_FIELDS),
         "refresh_command": "agentdeck agent refresh",
         "contract_path": str(contract_path),
         "contract_exists": contract_path.exists(),

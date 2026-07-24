@@ -4297,6 +4297,7 @@ def _workbench_worker_lifecycle_card(project_view: dict[str, object]) -> dict[st
             pending_inbox_count = _safe_int(inbox_by_agent.get(agent_id), default=0)
             artifact_count = _agent_artifact_count(agent_id, artifact_items)
             lifecycle_stage = _worker_lifecycle_stage(
+                runtime_status=runtime_status,
                 pending_inbox_count=pending_inbox_count,
                 latest_reply=latest_reply,
                 active_job=active_job,
@@ -4404,11 +4405,14 @@ def _safe_int(value: object, *, default: int = 0) -> int:
 
 def _worker_lifecycle_stage(
     *,
+    runtime_status: str,
     pending_inbox_count: int,
     latest_reply: dict[str, object],
     active_job: dict[str, object],
     active_message: dict[str, object],
 ) -> str:
+    if runtime_status == "released":
+        return "released"
     if pending_inbox_count > 0:
         return "inbox_pending"
     if latest_reply:
@@ -9905,6 +9909,62 @@ def agent_stop_command(args: argparse.Namespace) -> int:
         )
     )
     _print_json({"ok": True, "agent_id": args.agent, "pane_id": pane_id, "status": "stopped"})
+    return 0
+
+
+def agent_release_command(args: argparse.Namespace) -> int:
+    config, store, exit_code = _load_project_or_error()
+    if config is None or store is None:
+        return exit_code
+    if _agent_by_id(config, args.agent) is None:
+        print(f"unknown agent: {args.agent}", file=sys.stderr)
+        return 1
+    if not args.confirm:
+        print("agent release requires --confirm", file=sys.stderr)
+        return 1
+    state = store.load()
+    open_jobs = [
+        job
+        for job in state.get("jobs", [])
+        if job.get("agent_id") == args.agent and job.get("status") != "completed"
+    ]
+    inbox_state = state.get("inbox", {})
+    agent_inbox = inbox_state.get(args.agent, []) if isinstance(inbox_state, dict) else []
+    pending_inbox = [
+        item
+        for item in agent_inbox
+        if isinstance(item, dict) and item.get("status") == "pending"
+    ]
+    if open_jobs or pending_inbox:
+        print(
+            f"agent has unresolved work: {args.agent} "
+            f"(open jobs: {len(open_jobs)}, pending inbox: {len(pending_inbox)})",
+            file=sys.stderr,
+        )
+        return 1
+    binding = store.agent_binding(args.agent)
+    pane_id = str(binding["pane_id"]) if binding and binding.get("pane_id") else None
+    if pane_id and binding.get("status") == "running":
+        TmuxBackend().kill_pane(config.runtime, pane_id)
+    store.mark_agent_released(args.agent)
+    store.append_event(
+        EventRecord.create(
+            "agent_released",
+            {
+                "agent_id": args.agent,
+                "pane_id": pane_id,
+            },
+        )
+    )
+    _print_json(
+        {
+            "ok": True,
+            "mode": "agent_released",
+            "agent_id": args.agent,
+            "pane_id": pane_id,
+            "status": "released",
+        }
+    )
     return 0
 
 
@@ -19200,6 +19260,13 @@ def build_parser() -> argparse.ArgumentParser:
     agent_refresh = agent_subparsers.add_parser("refresh", help="Refresh stored agent runtime bindings from tmux")
     agent_refresh.set_defaults(func=agent_refresh_command)
 
+    agent_release = agent_subparsers.add_parser(
+        "release",
+        help="Release a worker whose dispatched work is fully resolved (kills the pane, marks released)",
+    )
+    agent_release.add_argument("--agent", required=True, help="Agent id from .agentdeck/config.toml")
+    agent_release.add_argument("--confirm", action="store_true", help="Explicitly confirm the release")
+    agent_release.set_defaults(func=agent_release_command)
     agent_stop = agent_subparsers.add_parser("stop", help="Kill a spawned agent pane and mark it stopped")
     agent_stop.add_argument("--agent", required=True, help="Agent id from .agentdeck/config.toml")
     agent_stop.set_defaults(func=agent_stop_command)

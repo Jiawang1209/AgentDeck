@@ -13137,6 +13137,66 @@ def test_agent_stop_kills_bound_pane_and_marks_stopped(tmp_path, monkeypatch, ca
     assert '"event_type": "agent_stopped"' in events
 
 
+def test_agent_release_requires_confirm_and_known_agent(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    bind_agent(root, "planner", "%42")
+    before = StateStore(root).load()
+
+    assert cli.main(["agent", "release", "--agent", "planner"]) == 1
+    assert "confirm" in capsys.readouterr().err
+    assert StateStore(root).load() == before
+
+    assert cli.main(["agent", "release", "--agent", "ghost", "--confirm"]) == 1
+    assert "unknown agent" in capsys.readouterr().err
+    assert StateStore(root).load() == before
+
+
+def test_agent_release_refuses_while_work_is_unresolved(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    plan_id, message_id = _dispatch_first_step_and_ack(root, monkeypatch, capsys)
+    before = StateStore(root).load()
+
+    exit_code = cli.main(["agent", "release", "--agent", "planner", "--confirm"])
+
+    assert exit_code == 1
+    err = capsys.readouterr().err
+    assert "unresolved" in err
+    assert StateStore(root).load() == before
+
+
+def test_agent_release_marks_released_and_kills_pane(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    bind_agent(root, "planner", "%42")
+    fake = FakeTmuxBackend()
+    monkeypatch.setattr(cli, "TmuxBackend", lambda: fake)
+
+    exit_code = cli.main(["agent", "release", "--agent", "planner", "--confirm"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload == {
+        "ok": True,
+        "mode": "agent_released",
+        "agent_id": "planner",
+        "pane_id": "%42",
+        "status": "released",
+    }
+    assert fake.killed == ["%42"]
+    state = StateStore(root).load()
+    assert state["agents"]["planner"]["pane_id"] is None
+    assert state["agents"]["planner"]["status"] == "released"
+    events = (root / ".agentdeck" / "state" / "events.jsonl").read_text(encoding="utf-8")
+    assert '"event_type": "agent_released"' in events
+
+    cli.main(["workbench"])
+    lifecycle = json.loads(capsys.readouterr().out)["worker_lifecycle_card"]
+    planner_item = next(
+        item for item in lifecycle["items"] if item["agent_id"] == "planner"
+    )
+    assert planner_item["runtime_status"] == "released"
+    assert planner_item["lifecycle_stage"] == "released"
+
+
 def _seed_pending_approval(root, approval_id, agent_id):
     store = StateStore(root)
     state = store.load()

@@ -8898,6 +8898,24 @@ class StateStore:
         self.save(state)
         return current
 
+    def mark_agent_released(self, agent_id: str) -> dict[str, Any]:
+        state = self.load()
+        agents = state.setdefault("agents", {})
+        current = agents.get(
+            agent_id,
+            {
+                "agent_id": agent_id,
+                "pane_id": None,
+                "session_name": None,
+                "cwd": None,
+                "status": "configured",
+            },
+        )
+        current.update({"pane_id": None, "status": "released"})
+        agents[agent_id] = current
+        self.save(state)
+        return current
+
     def mark_agent_stale(self, agent_id: str) -> dict[str, Any]:
         state = self.load()
         agents = state.setdefault("agents", {})
@@ -11612,6 +11630,7 @@ AUTHORITATIVE_STATE_MUTATION_METHODS = (
     "freeze_mission_execution",
     "finish_mission_worker_start",
     "interrupt_prepared_mission_attempt",
+    "mark_agent_released",
     "mark_agent_stale",
     "mark_agent_stopped",
     "mark_approval_dispatched",

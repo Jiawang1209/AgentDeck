@@ -52,7 +52,7 @@ user 已授权隔夜自主推进；一切 live 步骤（真实 provider、真实
 - 注意：run-loop 自动回收文件通道回复（写路径）是产品 fork，记入阻塞，
   本切片只做感知。
 
-### [ ] 4. G4 前半：worker 生命周期 released 阶段
+### [x] 4. G4 前半：worker 生命周期 released 阶段
 
 - 现象：`_worker_lifecycle_stage` 无 released 态；任务完成后 pane/context 不回收，
   无法在拓扑卡看出"已释放"。

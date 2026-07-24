@@ -24,6 +24,8 @@ The contract command returns:
   "capture_command_template": "agentdeck agent capture --agent <id> --lines 200",
   "send_command_template": "agentdeck agent send --agent <id> --text <text>",
   "stop_command_template": "agentdeck agent stop --agent <id>",
+  "release_command_template": "agentdeck agent release --agent <id> --confirm",
+  "release_response_fields": [],
   "refresh_command": "agentdeck agent refresh",
   "contract_path": "docs/contracts/agent-runtime-schema.md",
   "contract_exists": true,
@@ -210,6 +212,10 @@ The command does not attach to tmux, read pane output, send input, write state, 
 - `agent_id`: captured agent id.
 - `pane_id`: tmux pane id bound to the agent.
 - `output`: captured pane output.
+
+## Release Response Fields
+
+`agentdeck agent release --agent <id> --confirm` is the explicit task-scoped worker lifecycle release step: it is allowed only when the worker's dispatched work is fully resolved (no job with a status other than `completed` and no pending inbox item for that agent). It kills the running pane (reusing the existing kill-pane semantics), marks the runtime binding `status=released` with `pane_id=null`, and appends an `agent_released` audit event. The response uses `release_response_fields` (`ok`, `mode=agent_released`, `agent_id`, `pane_id`, `status=released`). Without `--confirm`, for an unknown agent, or while work is unresolved, it must fail with a non-zero exit and write nothing. Release never deletes files, never touches other agents, and is never triggered automatically — it is a human command. A released worker surfaces as `lifecycle_stage=released` in the workbench `worker_lifecycle_card` and role topology.
 
 ## Refresh Response Fields
 

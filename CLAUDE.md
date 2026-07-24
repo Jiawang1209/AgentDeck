@@ -69,6 +69,7 @@ agentdeck workbench
 agentdeck controls
 agentdeck agent list
 agentdeck agent stop --agent planner
+agentdeck agent release --agent coder --confirm
 agentdeck agent assign-role --agent planner --role "architecture planning" --role-prompt "你负责架构规划和任务拆解。"
 agentdeck leader chat --message "帮我设计自动 reply extraction"
 agentdeck leader chat --message "查看 planner 输出"

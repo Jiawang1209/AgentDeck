@@ -4,6 +4,28 @@
 
 ## 2026-07-25
 
+### Add explicit worker release stage to the task-scoped lifecycle
+
+- **Type**: feat
+- **Motivation**: G4 审计结论：worker 生命周期无 released 阶段，任务完成后
+  pane/context 不回收，拓扑卡无法展示"已释放"（gap-loop 计划切片 4；
+  worktree 隔离是切片 5 的 spec 草稿）。
+- **What**: 新增显式 `agentdeck agent release --agent <id> --confirm`：仅当该
+  agent 无未完结 job（status != completed）且无 pending inbox item 时允许；
+  kill 运行中 pane（复用既有语义）、`mark_agent_released` 标记 binding
+  `status=released`/`pane_id=null`、追加 `agent_released` 审计事件；缺
+  `--confirm`、未知 agent 或有未完结工作时拒绝且零写。`_worker_lifecycle_stage`
+  新增最高优先 `released` 态，流入 workbench `worker_lifecycle_card` 与 role
+  topology。同步 agent-runtime contract
+  （`AGENT_RUNTIME_RELEASE_RESPONSE_FIELDS`、release_command_template）、
+  agent-runtime/workbench schema 文档、CLAUDE.md 常用命令、测试
+  （CLI 3 例 + contract 断言）。不自动 release、不删除文件。
+- **Impact**: 任务级 worker 生命周期第一次有了显式回收终态；GUI 可一眼看出
+  worker 已释放。stop/spawn/dispatch 语义不变。
+- **Verification**: RED 先证 `invalid choice: 'release'`；GREEN 后 3 例过，
+  核心回归 `test_agent_cli/test_contracts/test_leader_cli/test_dispatch_cli`
+  1156 passed；全量 `pytest tests/ -q` 绿 + compileall（见 commit）。
+
 ### Surface file-channel reply readiness in recovery and run-loop (read-only)
 
 - **Type**: feat

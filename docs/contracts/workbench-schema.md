@@ -583,7 +583,7 @@ The card is configuration-only. It does not dispatch work or mutate roles; GUI c
 }
 ```
 
-The card fuses runtime and ledger facts without creating a second state source. `lifecycle_stage` is derived in this order: pending inbox means `inbox_pending`; otherwise a recorded reply means `reply_recorded`; otherwise a job contributes its job status; otherwise a dispatched message means `task_dispatched`; otherwise the worker is `idle`. All item controls are inspect-only. Disabled trace controls use `blocker=no active task`; disabled capture controls use `blocker=agent is not running`. GUI clients must not treat this card as permission to spawn, dispatch, ack, capture, or release work automatically.
+The card fuses runtime and ledger facts without creating a second state source. `lifecycle_stage` is derived in this order: a runtime binding with `status=released` (written only by explicit `agentdeck agent release --agent <id> --confirm`) means `released`; otherwise pending inbox means `inbox_pending`; otherwise a recorded reply means `reply_recorded`; otherwise a job contributes its job status; otherwise a dispatched message means `task_dispatched`; otherwise the worker is `idle`. All item controls are inspect-only. Disabled trace controls use `blocker=no active task`; disabled capture controls use `blocker=agent is not running`. GUI clients must not treat this card as permission to spawn, dispatch, ack, capture, or release work automatically.
 
 ## Review Gate Card
 
