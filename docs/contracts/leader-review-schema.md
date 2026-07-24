@@ -55,4 +55,6 @@ For `next_action=wait_for_reply`, review may expose a read-only trace preview co
 
 For `next_action=summarize`, review may expose `agentdeck leader summary --plan-id <plan_id>` as the next read-only command. Review itself must not synthesize or write the final summary; the summary command deterministically aggregates existing replies and artifacts without calling a provider or mutating state.
 
+Partial-dispatch guard: when replied steps exist but the plan still has steps whose approvals are pending human decision (or not yet created), review must return `next_action=wait_for_approval` with reason `replied steps exist but pending approvals remain` instead of `summarize`. A plan is only ready to summarize once no step is awaiting approval.
+
 GUI/TUI clients should discover this shape through `agentdeck contract leader-review --example` instead of hard-coding `next_command` or `controls[]` fields.

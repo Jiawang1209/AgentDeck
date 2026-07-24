@@ -9072,30 +9072,64 @@ def test_leader_review_recommends_waiting_for_dispatched_reply(tmp_path, monkeyp
     assert state_after["leader_actions"] == []
 
 
+def test_leader_review_waits_for_approval_when_pending_steps_remain_after_replies(tmp_path, monkeypatch, capsys) -> None:
+    # 2026-07-24 live finding: 只派发并回收了 step 1、后两步审批仍 pending 时,
+    # review 就返回 summarize,把没跑完的计划当可总结。
+    root = prepare_project(tmp_path, monkeypatch)
+    bind_agent(root, "planner", "%77")
+    fake = FakeTmuxBackend()
+    monkeypatch.setattr(cli, "TmuxBackend", lambda: fake)
+    cli.main(["leader", "plan", "--task", "partial review"])
+    plan_id = json.loads(capsys.readouterr().out)["plan_id"]
+    cli.main(["approval", "create-from-plan", "--plan-id", plan_id])
+    approvals = json.loads(capsys.readouterr().out)["approvals"]
+    assert len(approvals) > 1
+    first_approval = approvals[0]["approval_id"]
+    cli.main(["approval", "approve", "--approval-id", first_approval])
+    capsys.readouterr()
+    cli.main(["approval", "dispatch", "--approval-id", first_approval])
+    message_id = json.loads(capsys.readouterr().out)["message_id"]
+    cli.main(["reply", "--agent", "planner", "--message-id", message_id, "--text", "status: completed\nsummary: done"])
+    capsys.readouterr()
+
+    exit_code = cli.main(["leader", "review", "--plan-id", plan_id])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["next_action"] == "wait_for_approval"
+    assert payload["reason"] == "replied steps exist but pending approvals remain"
+
+
 def test_leader_review_summarizes_when_all_dispatched_steps_have_replies(tmp_path, monkeypatch, capsys) -> None:
     root = prepare_project(tmp_path, monkeypatch)
     bind_agent(root, "planner", "%77")
+    bind_agent(root, "coder", "%78")
+    bind_agent(root, "reviewer", "%79")
     fake = FakeTmuxBackend()
     monkeypatch.setattr(cli, "TmuxBackend", lambda: fake)
     cli.main(["leader", "plan", "--task", "review completed"])
     planned = json.loads(capsys.readouterr().out)
     plan_id = planned["plan_id"]
     cli.main(["approval", "create-from-plan", "--plan-id", plan_id])
-    approval_id = json.loads(capsys.readouterr().out)["approvals"][0]["approval_id"]
-    cli.main(["approval", "approve", "--approval-id", approval_id])
-    capsys.readouterr()
-    cli.main(["approval", "dispatch", "--approval-id", approval_id])
-    message_id = json.loads(capsys.readouterr().out)["message_id"]
-    cli.main(["reply", "--agent", "planner", "--message-id", message_id, "--text", "status: completed\nsummary: done"])
-    reply_payload = json.loads(capsys.readouterr().out)
-    reply_id = reply_payload["reply_id"]
-    assert reply_payload["inbox_card"]["agent_id"] == "leader"
-    assert reply_payload["inbox_card"]["count"] == 1
-    assert reply_payload["inbox_card"]["items"][0]["event_type"] == "task_reply"
-    assert reply_payload["inbox_card"]["items"][0]["reply_id"] == reply_id
-    assert reply_payload["inbox_card"]["items"][0]["message_id"] == message_id
-    assert reply_payload["inbox_card"]["items"][0]["trace_command"].startswith("agentdeck trace --id inb_")
-    assert reply_payload["inbox_card"]["items"][0]["can_ack"] is True
+    approvals = json.loads(capsys.readouterr().out)["approvals"]
+    expected_replies = []
+    for index, approval in enumerate(approvals):
+        cli.main(["approval", "approve", "--approval-id", approval["approval_id"]])
+        capsys.readouterr()
+        cli.main(["approval", "dispatch", "--approval-id", approval["approval_id"]])
+        message_id = json.loads(capsys.readouterr().out)["message_id"]
+        cli.main(["reply", "--agent", approval["agent_id"], "--message-id", message_id, "--text", "status: completed\nsummary: done"])
+        reply_payload = json.loads(capsys.readouterr().out)
+        reply_id = reply_payload["reply_id"]
+        expected_replies.append({"agent_id": approval["agent_id"], "message_id": message_id, "reply_id": reply_id})
+        if index == 0:
+            assert reply_payload["inbox_card"]["agent_id"] == "leader"
+            assert reply_payload["inbox_card"]["count"] == 1
+            assert reply_payload["inbox_card"]["items"][0]["event_type"] == "task_reply"
+            assert reply_payload["inbox_card"]["items"][0]["reply_id"] == reply_id
+            assert reply_payload["inbox_card"]["items"][0]["message_id"] == message_id
+            assert reply_payload["inbox_card"]["items"][0]["trace_command"].startswith("agentdeck trace --id inb_")
+            assert reply_payload["inbox_card"]["items"][0]["can_ack"] is True
 
     exit_code = cli.main(["leader", "review", "--plan-id", plan_id])
 
@@ -9103,7 +9137,7 @@ def test_leader_review_summarizes_when_all_dispatched_steps_have_replies(tmp_pat
     payload = json.loads(capsys.readouterr().out)
     assert payload["next_action"] == "summarize"
     assert payload["reason"] == "all dispatched steps have replies"
-    assert payload["replies"] == [{"agent_id": "planner", "message_id": message_id, "reply_id": reply_id}]
+    assert payload["replies"] == expected_replies
     assert payload["next_command"] == f"agentdeck leader summary --plan-id {plan_id}"
     assert payload["controls"] == [
         {
@@ -9314,32 +9348,35 @@ def test_leader_chat_summary_intent_embeds_summary_card_without_creating_actions
 ) -> None:
     root = prepare_project(tmp_path, monkeypatch)
     bind_agent(root, "planner", "%77")
+    bind_agent(root, "coder", "%78")
+    bind_agent(root, "reviewer", "%79")
     fake = FakeTmuxBackend()
     monkeypatch.setattr(cli, "TmuxBackend", lambda: fake)
     cli.main(["leader", "plan", "--task", "review completed"])
     planned = json.loads(capsys.readouterr().out)
     plan_id = planned["plan_id"]
     cli.main(["approval", "create-from-plan", "--plan-id", plan_id])
-    approval_id = json.loads(capsys.readouterr().out)["approvals"][0]["approval_id"]
-    cli.main(["approval", "approve", "--approval-id", approval_id])
-    capsys.readouterr()
-    cli.main(["approval", "dispatch", "--approval-id", approval_id])
-    message_id = json.loads(capsys.readouterr().out)["message_id"]
-    cli.main(
-        [
-            "reply",
-            "--agent",
-            "planner",
-            "--message-id",
-            message_id,
-            "--text",
-            "status: completed\nsummary: done\nfull_output_path: docs/done.md",
-        ]
-    )
-    reply_payload = json.loads(capsys.readouterr().out)
-    inbox_id = reply_payload["inbox_card"]["items"][0]["inbox_id"]
-    cli.main(["ack", "--agent", "leader", "--inbox-id", inbox_id])
-    capsys.readouterr()
+    approvals = json.loads(capsys.readouterr().out)["approvals"]
+    message_id = None
+    for index, approval in enumerate(approvals):
+        cli.main(["approval", "approve", "--approval-id", approval["approval_id"]])
+        capsys.readouterr()
+        cli.main(["approval", "dispatch", "--approval-id", approval["approval_id"]])
+        step_message_id = json.loads(capsys.readouterr().out)["message_id"]
+        if index == 0:
+            message_id = step_message_id
+            reply_text = "status: completed\nsummary: done\nfull_output_path: docs/done.md"
+        else:
+            reply_text = "status: completed\nsummary: done"
+        cli.main(["reply", "--agent", approval["agent_id"], "--message-id", step_message_id, "--text", reply_text])
+        reply_payload = json.loads(capsys.readouterr().out)
+        inbox_item = next(
+            item
+            for item in reply_payload["inbox_card"]["items"]
+            if item.get("message_id") == step_message_id
+        )
+        cli.main(["ack", "--agent", "leader", "--inbox-id", inbox_item["inbox_id"]])
+        capsys.readouterr()
     state_before = StateStore(root).load()
     sent_before = list(fake.sent)
     captured_before = list(fake.captured)
@@ -9354,7 +9391,7 @@ def test_leader_chat_summary_intent_embeds_summary_card_without_creating_actions
     assert payload["review"]["next_action"] == "summarize"
     assert payload["leader_summary_card"]["plan_id"] == plan_id
     assert payload["leader_summary_card"]["leader_backend"] == planned["leader_backend"]
-    assert payload["leader_summary_card"]["reply_count"] == 1
+    assert payload["leader_summary_card"]["reply_count"] == 3
     assert payload["leader_summary_card"]["artifact_count"] == 1
     assert payload["leader_summary_card"]["steps"][0]["message_id"] == message_id
     assert payload["leader_summary_card"]["steps"][0]["reply_text"].startswith("status: completed")
@@ -9509,22 +9546,29 @@ def test_validate_leader_chat_contract_requires_summary_registry_card(
 ) -> None:
     root = prepare_project(tmp_path, monkeypatch)
     bind_agent(root, "planner", "%77")
+    bind_agent(root, "coder", "%78")
+    bind_agent(root, "reviewer", "%79")
     fake = FakeTmuxBackend()
     monkeypatch.setattr(cli, "TmuxBackend", lambda: fake)
     cli.main(["leader", "plan", "--task", "review completed"])
     planned = json.loads(capsys.readouterr().out)
     plan_id = planned["plan_id"]
     cli.main(["approval", "create-from-plan", "--plan-id", plan_id])
-    approval_id = json.loads(capsys.readouterr().out)["approvals"][0]["approval_id"]
-    cli.main(["approval", "approve", "--approval-id", approval_id])
-    capsys.readouterr()
-    cli.main(["approval", "dispatch", "--approval-id", approval_id])
-    message_id = json.loads(capsys.readouterr().out)["message_id"]
-    cli.main(["reply", "--agent", "planner", "--message-id", message_id, "--text", "done"])
-    reply_payload = json.loads(capsys.readouterr().out)
-    inbox_id = reply_payload["inbox_card"]["items"][0]["inbox_id"]
-    cli.main(["ack", "--agent", "leader", "--inbox-id", inbox_id])
-    capsys.readouterr()
+    approvals = json.loads(capsys.readouterr().out)["approvals"]
+    for approval in approvals:
+        cli.main(["approval", "approve", "--approval-id", approval["approval_id"]])
+        capsys.readouterr()
+        cli.main(["approval", "dispatch", "--approval-id", approval["approval_id"]])
+        step_message_id = json.loads(capsys.readouterr().out)["message_id"]
+        cli.main(["reply", "--agent", approval["agent_id"], "--message-id", step_message_id, "--text", "done"])
+        reply_payload = json.loads(capsys.readouterr().out)
+        inbox_item = next(
+            item
+            for item in reply_payload["inbox_card"]["items"]
+            if item.get("message_id") == step_message_id
+        )
+        cli.main(["ack", "--agent", "leader", "--inbox-id", inbox_item["inbox_id"]])
+        capsys.readouterr()
 
     exit_code = cli.main(["leader", "chat", "--message", "总结当前计划"])
 

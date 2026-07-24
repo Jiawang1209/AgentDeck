@@ -9333,6 +9333,20 @@ class StateStore:
                 "counts": status["counts"],
                 "leader_backend": leader_backend,
             }
+        pending_steps = [
+            step
+            for step in status["steps"]
+            if step.get("approval_status") in (None, "pending")
+        ]
+        if completed_replies and pending_steps:
+            # 部分派发：已有回复但仍有步骤等待人类审批,不得提前 summarize。
+            return {
+                "plan_id": plan_id,
+                "next_action": "wait_for_approval",
+                "reason": "replied steps exist but pending approvals remain",
+                "counts": status["counts"],
+                "leader_backend": leader_backend,
+            }
         if completed_replies:
             return {
                 "plan_id": plan_id,

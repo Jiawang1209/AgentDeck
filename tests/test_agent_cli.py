@@ -9580,29 +9580,28 @@ def test_workbench_embeds_summary_card_when_latest_plan_is_ready_to_summarize(
 ) -> None:
     root = prepare_project(tmp_path, monkeypatch)
     bind_agent(root, "planner", "%77")
+    bind_agent(root, "coder", "%78")
+    bind_agent(root, "reviewer", "%79")
     fake = FakeTmuxBackend()
     monkeypatch.setattr(cli, "TmuxBackend", lambda: fake)
     cli.main(["leader", "plan", "--provider", "fake", "--model", "fake-plan", "--task", "总结 workbench"])
     started = json.loads(capsys.readouterr().out)
     plan_id = started["plan_id"]
     cli.main(["approval", "create-from-plan", "--plan-id", plan_id])
-    approval_id = json.loads(capsys.readouterr().out)["approvals"][0]["approval_id"]
-    cli.main(["approval", "approve", "--approval-id", approval_id])
-    capsys.readouterr()
-    cli.main(["approval", "dispatch", "--approval-id", approval_id])
-    message_id = json.loads(capsys.readouterr().out)["message_id"]
-    cli.main(
-        [
-            "reply",
-            "--agent",
-            "planner",
-            "--message-id",
-            message_id,
-            "--text",
-            "status: completed\nsummary: done\nfull_output_path: docs/workbench-summary.md",
-        ]
-    )
-    capsys.readouterr()
+    approvals = json.loads(capsys.readouterr().out)["approvals"]
+    message_id = None
+    for index, approval in enumerate(approvals):
+        cli.main(["approval", "approve", "--approval-id", approval["approval_id"]])
+        capsys.readouterr()
+        cli.main(["approval", "dispatch", "--approval-id", approval["approval_id"]])
+        step_message_id = json.loads(capsys.readouterr().out)["message_id"]
+        if index == 0:
+            message_id = step_message_id
+            reply_text = "status: completed\nsummary: done\nfull_output_path: docs/workbench-summary.md"
+        else:
+            reply_text = "status: completed\nsummary: done"
+        cli.main(["reply", "--agent", approval["agent_id"], "--message-id", step_message_id, "--text", reply_text])
+        capsys.readouterr()
     state_before = StateStore(root).load()
 
     exit_code = cli.main(["workbench"])
@@ -9613,9 +9612,9 @@ def test_workbench_embeds_summary_card_when_latest_plan_is_ready_to_summarize(
     assert summary_card["plan_id"] == plan_id
     assert summary_card["status"] == "ready"
     assert summary_card["leader_backend"] == started["leader_backend"]
-    assert summary_card["reply_count"] == 1
+    assert summary_card["reply_count"] == 3
     assert summary_card["artifact_count"] == 1
-    assert summary_card["summary"] == "1 dispatched step has replies; 1 artifact recorded."
+    assert summary_card["summary"] == "3 dispatched step has replies; 1 artifact recorded."
     assert summary_card["review_command"] == f"agentdeck leader review --plan-id {plan_id}"
     assert summary_card["steps"][0]["message_id"] == message_id
     assert summary_card["steps"][0]["reply_text"].startswith("status: completed")
@@ -9648,28 +9647,25 @@ def test_workbench_embeds_learning_review_card_when_latest_plan_is_ready_to_summ
 ) -> None:
     root = prepare_project(tmp_path, monkeypatch)
     bind_agent(root, "planner", "%77")
+    bind_agent(root, "coder", "%78")
+    bind_agent(root, "reviewer", "%79")
     fake = FakeTmuxBackend()
     monkeypatch.setattr(cli, "TmuxBackend", lambda: fake)
     cli.main(["leader", "plan", "--provider", "fake", "--model", "fake-plan", "--task", "复盘 workbench"])
     plan_id = json.loads(capsys.readouterr().out)["plan_id"]
     cli.main(["approval", "create-from-plan", "--plan-id", plan_id])
-    approval_id = json.loads(capsys.readouterr().out)["approvals"][0]["approval_id"]
-    cli.main(["approval", "approve", "--approval-id", approval_id])
-    capsys.readouterr()
-    cli.main(["approval", "dispatch", "--approval-id", approval_id])
-    message_id = json.loads(capsys.readouterr().out)["message_id"]
-    cli.main(
-        [
-            "reply",
-            "--agent",
-            "planner",
-            "--message-id",
-            message_id,
-            "--text",
-            "status: completed\nsummary: add a workbench review checklist\nfull_output_path: docs/workbench-review.md",
-        ]
-    )
-    capsys.readouterr()
+    approvals = json.loads(capsys.readouterr().out)["approvals"]
+    for index, approval in enumerate(approvals):
+        cli.main(["approval", "approve", "--approval-id", approval["approval_id"]])
+        capsys.readouterr()
+        cli.main(["approval", "dispatch", "--approval-id", approval["approval_id"]])
+        step_message_id = json.loads(capsys.readouterr().out)["message_id"]
+        if index == 0:
+            reply_text = "status: completed\nsummary: add a workbench review checklist\nfull_output_path: docs/workbench-review.md"
+        else:
+            reply_text = "status: completed\nsummary: done"
+        cli.main(["reply", "--agent", approval["agent_id"], "--message-id", step_message_id, "--text", reply_text])
+        capsys.readouterr()
     state_before = StateStore(root).load()
 
     exit_code = cli.main(["workbench"])

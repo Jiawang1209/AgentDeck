@@ -4,6 +4,26 @@
 
 ## 2026-07-24
 
+### Guard leader review against premature summarize on partially dispatched plans
+
+- **Type**: fix
+- **Motivation**: Line 1 live round 2 发现只派发并回收了 step 1、后两步审批仍 pending 时,
+  `leader review` 就返回 `next_action=summarize`,把没跑完的计划当可总结（hardening
+  loop 计划切片 C）。
+- **What**: `state.py::leader_review` 在 summarize 分支前新增部分派发守卫：存在已回复
+  step 且仍有 step 的 approval 为 pending（或尚未创建）时,返回既有枚举
+  `next_action=wait_for_approval`、reason `replied steps exist but pending approvals
+  remain`,不引入新枚举值;`run_loop_gate` 消费语义自然映射到 `needs_human_approval`。
+  同步 `docs/contracts/leader-review-schema.md` 增补 partial-dispatch guard 说明。
+  5 个依赖旧行为（部分完成即 summarize/ready）的既有测试改为走完全部审批后再断言,
+  workbench summary/learning 卡片计数断言随之更新。
+- **Impact**: 部分派发的 plan 不再被提前判定 ready-to-summarize;workbench
+  `leader_summary_card` / `learning_review_card` 也只在全部步骤审批完结后出现;
+  contract 枚举与 run-loop stop_reasons 兼容不变。
+- **Verification**: TDD——RED 用例（部分完成场景期望 wait_for_approval）先失败后
+  GREEN;leader CLI 227 passed、workbench 两用例修正后 passed;
+  `python -m compileall src` 通过;全量 4476 passed / 3 skipped。
+
 ### Surface worker waiting-for-input state in agent capture
 
 - **Type**: feat

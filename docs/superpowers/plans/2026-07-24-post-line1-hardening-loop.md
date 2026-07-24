@@ -44,7 +44,7 @@ round 3 返工）都不在本 loop 内，必须人类在场另行授权。
   contract 文档、fields、validator、example 和测试；capture 卡的既有断言不得回归。
 - 测试：fake backend 输出含/不含确认框两类用例 + 卡片契约用例。
 
-### [ ] C. leader review 部分派发感知
+### [x] C. leader review 部分派发感知
 
 - 现象：plan 还有未派发的 approvals（pending/approved 未 dispatch）时，
   `leader review` 就返回 `next_action=summarize`（"all dispatched steps have replies"），
