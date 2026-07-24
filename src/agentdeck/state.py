@@ -10947,10 +10947,12 @@ class StateStore:
             agent_id = waiting_reply_review.get("agent_id")
             message_id = waiting_reply_review.get("message_id")
             next_command = f"agentdeck capture-reply --agent {agent_id} --message-id {message_id}"
+            reply_file = self.deck_dir / "replies" / f"{message_id}.reply.txt"
             summary.update(
                 {
                     "status": "reply_waiting",
                     "reason": waiting_reply_review.get("reason"),
+                    "reply_file_ready": bool(message_id) and reply_file.exists(),
                     "next_command": next_command,
                     "recommended_action": self._recommended_action(
                         label="Capture pending reply",

@@ -40,7 +40,7 @@ user 已授权隔夜自主推进；一切 live 步骤（真实 provider、真实
   或无 pending 时非 0。响应含逐条结果与 next_command（指向 dispatch-ready）。
   同步 approvals contract 文档/fields/validator/example、README、HISTORY、测试。
 
-### [ ] 3. 旋钮·自主度：reply 文件通道就绪显性化（只读）
+### [x] 3. 旋钮·自主度：reply 文件通道就绪显性化（只读）
 
 - 现象：run-loop 停在 `waiting_for_reply` 后交回人工 capture-reply；北极星
   "确认一次走开"需要 loop 能感知 worker 已完成。文件通道回复（ab5902bf）落地后，

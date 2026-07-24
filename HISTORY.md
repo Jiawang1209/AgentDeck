@@ -4,6 +4,26 @@
 
 ## 2026-07-25
 
+### Surface file-channel reply readiness in recovery and run-loop (read-only)
+
+- **Type**: feat
+- **Motivation**: run-loop 停在 `waiting_for_reply` 后交回人工 capture-reply，但
+  人类/GUI/loop 无法确定性感知 worker 是否已按文件通道约定写出回复；
+  北极星"确认一次走开"需要这个完成信号（gap-loop 计划切片 3，只读感知，
+  自动回收是 fork 不在本切片）。
+- **What**: `status.recovery` 在 `status=reply_waiting` 时新增只读派生字段
+  `reply_file_ready`（检测 `.agentdeck/replies/<message_id>.reply.txt` 是否存在，
+  state.py reply_waiting 分支）；`agentdeck run-loop` 在
+  `stopped_reason=waiting_for_reply` 时同样携带该字段（cli.py run_loop payload）。
+  两处 `next_command` 不变，不自动 capture、不读文件内容；字段为可选派生，
+  `PROJECT_VIEW_RECOVERY_FIELDS` / `RUN_LOOP_RESPONSE_FIELDS` 必需集不变。
+  同步 project-view / run-loop schema 文档说明。
+- **Impact**: 人类和 GUI 一眼可见"回复文件已就绪，capture 必然成功"；为后续
+  有界自主回收（fork，待拍板）铺信号面。既有恢复/循环语义零变化。
+- **Verification**: RED 两例先证 KeyError（recovery + run-loop 场景）；GREEN 后
+  2 例过，核心回归 `test_agent_cli/test_contracts/test_leader_cli` 1134 passed；
+  全量 `pytest tests/ -q` 绿 + compileall（见 commit）。
+
 ### Add whole-plan approval command (confirmation-granularity knob)
 
 - **Type**: feat

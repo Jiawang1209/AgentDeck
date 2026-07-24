@@ -13148,6 +13148,72 @@ def _seed_pending_approval(root, approval_id, agent_id):
     store.save(state)
 
 
+def _dispatch_first_step_and_ack(root, monkeypatch, capsys):
+    bind_agent(root, "planner", "%42")
+    fake = FakeTmuxBackend()
+    monkeypatch.setattr(cli, "TmuxBackend", lambda: fake)
+    cli.main(["leader", "plan", "--provider", "fake", "--model", "fake-plan", "--task", "等待文件通道回复"])
+    plan_id = json.loads(capsys.readouterr().out)["plan_id"]
+    cli.main(["approval", "create-from-plan", "--plan-id", plan_id])
+    approvals = json.loads(capsys.readouterr().out)["approvals"]
+    approval_id = approvals[0]["approval_id"]
+    cli.main(["approval", "approve", "--approval-id", approval_id])
+    capsys.readouterr()
+    for approval in approvals[1:]:
+        cli.main(["approval", "reject", "--approval-id", approval["approval_id"], "--reason", "focus"])
+        capsys.readouterr()
+    cli.main(["approval", "dispatch", "--approval-id", approval_id])
+    dispatch_payload = json.loads(capsys.readouterr().out)
+    message_id = dispatch_payload["message_id"]
+    inbox_id = dispatch_payload["inbox_card"]["head_inbox_id"]
+    cli.main(["ack", "--agent", "planner", "--inbox-id", inbox_id])
+    capsys.readouterr()
+    return plan_id, message_id
+
+
+def test_recovery_reply_waiting_surfaces_reply_file_ready(tmp_path, monkeypatch, capsys):
+    root = prepare_project(tmp_path, monkeypatch)
+    plan_id, message_id = _dispatch_first_step_and_ack(root, monkeypatch, capsys)
+    expected_command = f"agentdeck capture-reply --agent planner --message-id {message_id}"
+
+    assert cli.main(["status"]) == 0
+    recovery = json.loads(capsys.readouterr().out)["recovery"]
+    assert recovery["status"] == "reply_waiting"
+    assert recovery["reply_file_ready"] is False
+    assert recovery["next_command"] == expected_command
+
+    reply_file = root / ".agentdeck" / "replies" / f"{message_id}.reply.txt"
+    reply_file.parent.mkdir(parents=True, exist_ok=True)
+    reply_file.write_text("status: completed\nsummary: done\n", encoding="utf-8")
+
+    assert cli.main(["status"]) == 0
+    recovery = json.loads(capsys.readouterr().out)["recovery"]
+    assert recovery["status"] == "reply_waiting"
+    assert recovery["reply_file_ready"] is True
+    assert recovery["next_command"] == expected_command
+
+
+def test_run_loop_waiting_for_reply_surfaces_reply_file_ready(tmp_path, monkeypatch, capsys):
+    root = prepare_project(tmp_path, monkeypatch)
+    plan_id, message_id = _dispatch_first_step_and_ack(root, monkeypatch, capsys)
+    cli.main(["policy", "set-mode", "--mode", "autonomous", "--confirm", "--allow-agent", "planner", "--max-approvals", "5"])
+    capsys.readouterr()
+
+    assert cli.main(["run-loop", "--plan-id", plan_id, "--confirm"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["stopped_reason"] == "waiting_for_reply"
+    assert payload["reply_file_ready"] is False
+
+    reply_file = root / ".agentdeck" / "replies" / f"{message_id}.reply.txt"
+    reply_file.parent.mkdir(parents=True, exist_ok=True)
+    reply_file.write_text("status: completed\nsummary: done\n", encoding="utf-8")
+
+    assert cli.main(["run-loop", "--plan-id", plan_id, "--confirm"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["stopped_reason"] == "waiting_for_reply"
+    assert payload["reply_file_ready"] is True
+
+
 def test_approval_approve_plan_requires_confirm_and_known_plan(tmp_path, monkeypatch, capsys):
     root = prepare_project(tmp_path, monkeypatch)
     cli.main(["leader", "plan", "--provider", "fake", "--model", "fake-plan", "--task", "整计划一次批准"])

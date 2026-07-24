@@ -578,7 +578,9 @@ Only the earliest pending item is the actionable mailbox head for an agent. Use 
 
 `recommended_action` is descriptive metadata. It never executes by itself. GUI clients must still call explicit AgentDeck commands and preserve approval boundaries.
 
-`pending.leader_errors` counts stored Leader errors. `pending.runtime_stale` counts agent runtime bindings whose tmux pane is no longer trusted. `pending.reply_waiting` is `1` when the latest plan review is waiting for a dispatched reply and no higher-priority queue masks it. These counts do not execute anything; they help GUI clients show unresolved Leader diagnostics, reply capture work, and runtime reconciliation work alongside approvals, inbox items, and action queue work.
+`pending.leader_errors` counts stored Leader errors. `pending.runtime_stale` counts agent runtime bindings whose tmux pane is no longer trusted. `pending.reply_waiting` is `1` when the latest plan review is waiting for a dispatched reply and no higher-priority queue masks it.
+
+When `recovery.status` is `reply_waiting`, the recovery object also carries an optional read-only derived field `reply_file_ready` (bool): `true` when the file-channel reply `.agentdeck/replies/<message_id>.reply.txt` for the awaited message already exists on disk, `false` otherwise. It is a completion *signal* only — `next_command` stays the explicit `agentdeck capture-reply` command, and nothing captures, reads, or ingests the reply automatically. The field is absent for every other recovery status, and `PROJECT_VIEW_RECOVERY_FIELDS` (the required field set) is unchanged. These counts do not execute anything; they help GUI clients show unresolved Leader diagnostics, reply capture work, and runtime reconciliation work alongside approvals, inbox items, and action queue work.
 
 `agentdeck contract project-view` exposes the required pending keys as `recovery_pending_fields`, and `validate_project_view_contract()` rejects ProjectView payloads missing any of them.
 

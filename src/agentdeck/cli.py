@@ -18532,6 +18532,11 @@ def run_loop_command(args: argparse.Namespace) -> int:
         "next_command": next_command,
         "policy": {"allowed_agents": list(policy.allowed_agents), "max_approvals": policy.max_approvals},
     }
+    if stopped_reason == "waiting_for_reply":
+        reply_message_id = str(review.get("message_id") or "")
+        payload["reply_file_ready"] = bool(reply_message_id) and _reply_file_path(
+            config.root, reply_message_id
+        ).exists()
     validation = validate_run_loop_contract(payload)
     if not validation["ok"]:
         print("run-loop contract validation failed", file=sys.stderr)
