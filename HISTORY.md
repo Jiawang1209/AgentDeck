@@ -4,6 +4,22 @@
 
 ## 2026-07-25
 
+### Record co-pilot Line 1 round 3 rework PASS (file-channel reply live-verified)
+
+- **Type**: data
+- **Motivation**: round 3 返工任务（审查清单流回 coder）于 07-24 派发后半途
+  存档；user 指示继续回收，需固化首次文件通道真实验证与迭代环闭合证据。
+- **What**: 新增 `docs/validation/2026-07-25-copilot-line1-round3-rework.md`：
+  迭代环闭合（审查报告→确认→coder 返工→`captured_from=file` 回收→ack→
+  review→summary ready）；观察点②完整 PASS（真实 codex 按约定写出结构化
+  回复文件）、③六次全命中、①④本轮未触发；四项返工在真实 index.html 核实
+  （SHA 88ed49fa…→de89cf01…）；三条新 live 发现（inbox_pending 遮蔽
+  reply_file_ready、同命令迭代授权框循环、回收顺序错位）。
+- **Impact**: 纯文档；pane 抓取脆弱性被文件通道实质解决的结论有了真实证据；
+  发现 1 成为候选下一切片（recovery 优先级/信号跨状态暴露，产品决策）。
+- **Verification**: 全部命令实测输出 + 文件级 grep/SHA 核实；live 步骤按
+  runbook 人工授权纪律执行并在文档中记录授权方式。
+
 ### Draft task-scoped worktree isolation spec (evaluation only)
 
 - **Type**: docs
