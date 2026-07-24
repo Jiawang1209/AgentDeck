@@ -14,6 +14,8 @@ from agentdeck.contracts import (
     AGENT_RUNTIME_REFRESH_RESPONSE_FIELDS,
     AGENT_RUNTIME_READY_RESPONSE_FIELDS,
     AGENT_RUNTIME_TERMINAL_RESPONSE_FIELDS,
+    APPROVAL_APPROVE_PLAN_RESPONSE_FIELDS,
+    APPROVAL_APPROVE_PLAN_RESULT_FIELDS,
     APPROVAL_DISPATCH_READY_RESPONSE_FIELDS,
     APPROVAL_DISPATCH_READY_RESULT_FIELDS,
     APPROVAL_ITEM_FIELDS,
@@ -3903,6 +3905,9 @@ def test_approval_contract_payload_is_reusable_without_cli(tmp_path: Path) -> No
     assert payload["dispatch_ready_command"] == "agentdeck approval dispatch-ready --confirm"
     assert payload["dispatch_ready_response_fields"] == list(APPROVAL_DISPATCH_READY_RESPONSE_FIELDS)
     assert payload["dispatch_ready_result_fields"] == list(APPROVAL_DISPATCH_READY_RESULT_FIELDS)
+    assert payload["approve_plan_command"] == "agentdeck approval approve-plan --plan-id <plan_id> --confirm"
+    assert payload["approve_plan_response_fields"] == list(APPROVAL_APPROVE_PLAN_RESPONSE_FIELDS)
+    assert payload["approve_plan_result_fields"] == list(APPROVAL_APPROVE_PLAN_RESULT_FIELDS)
     assert payload["project_view_contract"] == "agentdeck contract project-view"
 
 
@@ -3923,6 +3928,10 @@ def test_approval_contract_response_includes_example_without_drift(tmp_path: Pat
     assert payload["example_dispatch_ready_result_fields"] == payload["dispatch_ready_result_fields"]
     assert set(payload["example_dispatch_ready_fields"]) == set(payload["example_dispatch_ready"])
     assert set(payload["example_dispatch_ready_result_fields"]) == set(payload["example_dispatch_ready"]["results"][0])
+    assert payload["example_approve_plan_fields"] == payload["approve_plan_response_fields"]
+    assert payload["example_approve_plan_result_fields"] == payload["approve_plan_result_fields"]
+    assert set(payload["example_approve_plan_fields"]) == set(payload["example_approve_plan"])
+    assert set(payload["example_approve_plan_result_fields"]) == set(payload["example_approve_plan"]["approved"][0])
     assert example["approvals"][0]["can_dispatch"] is False
     assert example["approvals"][0]["preview_command"] == "agentdeck approval list"
     assert example["approvals"][0]["controls"] == [

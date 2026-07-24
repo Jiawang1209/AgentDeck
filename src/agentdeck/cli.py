@@ -17555,6 +17555,81 @@ def approval_reject_command(args: argparse.Namespace) -> int:
     return _approval_decision_command(args.approval_id, "rejected", args.reason)
 
 
+def approval_approve_plan_command(args: argparse.Namespace) -> int:
+    _config, store, exit_code = _load_project_or_error()
+    if store is None:
+        return exit_code
+    if not args.confirm:
+        print("approve-plan requires --confirm", file=sys.stderr)
+        return 1
+    state = store.load()
+    plan_ids = {str(plan.get("plan_id")) for plan in state.get("plans", [])}
+    if args.plan_id not in plan_ids:
+        print(f"unknown plan: {args.plan_id}", file=sys.stderr)
+        return 1
+    plan_approvals = [
+        approval
+        for approval in state.get("approvals", [])
+        if approval.get("plan_id") == args.plan_id
+    ]
+    pending = [approval for approval in plan_approvals if approval.get("status") == "pending"]
+    if not pending:
+        print(f"no pending approvals for plan: {args.plan_id}", file=sys.stderr)
+        return 1
+    approved: list[dict[str, object]] = []
+    for item in pending:
+        approval_id = str(item.get("approval_id"))
+        approval = store.decide_approval(approval_id, "approved")
+        store.append_event(
+            EventRecord.create(
+                "approval_decided",
+                {
+                    "approval_id": approval_id,
+                    "plan_id": args.plan_id,
+                    "status": "approved",
+                    "source": "approve_plan",
+                },
+            )
+        )
+        approved.append(
+            {
+                "approval_id": approval_id,
+                "step": approval.get("step"),
+                "agent_id": approval.get("agent_id"),
+                "task": approval.get("task"),
+                "status": approval.get("status"),
+            }
+        )
+    skipped = [
+        {"approval_id": approval.get("approval_id"), "status": approval.get("status")}
+        for approval in plan_approvals
+        if approval.get("status") != "pending"
+    ]
+    store.append_event(
+        EventRecord.create(
+            "approval_plan_approved",
+            {
+                "plan_id": args.plan_id,
+                "approved_count": len(approved),
+                "skipped_count": len(skipped),
+            },
+        )
+    )
+    _print_json(
+        {
+            "ok": True,
+            "mode": "approval_plan_approved",
+            "plan_id": args.plan_id,
+            "approved": approved,
+            "approved_count": len(approved),
+            "skipped": skipped,
+            "skipped_count": len(skipped),
+            "next_command": "agentdeck approval dispatch-ready --confirm",
+        }
+    )
+    return 0
+
+
 def _dispatch_approved_approval(
     approval: dict[str, object],
     *,
@@ -19219,6 +19294,13 @@ def build_parser() -> argparse.ArgumentParser:
     approval_reject.add_argument("--approval-id", required=True, help="Approval id")
     approval_reject.add_argument("--reason", default="", help="Reason for rejection")
     approval_reject.set_defaults(func=approval_reject_command)
+    approval_approve_plan = approval_subparsers.add_parser(
+        "approve-plan",
+        help="Approve all pending approvals of one plan in a single explicit action",
+    )
+    approval_approve_plan.add_argument("--plan-id", required=True, help="Plan id from agentdeck leader plan")
+    approval_approve_plan.add_argument("--confirm", action="store_true", help="Explicitly confirm whole-plan approval")
+    approval_approve_plan.set_defaults(func=approval_approve_plan_command)
     approval_dispatch = approval_subparsers.add_parser("dispatch", help="Dispatch an approved item")
     approval_dispatch.add_argument("--approval-id", required=True, help="Approved approval id")
     approval_dispatch.set_defaults(func=approval_dispatch_command)

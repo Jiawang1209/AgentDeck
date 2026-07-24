@@ -92,6 +92,7 @@ agentdeck plan status --plan-id pln_xxx
 agentdeck approval create-from-plan --plan-id pln_xxx
 agentdeck approval list
 agentdeck approval approve --approval-id apv_xxx
+agentdeck approval approve-plan --plan-id pln_xxx --confirm
 agentdeck approval dispatch --approval-id apv_xxx
 agentdeck dispatch --agent planner --task "设计消息账本"
 agentdeck inbox --agent planner

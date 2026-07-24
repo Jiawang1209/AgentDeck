@@ -13148,6 +13148,64 @@ def _seed_pending_approval(root, approval_id, agent_id):
     store.save(state)
 
 
+def test_approval_approve_plan_requires_confirm_and_known_plan(tmp_path, monkeypatch, capsys):
+    root = prepare_project(tmp_path, monkeypatch)
+    cli.main(["leader", "plan", "--provider", "fake", "--model", "fake-plan", "--task", "整计划一次批准"])
+    plan_id = json.loads(capsys.readouterr().out)["plan_id"]
+    cli.main(["approval", "create-from-plan", "--plan-id", plan_id])
+    capsys.readouterr()
+    before = StateStore(root).load()
+
+    assert cli.main(["approval", "approve-plan", "--plan-id", plan_id]) == 1
+    assert "confirm" in capsys.readouterr().err
+    assert StateStore(root).load() == before
+
+    assert cli.main(["approval", "approve-plan", "--plan-id", "pln_missing", "--confirm"]) == 1
+    assert "unknown plan" in capsys.readouterr().err
+    assert StateStore(root).load() == before
+
+
+def test_approval_approve_plan_approves_all_pending_with_confirm(tmp_path, monkeypatch, capsys):
+    root = prepare_project(tmp_path, monkeypatch)
+    cli.main(["leader", "plan", "--provider", "fake", "--model", "fake-plan", "--task", "整计划一次批准"])
+    plan_id = json.loads(capsys.readouterr().out)["plan_id"]
+    cli.main(["approval", "create-from-plan", "--plan-id", plan_id])
+    created = json.loads(capsys.readouterr().out)["approvals"]
+    assert len(created) >= 2
+
+    exit_code = cli.main(["approval", "approve-plan", "--plan-id", plan_id, "--confirm"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
+    assert payload["mode"] == "approval_plan_approved"
+    assert payload["plan_id"] == plan_id
+    assert payload["approved_count"] == len(created)
+    assert payload["skipped_count"] == 0
+    assert [item["approval_id"] for item in payload["approved"]] == [
+        item["approval_id"] for item in created
+    ]
+    assert all(item["status"] == "approved" for item in payload["approved"])
+    assert payload["next_command"] == "agentdeck approval dispatch-ready --confirm"
+    state = StateStore(root).load()
+    plan_statuses = [
+        approval["status"]
+        for approval in state["approvals"]
+        if approval.get("plan_id") == plan_id
+    ]
+    assert plan_statuses and all(status == "approved" for status in plan_statuses)
+    cli.main(["events", "--limit", "20"])
+    event_types = [item["event_type"] for item in json.loads(capsys.readouterr().out)["events"]]
+    assert event_types.count("approval_decided") >= len(created)
+    assert "approval_plan_approved" in event_types
+
+    # second run: nothing pending anymore -> refuse without writes
+    before = StateStore(root).load()
+    assert cli.main(["approval", "approve-plan", "--plan-id", plan_id, "--confirm"]) == 1
+    assert "no pending approvals" in capsys.readouterr().err
+    assert StateStore(root).load() == before
+
+
 def test_approval_auto_requires_confirm_and_autonomous_mode(tmp_path, monkeypatch, capsys):
     root = prepare_project(tmp_path, monkeypatch)
     _seed_pending_approval(root, "apv_1", "planner")

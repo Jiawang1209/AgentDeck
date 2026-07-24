@@ -17,12 +17,15 @@ Use `agentdeck contract approvals` to discover this contract:
   "approval_item_fields": [],
   "dispatch_ready_response_fields": [],
   "dispatch_ready_result_fields": [],
+  "approve_plan_command": "agentdeck approval approve-plan --plan-id <plan_id> --confirm",
+  "approve_plan_response_fields": [],
+  "approve_plan_result_fields": [],
   "project_view_schema_version": "project-view/v1",
   "project_view_contract": "agentdeck contract project-view"
 }
 ```
 
-Use `agentdeck contract approvals --example` to include stable GUI-ready approval queue and dispatch-ready fixtures.
+Use `agentdeck contract approvals --example` to include stable GUI-ready approval queue, dispatch-ready, and approve-plan fixtures.
 
 ## Queue Shape
 
@@ -69,6 +72,12 @@ Approvals may be generated from a saved Leader plan or from an explicit natural-
 `agentdeck approval dispatch --approval-id <id>` is an explicit runtime command, not part of the read-only queue contract. On success it returns `trace_command` for the created message lineage and embeds the target agent's `inbox_card`, reusing the `agentdeck inbox --agent <id>` queue shape so GUI clients can show the worker mailbox head without reading state directly.
 
 `agentdeck approval dispatch-ready --confirm` is also an explicit runtime command. It batch-dispatches only approved approvals whose target agent has a ready runtime binding, reusing the same single-dispatch lineage path for each dispatched item. Blocked approvals stay approved and are returned as `results[]` items with `status=blocked`, `blocker`, and `dispatch_command`. Without `--confirm`, it must fail without mutating state or sending tmux input.
+
+## Approve-Plan Shape
+
+`agentdeck approval approve-plan --plan-id <plan_id> --confirm` is the whole-plan confirmation-granularity knob: one explicit human action approves every pending approval of one plan. It appends one `approval_decided` audit event per approved item (with `source=approve_plan`) plus a single `approval_plan_approved` summary event, and points `next_command` at `agentdeck approval dispatch-ready --confirm`. It never dispatches, never touches runtime or tmux, and never re-decides non-pending approvals — those are returned in `skipped[]` with their current status. Without `--confirm`, for an unknown plan, or when the plan has no pending approvals, it must fail with a non-zero exit and write nothing.
+
+Response fields are `approve_plan_response_fields` (`ok`, `mode=approval_plan_approved`, `plan_id`, `approved[]`, `approved_count`, `skipped[]`, `skipped_count`, `next_command`); each `approved[]` item uses `approve_plan_result_fields` (`approval_id`, `step`, `agent_id`, `task`, `status`).
 
 ## Dispatch-Ready Shape
 

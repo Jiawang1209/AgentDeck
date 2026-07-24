@@ -29,7 +29,7 @@ user 已授权隔夜自主推进；一切 live 步骤（真实 provider、真实
   的 Active goal 改写为 Line 1 阶段现状 + 下一刀（旋钮 2/3、G4）。不删历史证据，
   只加现状层。纯文档，不改代码。
 
-### [ ] 2. 旋钮·确认粒度：整计划一次批准（explicit 批量 approve）
+### [x] 2. 旋钮·确认粒度：整计划一次批准（explicit 批量 approve）
 
 - 现象：Line 1 锁定"每次派活前确认一次"；北极星确认粒度旋钮需要"整计划一次
   确认"档位。现只有逐条 `approval approve` 与派发侧的 `dispatch-ready --confirm`，

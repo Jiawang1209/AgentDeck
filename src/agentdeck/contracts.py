@@ -715,6 +715,25 @@ APPROVAL_DISPATCH_READY_RESULT_FIELDS = (
     "dispatch_command",
 )
 
+APPROVAL_APPROVE_PLAN_RESPONSE_FIELDS = (
+    "ok",
+    "mode",
+    "plan_id",
+    "approved",
+    "approved_count",
+    "skipped",
+    "skipped_count",
+    "next_command",
+)
+
+APPROVAL_APPROVE_PLAN_RESULT_FIELDS = (
+    "approval_id",
+    "step",
+    "agent_id",
+    "task",
+    "status",
+)
+
 INBOX_QUEUE_FIELDS = (
     "agent_id",
     "count",
@@ -7089,6 +7108,9 @@ def approval_contract_payload(contract_path: Path) -> dict[str, object]:
         "approval_item_fields": list(APPROVAL_ITEM_FIELDS),
         "dispatch_ready_response_fields": list(APPROVAL_DISPATCH_READY_RESPONSE_FIELDS),
         "dispatch_ready_result_fields": list(APPROVAL_DISPATCH_READY_RESULT_FIELDS),
+        "approve_plan_command": "agentdeck approval approve-plan --plan-id <plan_id> --confirm",
+        "approve_plan_response_fields": list(APPROVAL_APPROVE_PLAN_RESPONSE_FIELDS),
+        "approve_plan_result_fields": list(APPROVAL_APPROVE_PLAN_RESULT_FIELDS),
         "project_view_schema_version": PROJECT_VIEW_SCHEMA_VERSION,
         "project_view_contract": "agentdeck contract project-view",
     }
@@ -7106,6 +7128,10 @@ def approval_contract_response(contract_path: Path, include_example: bool = Fals
         payload["example_dispatch_ready_fields"] = list(dispatch_ready_example)
         payload["example_dispatch_ready_result_fields"] = list(dispatch_ready_example["results"][0])
         payload["example_dispatch_ready"] = dispatch_ready_example
+        approve_plan_example = approval_approve_plan_example()
+        payload["example_approve_plan_fields"] = list(approve_plan_example)
+        payload["example_approve_plan_result_fields"] = list(approve_plan_example["approved"][0])
+        payload["example_approve_plan"] = approve_plan_example
     return payload
 
 
@@ -16946,6 +16972,36 @@ def approval_dispatch_ready_example() -> dict[str, object]:
                 "dispatch_command": "agentdeck approval dispatch --approval-id apv_blocked",
             },
         ],
+    }
+
+
+def approval_approve_plan_example() -> dict[str, object]:
+    return {
+        "ok": True,
+        "mode": "approval_plan_approved",
+        "plan_id": "pln_example",
+        "approved": [
+            {
+                "approval_id": "apv_step1",
+                "step": 1,
+                "agent_id": "planner",
+                "task": "draft the plan",
+                "status": "approved",
+            },
+            {
+                "approval_id": "apv_step2",
+                "step": 2,
+                "agent_id": "coder",
+                "task": "implement the plan",
+                "status": "approved",
+            },
+        ],
+        "approved_count": 2,
+        "skipped": [
+            {"approval_id": "apv_done", "status": "dispatched"},
+        ],
+        "skipped_count": 1,
+        "next_command": "agentdeck approval dispatch-ready --confirm",
     }
 
 

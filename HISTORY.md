@@ -2,6 +2,29 @@
 
 本文件记录 AgentDeck 每一次开发内容。约束：每次新增功能、文档规则、项目骨架、运行环境或用户可见行为变化，都必须同步更新本文件，并在同一次 commit 中提交。
 
+## 2026-07-25
+
+### Add whole-plan approval command (confirmation-granularity knob)
+
+- **Type**: feat
+- **Motivation**: Line 1 锁定"每次派活前确认一次"；北极星确认粒度旋钮需要
+  "整计划一次确认"档位，此前批准侧只有逐条 `approval approve`
+  （gap-loop 计划切片 2）。
+- **What**: 新增显式 `agentdeck approval approve-plan --plan-id <id> --confirm`：
+  一次批准该 plan 全部 pending approvals，逐条 `approval_decided`
+  （`source=approve_plan`）+ 一条 `approval_plan_approved` 汇总事件，
+  `next_command` 指向 `approval dispatch-ready --confirm`；缺 `--confirm`、
+  未知 plan 或无 pending 时非 0 且零写；非 pending 项进 `skipped[]` 不重决。
+  不 dispatch、不碰 runtime/tmux。同步 approvals contract
+  （`APPROVAL_APPROVE_PLAN_RESPONSE_FIELDS`/`RESULT_FIELDS`、
+  `approve_plan_command`、`approval_approve_plan_example` + example 接线）、
+  `docs/contracts/approvals-schema.md` Approve-Plan Shape 节、CLAUDE.md 常用命令、
+  测试（CLI 2 例 + contract 断言扩展）。
+- **Impact**: 人类可对整个 plan 一次点头再批量派发，逐条 approve 路径不变；
+  自主/派发边界不变。
+- **Verification**: RED 先证 `invalid choice: 'approve-plan'`；GREEN 后 CLI 2 例、
+  approval contract 5 例通过；全量 `pytest tests/ -q` 绿 + compileall（见 commit）。
+
 ## 2026-07-24
 
 ### Reconcile north-star and handoff docs with the Line 1 route
