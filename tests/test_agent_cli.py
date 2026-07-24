@@ -84,6 +84,7 @@ class FakeTmuxBackend:
         self.killed: list[str] = []
         self.existing_panes: set[str] = set()
         self.checked_panes: list[str] = []
+        self.layouts: list[list[tuple[str, str]]] = []
 
     def create_session(self, _config) -> None:
         self.created_sessions += 1
@@ -91,6 +92,9 @@ class FakeTmuxBackend:
     def spawn_agent(self, _config, agent, cwd: str) -> str:
         self.spawned.append((agent.agent_id, cwd))
         return "%42"
+
+    def apply_visible_layout(self, _config, panes) -> None:
+        self.layouts.append(list(panes))
 
     def capture_output(self, _config, pane_id: str, lines: int = 200) -> str:
         self.captured.append((pane_id, lines))
@@ -12711,6 +12715,32 @@ def test_agent_spawn_records_pane_binding_and_event(tmp_path, monkeypatch, capsy
 
     events = (root / ".agentdeck" / "state" / "events.jsonl").read_text(encoding="utf-8")
     assert '"event_type": "agent_spawned"' in events
+
+
+def test_agent_spawn_applies_visible_layout(tmp_path, monkeypatch, capsys) -> None:
+    prepare_project(tmp_path, monkeypatch)
+    fake = FakeTmuxBackend()
+    monkeypatch.setattr(cli, "TmuxBackend", lambda: fake)
+
+    exit_code = cli.main(["agent", "spawn", "--agent", "planner"])
+
+    assert exit_code == 0
+    capsys.readouterr()
+    assert fake.layouts == [[("%42", "planner")]]
+
+
+def test_agent_spawn_ready_applies_visible_layout_once_for_new_panes(tmp_path, monkeypatch, capsys) -> None:
+    prepare_project(tmp_path, monkeypatch)
+    fake = FakeTmuxBackend()
+    monkeypatch.setattr(cli, "TmuxBackend", lambda: fake)
+
+    exit_code = cli.main(["agent", "spawn-ready", "--confirm"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    spawned_ids = [item["agent_id"] for item in payload["results"] if item["status"] == "spawned"]
+    assert len(fake.layouts) == 1
+    assert [title for _pane, title in fake.layouts[0]] == spawned_ids
 
 
 def test_agent_spawn_ready_requires_confirm_without_mutating_state(tmp_path, monkeypatch, capsys) -> None:

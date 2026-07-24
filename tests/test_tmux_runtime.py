@@ -68,6 +68,29 @@ def test_every_tmux_subprocess_call_has_one_bounded_timeout(monkeypatch) -> None
     assert {kwargs.get("timeout") for _command, kwargs in calls} == {5.0}
 
 
+def test_apply_visible_layout_tiles_labels_and_sets_border_status(monkeypatch) -> None:
+    calls: list[tuple[list[str], dict[str, object]]] = []
+
+    def fake_run(command, **kwargs):
+        calls.append((command, kwargs))
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(tmux.subprocess, "run", fake_run)
+    config = RuntimeConfig(backend="tmux", session_name="demo", socket_name="demo")
+
+    tmux.TmuxBackend().apply_visible_layout(config, [("%1", "planner"), ("%2", "coder")])
+
+    commands = [command for command, _kwargs in calls]
+    assert commands == [
+        ["tmux", "-L", "demo", "select-layout", "-t", "demo", "tiled"],
+        ["tmux", "-L", "demo", "select-pane", "-t", "%1", "-T", "planner"],
+        ["tmux", "-L", "demo", "select-pane", "-t", "%2", "-T", "coder"],
+        ["tmux", "-L", "demo", "set-option", "-t", "demo", "pane-border-status", "top"],
+    ]
+    assert {kwargs.get("timeout") for _command, kwargs in calls} == {5.0}
+    assert all(kwargs.get("check") is False for _command, kwargs in calls)
+
+
 def test_create_session_sets_detached_terminal_size(monkeypatch) -> None:
     calls: list[list[str]] = []
 

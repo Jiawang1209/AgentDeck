@@ -9632,6 +9632,7 @@ def agent_spawn_command(args: argparse.Namespace) -> int:
     backend = TmuxBackend()
     backend.create_session(config.runtime)
     pane_id = backend.spawn_agent(config.runtime, agent, config.root)
+    backend.apply_visible_layout(config.runtime, [(pane_id, agent.agent_id)])
     binding = AgentRuntimeBinding(
         agent_id=agent.agent_id,
         pane_id=pane_id,
@@ -9724,6 +9725,13 @@ def agent_spawn_ready_command(args: argparse.Namespace) -> int:
                 "blocker": None,
             }
         )
+    spawned_panes = [
+        (str(item["pane_id"]), str(item["agent_id"]))
+        for item in results
+        if item["status"] == "spawned"
+    ]
+    if spawned_panes:
+        backend.apply_visible_layout(config.runtime, spawned_panes)
     store.append_event(
         EventRecord.create(
             "agent_spawn_ready_completed",

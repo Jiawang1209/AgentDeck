@@ -86,6 +86,23 @@ class TmuxBackend:
         )
         return result.stdout.strip()
 
+    def apply_visible_layout(self, config: RuntimeConfig, panes: list[tuple[str, str]]) -> None:
+        # 布局是可见性装饰：失败绝不能破坏已成功的 spawn，所以全部 check=False。
+        base = ["tmux", "-L", config.socket_name]
+        commands = [
+            [*base, "select-layout", "-t", config.session_name, "tiled"],
+            *([*base, "select-pane", "-t", pane_id, "-T", title] for pane_id, title in panes),
+            [*base, "set-option", "-t", config.session_name, "pane-border-status", "top"],
+        ]
+        for command in commands:
+            subprocess.run(
+                command,
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=TMUX_COMMAND_TIMEOUT_SECONDS,
+            )
+
     def capture_output(self, config: RuntimeConfig, pane_id: str, lines: int = 200) -> str:
         result = subprocess.run(
             [

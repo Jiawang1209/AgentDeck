@@ -20,7 +20,7 @@ round 3 返工）都不在本 loop 内，必须人类在场另行授权。
 
 ## 切片清单（按序执行）
 
-### [ ] A. spawn 默认可见布局（tiled + pane 标签）
+### [x] A. spawn 默认可见布局（tiled + pane 标签）
 
 - 现象：spawn-ready 后 pane 垂直死叠、无标签，小窗口下挤到 1 行高，"可见 runtime"不成立。
   Live 中手工 `select-layout tiled` + `select-pane -T <agent>` + `pane-border-status top` 后体验立好。

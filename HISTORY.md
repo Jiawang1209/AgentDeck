@@ -4,6 +4,23 @@
 
 ## 2026-07-24
 
+### Apply visible tiled layout and pane titles on agent spawn
+
+- **Type**: feat
+- **Motivation**: Line 1 live round 2 发现 spawn 出来的 pane 垂直死叠、无标签，小窗口下
+  被挤到 1 行高，"可见 runtime"名不副实；live 中手工 tiled + 标签后体验立好（hardening
+  loop 计划切片 A）。
+- **What**: `TmuxBackend.apply_visible_layout(config, panes)` 新方法：对 session 执行
+  `select-layout tiled`、逐 pane `select-pane -T <agent_id>`、`set-option
+  pane-border-status top`；全部 `check=False` + 统一 5s timeout——布局是可见性装饰，
+  失败绝不破坏已成功的 spawn。`agent spawn` 单 agent 路径与 `agent spawn-ready
+  --confirm` 批量路径在 spawn 成功后调用（批量路径只对本次新 spawn 的 pane 调用一次）；
+  只读命令与 daemon 内部 spawn 路径不受影响。
+- **Impact**: 新 spawn 的多 agent 终端默认即是带名字标签的均分网格；无行为面契约变化。
+- **Verification**: TDD——3 条 RED（backend 命令序列/timeout/check、单 spawn 布局、
+  spawn-ready 批量一次布局）先失败后 GREEN；tmux+agent 测试 376 passed；
+  `python -m compileall src` 通过；全量 4472 passed / 3 skipped。
+
 ### Write post-Line-1 hardening loop plan (autonomous dev slices)
 
 - **Type**: docs
