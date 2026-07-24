@@ -4,6 +4,22 @@
 
 ## 2026-07-24
 
+### Reconcile north-star and handoff docs with the Line 1 route
+
+- **Type**: docs
+- **Motivation**: `product-north-star.md` 与 `docs/handoff/current-development-state.md`
+  停在 2026-07-17/18 的 P0–P5 叙事（"P1 locked 待评审"），与 7-23 Line 1 转向及
+  round 2 真实全环 PASS 互相矛盾,续开发者会拿到冲突的"当前路线"
+  （gap-loop 计划切片 1）。
+- **What**: north-star 新增 "2026-07-24 route status: Line 1 pivot" 节：转向原因、
+  旋钮路线定义、与 P0–P5 的关系（Line 1 = P2–P4 实证先行路径,daemon 冻结路线
+  保留为收敛目标）、零件捐赠者分支定位、差距总账指针；handoff 顶部 Active goal
+  改写为 Line 1 现状（round 2 PASS、加固 A–F、round 3 半途、下一刀序列）,原
+  P0 exit review 段降级为 "Superseded goal" 历史证据层。不删任何历史内容。
+- **Impact**: 纯文档;两份权威载体与实际路线一致,消除续开发矛盾。
+- **Verification**: 纯文档;grep 确认无测试依赖这两个文件;历史段仅改标题层级
+  语义（Active → Superseded）。
+
 ### Record north-star gap review and overnight convergence loop plan
 
 - **Type**: docs

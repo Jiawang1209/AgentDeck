@@ -1,8 +1,37 @@
 # AgentDeck Current Development State
 
-Updated: 2026-07-18
+Updated: 2026-07-24
 
-## Active goal — AgentDeck P0 exit review
+## Active goal — Line 1 co-pilot route: knob-by-knob convergence to the north star
+
+2026-07-23 路线转向（human 批准）后，活跃开发线是 **Line 1 co-pilot 自然循环
+路线**：真实 API Leader + 真实 coding-agent Worker 在已有自然循环上跑通，再
+逐个拧旋钮泛化。设计与关系说明见
+`docs/superpowers/specs/2026-07-23-copilot-natural-line-1-design.md` 与
+`docs/roadmap/product-north-star.md` 的 "2026-07-24 route status" 节。
+
+当前状态（2026-07-24 夜）：
+
+- Line 1 round 2 真实全环 PASS（DeepSeek Leader + codex×2 + Claude Code，
+  `docs/validation/2026-07-24-copilot-line1-live-round2-iae-homepage.md`）；
+  加固切片 A–F 全部落地（spawn tiled 布局、waiting_for_input、review 部分派发
+  守卫、文件通道回复、意图路由劫持修复族）。
+- Round 3 live 返工半途：任务已派给 coder（`msg_dbbc6d7aa142`，scratch 项目
+  `~/Desktop/agentdeck-live-scratch`），待 user 在场授权 capture-reply 回收、
+  可选 reviewer 复核、summary 与 finding 文档。
+- 北极星差距总账：`docs/roadmap/2026-07-24-north-star-gap-review.md`；
+  隔夜自主收敛循环计划（文档 reconcile、整计划一次批准、reply 文件就绪
+  显性化、worker released 阶段、任务级 worktree spec）：
+  `docs/superpowers/plans/2026-07-24-north-star-gap-loop.md`。
+
+下一刀（按 gap-review 优先序）：Line 1 确认粒度旋钮（整计划一次批准）→
+自主度旋钮（reply 文件通道就绪感知）→ G4 worker released 阶段 →
+任务级 worktree spec（实现待 user 拍板）。SQLite 前向移植与 GUI/web 层
+是显式 fork，等 user 决策。
+
+下方从 P0 exit review 起的全部内容保留为历史证据层，不再是活跃调度门。
+
+## Superseded goal — AgentDeck P0 exit review (2026-07-18)
 
 The evolutionary-kernel route remains authoritative: preserve and converge
 the existing Conversation, ProjectView, daemon, ledger, approval, ACP/tmux,

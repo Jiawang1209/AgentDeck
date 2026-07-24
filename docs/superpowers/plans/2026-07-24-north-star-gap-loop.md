@@ -19,7 +19,7 @@ user 已授权隔夜自主推进；一切 live 步骤（真实 provider、真实
 
 ## 切片清单（按序执行）
 
-### [ ] 1. 文档 reconcile：north-star / handoff 对齐 Line 1 路线
+### [x] 1. 文档 reconcile：north-star / handoff 对齐 Line 1 路线
 
 - 现象：`product-north-star.md` 与 `docs/handoff/current-development-state.md`
   停在 2026-07-17 的 P0–P5 叙事（"P1 locked 待人工评审"），与 7-23 Line 1 转向

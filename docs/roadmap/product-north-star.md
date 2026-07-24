@@ -1,6 +1,35 @@
 # AgentDeck Product North Star
 
-Updated: 2026-07-17
+Updated: 2026-07-24
+
+## 2026-07-24 route status: Line 1 pivot
+
+2026-07-23 的路线转向（human 批准，见
+`docs/superpowers/specs/2026-07-23-copilot-natural-line-1-design.md`）更新了
+P0–P5 的**执行方式**，但不更改本文件的产品终点：
+
+- **为什么转**：product-kernel-rewrite 在 leader-propose 环节的刚性协议
+  （自定义 artifact、禁 agent 用工具）在真实 coding agent 上崩溃。复盘结论是
+  规划顺序错——把最 risky 的"真实 agent 假设"推迟到最后验证。
+- **新执行方式（Line 1 旋钮路线）**：先用真实 API Leader + 真实 coding-agent
+  Worker 在已有自然循环（`leader plan/review` · `approval` · `dispatch` ·
+  `capture-reply` · tmux 可见）上跑通最小真实线，再逐个拧旋钮泛化
+  （确认粒度、自主度、Leader 插槽、SQLite 零件前向移植）。2026-07-24 Line 1
+  round 2 已在真实 DeepSeek Leader + 3 个真实 coding agent 上完整一轮 PASS
+  （`docs/validation/2026-07-24-copilot-line1-live-round2-iae-homepage.md`），
+  加固切片 A–F 落地。
+- **与 P0–P5 的关系**：Line 1 旋钮路线是 P2（Conversation Product）–P4
+  （reliable multi-Agent closure）的**实证先行路径**——用真实 agent 逐档验证，
+  避免再次先造齐内核。P1 的 durable Mission kernel / daemon 冻结路线**保留为
+  收敛目标**：现有 daemon、frozen Mission、crash matrix、ACP client 等能力
+  继续作为权威内核演进，最终两条路径在"确认一次即可走开"的产品成功测试上
+  汇合。P0 exit 证据与下方 P0–P5 顺序仍然有效，但"每相位先造齐再验真"的
+  节奏被"真实 agent 先行、切片验证"取代。
+- **零件捐赠者分支**：`codex/product-kernel-rewrite`（sqlite store、
+  sqlite_secrets、tmux_observer、分层架构）与 `codex/p1-durable-mission-kernel`
+  （SQLite storage/migrations/ownership + daemon 加固，+8863 行）保留为按需
+  前向移植的素材，不再是活跃开发线。
+- **当前差距总账**：`docs/roadmap/2026-07-24-north-star-gap-review.md`。
 
 ## Active architecture-reset route
 
