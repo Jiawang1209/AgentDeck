@@ -4,6 +4,21 @@
 
 ## 2026-07-24
 
+### Record north-star gap review and overnight convergence loop plan
+
+- **Type**: docs
+- **Motivation**: Line 1 阶段合并进 main 后,user 要求全面盘点 main 与北极星
+  （product-north-star P0–P5 + roadmap G1–G6 + Line 1 转向）的差距,并授权隔夜
+  自主 /loop 按优先级逐个收敛。
+- **What**: 新增 `docs/roadmap/2026-07-24-north-star-gap-review.md`（四路只读审计
+  综合结论:底座建成、G1/G3/G6 达标、G2/G4/G5 部分、两条执行叙事未收拢、缺失
+  支柱清单、优先顺序建议）与
+  `docs/superpowers/plans/2026-07-24-north-star-gap-loop.md`（五切片自主循环:
+  文档 reconcile、整计划一次批准、reply 文件通道就绪显性化、worker released
+  阶段、任务级 worktree spec 草稿;硬边界与阻塞纪律同前一轮 loop）。
+- **Impact**: 纯文档;为隔夜自主开发提供冻结的执行清单与边界。
+- **Verification**: 纯文档;结论均来自审计 file:line 证据。
+
 ### Extend task-assignment precedence to the whole keyword-sniffing family
 
 - **Type**: fix
