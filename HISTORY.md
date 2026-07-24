@@ -4,6 +4,18 @@
 
 ## 2026-07-24
 
+### Add co-pilot Line 1 round 3 rework runbook (human-authorized)
+
+- **Type**: docs
+- **Motivation**: round 2 的 reviewer 审查清单需要经账本流回 coder 返工,首次证明迭代环;
+  同场 live 验证本日新增的文件通道回复与等待态显性化（hardening loop 计划切片 D）。
+- **What**: 新增 `docs/validation/2026-07-24-copilot-line1-round3-runbook.md`:
+  以 `review-index-html-2026-07-23.md` 改进清单为输入的人工授权返工步骤,
+  含四个观察点（spawn tiled 布局、reply 文件通道被真实 worker 遵守、capture
+  `waiting_for_input`、review 部分派发守卫）与成功判据。不执行任何 live 步骤。
+- **Impact**: 下一场 live 有了带观察点的冻结脚本;纯文档,无行为变化。
+- **Verification**: 纯文档;步骤与命令逐条对照现有 CLI 行为与 round 2 账本 ID。
+
 ### Guard leader review against premature summarize on partially dispatched plans
 
 - **Type**: fix

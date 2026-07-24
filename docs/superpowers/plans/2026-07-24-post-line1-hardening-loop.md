@@ -56,7 +56,7 @@ round 3 返工）都不在本 loop 内，必须人类在场另行授权。
   改语义时必须让 run-loop / run-loop-all 契约与测试同步一致，不得破坏其枚举。
 - 测试：部分派发场景 RED 用例 + 既有全回复场景不回归 + run-loop gate 相关用例。
 
-### [ ] D. Round 3 live 返工 runbook（纯文档）
+### [x] D. Round 3 live 返工 runbook（纯文档）
 
 - 目标：新增 `docs/validation/2026-07-24-copilot-line1-round3-runbook.md`：
   以 reviewer 报告 `review-index-html-2026-07-23.md` 的改进清单为输入，
