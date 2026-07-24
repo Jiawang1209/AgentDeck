@@ -31,7 +31,7 @@ round 3 返工）都不在本 loop 内，必须人类在场另行授权。
 - 实现位置：`runtime/tmux.py`（新增 layout 方法）+ `cli.py` spawn 两条路径调用。
 - 测试：现有 fake/subprocess mock 风格，断言 tmux 调用序列；不起真 tmux。
 
-### [ ] B. worker 等待输入显性化（只读启发式）
+### [x] B. worker 等待输入显性化（只读启发式）
 
 - 现象：worker（codex/claude CLI）弹权限确认框时任务静默停住，live 全靠脚本 grep
   "Press enter to confirm" / "enter to submit" 才发现。

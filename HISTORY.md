@@ -4,6 +4,23 @@
 
 ## 2026-07-24
 
+### Surface worker waiting-for-input state in agent capture
+
+- **Type**: feat
+- **Motivation**: Line 1 live round 2 发现 worker CLI（codex/claude）弹权限确认框时任务
+  静默停住，人类只能肉眼盯 pane 或靠外部脚本 grep 才能发现（hardening loop 计划切片 B）。
+- **What**: `agentdeck agent capture` 响应新增只读派生字段 `waiting_for_input`（bool）与
+  `waiting_hint`（命中的提示行，无则 null）。纯行级启发式 `_detect_waiting_for_input`：
+  只扫描捕获输出**尾部 10 行**（已批过的旧确认框留在滚动历史高处，live 曾因此误报），
+  倒序取最后命中行；markers 覆盖 codex `Press enter to confirm` / `Would you like to run`
+  与 Claude Code `enter to submit`。不写 state、不发送输入、既有 `output` 字段语义不变；
+  chat `capture_card` 契约字段本切片未动（后续可复用同一 helper）。
+- **Impact**: GUI/人类可从 capture 响应直接看到"worker 在等人类授权"及其提示行；
+  只读边界不变。
+- **Verification**: TDD——3 条 RED（挂起确认框 True+hint、普通输出 False、尾部外旧框
+  忽略）先失败后 GREEN；agent CLI 测试 366 passed；`python -m compileall src` 通过；
+  全量 4475 passed / 3 skipped。
+
 ### Apply visible tiled layout and pane titles on agent spawn
 
 - **Type**: feat

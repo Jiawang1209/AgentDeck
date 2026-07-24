@@ -98,7 +98,9 @@ class FakeTmuxBackend:
 
     def capture_output(self, _config, pane_id: str, lines: int = 200) -> str:
         self.captured.append((pane_id, lines))
-        return "planner output\n"
+        return self.capture_text
+
+    capture_text = "planner output\n"
 
     def send_input(self, _config, pane_id: str, text: str) -> None:
         self.sent.append((pane_id, text))
@@ -12848,6 +12850,75 @@ def test_agent_spawn_refuses_existing_running_binding(tmp_path, monkeypatch, cap
     assert "already running" in capsys.readouterr().err
     assert fake.created_sessions == 0
     assert fake.spawned == []
+
+
+def _bind_running_planner(root) -> None:
+    store = StateStore(root)
+    state = store.load()
+    state["agents"]["planner"] = {
+        "agent_id": "planner",
+        "pane_id": "%42",
+        "session_name": "agentdeck",
+        "cwd": str(root),
+        "status": "running",
+    }
+    store.save(state)
+
+
+def test_agent_capture_flags_pending_permission_prompt(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    _bind_running_planner(root)
+    fake = FakeTmuxBackend()
+    # 2026-07-24 live finding: worker CLI 弹权限确认框时任务静默停住，
+    # 人类只有靠肉眼盯 pane 才能发现；capture 应把等待态显性化。
+    fake.capture_text = (
+        "codex working\n"
+        "  Would you like to run the following command?\n"
+        "  $ curl -L http://example.org\n"
+        "  Press enter to confirm or esc to cancel\n"
+    )
+    monkeypatch.setattr(cli, "TmuxBackend", lambda: fake)
+
+    exit_code = cli.main(["agent", "capture", "--agent", "planner"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["waiting_for_input"] is True
+    assert payload["waiting_hint"] == "Press enter to confirm or esc to cancel"
+
+
+def test_agent_capture_reports_not_waiting_for_plain_output(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    _bind_running_planner(root)
+    fake = FakeTmuxBackend()
+    fake.capture_text = "codex working\nstill running tests\n"
+    monkeypatch.setattr(cli, "TmuxBackend", lambda: fake)
+
+    exit_code = cli.main(["agent", "capture", "--agent", "planner"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["waiting_for_input"] is False
+    assert payload["waiting_hint"] is None
+
+
+def test_agent_capture_ignores_answered_prompt_outside_tail(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    _bind_running_planner(root)
+    fake = FakeTmuxBackend()
+    # 已批过的旧确认框留在滚动历史高处（live 中曾造成监视误报）；只有尾部才算等待。
+    fake.capture_text = (
+        "  Press enter to confirm or esc to cancel\n"
+        "✔ You approved codex to run curl\n" + "output line\n" * 12
+    )
+    monkeypatch.setattr(cli, "TmuxBackend", lambda: fake)
+
+    exit_code = cli.main(["agent", "capture", "--agent", "planner"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["waiting_for_input"] is False
+    assert payload["waiting_hint"] is None
 
 
 def test_agent_capture_reads_bound_pane(tmp_path, monkeypatch, capsys) -> None:

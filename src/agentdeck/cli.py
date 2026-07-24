@@ -9764,6 +9764,23 @@ def _running_binding_or_error(store: StateStore, agent_id: str) -> tuple[dict[st
     return binding, 0
 
 
+_WAITING_FOR_INPUT_MARKERS = (
+    "Press enter to confirm",  # codex 命令确认框
+    "enter to submit",  # Claude Code 工具授权框
+    "Would you like to run",  # codex 确认框标题
+)
+_WAITING_FOR_INPUT_TAIL_LINES = 10
+
+
+def _detect_waiting_for_input(output: str) -> str | None:
+    # 只看尾部：挂起的确认框一定停在画面底部；已批过的旧框会留在滚动历史高处（live 曾误报）。
+    # 倒序取最后一条命中行——离真实输入点最近的提示。
+    for line in reversed(output.splitlines()[-_WAITING_FOR_INPUT_TAIL_LINES:]):
+        if any(marker in line for marker in _WAITING_FOR_INPUT_MARKERS):
+            return line.strip()
+    return None
+
+
 def agent_capture_command(args: argparse.Namespace) -> int:
     config, store, exit_code = _load_project_or_error()
     if config is None or store is None:
@@ -9773,7 +9790,16 @@ def agent_capture_command(args: argparse.Namespace) -> int:
         return exit_code
     pane_id = str(binding["pane_id"])
     output = TmuxBackend().capture_output(config.runtime, pane_id, args.lines)
-    _print_json({"agent_id": args.agent, "pane_id": pane_id, "output": output})
+    waiting_hint = _detect_waiting_for_input(output)
+    _print_json(
+        {
+            "agent_id": args.agent,
+            "pane_id": pane_id,
+            "output": output,
+            "waiting_for_input": waiting_hint is not None,
+            "waiting_hint": waiting_hint,
+        }
+    )
     return 0
 
 
