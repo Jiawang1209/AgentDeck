@@ -4,6 +4,19 @@
 
 ## 2026-07-24
 
+### Write post-Line-1 hardening loop plan (autonomous dev slices)
+
+- **Type**: docs
+- **Motivation**: Line 1 live round 2 攒下的确定性缺口需要连续开发清掉；human 决定用
+  自主 /loop 无人值守推进，需要一份冻结的切片清单和硬边界。
+- **What**: 新增 `docs/superpowers/plans/2026-07-24-post-line1-hardening-loop.md`：
+  四个纯代码/文档切片（A spawn tiled+标签布局、B worker 等待输入只读显性化、
+  C leader review 部分派发感知、D round 3 返工 runbook），每切片 TDD + 契约同步 +
+  HISTORY 纪律；硬边界=不 push、不调 provider、不 spawn 真实 tmux、fork 决策记录后跳过；
+  live 步骤明确排除在 loop 外。
+- **Impact**: 后续自主迭代有了冻结依据与完成判定；不改任何行为代码。
+- **Verification**: 纯文档；切片来源与 live 证据逐条对应 validation 记录。
+
 ### Add file-channel reply path for worker structured replies
 
 - **Type**: feat
