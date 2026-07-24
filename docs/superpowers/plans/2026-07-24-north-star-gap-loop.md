@@ -63,7 +63,7 @@ user 已授权隔夜自主推进；一切 live 步骤（真实 provider、真实
   缺 confirm 或有未完结任务时拒绝且零写。同步 agent-runtime/workbench contract、
   测试。不自动 release、不删除文件。
 
-### [ ] 5. G4 后半：任务级 worktree 隔离（评估切片）
+### [x] 5. G4 后半：任务级 worktree 隔离（评估切片）
 
 - 先只读评估：dispatch 时按 `workspace_mode=worktree` 为任务创建 git worktree
   的设计空间（目录约定、release 时保留未确认改动、与 workflow/mission 的关系），

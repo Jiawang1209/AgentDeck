@@ -4,6 +4,22 @@
 
 ## 2026-07-25
 
+### Draft task-scoped worktree isolation spec (evaluation only)
+
+- **Type**: docs
+- **Motivation**: G4 后半（任务级 worktree 隔离）是产品 fork，隔夜 loop 只做
+  只读设计评估供 user 醒来拍板（gap-loop 计划切片 5）。
+- **What**: 新增 `docs/superpowers/specs/2026-07-25-task-worktree-design.md`：
+  per-message worktree 目录约定与 branch 命名、创建时机、release "绝不删除 +
+  dirty 列表"安全边界、archive/prune 显式命令草案、与 approval/workflow/
+  mission/capture-reply 的关系、donor 分支零件对照、北极星 G4 验收对照、
+  实施切片草案与四个开放决策（A worker 进入方式 / B 合并策略 / C 清理审计 /
+  D reviewer 挂载模式）。不改任何代码。gap-loop 计划五切片全部完成。
+- **Impact**: 纯文档；worktree 实现路径就绪，待 user 决策后另立 TDD 计划。
+- **Verification**: 纯文档；切片 4 修复（writer registry 登记
+  `mark_agent_released`）后全量 `pytest tests/ -q` 4490 passed, 3 skipped
+  + compileall（pipefail 验证）。
+
 ### Add explicit worker release stage to the task-scoped lifecycle
 
 - **Type**: feat
