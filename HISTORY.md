@@ -4,6 +4,19 @@
 
 ## 2026-07-25
 
+### Write autonomy-knob convergence loop plan (run-loop file-channel capture)
+
+- **Type**: docs
+- **Motivation**: round 3 文件通道 2/2 真实验证后，user 明确批准
+  "run-loop 文件通道自动回收"fork 并要求修复 recovery 信号遮蔽,
+  两切片进自主 loop；live 整环验证等 user 在场。
+- **What**: 新增 `docs/superpowers/plans/2026-07-25-autonomy-knob-loop.md`：
+  切片 1=run-loop 在 `waiting_for_reply` 且 reply 文件存在时同 wave 复用
+  文件通道摄入并重算 gate（绝不读 pane），切片 2=recovery 跨状态暴露
+  `reply_file_ready`；硬边界、契约同步与完成判定同前轮 loop 惯例。
+- **Impact**: 纯文档；"确认一次走开"链条的最后断点有了冻结执行清单。
+- **Verification**: 纯文档。
+
 ### Record first live verification of agent release (released lifecycle 3/3)
 
 - **Type**: data
