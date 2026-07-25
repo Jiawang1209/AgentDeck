@@ -4,6 +4,27 @@
 
 ## 2026-07-25
 
+### Require commit-to-task-branch in worktree dispatch prompts
+
+- **Type**: feat
+- **Motivation**: round 6 live 核心发现——真实 worker（codex）天性不主动
+  commit，而 worktree 审阅/合并面（`worktree diff` 的 `HEAD...branch`、
+  review-step 检出、`worktree merge`）只看任务分支上的 commit；不 commit
+  则整个审阅面为空。round 6 中一条补充指令即让 codex 自主复跑回归后
+  commit，修复方向已 live 验证。
+- **What**: `build_dispatch_prompt` 新增 `worktree_branch` 参数；worktree
+  模式的 dispatch prompt 在 cd 声明后追加要求：任务完成后必须在 worktree
+  内把全部改动 git commit 到当前任务分支（点名分支），不 push、不切换或
+  合并分支，并说明未 commit 的改动不会进入审阅与合并流程。`dispatch` 与
+  `approval dispatch` 两条派发路径都传入 provenance 同源的 branch。shared
+  模式 prompt 不变。task-worktree 设计文档同步补充该护栏。
+- **Impact**: worktree 生命周期的"worker 会 commit"隐含假设显式化为 prompt
+  合同；下一轮 live 应观察 worker 是否按要求自主 commit。
+- **Verification**: RED 先证 worktree prompt 缺分支/commit 要求（新测试
+  `test_worktree_dispatch_prompt_requires_commit_to_task_branch` 失败）+
+  shared 反向守卫测试；GREEN 后 dispatch 套件 29 passed；全量
+  `pytest tests/ -q` 绿（pipefail）+ compileall（见 commit）。
+
 ### Record round 6 task-worktree loop live PASS
 
 - **Type**: data

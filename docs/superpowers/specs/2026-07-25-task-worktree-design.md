@@ -12,6 +12,10 @@
 - 实施护栏：worktree 创建仅在 `workspace_mode=worktree` 且项目为真实 git
   仓库时发生；否则按现状派发并在 message provenance/事件中记录未启用
   （可审计的降级，不是静默）。
+- Round 6 live 补充（2026-07-25 晚）：worktree-mode dispatch prompt 除声明
+  cd 外必须要求任务完成时把改动 git commit 到当前任务分支（不 push、不切换
+  分支）——live 实证 worker 天性不主动 commit，而 diff/review 检出/merge
+  只看任务分支上的 commit，未 commit 则整个审阅面为空。
 - 来源：G4 审计缺口（`workspace_mode="worktree"` 仅 config 声明未落地）+
   Line 1 live 实证（reviewer 越权顺手修 bug，共享工作区无隔离）
 

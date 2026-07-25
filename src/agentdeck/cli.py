@@ -10142,6 +10142,7 @@ def build_dispatch_prompt(
     skill_loads: list[dict[str, object]] | None = None,
     reply_file: str | None = None,
     worktree_path: str | None = None,
+    worktree_branch: str | None = None,
 ) -> str:
     skill_lines = _dispatch_skill_prompt_lines(skill_loads or [])
     worktree_lines = (
@@ -10150,6 +10151,10 @@ def build_dispatch_prompt(
             worktree_path,
             "请先 cd 进上述目录，本任务的全部读写都只在该目录内进行；",
             "不要改动主工作区或其它任务的 worktree。",
+            # round 6 live 发现：真实 agent 天性不主动 commit，而审阅/合并面
+            # （diff、review 检出、merge）只看任务分支上的 commit。
+            f"任务完成后必须在该 worktree 内把全部改动 git commit 到当前任务分支 {worktree_branch or '（当前分支）'}；",
+            "不要 push，不要切换或合并分支；未 commit 的改动不会进入审阅与合并流程。",
             "",
         ]
         if worktree_path
@@ -10578,6 +10583,7 @@ def dispatch_command(args: argparse.Namespace) -> int:
         skill_loads=skill_loads,
         reply_file=str(reply_file),
         worktree_path=(worktree_info or {}).get("path"),
+        worktree_branch=(worktree_info or {}).get("branch"),
     )
     records = store.create_dispatch_records(
         args.from_agent,
@@ -18240,6 +18246,7 @@ def _dispatch_approved_approval(
         skill_loads=skill_loads,
         reply_file=str(reply_file),
         worktree_path=(worktree_info or {}).get("path"),
+        worktree_branch=(worktree_info or {}).get("branch"),
     )
     records = store.create_dispatch_records(
         "leader",

@@ -576,6 +576,40 @@ def test_dispatch_creates_task_worktree_for_worktree_mode_agent(tmp_path, monkey
     assert '"event_type": "worktree_created"' in events
 
 
+def test_worktree_dispatch_prompt_requires_commit_to_task_branch(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    _init_real_git(root)
+    _bind_agent(root, "coder", "%50")  # default config: coder workspace_mode=worktree
+    fake = FakeTmuxBackend()
+    monkeypatch.setattr(cli, "TmuxBackend", lambda: fake)
+
+    exit_code = cli.main(["dispatch", "--agent", "coder", "--task", "在隔离环境中实现功能"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    message_id = payload["message_id"]
+    prompt = fake.sent[0][1]
+    assert f"agentdeck/coder/{message_id}" in prompt
+    assert "git commit" in prompt
+    assert "不要 push" in prompt
+
+
+def test_shared_dispatch_prompt_has_no_commit_requirement(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    _init_real_git(root)
+    _bind_agent(root, "planner", "%51")  # default config: planner workspace_mode=shared
+    fake = FakeTmuxBackend()
+    monkeypatch.setattr(cli, "TmuxBackend", lambda: fake)
+
+    exit_code = cli.main(["dispatch", "--agent", "planner", "--task", "分析现状"])
+
+    assert exit_code == 0
+    capsys.readouterr()
+    prompt = fake.sent[0][1]
+    assert "git commit" not in prompt
+    assert "不要 push" not in prompt
+
+
 def test_dispatch_degrades_cleanly_without_real_git_repo(tmp_path, monkeypatch, capsys) -> None:
     root = prepare_project(tmp_path, monkeypatch)  # fake .git dir, not a real repo
     _bind_agent(root, "coder", "%50")
