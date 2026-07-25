@@ -13296,6 +13296,53 @@ def test_run_loop_waiting_for_reply_without_file_stays_waiting(tmp_path, monkeyp
     assert state.get("replies", []) == []
 
 
+def test_run_loop_dispatches_only_earliest_incomplete_step(tmp_path, monkeypatch, capsys):
+    # round 4 发现③：wave 只派发最早未完成 step，后续 step 保持 approved 等待
+    root = prepare_project(tmp_path, monkeypatch)
+    fake = FakeTmuxBackend()
+    monkeypatch.setattr(cli, "TmuxBackend", lambda: fake)
+    cli.main(["leader", "plan", "--provider", "fake", "--model", "fake-plan", "--task", "顺序守卫"])
+    plan_id = json.loads(capsys.readouterr().out)["plan_id"]
+    cli.main(["approval", "create-from-plan", "--plan-id", plan_id])
+    approvals = json.loads(capsys.readouterr().out)["approvals"]
+    assert len(approvals) >= 2
+    step1, step2 = approvals[0], approvals[1]
+    bind_agent(root, step1["agent_id"], "%41")
+    bind_agent(root, step2["agent_id"], "%42")
+    for approval in approvals[2:]:
+        cli.main(["approval", "reject", "--approval-id", approval["approval_id"], "--reason", "focus"])
+        capsys.readouterr()
+    cli.main([
+        "policy", "set-mode", "--mode", "autonomous", "--confirm",
+        "--allow-agent", step1["agent_id"], "--allow-agent", step2["agent_id"],
+        "--max-approvals", "5",
+    ])
+    capsys.readouterr()
+    cli.main(["approval", "approve-plan", "--plan-id", plan_id, "--confirm"])
+    capsys.readouterr()
+
+    assert cli.main(["run-loop", "--plan-id", plan_id, "--confirm"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert [d["approval_id"] for d in payload["dispatched"]] == [step1["approval_id"]]
+    held = [s for s in payload["skipped"] if s.get("approval_id") == step2["approval_id"]]
+    assert held and held[0]["reason"] == "awaiting earlier step completion"
+    assert payload["stopped_reason"] == "waiting_for_reply"
+    state = StateStore(root).load()
+    step2_state = next(a for a in state["approvals"] if a["approval_id"] == step2["approval_id"])
+    assert step2_state["status"] == "approved"
+    message_id = payload["dispatched"][0]["message_id"]
+
+    # step-1 文件就绪 -> 下一 wave 同时摄入 step1 并派发 step2
+    reply_file = root / ".agentdeck" / "replies" / f"{message_id}.reply.txt"
+    reply_file.parent.mkdir(parents=True, exist_ok=True)
+    reply_file.write_text("status: completed\nsummary: done\n", encoding="utf-8")
+
+    assert cli.main(["run-loop", "--plan-id", plan_id, "--confirm"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert [c["message_id"] for c in (payload.get("captured_replies") or [])] == [message_id]
+    assert [d["approval_id"] for d in payload["dispatched"]] == [step2["approval_id"]]
+
+
 def test_run_loop_ingests_ready_reply_even_when_gate_is_blocked(tmp_path, monkeypatch, capsys):
     # round 4 发现④：blocked gate 不得遮蔽已就绪的文件通道回复摄入
     root = prepare_project(tmp_path, monkeypatch)

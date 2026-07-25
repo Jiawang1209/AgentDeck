@@ -4,6 +4,28 @@
 
 ## 2026-07-25
 
+### Enforce sequential step order in run-loop waves
+
+- **Type**: fix
+- **Motivation**: round 4 发现③——wave 把所有 approved-and-ready 审批一次
+  全派，step 2 会在 step 1 完成前派出（live 靠 stop-reviewer 绕行）
+  （round4-findings loop 切片 3）。
+- **What**: 单计划 run-loop wave 只派发"最早未完成 step"（完成 = rejected
+  或 dispatched 且已有 reply）的 approved 审批，更晚 step 保持 approved 并
+  记入 `skipped[]`（reason `awaiting earlier step completion`）；摄入前移到
+  派发之前，使"前一 step 文件就绪→同 wave 摄入→解锁下一 step 派发"成立；
+  新增 4b 诚实化修正——wave 持留后续 step、无真实 blocked 且最早 step 等
+  回复时，gate 呈现该 step 的 `waiting_for_reply` + 显式 capture 命令，
+  不再推荐派发被持留审批。`_run_loop_all` 每计划循环加同一守卫（held 进
+  该计划 `skipped[]`；--all 暂不摄入，schema 记为后续）。同步 run-loop /
+  run-loop-all schema 与 CLAUDE.md。
+- **Impact**: 多步计划的顺序语义在自主 wave 下成立，走开环不再需要人工
+  制造 blocked 来排序；单步场景行为不变。
+- **Verification**: RED=两步全 approved 双 agent 就绪场景（wave1 全派）；
+  GREEN 后断言 wave1 只派 step1+held 有 reason+gate waiting_for_reply，
+  文件就绪后 wave2 摄入并派 step2；run-loop 家族 19 例 + 核心回归 1142
+  passed；全量 `pytest tests/ -q` 绿（pipefail）+ compileall（见 commit）。
+
 ### Decouple run-loop file-channel ingestion from the gate
 
 - **Type**: fix

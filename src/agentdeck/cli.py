@@ -18469,13 +18469,38 @@ def _run_loop_all(config: ProjectConfig, store: StateStore) -> int:
         blocked: list[dict[str, object]] = []
         skipped_contention: list[dict[str, object]] = []
         has_error = False
-        approved_now = [
-            a for a in store.load().get("approvals", [])
-            if isinstance(a, dict) and a.get("plan_id") == plan_id and a.get("status") == "approved"
+        wave_state = store.load()
+        wave_replied = {
+            str(reply.get("message_id"))
+            for reply in wave_state.get("replies", [])
+            if isinstance(reply, dict)
+        }
+        wave_approvals = [
+            a for a in wave_state.get("approvals", [])
+            if isinstance(a, dict) and a.get("plan_id") == plan_id
         ]
+        wave_incomplete_steps = [
+            int(item.get("step") or 0)
+            for item in wave_approvals
+            if item.get("status") != "rejected"
+            and not (
+                item.get("status") == "dispatched"
+                and str(item.get("message_id")) in wave_replied
+            )
+        ]
+        wave_earliest = min(wave_incomplete_steps) if wave_incomplete_steps else None
+        approved_now = [a for a in wave_approvals if a.get("status") == "approved"]
+        sequence_held_all: list[dict[str, object]] = []
         for approval in approved_now:
             aid = str(approval.get("approval_id", ""))
             agent_id = approval.get("agent_id")
+            if wave_earliest is not None and int(approval.get("step") or 0) != wave_earliest:
+                sequence_held_all.append({
+                    "approval_id": aid,
+                    "agent_id": agent_id,
+                    "reason": "awaiting earlier step completion",
+                })
+                continue
             if agent_id in busy:
                 skipped_contention.append({"approval_id": aid, "agent_id": agent_id, "blocker": "agent busy this wave"})
                 continue
@@ -18496,7 +18521,10 @@ def _run_loop_all(config: ProjectConfig, store: StateStore) -> int:
             "plan_id": plan_id, "task": plan.get("task"),
             "auto_approved": len(selected), "dispatched": dispatched,
             "blocked": blocked,
-            "skipped": [{"approval_id": s.get("approval_id"), "agent_id": s.get("agent_id"), "reason": s.get("reason")} for s in skipped],
+            "skipped": [
+                {"approval_id": s.get("approval_id"), "agent_id": s.get("agent_id"), "reason": s.get("reason")}
+                for s in skipped
+            ] + sequence_held_all,
             "skipped_contention": skipped_contention,
             "gate": gate, "next_command": next_command,
         })
@@ -18570,50 +18598,11 @@ def run_loop_command(args: argparse.Namespace) -> int:
             "approval_id": approval_id, "status": "approved", "source": "autonomous",
         }))
 
-    # 2) dispatch every approved-and-ready approval for this plan (auto- or human-approved)
-    backend = TmuxBackend()
-    dispatched: list[dict[str, object]] = []
-    blocked: list[dict[str, object]] = []
-    has_error = False
-    approved_now = [
-        a for a in store.load().get("approvals", [])
-        if isinstance(a, dict) and a.get("plan_id") == plan_id and a.get("status") == "approved"
-    ]
-    for approval in approved_now:
-        approval_id = str(approval.get("approval_id", ""))
-        preview = _approval_dispatch_preview_card(approval, config, store)
-        if preview.get("blocker"):
-            blocked.append({
-                "approval_id": approval_id,
-                "agent_id": approval.get("agent_id"),
-                "blocker": preview.get("blocker"),
-            })
-            continue
-        try:
-            result = _dispatch_approved_approval(
-                approval, approval_id=approval_id, config=config, store=store, backend=backend
-            )
-            dispatched.append({
-                "approval_id": approval_id,
-                "agent_id": result["agent_id"],
-                "message_id": result["message_id"],
-                "trace_command": result["trace_command"],
-            })
-        except Exception as exc:  # dispatch failed -- stop at the error gate
-            has_error = True
-            store.append_event(EventRecord.create("run_loop_dispatch_failed", {
-                "approval_id": approval_id, "detail": str(exc),
-            }))
-
-    # 3) diagnose the resulting gate via leader review (single source of truth)
-    review = store.leader_review(plan_id)
-    stopped_reason, next_command = run_loop_gate(review, has_error, plan_id)
-
-    # 3b) file-channel reply ingestion, decoupled from the gate: every
-    # dispatched-but-unreplied message of this plan whose worker has already
-    # announced completion by writing its explicit reply file is ingested
-    # (bounded by the awaiting set, never reading the pane); the gate is then
-    # re-diagnosed once. The current stopped_reason does not gate ingestion.
+    # 2) file-channel reply ingestion, decoupled from the gate and run BEFORE
+    # dispatch: every dispatched-but-unreplied message of this plan whose worker
+    # has already announced completion by writing its explicit reply file is
+    # ingested (bounded by the awaiting set, never reading the pane). Ingesting
+    # first lets a completed step unlock the next step in the same wave.
     captured_replies: list[dict[str, object]] = []
     state_now = store.load()
     replied_messages = {
@@ -18641,16 +18630,112 @@ def run_loop_command(args: argparse.Namespace) -> int:
             "reply_id": captured["reply_id"],
             "agent_id": captured["agent_id"],
         }))
-    if captured_replies:
-        review = store.leader_review(plan_id)
-        stopped_reason, next_command = run_loop_gate(review, has_error, plan_id)
+
+    # 3) dispatch approved approvals for the earliest incomplete step only
+    # (sequential plan semantics): later approved steps stay approved and are
+    # reported as skipped with an explicit reason.
+    backend = TmuxBackend()
+    dispatched: list[dict[str, object]] = []
+    blocked: list[dict[str, object]] = []
+    sequence_held: list[dict[str, object]] = []
+    has_error = False
+    state_seq = store.load()
+    replied_now = {
+        str(reply.get("message_id"))
+        for reply in state_seq.get("replies", [])
+        if isinstance(reply, dict)
+    }
+    seq_approvals = [
+        a for a in state_seq.get("approvals", [])
+        if isinstance(a, dict) and a.get("plan_id") == plan_id
+    ]
+
+    def _step_is_incomplete(item: dict[str, object]) -> bool:
+        status = item.get("status")
+        if status == "rejected":
+            return False
+        if status == "dispatched" and str(item.get("message_id")) in replied_now:
+            return False
+        return True
+
+    incomplete_steps = [
+        int(item.get("step") or 0) for item in seq_approvals if _step_is_incomplete(item)
+    ]
+    earliest_incomplete = min(incomplete_steps) if incomplete_steps else None
+    approved_now = [a for a in seq_approvals if a.get("status") == "approved"]
+    for approval in approved_now:
+        approval_id = str(approval.get("approval_id", ""))
+        if earliest_incomplete is not None and int(approval.get("step") or 0) != earliest_incomplete:
+            sequence_held.append({
+                "approval_id": approval_id,
+                "agent_id": approval.get("agent_id"),
+                "reason": "awaiting earlier step completion",
+            })
+            continue
+        preview = _approval_dispatch_preview_card(approval, config, store)
+        if preview.get("blocker"):
+            blocked.append({
+                "approval_id": approval_id,
+                "agent_id": approval.get("agent_id"),
+                "blocker": preview.get("blocker"),
+            })
+            continue
+        try:
+            result = _dispatch_approved_approval(
+                approval, approval_id=approval_id, config=config, store=store, backend=backend
+            )
+            dispatched.append({
+                "approval_id": approval_id,
+                "agent_id": result["agent_id"],
+                "message_id": result["message_id"],
+                "trace_command": result["trace_command"],
+            })
+        except Exception as exc:  # dispatch failed -- stop at the error gate
+            has_error = True
+            store.append_event(EventRecord.create("run_loop_dispatch_failed", {
+                "approval_id": approval_id, "detail": str(exc),
+            }))
+
+    # 4) diagnose the resulting gate via leader review (single source of truth)
+    review = store.leader_review(plan_id)
+    stopped_reason, next_command = run_loop_gate(review, has_error, plan_id)
+
+    # 4b) sequential-hold refinement: when this wave held later steps, nothing
+    # actually blocked, and the earliest step is still awaiting its reply, the
+    # honest gate is waiting_for_reply on that earlier step -- not a dispatch
+    # recommendation for an intentionally held approval.
+    waiting_message_id = str(review.get("message_id") or "")
+    waiting_agent_id = str(review.get("agent_id") or "")
+    if sequence_held and not blocked and stopped_reason == "blocked":
+        state_after = store.load()
+        replied_after = {
+            str(reply.get("message_id"))
+            for reply in state_after.get("replies", [])
+            if isinstance(reply, dict)
+        }
+        awaiting_after = [
+            (str(a.get("message_id")), str(a.get("agent_id")), int(a.get("step") or 0))
+            for a in state_after.get("approvals", [])
+            if isinstance(a, dict)
+            and a.get("plan_id") == plan_id
+            and a.get("status") == "dispatched"
+            and a.get("message_id")
+            and str(a.get("message_id")) not in replied_after
+        ]
+        if awaiting_after:
+            awaiting_after.sort(key=lambda item: item[2])
+            waiting_message_id, waiting_agent_id = awaiting_after[0][0], awaiting_after[0][1]
+            stopped_reason = "waiting_for_reply"
+            next_command = (
+                f"agentdeck capture-reply --agent {waiting_agent_id} --message-id {waiting_message_id}"
+            )
 
     store.append_event(EventRecord.create("run_loop_advanced", {
         "plan_id": plan_id,
         "auto_approved": len(selected),
         "dispatched": len(dispatched),
         "blocked": len(blocked),
-        "skipped": len(skipped),
+        "skipped": len(skipped) + len(sequence_held),
         "stopped_reason": stopped_reason,
     }))
 
@@ -18666,7 +18751,7 @@ def run_loop_command(args: argparse.Namespace) -> int:
         "skipped": [
             {"approval_id": s.get("approval_id"), "agent_id": s.get("agent_id"), "reason": s.get("reason")}
             for s in skipped
-        ],
+        ] + sequence_held,
         "stopped_reason": stopped_reason,
         "next_command": next_command,
         "policy": {"allowed_agents": list(policy.allowed_agents), "max_approvals": policy.max_approvals},
@@ -18674,9 +18759,8 @@ def run_loop_command(args: argparse.Namespace) -> int:
     if captured_replies:
         payload["captured_replies"] = captured_replies
     if stopped_reason == "waiting_for_reply":
-        reply_message_id = str(review.get("message_id") or "")
-        payload["reply_file_ready"] = bool(reply_message_id) and _reply_file_path(
-            config.root, reply_message_id
+        payload["reply_file_ready"] = bool(waiting_message_id) and _reply_file_path(
+            config.root, waiting_message_id
         ).exists()
     validation = validate_run_loop_contract(payload)
     if not validation["ok"]:

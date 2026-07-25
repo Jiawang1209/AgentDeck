@@ -38,7 +38,7 @@
 - 同步：run-loop schema 摄入条件文字、CLAUDE.md run-loop 段；round 4
   wave2 场景（blocked + 文件就绪）做成 RED 用例。
 
-### [ ] 3.（发现③）run-loop step 顺序守卫
+### [x] 3.（发现③）run-loop step 顺序守卫
 
 - 现象：wave 把所有 approved-and-ready 审批一次全派，step 2 会在 step 1
   完成前派出，破坏顺序语义。
