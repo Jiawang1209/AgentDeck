@@ -4,6 +4,20 @@
 
 ## 2026-07-25
 
+### Write round-4 findings convergence loop plan (order 1-4-3-5-2)
+
+- **Type**: docs
+- **Motivation**: round 4 五条 live 发现需收敛；user 拍板按 ①④③⑤② 顺序
+  进自主 loop（①④小而清晰、③顺序语义正解、⑤送达校验设计、②偏产品决策）。
+- **What**: 新增 `docs/superpowers/plans/2026-07-25-round4-findings-loop.md`：
+  切片 1=provider HTTP 错误转干净 leader_error（不裸崩）；切片 2=run-loop
+  文件摄入按 awaiting message 集驱动、与 gate 解耦；切片 3=wave 只派最早
+  未完成 step（含 run-loop-all 同守卫）；切片 4=capture 新增只读
+  `composer_pending` 探测 + 送达校验方向记录；切片 5=远端模型探测评估文档
+  （不破 doctor 只读边界，b 方案留 user 拍板）。硬边界与完成判定同前轮。
+- **Impact**: 纯文档；下一批切片冻结。
+- **Verification**: 纯文档。
+
 ### Record round 4 walk-away loop live PASS (five new findings)
 
 - **Type**: data
