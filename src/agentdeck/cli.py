@@ -10264,6 +10264,49 @@ def _extract_structured_reply(output: str) -> str | None:
     return "\n".join(tail).strip()
 
 
+def _capture_reply_from_file_channel(
+    config: ProjectConfig, store: StateStore, agent_id: str, message_id: str
+) -> dict[str, object] | None:
+    """File-channel-only reply ingestion for the run loop.
+
+    Reads the explicit worker reply file; never touches tmux panes."""
+    reply_file = _reply_file_path(config.root, message_id)
+    if not reply_file.is_file():
+        return None
+    try:
+        file_text = reply_file.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    text = _extract_structured_reply(file_text)
+    if text is None:
+        return None
+    try:
+        reply = store.record_reply(agent_id, message_id, text)
+    except KeyError:
+        return None
+    store.append_event(
+        EventRecord.create(
+            "reply_captured",
+            {
+                "reply_id": reply["reply_id"],
+                "message_id": reply["message_id"],
+                "from_agent": agent_id,
+                "pane_id": None,
+                "captured_from": "file",
+                "captured_lines": len(text.splitlines()),
+                "artifact_count": len(reply.get("artifacts", [])) if isinstance(reply.get("artifacts"), list) else 0,
+            },
+        )
+    )
+    return {
+        "message_id": str(reply["message_id"]),
+        "reply_id": str(reply["reply_id"]),
+        "agent_id": agent_id,
+        "captured_from": "file",
+        "trace_command": _trace_command(reply["reply_id"]),
+    }
+
+
 def capture_reply_command(args: argparse.Namespace) -> int:
     config, store, exit_code = _load_project_or_error()
     if config is None or store is None:
@@ -18566,6 +18609,26 @@ def run_loop_command(args: argparse.Namespace) -> int:
     review = store.leader_review(plan_id)
     stopped_reason, next_command = run_loop_gate(review, has_error, plan_id)
 
+    # 3b) file-channel reply ingestion: when the gate waits on a reply the worker
+    # has already announced by writing its explicit reply file, ingest it (one
+    # capture pass per wave, never reading the pane) and re-diagnose the gate.
+    captured_replies: list[dict[str, object]] = []
+    if stopped_reason == "waiting_for_reply":
+        waiting_agent = str(review.get("agent_id") or "")
+        waiting_message = str(review.get("message_id") or "")
+        if waiting_agent and waiting_message:
+            captured = _capture_reply_from_file_channel(config, store, waiting_agent, waiting_message)
+            if captured is not None:
+                captured_replies.append(captured)
+                store.append_event(EventRecord.create("run_loop_reply_captured", {
+                    "plan_id": plan_id,
+                    "message_id": captured["message_id"],
+                    "reply_id": captured["reply_id"],
+                    "agent_id": captured["agent_id"],
+                }))
+                review = store.leader_review(plan_id)
+                stopped_reason, next_command = run_loop_gate(review, has_error, plan_id)
+
     store.append_event(EventRecord.create("run_loop_advanced", {
         "plan_id": plan_id,
         "auto_approved": len(selected),
@@ -18592,6 +18655,8 @@ def run_loop_command(args: argparse.Namespace) -> int:
         "next_command": next_command,
         "policy": {"allowed_agents": list(policy.allowed_agents), "max_approvals": policy.max_approvals},
     }
+    if captured_replies:
+        payload["captured_replies"] = captured_replies
     if stopped_reason == "waiting_for_reply":
         reply_message_id = str(review.get("message_id") or "")
         payload["reply_file_ready"] = bool(reply_message_id) and _reply_file_path(

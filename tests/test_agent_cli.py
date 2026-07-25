@@ -13253,7 +13253,35 @@ def test_recovery_reply_waiting_surfaces_reply_file_ready(tmp_path, monkeypatch,
     assert recovery["next_command"] == expected_command
 
 
-def test_run_loop_waiting_for_reply_surfaces_reply_file_ready(tmp_path, monkeypatch, capsys):
+def test_recovery_inbox_pending_still_surfaces_reply_file_ready(tmp_path, monkeypatch, capsys):
+    root = prepare_project(tmp_path, monkeypatch)
+    bind_agent(root, "planner", "%42")
+    fake = FakeTmuxBackend()
+    monkeypatch.setattr(cli, "TmuxBackend", lambda: fake)
+    cli.main(["leader", "plan", "--provider", "fake", "--model", "fake-plan", "--task", "遮蔽场景"])
+    plan_id = json.loads(capsys.readouterr().out)["plan_id"]
+    cli.main(["approval", "create-from-plan", "--plan-id", plan_id])
+    approvals = json.loads(capsys.readouterr().out)["approvals"]
+    approval_id = approvals[0]["approval_id"]
+    cli.main(["approval", "approve", "--approval-id", approval_id])
+    capsys.readouterr()
+    for approval in approvals[1:]:
+        cli.main(["approval", "reject", "--approval-id", approval["approval_id"], "--reason", "focus"])
+        capsys.readouterr()
+    cli.main(["approval", "dispatch", "--approval-id", approval_id])
+    message_id = json.loads(capsys.readouterr().out)["message_id"]
+    # deliberately NOT acked: recovery stays inbox_pending while a reply is awaited
+    reply_file = root / ".agentdeck" / "replies" / f"{message_id}.reply.txt"
+    reply_file.parent.mkdir(parents=True, exist_ok=True)
+    reply_file.write_text("status: completed\nsummary: done\n", encoding="utf-8")
+
+    assert cli.main(["status"]) == 0
+    recovery = json.loads(capsys.readouterr().out)["recovery"]
+    assert recovery["status"] == "inbox_pending"
+    assert recovery["reply_file_ready"] is True
+
+
+def test_run_loop_waiting_for_reply_without_file_stays_waiting(tmp_path, monkeypatch, capsys):
     root = prepare_project(tmp_path, monkeypatch)
     plan_id, message_id = _dispatch_first_step_and_ack(root, monkeypatch, capsys)
     cli.main(["policy", "set-mode", "--mode", "autonomous", "--confirm", "--allow-agent", "planner", "--max-approvals", "5"])
@@ -13263,15 +13291,40 @@ def test_run_loop_waiting_for_reply_surfaces_reply_file_ready(tmp_path, monkeypa
     payload = json.loads(capsys.readouterr().out)
     assert payload["stopped_reason"] == "waiting_for_reply"
     assert payload["reply_file_ready"] is False
+    assert payload.get("captured_replies") in (None, [])
+    state = StateStore(root).load()
+    assert state.get("replies", []) == []
 
+
+def test_run_loop_captures_file_channel_reply_and_advances(tmp_path, monkeypatch, capsys):
+    root = prepare_project(tmp_path, monkeypatch)
+    plan_id, message_id = _dispatch_first_step_and_ack(root, monkeypatch, capsys)
+    cli.main(["policy", "set-mode", "--mode", "autonomous", "--confirm", "--allow-agent", "planner", "--max-approvals", "5"])
+    capsys.readouterr()
     reply_file = root / ".agentdeck" / "replies" / f"{message_id}.reply.txt"
     reply_file.parent.mkdir(parents=True, exist_ok=True)
     reply_file.write_text("status: completed\nsummary: done\n", encoding="utf-8")
+    fake = FakeTmuxBackend()
+    monkeypatch.setattr(cli, "TmuxBackend", lambda: fake)
 
     assert cli.main(["run-loop", "--plan-id", plan_id, "--confirm"]) == 0
     payload = json.loads(capsys.readouterr().out)
-    assert payload["stopped_reason"] == "waiting_for_reply"
-    assert payload["reply_file_ready"] is True
+
+    captured = payload["captured_replies"]
+    assert len(captured) == 1
+    assert captured[0]["message_id"] == message_id
+    assert captured[0]["agent_id"] == "planner"
+    assert captured[0]["captured_from"] == "file"
+    assert captured[0]["reply_id"].startswith("rep_")
+    assert captured[0]["trace_command"] == f"agentdeck trace --id {captured[0]['reply_id']}"
+    assert payload["stopped_reason"] != "waiting_for_reply"
+    assert fake.captured == []  # file channel only: never reads the pane
+    state = StateStore(root).load()
+    replies = [r for r in state.get("replies", []) if r.get("message_id") == message_id]
+    assert len(replies) == 1
+    events = (root / ".agentdeck" / "state" / "events.jsonl").read_text(encoding="utf-8")
+    assert '"event_type": "reply_captured"' in events
+    assert '"event_type": "run_loop_reply_captured"' in events
 
 
 def test_approval_approve_plan_requires_confirm_and_known_plan(tmp_path, monkeypatch, capsys):

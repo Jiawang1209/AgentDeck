@@ -4,6 +4,28 @@
 
 ## 2026-07-25
 
+### Let run-loop ingest explicit file-channel replies and unmask reply_file_ready
+
+- **Type**: feat
+- **Motivation**: run-loop 停在 `waiting_for_reply` 交还人工是"确认一次走开"
+  链条的唯一断点；round 3 文件通道 2/2 真实验证后 user 明确批准该 fork
+  （autonomy-knob loop 切片 1+2）。
+- **What**: 切片 1——`_capture_reply_from_file_channel` 纯文件摄入 helper
+  （读 `.agentdeck/replies/<message_id>.reply.txt`，绝不读 pane、`pane_id=null`），
+  run-loop 在 gate=`waiting_for_reply` 且文件存在结构化回复时同 wave 摄入
+  （`record_reply`+`reply_captured` `captured_from=file`+一条
+  `run_loop_reply_captured` 汇总事件）并重算 gate 一次，结果入可选
+  `captured_replies[]`；文件缺失行为不变。每 wave 至多一轮摄入。切片 2——
+  recovery 的 `reply_file_ready` 改为随"存在待回复 dispatched message"跨状态
+  携带（`inbox_pending` 不再遮蔽），单一来源在 return 前派生。同步 run-loop/
+  project-view schema 边界文字与 CLAUDE.md run-loop 段（记录 human 批准），
+  必需字段集不变。
+- **Impact**: 自然循环路线上"说目标→approve-plan 一次→run-loop 反复推进→
+  只在授权框/异常停"的最小走开体验成立；pane 捕获仍是人工兜底路径。
+- **Verification**: RED 两例（captured_replies KeyError、inbox_pending 遮蔽）；
+  GREEN 后 run-loop 全家 17 例 + 目标 19 例过，核心回归 1158 passed；全量
+  `pytest tests/ -q` 绿（pipefail）+ compileall（见 commit）。
+
 ### Write autonomy-knob convergence loop plan (run-loop file-channel capture)
 
 - **Type**: docs

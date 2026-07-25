@@ -17,7 +17,7 @@
 
 ## 切片清单
 
-### [ ] 1. run-loop 文件通道自动回收（自主度旋钮关键档）
+### [x] 1. run-loop 文件通道自动回收（自主度旋钮关键档）
 
 - 现象：run-loop 停在 `waiting_for_reply` 即交还人工 capture-reply，是
   "确认一次走开"链条上唯一断点；文件通道 2/2 真实验证后，reply 文件存在
@@ -37,7 +37,7 @@
   停下/回收后 gate 推进 三态。
 - 授权依据：user 2026-07-25 对话明确批准该 fork。
 
-### [ ] 2. recovery 跨状态暴露 reply_file_ready（遮蔽修复）
+### [x] 2. recovery 跨状态暴露 reply_file_ready（遮蔽修复）
 
 - 现象：round 3 发现 1——worker 已写回复文件时，recovery 因未 ack 收件停
   在 `inbox_pending`，`reply_file_ready` 不可见。
