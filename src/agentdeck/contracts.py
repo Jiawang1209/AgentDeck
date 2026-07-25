@@ -281,6 +281,12 @@ CONTRACT_INDEX_SPECS = (
         "agentdeck contract artifacts --example",
         "artifacts-schema.md",
     ),
+    (
+        "worktree",
+        "agentdeck contract worktree",
+        "agentdeck contract worktree --example",
+        "worktree-schema.md",
+    ),
 )
 
 
@@ -733,6 +739,155 @@ APPROVAL_APPROVE_PLAN_RESULT_FIELDS = (
     "task",
     "status",
 )
+
+WORKTREE_LIST_RESPONSE_FIELDS = (
+    "ok",
+    "mode",
+    "count",
+    "items",
+)
+
+WORKTREE_ITEM_FIELDS = (
+    "agent_id",
+    "message_id",
+    "branch",
+    "path",
+    "base_branch",
+    "exists",
+    "dirty",
+    "merged",
+    "abandoned",
+    "diff_command",
+    "trace_command",
+)
+
+WORKTREE_DIFF_RESPONSE_FIELDS = (
+    "ok",
+    "mode",
+    "message_id",
+    "agent_id",
+    "branch",
+    "base",
+    "dirty",
+    "stat",
+    "files",
+    "merge_command",
+    "abandon_command",
+    "trace_command",
+)
+
+
+def validate_worktree_list_contract(payload: dict[str, object]) -> dict[str, object]:
+    errors: list[str] = []
+    for field in WORKTREE_LIST_RESPONSE_FIELDS:
+        if field not in payload:
+            errors.append(f"missing worktree_list field: {field}")
+    if payload.get("mode") != "worktree_list":
+        errors.append(f"worktree_list.mode must be worktree_list, got {payload.get('mode')}")
+    items = payload.get("items")
+    if not isinstance(items, list):
+        errors.append("worktree_list.items must be a list")
+    else:
+        if payload.get("count") != len(items):
+            errors.append("worktree_list.count must match items length")
+        for index, item in enumerate(items):
+            if not isinstance(item, dict):
+                errors.append(f"worktree_list.items[{index}] must be an object")
+                continue
+            for field in WORKTREE_ITEM_FIELDS:
+                if field not in item:
+                    errors.append(f"missing worktree_list.items[{index}] field: {field}")
+    return {"ok": not errors, "errors": errors}
+
+
+def validate_worktree_diff_contract(payload: dict[str, object]) -> dict[str, object]:
+    errors: list[str] = []
+    for field in WORKTREE_DIFF_RESPONSE_FIELDS:
+        if field not in payload:
+            errors.append(f"missing worktree_diff field: {field}")
+    if payload.get("mode") != "worktree_diff":
+        errors.append(f"worktree_diff.mode must be worktree_diff, got {payload.get('mode')}")
+    files = payload.get("files")
+    if not isinstance(files, list):
+        errors.append("worktree_diff.files must be a list")
+    else:
+        for index, item in enumerate(files):
+            if not isinstance(item, dict) or "status" not in item or "path" not in item:
+                errors.append(f"worktree_diff.files[{index}] must have status and path")
+    return {"ok": not errors, "errors": errors}
+
+
+def worktree_list_example() -> dict[str, object]:
+    return {
+        "ok": True,
+        "mode": "worktree_list",
+        "count": 1,
+        "items": [
+            {
+                "agent_id": "coder",
+                "message_id": "msg_example",
+                "branch": "agentdeck/coder/msg_example",
+                "path": "/workspace/project/.agentdeck/worktrees/coder/msg_example",
+                "base_branch": None,
+                "exists": True,
+                "dirty": False,
+                "merged": False,
+                "abandoned": False,
+                "diff_command": "agentdeck worktree diff --message-id msg_example",
+                "trace_command": "agentdeck trace --id msg_example",
+            }
+        ],
+    }
+
+
+def worktree_diff_example() -> dict[str, object]:
+    return {
+        "ok": True,
+        "mode": "worktree_diff",
+        "message_id": "msg_example",
+        "agent_id": "coder",
+        "branch": "agentdeck/coder/msg_example",
+        "base": "HEAD",
+        "dirty": False,
+        "stat": " feature.txt | 1 +\n 1 file changed, 1 insertion(+)\n",
+        "files": [{"status": "A", "path": "feature.txt"}],
+        "merge_command": "agentdeck worktree merge --message-id msg_example --confirm",
+        "abandon_command": "agentdeck worktree abandon --message-id msg_example --confirm",
+        "trace_command": "agentdeck trace --id msg_example",
+    }
+
+
+def worktree_contract_payload(contract_path: Path) -> dict[str, object]:
+    return {
+        "schema_version": PROJECT_VIEW_SCHEMA_VERSION,
+        "list_command": "agentdeck worktree list",
+        "diff_command_template": "agentdeck worktree diff --message-id <message_id>",
+        "merge_command_template": "agentdeck worktree merge --message-id <message_id> --confirm",
+        "abandon_command_template": "agentdeck worktree abandon --message-id <message_id> --confirm",
+        "prune_command_template": "agentdeck worktree prune --confirm",
+        "contract_path": str(contract_path),
+        "contract_exists": contract_path.exists(),
+        "list_response_fields": list(WORKTREE_LIST_RESPONSE_FIELDS),
+        "worktree_item_fields": list(WORKTREE_ITEM_FIELDS),
+        "diff_response_fields": list(WORKTREE_DIFF_RESPONSE_FIELDS),
+        "project_view_schema_version": PROJECT_VIEW_SCHEMA_VERSION,
+        "project_view_contract": "agentdeck contract project-view",
+    }
+
+
+def worktree_contract_response(contract_path: Path, include_example: bool = False) -> dict[str, object]:
+    payload = worktree_contract_payload(contract_path)
+    if include_example:
+        list_example = worktree_list_example()
+        diff_example = worktree_diff_example()
+        payload["example"] = True
+        payload["example_list_fields"] = list(list_example)
+        payload["example_worktree_item_fields"] = list(list_example["items"][0])
+        payload["example_list"] = list_example
+        payload["example_diff_fields"] = list(diff_example)
+        payload["example_diff"] = diff_example
+    return payload
+
 
 INBOX_QUEUE_FIELDS = (
     "agent_id",

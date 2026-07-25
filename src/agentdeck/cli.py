@@ -48,6 +48,7 @@ from .contracts import (
     acp_executable_basename,
     approval_contract_response,
     artifacts_contract_response,
+    worktree_contract_response,
     contract_index_response,
     control_registry_item_id,
     continue_contract_response,
@@ -96,6 +97,8 @@ from .contracts import (
     validate_acp_runtime_contract,
     validate_approval_dispatch_ready_contract,
     validate_artifacts_contract,
+    validate_worktree_list_contract,
+    validate_worktree_diff_contract,
     validate_continue_contract,
     validate_conversation_runtime_contract,
     validate_control_registry_card_contract,
@@ -8224,6 +8227,13 @@ def contract_artifacts_command(args: argparse.Namespace) -> int:
     return 0
 
 
+def contract_worktree_command(args: argparse.Namespace) -> int:
+    contract_path = Path(__file__).resolve().parents[2] / "docs" / "contracts" / "worktree-schema.md"
+    payload = worktree_contract_response(contract_path, include_example=args.example)
+    _print_json(payload)
+    return 0
+
+
 def _load_project_or_error() -> tuple[ProjectConfig | None, StateStore | None, int]:
     root = project_root()
     try:
@@ -10208,6 +10218,128 @@ def _loaded_skill_records_for_agent(store: StateStore, agent_id: str) -> list[di
 
 def _dispatch_prompt_skill_context(skill_loads: list[dict[str, object]]) -> dict[str, object]:
     return StateStore._skill_load_summaries(skill_loads)
+
+
+def _worktree_messages(state: dict[str, object]) -> list[dict[str, object]]:
+    return [
+        message
+        for message in state.get("messages", [])
+        if isinstance(message, dict) and message.get("worktree_path")
+    ]
+
+
+def _worktree_item(config: ProjectConfig, state: dict[str, object], message: dict[str, object]) -> dict[str, object]:
+    message_id = str(message.get("message_id"))
+    path = str(message.get("worktree_path"))
+    branch = str(message.get("worktree_branch"))
+    exists = Path(path).is_dir()
+    dirty = False
+    if exists:
+        status = subprocess.run(
+            ["git", "status", "--porcelain"], cwd=path, capture_output=True, text=True
+        )
+        dirty = status.returncode == 0 and bool(status.stdout.strip())
+    merged = (
+        subprocess.run(
+            ["git", "merge-base", "--is-ancestor", branch, "HEAD"],
+            cwd=config.root,
+            capture_output=True,
+        ).returncode
+        == 0
+    )
+    abandoned_ids = {str(item) for item in state.get("abandoned_worktrees", [])}
+    return {
+        "agent_id": message.get("to_agent"),
+        "message_id": message_id,
+        "branch": branch,
+        "path": path,
+        "base_branch": message.get("worktree_base_branch"),
+        "exists": exists,
+        "dirty": dirty,
+        "merged": merged,
+        "abandoned": message_id in abandoned_ids,
+        "diff_command": f"agentdeck worktree diff --message-id {message_id}",
+        "trace_command": _trace_command(message_id),
+    }
+
+
+def worktree_list_command(_args: argparse.Namespace) -> int:
+    config, store, exit_code = _load_project_or_error()
+    if config is None or store is None:
+        return exit_code
+    state = store.load()
+    items = [_worktree_item(config, state, message) for message in _worktree_messages(state)]
+    payload = {
+        "ok": True,
+        "mode": "worktree_list",
+        "count": len(items),
+        "items": items,
+    }
+    validation = validate_worktree_list_contract(payload)
+    if not validation["ok"]:
+        print("worktree list contract validation failed", file=sys.stderr)
+        for error in validation["errors"]:
+            print(f"- {error}", file=sys.stderr)
+        return 1
+    _print_json(payload)
+    return 0
+
+
+def worktree_diff_command(args: argparse.Namespace) -> int:
+    config, store, exit_code = _load_project_or_error()
+    if config is None or store is None:
+        return exit_code
+    state = store.load()
+    message = next(
+        (m for m in _worktree_messages(state) if str(m.get("message_id")) == args.message_id),
+        None,
+    )
+    if message is None:
+        print(f"unknown worktree message: {args.message_id}", file=sys.stderr)
+        return 1
+    item = _worktree_item(config, state, message)
+    branch = item["branch"]
+    stat = subprocess.run(
+        ["git", "diff", "--stat", f"HEAD...{branch}"],
+        cwd=config.root,
+        capture_output=True,
+        text=True,
+    )
+    names = subprocess.run(
+        ["git", "diff", "--name-status", f"HEAD...{branch}"],
+        cwd=config.root,
+        capture_output=True,
+        text=True,
+    )
+    files = []
+    for line in (names.stdout or "").splitlines():
+        if not line.strip():
+            continue
+        parts = line.split("\t", 1)
+        if len(parts) == 2:
+            files.append({"status": parts[0].strip(), "path": parts[1].strip()})
+    payload = {
+        "ok": True,
+        "mode": "worktree_diff",
+        "message_id": str(message.get("message_id")),
+        "agent_id": message.get("to_agent"),
+        "branch": branch,
+        "base": "HEAD",
+        "dirty": item["dirty"],
+        "stat": stat.stdout or "",
+        "files": files,
+        "merge_command": f"agentdeck worktree merge --message-id {args.message_id} --confirm",
+        "abandon_command": f"agentdeck worktree abandon --message-id {args.message_id} --confirm",
+        "trace_command": _trace_command(str(message.get("message_id"))),
+    }
+    validation = validate_worktree_diff_contract(payload)
+    if not validation["ok"]:
+        print("worktree diff contract validation failed", file=sys.stderr)
+        for error in validation["errors"]:
+            print(f"- {error}", file=sys.stderr)
+        return 1
+    _print_json(payload)
+    return 0
 
 
 def _record_worktree_provenance(
@@ -19535,6 +19667,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     contract_artifacts.add_argument("--example", action="store_true", help="Include a GUI-ready artifacts example")
     contract_artifacts.set_defaults(func=contract_artifacts_command)
+    contract_worktree = contract_subparsers.add_parser(
+        "worktree",
+        help="Show task-worktree contract discovery metadata",
+    )
+    contract_worktree.add_argument("--example", action="store_true", help="Include GUI-ready worktree examples")
+    contract_worktree.set_defaults(func=contract_worktree_command)
 
     demo = subparsers.add_parser("demo", help="Run read-only demo helpers")
     demo_subparsers = demo.add_subparsers(dest="demo_command")
@@ -19727,6 +19865,14 @@ def build_parser() -> argparse.ArgumentParser:
     approval_auto = approval_subparsers.add_parser("auto", help="Auto-approve allowlisted pending approvals and dispatch them (autonomous mode)")
     approval_auto.add_argument("--confirm", action="store_true", help="Explicitly confirm autonomous auto-approval")
     approval_auto.set_defaults(func=approval_auto_command)
+
+    worktree = subparsers.add_parser("worktree", help="Task-worktree inspection and lifecycle commands")
+    worktree_subparsers = worktree.add_subparsers(dest="worktree_command")
+    worktree_list = worktree_subparsers.add_parser("list", help="List task worktrees derived from message provenance (read-only)")
+    worktree_list.set_defaults(func=worktree_list_command)
+    worktree_diff = worktree_subparsers.add_parser("diff", help="Show a task branch's diff against HEAD (read-only)")
+    worktree_diff.add_argument("--message-id", required=True, help="Dispatch message id that owns the worktree")
+    worktree_diff.set_defaults(func=worktree_diff_command)
 
     dispatch = subparsers.add_parser("dispatch", help="Send a role-aware task to a running agent")
     dispatch.add_argument("--from-agent", default="user", help="Actor or agent id that submitted this task")

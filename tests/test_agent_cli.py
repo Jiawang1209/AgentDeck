@@ -6183,6 +6183,7 @@ def test_contract_list_discovers_all_gui_contracts(capsys) -> None:
         "inbox",
         "trace",
         "artifacts",
+        "worktree",
     ]
     assert all(item["contract_exists"] for item in payload["contracts"])
     assert payload["contracts"][0]["command"] == "agentdeck contract daemon-runtime"

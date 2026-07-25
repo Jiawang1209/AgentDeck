@@ -4,6 +4,26 @@
 
 ## 2026-07-25
 
+### Add read-only worktree list/diff commands with a registered contract
+
+- **Type**: feat
+- **Motivation**: worktree 需要只读检查面供人类/GUI 审阅任务分支产物
+  （task-worktree loop 切片 3，决策 B 的只读前半）。
+- **What**: `agentdeck worktree list`（从 message provenance + 磁盘/git 状态
+  派生 agent/message/branch/path/base_branch/exists/dirty/merged/abandoned/
+  diff_command/trace_command）与 `agentdeck worktree diff --message-id <id>`
+  （`HEAD...branch` 三点语义的 stat + name-status，投影显式 merge/abandon
+  后续命令但不执行）；未知 id 非 0；二者零写、不碰 tmux、输出前经
+  `validate_worktree_list_contract()`/`validate_worktree_diff_contract()`
+  守门。新契约 `agentdeck contract worktree`（fields/example/payload）注册进
+  `CONTRACT_INDEX_SPECS`（38→39），`docs/contracts/worktree-schema.md`、
+  contract-index doc、CLAUDE.md 常用命令与相关测试名单同步。
+- **Impact**: 任务分支产物有了标准只读审阅入口；GUI 可发现。
+- **Verification**: RED 两例（list/diff 未知子命令、unknown id）；GREEN 后
+  真实 git 断言（dirty/merged/文件清单）+ 状态零变化断言；核心回归
+  contracts/dispatch/agent/leader 1169 passed；全量 `pytest tests/ -q` 绿
+  （pipefail）+ compileall（见 commit）。
+
 ### Check out the implementing step's branch in review-step worktrees
 
 - **Type**: feat

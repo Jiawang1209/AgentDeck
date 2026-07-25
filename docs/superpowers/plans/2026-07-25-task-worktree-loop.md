@@ -36,7 +36,7 @@
   provenance 记 `worktree_base_branch`。reviewer 由此在自己的 worktree
   实测 coder 产物。
 
-### [ ] 3. `worktree list` + `worktree diff`（只读）
+### [x] 3. `worktree list` + `worktree diff`（只读）
 
 - `agentdeck worktree list`：从 messages provenance + 磁盘状态派生
   worktree 清单（agent/message/branch/path/exists/dirty/merged/abandoned）；

@@ -668,3 +668,57 @@ def test_review_step_worktree_checks_out_earlier_step_branch(tmp_path, monkeypat
     assert (Path(review_message["worktree_path"]) / "feature.txt").is_file()
     events = (root / ".agentdeck" / "state" / "events.jsonl").read_text(encoding="utf-8")
     assert events.count('"event_type": "worktree_created"') == 2
+
+
+def test_worktree_list_and_diff_are_read_only(tmp_path, monkeypatch, capsys) -> None:
+    import subprocess
+
+    root = prepare_project(tmp_path, monkeypatch)
+    _init_real_git(root)
+    _bind_agent(root, "coder", "%50")
+    fake = FakeTmuxBackend()
+    monkeypatch.setattr(cli, "TmuxBackend", lambda: fake)
+    cli.main(["dispatch", "--agent", "coder", "--task", "worktree 工作"])
+    msg = json.loads(capsys.readouterr().out)["message_id"]
+    state = StateStore(root).load()
+    message = next(m for m in state["messages"] if m["message_id"] == msg)
+    wt = message["worktree_path"]
+    (Path(wt) / "new.txt").write_text("x\n", encoding="utf-8")
+    subprocess.run(["git", "-C", wt, "add", "new.txt"], check=True)
+    subprocess.run(["git", "-C", wt, "commit", "-qm", "add new"], check=True)
+    (Path(wt) / "uncommitted.txt").write_text("y\n", encoding="utf-8")
+    state_before = StateStore(root).load()
+
+    assert cli.main(["worktree", "list"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["mode"] == "worktree_list"
+    assert payload["count"] == 1
+    item = payload["items"][0]
+    assert item["agent_id"] == "coder"
+    assert item["message_id"] == msg
+    assert item["branch"] == f"agentdeck/coder/{msg}"
+    assert item["exists"] is True
+    assert item["dirty"] is True
+    assert item["merged"] is False
+    assert item["abandoned"] is False
+    assert item["diff_command"] == f"agentdeck worktree diff --message-id {msg}"
+    assert item["trace_command"] == f"agentdeck trace --id {msg}"
+
+    assert cli.main(["worktree", "diff", "--message-id", msg]) == 0
+    diff_payload = json.loads(capsys.readouterr().out)
+    assert diff_payload["mode"] == "worktree_diff"
+    assert diff_payload["branch"] == f"agentdeck/coder/{msg}"
+    assert "new.txt" in diff_payload["stat"]
+    assert any(f["path"] == "new.txt" and f["status"] == "A" for f in diff_payload["files"])
+    assert diff_payload["merge_command"] == f"agentdeck worktree merge --message-id {msg} --confirm"
+    assert diff_payload["abandon_command"] == f"agentdeck worktree abandon --message-id {msg} --confirm"
+
+    assert StateStore(root).load() == state_before
+
+
+def test_worktree_diff_rejects_unknown_message(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    _init_real_git(root)
+
+    assert cli.main(["worktree", "diff", "--message-id", "msg_missing"]) == 1
+    assert "unknown worktree message" in capsys.readouterr().err

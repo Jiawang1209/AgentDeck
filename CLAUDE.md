@@ -96,6 +96,8 @@ agentdeck approval approve --approval-id apv_xxx
 agentdeck approval approve-plan --plan-id pln_xxx --confirm
 agentdeck approval dispatch --approval-id apv_xxx
 agentdeck dispatch --agent planner --task "设计消息账本"
+agentdeck worktree list
+agentdeck worktree diff --message-id msg_xxx
 agentdeck inbox --agent planner
 agentdeck reply --agent planner --message-id msg_xxx --text "status: completed"
 agentdeck capture-reply --agent planner --message-id msg_xxx

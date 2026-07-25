@@ -726,6 +726,7 @@ def test_contract_index_response_is_reusable_without_cli(tmp_path: Path) -> None
         "inbox-schema.md",
         "trace-schema.md",
         "artifacts-schema.md",
+        "worktree-schema.md",
         "daemon-runtime-schema.md",
         "mission-scheduler-schema.md",
         "client-session-schema.md",
@@ -740,7 +741,7 @@ def test_contract_index_response_is_reusable_without_cli(tmp_path: Path) -> None
     assert payload["contract_docs_dir"] == str(tmp_path)
     assert payload["response_fields"] == list(CONTRACT_INDEX_RESPONSE_FIELDS)
     assert payload["contract_item_fields"] == list(CONTRACT_INDEX_ITEM_FIELDS)
-    assert payload["count"] == 38
+    assert payload["count"] == 39
     assert len(payload["contracts"]) == payload["count"]
     assert [item["name"] for item in payload["contracts"]] == [
         "daemon-runtime",
@@ -781,6 +782,7 @@ def test_contract_index_response_is_reusable_without_cli(tmp_path: Path) -> None
         "inbox",
         "trace",
         "artifacts",
+        "worktree",
     ]
     for contract in payload["contracts"]:
         assert set(contract) == set(CONTRACT_INDEX_ITEM_FIELDS)
