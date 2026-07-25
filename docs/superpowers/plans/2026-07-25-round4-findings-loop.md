@@ -66,7 +66,7 @@
   为待 user 决策的 fork。
 - 测试：fake backend 输出含/不含 composer 内容两类用例 + 契约用例。
 
-### [ ] 5.（发现②）远端模型下线探测——评估切片（偏产品决策）
+### [x] 5.（发现②）远端模型下线探测——评估切片（偏产品决策）
 
 - 现象：DeepSeek 下线 `deepseek-chat`，doctor/provider_health 只查环境
   变量，探测不到远端模型失效。

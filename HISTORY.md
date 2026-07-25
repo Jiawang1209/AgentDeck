@@ -4,6 +4,21 @@
 
 ## 2026-07-25
 
+### Evaluate remote model availability probing (decision doc)
+
+- **Type**: docs
+- **Motivation**: round 4 发现②——DeepSeek 下线 `deepseek-chat`，doctor/
+  provider_health 只查环境变量探测不到远端模型失效；自动探测与"诊断命令
+  不得调用 provider"的硬边界冲突，属产品 fork（round4-findings loop 切片 5）。
+- **What**: 新增
+  `docs/superpowers/specs/2026-07-25-remote-model-availability-design.md`：
+  三方案对比（a=切片 1 干净错误面即文档、b=显式 `leader probe --confirm`
+  主动探测（需授权）、c=doctor 文案提示），建议 a+c 默认成立、b 留 user
+  拍板并附实施要点；doctor 只读边界不动。round4-findings loop 五切片全部
+  完成。
+- **Impact**: 纯文档；发现②有了明确的决策面。
+- **Verification**: 纯文档；切片 4 全量 4499 passed（pipefail）后提交。
+
 ### Surface stuck TUI composer content in agent capture (read-only)
 
 - **Type**: feat
