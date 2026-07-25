@@ -4,6 +4,26 @@
 
 ## 2026-07-25
 
+### Record round 6 task-worktree loop live PASS
+
+- **Type**: data
+- **Motivation**: G4 任务级 worktree 五切片落地后需要真实整环验证
+  （round 6，user 在场授权）。
+- **What**: 新增 `docs/validation/2026-07-25-copilot-line1-round6-worktree-loop.md`。
+  DeepSeek Leader 3 步（planner 分析→coder worktree 实现→reviewer worktree
+  审查）整环 PASS：dispatch 建 per-message worktree、review-step worktree 从
+  实现分支尖起建（base 入账）、`worktree list/diff` 投影、`merge --confirm`
+  快进、release `dirty_worktrees[]` 精确报告 dirty reviewer worktree、
+  `abandon`+`prune` 全回收；文件通道 3/3、顺序守卫、摄入解耦、approve-plan
+  复验通过；main 上双回归测试 exit 0。8 条发现入档，核心是 worker 天性不
+  commit 导致审阅面为空（修复方向已 live 验证：prompt 要求 commit 即可），
+  以及零 commit 分支被投影为 merged、worktree 内嵌产物 prune 丢失风险。
+- **Impact**: G4 主体验证闭环；产出 5 个后续候选切片（dispatch prompt 要求
+  commit、`in_flight` 语义、产物抢救、多行 full_output_path 容错、scoped
+  授权委托）。不涉及代码行为变化。
+- **Verification**: live 整环证据见 validation 文档；merge 后 main 双测试
+  exit 0；worktree/branch 清理后仅剩 main。
+
 ### Report unresolved task worktrees on agent release
 
 - **Type**: feat
