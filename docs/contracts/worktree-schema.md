@@ -37,6 +37,9 @@ current disk/git state: `agent_id`, `message_id`, `branch`, `path`,
 `base_branch`, `exists` (directory present), `dirty` (uncommitted changes in
 the worktree), `merged` (branch tip reachable from the main worktree's HEAD),
 `abandoned` (explicitly marked via `worktree abandon --confirm`),
+`in_flight` (ledger semantics: the dispatch message has no reply yet and the
+worktree is not abandoned — a zero-commit branch tip equals the base tip so
+git `merged` is vacuously true and cannot distinguish an in-progress task),
 `diff_command`, and `trace_command`. It validates with
 `validate_worktree_list_contract()` before printing, never writes state, never
 touches tmux, and never mutates any worktree.
@@ -56,19 +59,24 @@ into state.
 
 - `worktree merge --message-id <id> --confirm` merges the task branch into the
   current branch with `git merge --no-edit`; a conflicting merge is aborted and
-  refused (zero state writes) for manual resolution. Success appends a
-  `worktree_merged` event and returns `mode=worktree_merged` with
+  refused (zero state writes) for manual resolution. Success records the
+  message id in the authoritative `merged_worktrees` list (via the registered
+  idempotent `mark_worktree_merged` writer — re-merging is legitimate), appends
+  a `worktree_merged` event and returns `mode=worktree_merged` with
   `next_command=agentdeck worktree prune --confirm`.
 - `worktree abandon --message-id <id> --confirm` appends the message id to the
   authoritative `abandoned_worktrees` list (via the registered
   `mark_worktree_abandoned` writer) plus a `worktree_abandoned` event; a second
   abandon of the same id is refused.
 - `worktree prune --confirm` removes only worktrees that are abandoned
-  (`git worktree remove --force`, branch `-D`) or merged-and-clean
-  (`git worktree remove`, branch `-d`); everything else lands in `skipped[]`
-  with a reason (`dirty and not abandoned` / `branch not merged`). Each removal
-  appends a `worktree_pruned` event. Missing `--confirm` refuses with zero
-  writes for all three commands.
+  (`git worktree remove --force`, branch `-D`) or merge-settled-and-clean
+  (`git worktree remove`, branch `-d`), where merge-settled means the id is in
+  `merged_worktrees` (explicit human merge) or the branch is git-merged AND the
+  task is not `in_flight` — a vacuously-merged zero-commit worktree of a task
+  still awaiting its reply is never removed. Everything else lands in
+  `skipped[]` with a reason (`dirty and not abandoned` / `task still in
+  flight` / `branch not merged`). Each removal appends a `worktree_pruned`
+  event. Missing `--confirm` refuses with zero writes for all three commands.
 
 ## Boundaries
 

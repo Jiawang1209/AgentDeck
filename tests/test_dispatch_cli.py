@@ -798,6 +798,54 @@ def test_worktree_merge_requires_confirm_and_merges_branch(tmp_path, monkeypatch
     assert '"event_type": "worktree_pruned"' in events
 
 
+def test_worktree_prune_skips_in_flight_zero_commit_worktree(tmp_path, monkeypatch, capsys) -> None:
+    # round 6 live 发现：零 commit 分支尖==main 尖，merged 被平凡判真，
+    # prune 会把仍在进行中的任务 worktree 当 merged-and-clean 删掉。
+    root = prepare_project(tmp_path, monkeypatch)
+    _init_real_git(root)
+    _bind_agent(root, "coder", "%50")
+    fake = FakeTmuxBackend()
+    monkeypatch.setattr(cli, "TmuxBackend", lambda: fake)
+    cli.main(["dispatch", "--agent", "coder", "--task", "刚派发还没动工"])
+    msg = json.loads(capsys.readouterr().out)["message_id"]
+    state = StateStore(root).load()
+    wt = next(m for m in state["messages"] if m["message_id"] == msg)["worktree_path"]
+
+    assert cli.main(["worktree", "list"]) == 0
+    item = json.loads(capsys.readouterr().out)["items"][0]
+    assert item["in_flight"] is True
+
+    assert cli.main(["worktree", "prune", "--confirm"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["removed"] == []
+    skipped = next(s for s in payload["skipped"] if s["message_id"] == msg)
+    assert skipped["reason"] == "task still in flight"
+    assert Path(wt).exists()
+
+
+def test_worktree_replied_zero_commit_worktree_becomes_prunable(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    _init_real_git(root)
+    _bind_agent(root, "coder", "%50")
+    fake = FakeTmuxBackend()
+    monkeypatch.setattr(cli, "TmuxBackend", lambda: fake)
+    cli.main(["dispatch", "--agent", "coder", "--task", "任务完成但无产物"])
+    msg = json.loads(capsys.readouterr().out)["message_id"]
+    state = StateStore(root).load()
+    wt = next(m for m in state["messages"] if m["message_id"] == msg)["worktree_path"]
+    assert cli.main(["reply", "--agent", "coder", "--message-id", msg, "--text", "status: completed\nsummary: 无需改动"]) == 0
+    capsys.readouterr()
+
+    assert cli.main(["worktree", "list"]) == 0
+    item = json.loads(capsys.readouterr().out)["items"][0]
+    assert item["in_flight"] is False
+
+    assert cli.main(["worktree", "prune", "--confirm"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert msg in [r["message_id"] for r in payload["removed"]]
+    assert not Path(wt).exists()
+
+
 def test_worktree_prune_protects_dirty_until_abandoned(tmp_path, monkeypatch, capsys) -> None:
     root = prepare_project(tmp_path, monkeypatch)
     _init_real_git(root)

@@ -8925,6 +8925,15 @@ class StateStore:
         self.save(state)
         return list(abandoned)
 
+    def mark_worktree_merged(self, message_id: str) -> list[str]:
+        # 重复 merge（already up to date）是合法操作，这里保持幂等不报错。
+        state = self.load()
+        merged = state.setdefault("merged_worktrees", [])
+        if message_id not in merged:
+            merged.append(message_id)
+            self.save(state)
+        return list(merged)
+
     def mark_agent_stale(self, agent_id: str) -> dict[str, Any]:
         state = self.load()
         agents = state.setdefault("agents", {})
@@ -11653,6 +11662,7 @@ AUTHORITATIVE_STATE_MUTATION_METHODS = (
     "mark_agent_released",
     "mark_agent_stale",
     "mark_worktree_abandoned",
+    "mark_worktree_merged",
     "mark_agent_stopped",
     "mark_approval_dispatched",
     "mark_acp_mission_attempt_completion_ambiguous",

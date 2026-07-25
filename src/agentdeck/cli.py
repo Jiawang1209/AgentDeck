@@ -10268,6 +10268,12 @@ def _worktree_item(config: ProjectConfig, state: dict[str, object], message: dic
         == 0
     )
     abandoned_ids = {str(item) for item in state.get("abandoned_worktrees", [])}
+    replied_ids = {
+        str(reply.get("message_id"))
+        for reply in state.get("replies", [])
+        if isinstance(reply, dict)
+    }
+    abandoned = message_id in abandoned_ids
     return {
         "agent_id": message.get("to_agent"),
         "message_id": message_id,
@@ -10277,7 +10283,10 @@ def _worktree_item(config: ProjectConfig, state: dict[str, object], message: dic
         "exists": exists,
         "dirty": dirty,
         "merged": merged,
-        "abandoned": message_id in abandoned_ids,
+        "abandoned": abandoned,
+        # 账本语义的进行中信号：任务尚无 reply 且未被显式放弃。零 commit 分支
+        # 的 merged 会被平凡判真（分支尖==主干尖），git 层无法区分，靠它守门。
+        "in_flight": message_id not in replied_ids and not abandoned,
         "diff_command": f"agentdeck worktree diff --message-id {message_id}",
         "trace_command": _trace_command(message_id),
     }
@@ -10395,6 +10404,7 @@ def worktree_merge_command(args: argparse.Namespace) -> int:
         detail = " ".join((merged.stderr or merged.stdout or "").split())[:200]
         print(f"worktree merge failed (left untouched for manual resolution): {detail}", file=sys.stderr)
         return 1
+    store.mark_worktree_merged(args.message_id)
     store.append_event(
         EventRecord.create(
             "worktree_merged",
@@ -10464,6 +10474,7 @@ def worktree_prune_command(args: argparse.Namespace) -> int:
         print("worktree prune requires --confirm", file=sys.stderr)
         return 1
     state = store.load()
+    merged_ids = {str(item) for item in state.get("merged_worktrees", [])}
     removed: list[dict[str, object]] = []
     skipped: list[dict[str, object]] = []
     for message in _worktree_messages(state):
@@ -10473,6 +10484,11 @@ def worktree_prune_command(args: argparse.Namespace) -> int:
         message_id = str(item["message_id"])
         branch = str(item["branch"])
         path = str(item["path"])
+        # 零 commit 分支的 git merged 是平凡真（分支尖==主干尖），只有显式
+        # merge 记录或账本已收到 reply 才把 git-merged 当真正的可清理信号。
+        merge_settled = message_id in merged_ids or (
+            bool(item["merged"]) and not item["in_flight"]
+        )
         if item["abandoned"]:
             removal = subprocess.run(
                 ["git", "worktree", "remove", "--force", path],
@@ -10481,7 +10497,7 @@ def worktree_prune_command(args: argparse.Namespace) -> int:
                 text=True,
             )
             branch_delete_flag = "-D"
-        elif item["merged"] and not item["dirty"]:
+        elif merge_settled and not item["dirty"]:
             removal = subprocess.run(
                 ["git", "worktree", "remove", path],
                 cwd=config.root,
@@ -10490,7 +10506,12 @@ def worktree_prune_command(args: argparse.Namespace) -> int:
             )
             branch_delete_flag = "-d"
         else:
-            reason = "dirty and not abandoned" if item["dirty"] else "branch not merged"
+            if item["dirty"]:
+                reason = "dirty and not abandoned"
+            elif item["in_flight"]:
+                reason = "task still in flight"
+            else:
+                reason = "branch not merged"
             skipped.append({"message_id": message_id, "branch": branch, "reason": reason})
             continue
         if removal.returncode != 0:

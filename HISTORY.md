@@ -4,6 +4,29 @@
 
 ## 2026-07-25
 
+### Guard in-flight task worktrees from prune with ledger semantics
+
+- **Type**: fix
+- **Motivation**: round 6 live 发现 ②——零 commit 任务分支的分支尖==主干尖，
+  `merge-base --is-ancestor` 平凡判真，`worktree list` 投影 `merged:true`，
+  `worktree prune --confirm` 会把仍在进行中的任务 worktree 当 merged-and-clean
+  删掉（git 层无法区分"零 commit"与"ff 合并后"）。
+- **What**: 用账本语义守门。`_worktree_item` 新增 `in_flight`（dispatch
+  message 尚无 reply 且未 abandoned），加入 `WORKTREE_ITEM_FIELDS`、example
+  fixture 与 schema 文档；`worktree merge --confirm` 成功时经新注册的幂等
+  writer `mark_worktree_merged` 把 id 记入 authoritative `merged_worktrees[]`
+  （重复 merge 合法不报错）；prune 的可删条件从"git-merged 且 clean"改为
+  "merge-settled 且 clean"——merge-settled = 显式 merge 记录存在，或
+  git-merged 且非 in_flight；in-flight 的平凡 merged worktree 进 `skipped[]`
+  并给专属 reason `task still in flight`。abandoned 强删路径不变。
+- **Impact**: 活跃任务 worktree 不再可能被 prune 误删；任务收到 reply 后的
+  陈旧零 commit worktree 仍可正常清理；`worktree list` 为 GUI 提供进行中
+  信号。worktree contract item 字段新增 `in_flight`（向后兼容：只增不改）。
+- **Verification**: RED 两例先证 KeyError/误删（in-flight 零 commit 被
+  prune 删除）；GREEN 后 dispatch+contracts 561 passed（含既有 merge→prune、
+  dirty 保护回归）；全量 `pytest tests/ -q` 绿（pipefail）+ compileall
+  （见 commit）。
+
 ### Require commit-to-task-branch in worktree dispatch prompts
 
 - **Type**: feat

@@ -757,6 +757,7 @@ WORKTREE_ITEM_FIELDS = (
     "dirty",
     "merged",
     "abandoned",
+    "in_flight",
     "diff_command",
     "trace_command",
 )
@@ -833,6 +834,7 @@ def worktree_list_example() -> dict[str, object]:
                 "dirty": False,
                 "merged": False,
                 "abandoned": False,
+                "in_flight": True,
                 "diff_command": "agentdeck worktree diff --message-id msg_example",
                 "trace_command": "agentdeck trace --id msg_example",
             }
