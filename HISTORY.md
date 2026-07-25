@@ -4,6 +4,24 @@
 
 ## 2026-07-25
 
+### Check out the implementing step's branch in review-step worktrees
+
+- **Type**: feat
+- **Motivation**: 决策 D——reviewer 需在自己的隔离 worktree 里实测 coder
+  产物而非共享目录（task-worktree loop 切片 2）。
+- **What**: `_plan_base_worktree_branch`：approval 派发时查同 plan 更早
+  step 的 message worktree 分支（取最晚的更早 step）；`_create_task_worktree`
+  支持 base branch 起点（`git worktree add -b <new> <path> <base>`）。message
+  record/ProjectView `messages.items[]` 新增 `worktree_base_branch`
+  provenance（fields/example/schema/CLAUDE.md 同步）。首 step、无 plan 手动
+  dispatch、非 worktree 消息为 null。
+- **Impact**: review step 的 worktree 基于实现分支尖起建：可真实运行/实测，
+  改不到 coder 目录，越权改动留在 reviewer 自己分支可审可弃。
+- **Verification**: RED（真实 git 两步流转：coder worktree 提交 →
+  reviewer worktree 应含该文件）先证 KeyError；GREEN 后 dispatch 23 例 +
+  contracts/agent 909 passed；全量 `pytest tests/ -q` 绿（pipefail）+
+  compileall（见 commit）。
+
 ### Create per-task git worktrees on worktree-mode dispatch
 
 - **Type**: feat

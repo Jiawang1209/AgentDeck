@@ -10040,8 +10040,42 @@ def _reply_file_path(root: str | Path, message_id: str) -> Path:
     return Path(root) / ".agentdeck" / "replies" / f"{message_id}.reply.txt"
 
 
+def _plan_base_worktree_branch(store: StateStore, plan_id: object, step: object) -> str | None:
+    """Latest earlier-step worktree branch of the same plan (decision D).
+
+    Lets a review-step worktree check out the implementing step's branch so the
+    reviewer can run the real artifact without touching the coder's directory."""
+    if not plan_id:
+        return None
+    try:
+        current_step = int(step or 0)
+    except (TypeError, ValueError):
+        return None
+    state = store.load()
+    messages_by_id = {
+        str(message.get("message_id")): message
+        for message in state.get("messages", [])
+        if isinstance(message, dict)
+    }
+    best: tuple[int, str] | None = None
+    for approval in state.get("approvals", []):
+        if not isinstance(approval, dict) or approval.get("plan_id") != plan_id:
+            continue
+        try:
+            approval_step = int(approval.get("step") or 0)
+        except (TypeError, ValueError):
+            continue
+        if approval_step >= current_step:
+            continue
+        message = messages_by_id.get(str(approval.get("message_id")))
+        branch = (message or {}).get("worktree_branch")
+        if branch and (best is None or approval_step > best[0]):
+            best = (approval_step, str(branch))
+    return best[1] if best else None
+
+
 def _create_task_worktree(
-    config: ProjectConfig, agent: AgentSpec, message_id: str
+    config: ProjectConfig, agent: AgentSpec, message_id: str, base_branch: str | None = None
 ) -> tuple[dict[str, str] | None, str | None]:
     """Create a per-task git worktree for a worktree-mode agent.
 
@@ -10062,8 +10096,11 @@ def _create_task_worktree(
     branch = f"agentdeck/{agent.agent_id}/{message_id}"
     path = Path(config.root) / ".agentdeck" / "worktrees" / agent.agent_id / message_id
     path.parent.mkdir(parents=True, exist_ok=True)
+    add_command = ["git", "worktree", "add", "-b", branch, str(path)]
+    if base_branch:
+        add_command.append(base_branch)
     created = subprocess.run(
-        ["git", "worktree", "add", "-b", branch, str(path)],
+        add_command,
         cwd=config.root,
         capture_output=True,
         text=True,
@@ -17881,7 +17918,8 @@ def _dispatch_approved_approval(
     skill_loads = _loaded_skill_records_for_agent(store, agent.agent_id)
     prompt_skill_context = _dispatch_prompt_skill_context(skill_loads)
     message_id = new_id("msg")
-    worktree_info, worktree_skip = _create_task_worktree(config, agent, message_id)
+    base_branch = _plan_base_worktree_branch(store, approval.get("plan_id"), approval.get("step"))
+    worktree_info, worktree_skip = _create_task_worktree(config, agent, message_id, base_branch=base_branch)
     reply_file = _reply_file_path(config.root, message_id)
     reply_file.parent.mkdir(parents=True, exist_ok=True)
     prompt = build_dispatch_prompt(
@@ -17901,6 +17939,7 @@ def _dispatch_approved_approval(
         message_id=message_id,
         worktree_path=(worktree_info or {}).get("path"),
         worktree_branch=(worktree_info or {}).get("branch"),
+        worktree_base_branch=base_branch if worktree_info else None,
     )
     _record_worktree_provenance(store, agent, message_id, worktree_info, worktree_skip)
     message = records["message"]

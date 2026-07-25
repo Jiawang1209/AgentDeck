@@ -615,3 +615,56 @@ def test_dispatch_shared_mode_agent_gets_no_worktree(tmp_path, monkeypatch, caps
     events = (root / ".agentdeck" / "state" / "events.jsonl").read_text(encoding="utf-8")
     assert '"event_type": "worktree_skipped"' not in events
     assert '"event_type": "worktree_created"' not in events
+
+
+def _seed_approved_approval(root: Path, approval_id: str, plan_id: str, step: int, agent_id: str) -> None:
+    store = StateStore(root)
+    state = store.load()
+    state.setdefault("approvals", []).append({
+        "approval_id": approval_id, "plan_id": plan_id, "step": step,
+        "agent_id": agent_id, "role": "implementation", "task": f"step {step} work",
+        "risk": "low", "status": "approved", "created_at": "2026-07-25T00:00:00+00:00",
+    })
+    store.save(state)
+
+
+def test_review_step_worktree_checks_out_earlier_step_branch(tmp_path, monkeypatch, capsys) -> None:
+    import subprocess
+
+    root = prepare_project(tmp_path, monkeypatch)
+    config_path = root / ".agentdeck" / "config.toml"
+    config_text = config_path.read_text(encoding="utf-8")
+    config_path.write_text(
+        config_text.replace('workspace_mode = "shared"\nrole_prompt = "你是 AgentDeck 的审查', 'workspace_mode = "worktree"\nrole_prompt = "你是 AgentDeck 的审查'),
+        encoding="utf-8",
+    )
+    _init_real_git(root)
+    _bind_agent(root, "coder", "%50")
+    _bind_agent(root, "reviewer", "%51")
+    fake = FakeTmuxBackend()
+    monkeypatch.setattr(cli, "TmuxBackend", lambda: fake)
+    _seed_approved_approval(root, "apv_w1", "pln_w", 1, "coder")
+    _seed_approved_approval(root, "apv_w2", "pln_w", 2, "reviewer")
+
+    assert cli.main(["approval", "dispatch", "--approval-id", "apv_w1"]) == 0
+    msg1 = json.loads(capsys.readouterr().out)["message_id"]
+    state = StateStore(root).load()
+    coder_message = next(m for m in state["messages"] if m["message_id"] == msg1)
+    coder_branch = coder_message["worktree_branch"]
+    assert coder_branch == f"agentdeck/coder/{msg1}"
+    coder_wt = coder_message["worktree_path"]
+    # coder 在自己的 worktree 分支上产出一个提交
+    (Path(coder_wt) / "feature.txt").write_text("done\n", encoding="utf-8")
+    subprocess.run(["git", "-C", coder_wt, "add", "feature.txt"], check=True)
+    subprocess.run(["git", "-C", coder_wt, "commit", "-qm", "feature"], check=True)
+
+    assert cli.main(["approval", "dispatch", "--approval-id", "apv_w2"]) == 0
+    msg2 = json.loads(capsys.readouterr().out)["message_id"]
+    state = StateStore(root).load()
+    review_message = next(m for m in state["messages"] if m["message_id"] == msg2)
+    assert review_message["worktree_branch"] == f"agentdeck/reviewer/{msg2}"
+    assert review_message["worktree_base_branch"] == coder_branch
+    # reviewer 的 worktree 基于 coder 分支——能看到 coder 的产出
+    assert (Path(review_message["worktree_path"]) / "feature.txt").is_file()
+    events = (root / ".agentdeck" / "state" / "events.jsonl").read_text(encoding="utf-8")
+    assert events.count('"event_type": "worktree_created"') == 2

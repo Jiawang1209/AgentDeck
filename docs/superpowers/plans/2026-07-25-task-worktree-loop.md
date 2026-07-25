@@ -29,7 +29,7 @@
   ProjectView `messages.items[]` 与 trace），`worktree_created` 事件；
   降级路径记 `worktree_skipped`。project-view/trace contract 同步。
 
-### [ ] 2. reviewer 检出同分支（决策 D）
+### [x] 2. reviewer 检出同分支（决策 D）
 
 - 派发某 plan step 时，若该 plan 更早 step 已有 `worktree_branch` 且当前
   agent 也是 worktree 模式，则新 worktree 检出**该分支**（而非 HEAD），

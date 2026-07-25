@@ -1304,6 +1304,7 @@ PROJECT_VIEW_MESSAGE_ITEM_FIELDS = (
     "prompt_skill_context",
     "worktree_path",
     "worktree_branch",
+    "worktree_base_branch",
 )
 
 PROJECT_VIEW_JOB_ITEM_FIELDS = (
@@ -13449,6 +13450,7 @@ def project_view_example() -> dict[str, object]:
                     },
                     "worktree_path": None,
                     "worktree_branch": None,
+                    "worktree_base_branch": None,
                 }
             ],
         },
