@@ -20,7 +20,7 @@
 
 ## 切片清单（按序执行）
 
-### [ ] 1. dispatch 集成：创建任务 worktree + prompt 声明 cd + provenance
+### [x] 1. dispatch 集成：创建任务 worktree + prompt 声明 cd + provenance
 
 - `dispatch` / `approval dispatch` / run-loop 派发路径：目标 agent
   `workspace_mode=worktree` 且真实 git 仓库时，从当前 HEAD 创建分支+

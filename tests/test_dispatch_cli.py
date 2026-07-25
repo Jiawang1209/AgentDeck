@@ -519,3 +519,99 @@ def test_capture_reply_rejects_output_without_structured_status(tmp_path, monkey
     assert exit_code == 1
     assert "no structured reply found for agent: planner" in capsys.readouterr().err
     assert StateStore(root).load().get("replies", []) == []
+
+
+def _bind_agent(root: Path, agent_id: str, pane_id: str = "%42") -> None:
+    store = StateStore(root)
+    state = store.load()
+    state["agents"][agent_id] = {
+        "agent_id": agent_id,
+        "pane_id": pane_id,
+        "session_name": "agentdeck",
+        "cwd": str(root),
+        "status": "running",
+    }
+    store.save(state)
+
+
+def _init_real_git(root: Path) -> None:
+    import subprocess
+
+    subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+    subprocess.run(["git", "-C", str(root), "config", "user.email", "t@example.com"], check=True)
+    subprocess.run(["git", "-C", str(root), "config", "user.name", "tester"], check=True)
+    (root / "README.md").write_text("hello\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(root), "add", "README.md"], check=True)
+    subprocess.run(["git", "-C", str(root), "commit", "-qm", "init"], check=True)
+
+
+def test_dispatch_creates_task_worktree_for_worktree_mode_agent(tmp_path, monkeypatch, capsys) -> None:
+    import subprocess
+
+    root = prepare_project(tmp_path, monkeypatch)
+    _init_real_git(root)
+    _bind_agent(root, "coder", "%50")  # default config: coder workspace_mode=worktree
+    fake = FakeTmuxBackend()
+    monkeypatch.setattr(cli, "TmuxBackend", lambda: fake)
+
+    exit_code = cli.main(["dispatch", "--agent", "coder", "--task", "在隔离 worktree 中实现功能"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    message_id = payload["message_id"]
+    state = StateStore(root).load()
+    message = next(m for m in state["messages"] if m["message_id"] == message_id)
+    expected_branch = f"agentdeck/coder/{message_id}"
+    expected_path = str(root / ".agentdeck" / "worktrees" / "coder" / message_id)
+    assert message["worktree_branch"] == expected_branch
+    assert message["worktree_path"] == expected_path
+    assert (Path(expected_path) / "README.md").is_file()
+    worktrees = subprocess.run(
+        ["git", "-C", str(root), "worktree", "list"], capture_output=True, text=True, check=True
+    ).stdout
+    assert expected_branch in worktrees
+    prompt = fake.sent[0][1]
+    assert expected_path in prompt
+    events = (root / ".agentdeck" / "state" / "events.jsonl").read_text(encoding="utf-8")
+    assert '"event_type": "worktree_created"' in events
+
+
+def test_dispatch_degrades_cleanly_without_real_git_repo(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)  # fake .git dir, not a real repo
+    _bind_agent(root, "coder", "%50")
+    fake = FakeTmuxBackend()
+    monkeypatch.setattr(cli, "TmuxBackend", lambda: fake)
+
+    exit_code = cli.main(["dispatch", "--agent", "coder", "--task", "普通派发"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    message_id = payload["message_id"]
+    state = StateStore(root).load()
+    message = next(m for m in state["messages"] if m["message_id"] == message_id)
+    assert message["worktree_path"] is None
+    assert message["worktree_branch"] is None
+    assert ".agentdeck/worktrees" not in fake.sent[0][1]
+    events = (root / ".agentdeck" / "state" / "events.jsonl").read_text(encoding="utf-8")
+    assert '"event_type": "worktree_skipped"' in events
+
+
+def test_dispatch_shared_mode_agent_gets_no_worktree(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    _init_real_git(root)
+    bind_planner(root)  # planner workspace_mode=shared
+    fake = FakeTmuxBackend()
+    monkeypatch.setattr(cli, "TmuxBackend", lambda: fake)
+
+    exit_code = cli.main(["dispatch", "--agent", "planner", "--task", "共享模式照旧"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    message_id = payload["message_id"]
+    state = StateStore(root).load()
+    message = next(m for m in state["messages"] if m["message_id"] == message_id)
+    assert message["worktree_path"] is None
+    assert message["worktree_branch"] is None
+    events = (root / ".agentdeck" / "state" / "events.jsonl").read_text(encoding="utf-8")
+    assert '"event_type": "worktree_skipped"' not in events
+    assert '"event_type": "worktree_created"' not in events

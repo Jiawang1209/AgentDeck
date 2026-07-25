@@ -4,6 +4,27 @@
 
 ## 2026-07-25
 
+### Create per-task git worktrees on worktree-mode dispatch
+
+- **Type**: feat
+- **Motivation**: G4 后半落地第一刀（task-worktree loop 切片 1，决策 A）：
+  `workspace_mode=worktree` 此前只是 config 声明，dispatch 无任何隔离。
+- **What**: `_create_task_worktree`：worktree 模式 agent 且真实 git 仓库时，
+  dispatch（manual `dispatch` 与 `approval dispatch`/run-loop 共用路径）从
+  当前 HEAD 建分支 `agentdeck/<agent>/<message_id>` + worktree
+  `.agentdeck/worktrees/<agent>/<message_id>/`，prompt 头部显式声明工作目录
+  （决策 A），message record 与 ProjectView `messages.items[]` 新增
+  `worktree_path`/`worktree_branch` provenance，`worktree_created` 事件；
+  创建不成（非真实仓库/git 失败）记 `worktree_skipped` 事件、字段为 null
+  ——可审计降级；shared 模式零变化。同步
+  `PROJECT_VIEW_MESSAGE_ITEM_FIELDS`+example、project-view schema、CLAUDE.md。
+- **Impact**: worktree 模式的 worker 任务首次获得真实 git 隔离面；既有
+  fake-`.git` 测试环境全部走降级路径不回归。
+- **Verification**: RED 三例（真实 git 创建/降级/shared）先证 KeyError；
+  GREEN 后 3 例过（真实 `git worktree list` 断言），核心回归
+  `dispatch/contracts/agent/leader` 1166 passed；全量 `pytest tests/ -q` 绿
+  （pipefail）+ compileall（见 commit）。
+
 ### Freeze task-worktree decisions and implementation loop plan
 
 - **Type**: docs

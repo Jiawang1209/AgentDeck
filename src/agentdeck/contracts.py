@@ -1302,6 +1302,8 @@ PROJECT_VIEW_MESSAGE_ITEM_FIELDS = (
     "created_at",
     "trace_command",
     "prompt_skill_context",
+    "worktree_path",
+    "worktree_branch",
 )
 
 PROJECT_VIEW_JOB_ITEM_FIELDS = (
@@ -13445,6 +13447,8 @@ def project_view_example() -> dict[str, object]:
                             }
                         ],
                     },
+                    "worktree_path": None,
+                    "worktree_branch": None,
                 }
             ],
         },

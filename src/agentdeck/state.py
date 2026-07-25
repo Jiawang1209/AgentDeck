@@ -9690,6 +9690,8 @@ class StateStore:
         pane_id: str,
         prompt_skill_context: dict[str, Any] | None = None,
         message_id: str | None = None,
+        worktree_path: str | None = None,
+        worktree_branch: str | None = None,
     ) -> dict[str, dict[str, Any]]:
         state = self.load()
         message = {
@@ -9700,6 +9702,8 @@ class StateStore:
             "prompt": prompt,
             "status": "dispatched",
             "created_at": utc_now(),
+            "worktree_path": worktree_path,
+            "worktree_branch": worktree_branch,
         }
         if prompt_skill_context is not None:
             message["prompt_skill_context"] = self._plan_skill_context(prompt_skill_context)
@@ -10581,6 +10585,8 @@ class StateStore:
                     "created_at": message.get("created_at"),
                     "trace_command": self._trace_command(message.get("message_id")),
                     "prompt_skill_context": StateStore._plan_skill_context(message.get("prompt_skill_context")),
+                    "worktree_path": message.get("worktree_path"),
+                    "worktree_branch": message.get("worktree_branch"),
                 }
                 for message in messages
             ],

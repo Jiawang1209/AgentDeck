@@ -5,6 +5,7 @@ from dataclasses import asdict, replace
 from datetime import datetime, timezone
 import argparse
 import asyncio
+import subprocess
 from collections.abc import Mapping
 import contextlib
 import hashlib
@@ -10039,13 +10040,59 @@ def _reply_file_path(root: str | Path, message_id: str) -> Path:
     return Path(root) / ".agentdeck" / "replies" / f"{message_id}.reply.txt"
 
 
+def _create_task_worktree(
+    config: ProjectConfig, agent: AgentSpec, message_id: str
+) -> tuple[dict[str, str] | None, str | None]:
+    """Create a per-task git worktree for a worktree-mode agent.
+
+    Returns (info, skip_reason): info={"path","branch"} on success; when the
+    agent is worktree-mode but creation is not possible, info is None and
+    skip_reason explains the auditable degradation. Shared-mode agents get
+    (None, None) with no event expected."""
+    if agent.workspace_mode != "worktree":
+        return None, None
+    probe = subprocess.run(
+        ["git", "rev-parse", "--git-dir"],
+        cwd=config.root,
+        capture_output=True,
+        text=True,
+    )
+    if probe.returncode != 0:
+        return None, "not a real git repository"
+    branch = f"agentdeck/{agent.agent_id}/{message_id}"
+    path = Path(config.root) / ".agentdeck" / "worktrees" / agent.agent_id / message_id
+    path.parent.mkdir(parents=True, exist_ok=True)
+    created = subprocess.run(
+        ["git", "worktree", "add", "-b", branch, str(path)],
+        cwd=config.root,
+        capture_output=True,
+        text=True,
+    )
+    if created.returncode != 0:
+        detail = " ".join((created.stderr or created.stdout or "").split())[:200]
+        return None, f"git worktree add failed: {detail}"
+    return {"path": str(path), "branch": branch}, None
+
+
 def build_dispatch_prompt(
     agent: AgentSpec,
     task: str,
     skill_loads: list[dict[str, object]] | None = None,
     reply_file: str | None = None,
+    worktree_path: str | None = None,
 ) -> str:
     skill_lines = _dispatch_skill_prompt_lines(skill_loads or [])
+    worktree_lines = (
+        [
+            "工作目录（本任务专用 worktree）:",
+            worktree_path,
+            "请先 cd 进上述目录，本任务的全部读写都只在该目录内进行；",
+            "不要改动主工作区或其它任务的 worktree。",
+            "",
+        ]
+        if worktree_path
+        else []
+    )
     lines = [
         "# AgentDeck dispatch",
         "",
@@ -10053,6 +10100,7 @@ def build_dispatch_prompt(
         f"Provider: {agent.provider}",
         f"角色: {agent.role}",
         "",
+        *worktree_lines,
         "角色说明:",
         agent.role_prompt or "请按该 agent 的配置角色完成任务。",
         "",
@@ -10125,6 +10173,38 @@ def _dispatch_prompt_skill_context(skill_loads: list[dict[str, object]]) -> dict
     return StateStore._skill_load_summaries(skill_loads)
 
 
+def _record_worktree_provenance(
+    store: StateStore,
+    agent: AgentSpec,
+    message_id: str,
+    worktree_info: dict[str, str] | None,
+    skip_reason: str | None,
+) -> None:
+    if worktree_info is not None:
+        store.append_event(
+            EventRecord.create(
+                "worktree_created",
+                {
+                    "agent_id": agent.agent_id,
+                    "message_id": message_id,
+                    "branch": worktree_info["branch"],
+                    "path": worktree_info["path"],
+                },
+            )
+        )
+    elif skip_reason is not None:
+        store.append_event(
+            EventRecord.create(
+                "worktree_skipped",
+                {
+                    "agent_id": agent.agent_id,
+                    "message_id": message_id,
+                    "reason": skip_reason,
+                },
+            )
+        )
+
+
 def dispatch_command(args: argparse.Namespace) -> int:
     config, store, exit_code = _load_project_or_error()
     if config is None or store is None:
@@ -10140,9 +10220,16 @@ def dispatch_command(args: argparse.Namespace) -> int:
     skill_loads = _loaded_skill_records_for_agent(store, agent.agent_id)
     prompt_skill_context = _dispatch_prompt_skill_context(skill_loads)
     message_id = new_id("msg")
+    worktree_info, worktree_skip = _create_task_worktree(config, agent, message_id)
     reply_file = _reply_file_path(config.root, message_id)
     reply_file.parent.mkdir(parents=True, exist_ok=True)
-    prompt = build_dispatch_prompt(agent, args.task, skill_loads=skill_loads, reply_file=str(reply_file))
+    prompt = build_dispatch_prompt(
+        agent,
+        args.task,
+        skill_loads=skill_loads,
+        reply_file=str(reply_file),
+        worktree_path=(worktree_info or {}).get("path"),
+    )
     records = store.create_dispatch_records(
         args.from_agent,
         agent.agent_id,
@@ -10151,8 +10238,11 @@ def dispatch_command(args: argparse.Namespace) -> int:
         pane_id,
         prompt_skill_context=prompt_skill_context,
         message_id=message_id,
+        worktree_path=(worktree_info or {}).get("path"),
+        worktree_branch=(worktree_info or {}).get("branch"),
     )
     message = records["message"]
+    _record_worktree_provenance(store, agent, message_id, worktree_info, worktree_skip)
     TmuxBackend().send_input(config.runtime, pane_id, prompt)
     store.append_event(
         EventRecord.create(
@@ -17791,9 +17881,16 @@ def _dispatch_approved_approval(
     skill_loads = _loaded_skill_records_for_agent(store, agent.agent_id)
     prompt_skill_context = _dispatch_prompt_skill_context(skill_loads)
     message_id = new_id("msg")
+    worktree_info, worktree_skip = _create_task_worktree(config, agent, message_id)
     reply_file = _reply_file_path(config.root, message_id)
     reply_file.parent.mkdir(parents=True, exist_ok=True)
-    prompt = build_dispatch_prompt(agent, task, skill_loads=skill_loads, reply_file=str(reply_file))
+    prompt = build_dispatch_prompt(
+        agent,
+        task,
+        skill_loads=skill_loads,
+        reply_file=str(reply_file),
+        worktree_path=(worktree_info or {}).get("path"),
+    )
     records = store.create_dispatch_records(
         "leader",
         agent.agent_id,
@@ -17802,7 +17899,10 @@ def _dispatch_approved_approval(
         pane_id,
         prompt_skill_context=prompt_skill_context,
         message_id=message_id,
+        worktree_path=(worktree_info or {}).get("path"),
+        worktree_branch=(worktree_info or {}).get("branch"),
     )
+    _record_worktree_provenance(store, agent, message_id, worktree_info, worktree_skip)
     message = records["message"]
     attempt = records["attempt"]
     job = records["job"]
