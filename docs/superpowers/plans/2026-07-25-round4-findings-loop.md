@@ -26,7 +26,7 @@
 - 测试：mock urlopen 抛 400（带 DeepSeek 风格错误体）与 URLError 两例，
   断言非 0、无 traceback、leader_errors 落账、事件追加、不半写 plan。
 
-### [ ] 2.（发现④）文件摄入与 gate 解耦
+### [x] 2.（发现④）文件摄入与 gate 解耦
 
 - 现象：coder 回复文件已就绪时，wave 因 reviewer blocked 停在 `blocked`，
   摄入条件（仅 `waiting_for_reply` 触发）未命中——与 recovery 遮蔽同类。

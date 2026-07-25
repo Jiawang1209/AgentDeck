@@ -18609,25 +18609,41 @@ def run_loop_command(args: argparse.Namespace) -> int:
     review = store.leader_review(plan_id)
     stopped_reason, next_command = run_loop_gate(review, has_error, plan_id)
 
-    # 3b) file-channel reply ingestion: when the gate waits on a reply the worker
-    # has already announced by writing its explicit reply file, ingest it (one
-    # capture pass per wave, never reading the pane) and re-diagnose the gate.
+    # 3b) file-channel reply ingestion, decoupled from the gate: every
+    # dispatched-but-unreplied message of this plan whose worker has already
+    # announced completion by writing its explicit reply file is ingested
+    # (bounded by the awaiting set, never reading the pane); the gate is then
+    # re-diagnosed once. The current stopped_reason does not gate ingestion.
     captured_replies: list[dict[str, object]] = []
-    if stopped_reason == "waiting_for_reply":
-        waiting_agent = str(review.get("agent_id") or "")
-        waiting_message = str(review.get("message_id") or "")
-        if waiting_agent and waiting_message:
-            captured = _capture_reply_from_file_channel(config, store, waiting_agent, waiting_message)
-            if captured is not None:
-                captured_replies.append(captured)
-                store.append_event(EventRecord.create("run_loop_reply_captured", {
-                    "plan_id": plan_id,
-                    "message_id": captured["message_id"],
-                    "reply_id": captured["reply_id"],
-                    "agent_id": captured["agent_id"],
-                }))
-                review = store.leader_review(plan_id)
-                stopped_reason, next_command = run_loop_gate(review, has_error, plan_id)
+    state_now = store.load()
+    replied_messages = {
+        str(reply.get("message_id"))
+        for reply in state_now.get("replies", [])
+        if isinstance(reply, dict)
+    }
+    awaiting = [
+        (str(approval.get("message_id")), str(approval.get("agent_id")))
+        for approval in state_now.get("approvals", [])
+        if isinstance(approval, dict)
+        and approval.get("plan_id") == plan_id
+        and approval.get("status") == "dispatched"
+        and approval.get("message_id")
+        and str(approval.get("message_id")) not in replied_messages
+    ]
+    for awaiting_message, awaiting_agent in awaiting:
+        captured = _capture_reply_from_file_channel(config, store, awaiting_agent, awaiting_message)
+        if captured is None:
+            continue
+        captured_replies.append(captured)
+        store.append_event(EventRecord.create("run_loop_reply_captured", {
+            "plan_id": plan_id,
+            "message_id": captured["message_id"],
+            "reply_id": captured["reply_id"],
+            "agent_id": captured["agent_id"],
+        }))
+    if captured_replies:
+        review = store.leader_review(plan_id)
+        stopped_reason, next_command = run_loop_gate(review, has_error, plan_id)
 
     store.append_event(EventRecord.create("run_loop_advanced", {
         "plan_id": plan_id,

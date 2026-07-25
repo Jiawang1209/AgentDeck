@@ -4,6 +4,24 @@
 
 ## 2026-07-25
 
+### Decouple run-loop file-channel ingestion from the gate
+
+- **Type**: fix
+- **Motivation**: round 4 发现④——coder 回复文件已就绪时，wave 因 reviewer
+  blocked 停在 `blocked`，仅 `waiting_for_reply` 触发的摄入条件未命中，
+  就绪回复被遮蔽（round4-findings loop 切片 2）。
+- **What**: run-loop 摄入改为 awaiting 集驱动：每 wave 从本 plan 的
+  dispatched 审批（含 message_id）减去已有 reply 的 message 得 awaiting 集，
+  对其中 reply 文件已就绪者逐个摄入（每条一条 `run_loop_reply_captured`），
+  全部摄入后重算 review/gate 一次；当前 stopped_reason（含 blocked/
+  needs_human_approval）不再影响摄入是否发生。绝不读 pane 语义不变，摄入
+  以 awaiting 集为界。同步 run-loop schema 与 CLAUDE.md 摄入条件描述。
+- **Impact**: "走开"环不再被 blocked/审批 gate 卡住已完成的回收；round 4
+  wave2 场景（blocked+文件就绪）现可同 wave 回收。
+- **Verification**: RED=round4 wave2 复现用例（blocked gate 下 captured 为
+  空）；GREEN 后 run-loop 全家 18 例 + `test_agent_cli/test_contracts`
+  906 passed；全量 `pytest tests/ -q` 绿（pipefail）+ compileall（见 commit）。
+
 ### Convert provider HTTP errors into clean bounded leader errors
 
 - **Type**: fix

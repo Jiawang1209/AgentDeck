@@ -13296,6 +13296,48 @@ def test_run_loop_waiting_for_reply_without_file_stays_waiting(tmp_path, monkeyp
     assert state.get("replies", []) == []
 
 
+def test_run_loop_ingests_ready_reply_even_when_gate_is_blocked(tmp_path, monkeypatch, capsys):
+    # round 4 发现④：blocked gate 不得遮蔽已就绪的文件通道回复摄入
+    root = prepare_project(tmp_path, monkeypatch)
+    bind_agent(root, "planner", "%42")
+    fake = FakeTmuxBackend()
+    monkeypatch.setattr(cli, "TmuxBackend", lambda: fake)
+    cli.main(["leader", "plan", "--provider", "fake", "--model", "fake-plan", "--task", "遮蔽摄入场景"])
+    plan_id = json.loads(capsys.readouterr().out)["plan_id"]
+    cli.main(["approval", "create-from-plan", "--plan-id", plan_id])
+    approvals = json.loads(capsys.readouterr().out)["approvals"]
+    assert len(approvals) >= 2
+    cli.main(["approval", "approve", "--approval-id", approvals[0]["approval_id"]])
+    capsys.readouterr()
+    cli.main(["approval", "approve", "--approval-id", approvals[1]["approval_id"]])
+    capsys.readouterr()
+    for approval in approvals[2:]:
+        cli.main(["approval", "reject", "--approval-id", approval["approval_id"], "--reason", "focus"])
+        capsys.readouterr()
+    cli.main(["approval", "dispatch", "--approval-id", approvals[0]["approval_id"]])
+    dispatch_payload = json.loads(capsys.readouterr().out)
+    message_id = dispatch_payload["message_id"]
+    cli.main(["ack", "--agent", "planner", "--inbox-id", dispatch_payload["inbox_card"]["head_inbox_id"]])
+    capsys.readouterr()
+    reply_file = root / ".agentdeck" / "replies" / f"{message_id}.reply.txt"
+    reply_file.parent.mkdir(parents=True, exist_ok=True)
+    reply_file.write_text("status: completed\nsummary: done\n", encoding="utf-8")
+    cli.main(["policy", "set-mode", "--mode", "autonomous", "--confirm", "--allow-agent", "planner", "--max-approvals", "5"])
+    capsys.readouterr()
+
+    # step-2 agent 未 spawn -> gate 会是 blocked；摄入仍必须发生
+    assert cli.main(["run-loop", "--plan-id", plan_id, "--confirm"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+
+    captured = payload.get("captured_replies") or []
+    assert [item["message_id"] for item in captured] == [message_id]
+    assert captured[0]["captured_from"] == "file"
+    assert payload["stopped_reason"] == "blocked"
+    state = StateStore(root).load()
+    replies = [r for r in state.get("replies", []) if r.get("message_id") == message_id]
+    assert len(replies) == 1
+
+
 def test_run_loop_captures_file_channel_reply_and_advances(tmp_path, monkeypatch, capsys):
     root = prepare_project(tmp_path, monkeypatch)
     plan_id, message_id = _dispatch_first_step_and_ack(root, monkeypatch, capsys)
