@@ -4,6 +4,26 @@
 
 ## 2026-07-25
 
+### Add explicit worktree merge/abandon/prune lifecycle commands
+
+- **Type**: feat
+- **Motivation**: 决策 B/C——worktree 产物只能人工 diff 后显式合并，清理只能
+  删已合并或显式放弃的（task-worktree loop 切片 4）。
+- **What**: `worktree merge --message-id --confirm`（`git merge --no-edit`，
+  冲突即 abort+拒绝零写，成功记 `worktree_merged`）；`worktree abandon
+  --message-id --confirm`（`mark_worktree_abandoned` 写
+  `abandoned_worktrees[]`——已登记 authoritative writer registry——+
+  `worktree_abandoned` 事件，重复 abandon 拒绝）；`worktree prune --confirm`
+  （仅删 abandoned（--force/-D）或 merged-and-clean（普通 remove/-d），其余
+  进 `skipped[]` 带 reason，每删一条记 `worktree_pruned`）。三命令缺
+  `--confirm` 一律拒绝零写。schema 文档 Lifecycle Shapes 节 + CLAUDE.md
+  常用命令同步。
+- **Impact**: worktree 全生命周期闭环（创建→审阅→合并/放弃→清理），
+  "绝不删除未确认改动"承诺由 dirty-未-abandon 硬保护实现。
+- **Verification**: RED 两例（merge 全流程含 prune、dirty 保护到 abandon
+  后可删）；GREEN 后 worktree 7 例 + writer registry 过；全量
+  `pytest tests/ -q` 绿（pipefail）+ compileall（见 commit）。
+
 ### Add read-only worktree list/diff commands with a registered contract
 
 - **Type**: feat

@@ -52,6 +52,24 @@ non-worktree message ids fail with a non-zero exit. It validates with
 `validate_worktree_diff_contract()` before printing and reads no file contents
 into state.
 
+## Lifecycle Shapes (explicit, --confirm)
+
+- `worktree merge --message-id <id> --confirm` merges the task branch into the
+  current branch with `git merge --no-edit`; a conflicting merge is aborted and
+  refused (zero state writes) for manual resolution. Success appends a
+  `worktree_merged` event and returns `mode=worktree_merged` with
+  `next_command=agentdeck worktree prune --confirm`.
+- `worktree abandon --message-id <id> --confirm` appends the message id to the
+  authoritative `abandoned_worktrees` list (via the registered
+  `mark_worktree_abandoned` writer) plus a `worktree_abandoned` event; a second
+  abandon of the same id is refused.
+- `worktree prune --confirm` removes only worktrees that are abandoned
+  (`git worktree remove --force`, branch `-D`) or merged-and-clean
+  (`git worktree remove`, branch `-d`); everything else lands in `skipped[]`
+  with a reason (`dirty and not abandoned` / `branch not merged`). Each removal
+  appends a `worktree_pruned` event. Missing `--confirm` refuses with zero
+  writes for all three commands.
+
 ## Boundaries
 
 - `list`/`diff` are inspection only: no state writes, no tmux, no provider

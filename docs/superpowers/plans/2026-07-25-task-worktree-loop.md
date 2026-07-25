@@ -44,7 +44,7 @@
   `git diff --stat` + name-status（不读文件全文进 state）。二者不写 state。
   新 contract 惯例全量同步。
 
-### [ ] 4. `worktree merge/abandon/prune --confirm`（决策 B/C）
+### [x] 4. `worktree merge/abandon/prune --confirm`（决策 B/C）
 
 - `merge --confirm`：将任务分支合入当前主分支（无冲突 fast-forward/普通
   merge；冲突则拒绝并零写，交人工）；`abandon --confirm`：显式标记放弃

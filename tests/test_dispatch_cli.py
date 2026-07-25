@@ -722,3 +722,80 @@ def test_worktree_diff_rejects_unknown_message(tmp_path, monkeypatch, capsys) ->
 
     assert cli.main(["worktree", "diff", "--message-id", "msg_missing"]) == 1
     assert "unknown worktree message" in capsys.readouterr().err
+
+
+def test_worktree_merge_requires_confirm_and_merges_branch(tmp_path, monkeypatch, capsys) -> None:
+    import subprocess
+
+    root = prepare_project(tmp_path, monkeypatch)
+    _init_real_git(root)
+    _bind_agent(root, "coder", "%50")
+    fake = FakeTmuxBackend()
+    monkeypatch.setattr(cli, "TmuxBackend", lambda: fake)
+    cli.main(["dispatch", "--agent", "coder", "--task", "做功能"])
+    msg = json.loads(capsys.readouterr().out)["message_id"]
+    state = StateStore(root).load()
+    wt = next(m for m in state["messages"] if m["message_id"] == msg)["worktree_path"]
+    (Path(wt) / "merged.txt").write_text("done\n", encoding="utf-8")
+    subprocess.run(["git", "-C", wt, "add", "merged.txt"], check=True)
+    subprocess.run(["git", "-C", wt, "commit", "-qm", "feature"], check=True)
+    before = StateStore(root).load()
+
+    assert cli.main(["worktree", "merge", "--message-id", msg]) == 1
+    assert "confirm" in capsys.readouterr().err
+    assert StateStore(root).load() == before
+    assert not (root / "merged.txt").is_file()
+
+    assert cli.main(["worktree", "merge", "--message-id", msg, "--confirm"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["mode"] == "worktree_merged"
+    assert payload["branch"] == f"agentdeck/coder/{msg}"
+    assert (root / "merged.txt").is_file()
+    events = (root / ".agentdeck" / "state" / "events.jsonl").read_text(encoding="utf-8")
+    assert '"event_type": "worktree_merged"' in events
+
+    # merged worktree becomes prunable
+    assert cli.main(["worktree", "prune", "--confirm"]) == 0
+    prune_payload = json.loads(capsys.readouterr().out)
+    assert prune_payload["mode"] == "worktree_prune"
+    assert msg in [item["message_id"] for item in prune_payload["removed"]]
+    assert not Path(wt).exists()
+    events = (root / ".agentdeck" / "state" / "events.jsonl").read_text(encoding="utf-8")
+    assert '"event_type": "worktree_pruned"' in events
+
+
+def test_worktree_prune_protects_dirty_until_abandoned(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    _init_real_git(root)
+    _bind_agent(root, "coder", "%50")
+    fake = FakeTmuxBackend()
+    monkeypatch.setattr(cli, "TmuxBackend", lambda: fake)
+    cli.main(["dispatch", "--agent", "coder", "--task", "半途任务"])
+    msg = json.loads(capsys.readouterr().out)["message_id"]
+    state = StateStore(root).load()
+    wt = next(m for m in state["messages"] if m["message_id"] == msg)["worktree_path"]
+    (Path(wt) / "wip.txt").write_text("uncommitted\n", encoding="utf-8")
+
+    # dirty 且未 abandon：prune 必须跳过并保留目录
+    assert cli.main(["worktree", "prune", "--confirm"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["removed"] == []
+    skipped_ids = [item["message_id"] for item in payload["skipped"]]
+    assert msg in skipped_ids
+    assert Path(wt).exists()
+
+    # abandon 缺 confirm：拒绝零写
+    before = StateStore(root).load()
+    assert cli.main(["worktree", "abandon", "--message-id", msg]) == 1
+    assert StateStore(root).load() == before
+
+    assert cli.main(["worktree", "abandon", "--message-id", msg, "--confirm"]) == 0
+    abandon_payload = json.loads(capsys.readouterr().out)
+    assert abandon_payload["mode"] == "worktree_abandoned"
+    events = (root / ".agentdeck" / "state" / "events.jsonl").read_text(encoding="utf-8")
+    assert '"event_type": "worktree_abandoned"' in events
+
+    assert cli.main(["worktree", "prune", "--confirm"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert msg in [item["message_id"] for item in payload["removed"]]
+    assert not Path(wt).exists()

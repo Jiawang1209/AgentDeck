@@ -10342,6 +10342,171 @@ def worktree_diff_command(args: argparse.Namespace) -> int:
     return 0
 
 
+def _worktree_message_or_error(store: StateStore, message_id: str) -> dict[str, object] | None:
+    state = store.load()
+    message = next(
+        (m for m in _worktree_messages(state) if str(m.get("message_id")) == message_id),
+        None,
+    )
+    if message is None:
+        print(f"unknown worktree message: {message_id}", file=sys.stderr)
+    return message
+
+
+def worktree_merge_command(args: argparse.Namespace) -> int:
+    config, store, exit_code = _load_project_or_error()
+    if config is None or store is None:
+        return exit_code
+    message = _worktree_message_or_error(store, args.message_id)
+    if message is None:
+        return 1
+    if not args.confirm:
+        print("worktree merge requires --confirm", file=sys.stderr)
+        return 1
+    branch = str(message.get("worktree_branch"))
+    merged = subprocess.run(
+        ["git", "merge", "--no-edit", branch],
+        cwd=config.root,
+        capture_output=True,
+        text=True,
+    )
+    if merged.returncode != 0:
+        subprocess.run(["git", "merge", "--abort"], cwd=config.root, capture_output=True)
+        detail = " ".join((merged.stderr or merged.stdout or "").split())[:200]
+        print(f"worktree merge failed (left untouched for manual resolution): {detail}", file=sys.stderr)
+        return 1
+    store.append_event(
+        EventRecord.create(
+            "worktree_merged",
+            {
+                "message_id": args.message_id,
+                "agent_id": message.get("to_agent"),
+                "branch": branch,
+            },
+        )
+    )
+    _print_json(
+        {
+            "ok": True,
+            "mode": "worktree_merged",
+            "message_id": args.message_id,
+            "agent_id": message.get("to_agent"),
+            "branch": branch,
+            "next_command": "agentdeck worktree prune --confirm",
+        }
+    )
+    return 0
+
+
+def worktree_abandon_command(args: argparse.Namespace) -> int:
+    config, store, exit_code = _load_project_or_error()
+    if config is None or store is None:
+        return exit_code
+    message = _worktree_message_or_error(store, args.message_id)
+    if message is None:
+        return 1
+    if not args.confirm:
+        print("worktree abandon requires --confirm", file=sys.stderr)
+        return 1
+    try:
+        store.mark_worktree_abandoned(args.message_id)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    store.append_event(
+        EventRecord.create(
+            "worktree_abandoned",
+            {
+                "message_id": args.message_id,
+                "agent_id": message.get("to_agent"),
+                "branch": message.get("worktree_branch"),
+            },
+        )
+    )
+    _print_json(
+        {
+            "ok": True,
+            "mode": "worktree_abandoned",
+            "message_id": args.message_id,
+            "agent_id": message.get("to_agent"),
+            "branch": message.get("worktree_branch"),
+            "next_command": "agentdeck worktree prune --confirm",
+        }
+    )
+    return 0
+
+
+def worktree_prune_command(args: argparse.Namespace) -> int:
+    config, store, exit_code = _load_project_or_error()
+    if config is None or store is None:
+        return exit_code
+    if not args.confirm:
+        print("worktree prune requires --confirm", file=sys.stderr)
+        return 1
+    state = store.load()
+    removed: list[dict[str, object]] = []
+    skipped: list[dict[str, object]] = []
+    for message in _worktree_messages(state):
+        item = _worktree_item(config, state, message)
+        if not item["exists"]:
+            continue
+        message_id = str(item["message_id"])
+        branch = str(item["branch"])
+        path = str(item["path"])
+        if item["abandoned"]:
+            removal = subprocess.run(
+                ["git", "worktree", "remove", "--force", path],
+                cwd=config.root,
+                capture_output=True,
+                text=True,
+            )
+            branch_delete_flag = "-D"
+        elif item["merged"] and not item["dirty"]:
+            removal = subprocess.run(
+                ["git", "worktree", "remove", path],
+                cwd=config.root,
+                capture_output=True,
+                text=True,
+            )
+            branch_delete_flag = "-d"
+        else:
+            reason = "dirty and not abandoned" if item["dirty"] else "branch not merged"
+            skipped.append({"message_id": message_id, "branch": branch, "reason": reason})
+            continue
+        if removal.returncode != 0:
+            detail = " ".join((removal.stderr or removal.stdout or "").split())[:200]
+            skipped.append({"message_id": message_id, "branch": branch, "reason": f"git worktree remove failed: {detail}"})
+            continue
+        subprocess.run(
+            ["git", "branch", branch_delete_flag, branch],
+            cwd=config.root,
+            capture_output=True,
+            text=True,
+        )
+        removed.append({"message_id": message_id, "branch": branch, "path": path})
+        store.append_event(
+            EventRecord.create(
+                "worktree_pruned",
+                {
+                    "message_id": message_id,
+                    "branch": branch,
+                    "abandoned": bool(item["abandoned"]),
+                },
+            )
+        )
+    _print_json(
+        {
+            "ok": True,
+            "mode": "worktree_prune",
+            "removed": removed,
+            "removed_count": len(removed),
+            "skipped": skipped,
+            "skipped_count": len(skipped),
+        }
+    )
+    return 0
+
+
 def _record_worktree_provenance(
     store: StateStore,
     agent: AgentSpec,
@@ -19873,6 +20038,17 @@ def build_parser() -> argparse.ArgumentParser:
     worktree_diff = worktree_subparsers.add_parser("diff", help="Show a task branch's diff against HEAD (read-only)")
     worktree_diff.add_argument("--message-id", required=True, help="Dispatch message id that owns the worktree")
     worktree_diff.set_defaults(func=worktree_diff_command)
+    worktree_merge = worktree_subparsers.add_parser("merge", help="Merge a task branch into the current branch (explicit)")
+    worktree_merge.add_argument("--message-id", required=True, help="Dispatch message id that owns the worktree")
+    worktree_merge.add_argument("--confirm", action="store_true", help="Explicitly confirm the merge")
+    worktree_merge.set_defaults(func=worktree_merge_command)
+    worktree_abandon = worktree_subparsers.add_parser("abandon", help="Explicitly mark a task worktree as abandoned")
+    worktree_abandon.add_argument("--message-id", required=True, help="Dispatch message id that owns the worktree")
+    worktree_abandon.add_argument("--confirm", action="store_true", help="Explicitly confirm the abandonment")
+    worktree_abandon.set_defaults(func=worktree_abandon_command)
+    worktree_prune = worktree_subparsers.add_parser("prune", help="Remove merged or abandoned task worktrees (explicit)")
+    worktree_prune.add_argument("--confirm", action="store_true", help="Explicitly confirm the prune")
+    worktree_prune.set_defaults(func=worktree_prune_command)
 
     dispatch = subparsers.add_parser("dispatch", help="Send a role-aware task to a running agent")
     dispatch.add_argument("--from-agent", default="user", help="Actor or agent id that submitted this task")

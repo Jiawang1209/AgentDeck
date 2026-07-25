@@ -8916,6 +8916,15 @@ class StateStore:
         self.save(state)
         return current
 
+    def mark_worktree_abandoned(self, message_id: str) -> list[str]:
+        state = self.load()
+        abandoned = state.setdefault("abandoned_worktrees", [])
+        if message_id in abandoned:
+            raise ValueError(f"worktree already abandoned: {message_id}")
+        abandoned.append(message_id)
+        self.save(state)
+        return list(abandoned)
+
     def mark_agent_stale(self, agent_id: str) -> dict[str, Any]:
         state = self.load()
         agents = state.setdefault("agents", {})
@@ -11643,6 +11652,7 @@ AUTHORITATIVE_STATE_MUTATION_METHODS = (
     "interrupt_prepared_mission_attempt",
     "mark_agent_released",
     "mark_agent_stale",
+    "mark_worktree_abandoned",
     "mark_agent_stopped",
     "mark_approval_dispatched",
     "mark_acp_mission_attempt_completion_ambiguous",
