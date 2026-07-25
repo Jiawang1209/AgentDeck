@@ -4,6 +4,23 @@
 
 ## 2026-07-25
 
+### Record round 5 full-speed walk-away loop live PASS (zero workarounds)
+
+- **Type**: data
+- **Motivation**: round4 五修复 push 后，user 发起全速走开环复跑，验证修复
+  在真实异构 agent 上组合生效。
+- **What**: 新增
+  `docs/validation/2026-07-25-copilot-line1-round5-fullspeed-loop.md`：
+  任务=返回顶部按钮；3 个 wave 零绕行跑完整环（wave1 顺序守卫只派 step1、
+  wave2 摄入+同 wave 解锁派 reviewer、wave3 摄入+complete）；release 3/3
+  二次整环；文件通道 4/4 轮全遵守；composer 探测入监视轮（未触发=一次
+  送达）；产物含新测试资产且 coder 主动重跑 round4 回归测试（资产跨轮
+  复利）；观察=7 个同类授权框的 scoped 委托数据点。
+- **Impact**: 纯文档；"说目标→确认一次→走开→回来看结果"成为可重复的
+  默认体验；剩余人工点=计划一次确认+授权框。
+- **Verification**: 全部命令实测输出、文件级 grep/SHA 核实（8ace2367→
+  d4a47aeb）、reviewer 独立浏览器实测 PASS；授权方式逐项记录。
+
 ### Evaluate remote model availability probing (decision doc)
 
 - **Type**: docs
