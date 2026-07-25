@@ -53,8 +53,27 @@ coder 自证：Chrome 1440px 与移动端实测断言全过、无横向溢出、
    ack → capture。账本 ack-first 纪律与真实使用顺序存在错位，未阻塞回收，
    但解释了发现 1 的遮蔽现象。
 
+## Reviewer 复核轮（user 授权后执行，PASS）
+
+- 指派 approval `apv_d0f6ba66c4a4` → message `msg_e259743759a6` → reviewer
+  （Claude Code）复核，全程未弹授权框，直接写出文件通道回复 →
+  `captured_from=file` 回收（reply `rep_717313426643`）→ 清账 →
+  `leader summary` `status: ready`。
+- **结论：四项返工全部 ✅**（代码核对 + 无头 Chrome 1280px 自动化断言 +
+  截图目视；hero=2/2、focus=2/2 切换三态同步、shadow=rgb(0,75,39)、
+  aria-current 高亮 rgb(255,173,0) 且未误伤）。
+- reviewer 另发现返工新引入的轻微 a11y 问题（不阻塞）：焦点轮播非活动页
+  aria-hidden 但页内链接未设 tabindex="-1"，键盘仍可聚焦隐藏链接；已由
+  reviewer 追记到审查报告修复记录区，留作后续小修。
+- **文件通道 2/2**：codex（coder）与 Claude Code（reviewer）两种真实 agent
+  都遵守回复文件约定——文件通道作为默认回收路径的证据完备。
+- **切片 E 首次真实验证**：复核指派消息含 `.agentdeck/artifacts/...` 路径，
+  路由正确进入 `mode=approval`（07-24 同类消息曾被 artifacts 嗅探劫持，
+  修复 069748a4 生效）。
+- agent 天性再证：reviewer 本分完成复核未改 index.html，但主动把复核结论
+  追记进审查报告并更新了 scratch 项目的 DEVELOPMENT_HISTORY。
+
 ## 后续
 
-- 可选：reviewer 复核返工结果一轮（approve→dispatch→capture）后再 summary，
-  由 user 决定是否执行。
 - 发现 1 的 recovery 优先级/信号跨状态暴露 → 候选下一切片（产品决策）。
+- a11y 小修（tabindex="-1"）可并入下一轮任务。

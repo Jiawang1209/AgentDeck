@@ -4,6 +4,19 @@
 
 ## 2026-07-25
 
+### Record round 3 reviewer recheck PASS (file channel 2/2, slice E live-verified)
+
+- **Type**: data
+- **Motivation**: user 授权跑 reviewer 复核轮，闭合 round 3 的完整
+  审查→返工→复核环，并顺带真实验证 07-25 凌晨的意图路由修复。
+- **What**: 更新 `docs/validation/2026-07-25-copilot-line1-round3-rework.md`
+  增补复核轮：`apv_d0f6ba66c4a4`→`msg_e259743759a6`→Claude Code 复核四项
+  全 ✅（无头 Chrome 断言）→`captured_from=file` 回收→summary ready；
+  文件通道 2/2（codex+Claude 都遵守）；切片 E（069748a4）首验通过（含
+  artifacts 路径的指派不再被劫持）；reviewer 新发现轻微 a11y 问题留作后续。
+- **Impact**: 纯文档；文件通道作为默认回收路径证据完备；round 3 完整收官。
+- **Verification**: 全部命令实测输出；复核结论与 reviewer 回复文件逐字核对。
+
 ### Record co-pilot Line 1 round 3 rework PASS (file-channel reply live-verified)
 
 - **Type**: data
