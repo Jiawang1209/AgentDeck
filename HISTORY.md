@@ -4,6 +4,24 @@
 
 ## 2026-07-25
 
+### Record round 4 walk-away loop live PASS (five new findings)
+
+- **Type**: data
+- **Motivation**: user 在场执行 autonomy-knob loop 切片 3——用真实任务
+  （a11y 修复）首验"说目标→approve-plan 一次确认→run-loop 反复推进→
+  只在授权框/异常停"的最小走开环。
+- **What**: 新增 `docs/validation/2026-07-25-copilot-line1-round4-walkaway-loop.md`：
+  整环 PASS（DeepSeek v4-pro 拆 2 步、wave1 派 coder/reviewer blocked、
+  wave3/wave4 文件通道自动摄入 ×2、complete、summary ready、release 3/3）；
+  首验通过清单（观察点① tiled、approve-plan、captured_replies、blocked
+  语义、release 整环）；五条新 live 发现（provider 400 裸崩、远端模型下线
+  探测缺口、run-loop 无 step 顺序守卫、blocked gate 遮蔽文件摄入、多行
+  prompt 尾部卡 Claude composer）。
+- **Impact**: 纯文档；北极星产品成功测试核心闭环首次在真实异构 agent 上
+  立住；五条发现构成下一批切片清单。
+- **Verification**: 全部命令实测输出、文件级 grep/SHA 核实、reviewer 独立
+  重跑 coder CDP 测试通过；live 步骤授权方式在文档中逐项记录。
+
 ### Let run-loop ingest explicit file-channel replies and unmask reply_file_ready
 
 - **Type**: feat
