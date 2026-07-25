@@ -4,6 +4,19 @@
 
 ## 2026-07-25
 
+### Record first live verification of agent release (released lifecycle 3/3)
+
+- **Type**: data
+- **Motivation**: round 3 收官后三个 worker pane 不再需要，user 授权在真实
+  项目首验 07-25 凌晨新增的 `agent release`（gap-loop 切片 4）。
+- **What**: 更新 round 3 验收文档增补收官节：planner/coder/reviewer 依次
+  `agent release --confirm` 全部 `released`，pane 真实回收（tmux 仅剩 shell），
+  `agent_released` 事件落账；`worker_lifecycle_card` `by_stage={released:3}`、
+  拓扑卡同步；记录一处显示细节（reviewer 的 review-gate overlay 优先于
+  released 态，GUI 设计时复核）。
+- **Impact**: 纯文档；released 生命周期在真实 tmux 上闭环，切片 4 证据完备。
+- **Verification**: 命令实测输出 + tmux list-panes + workbench/events 投影核对。
+
 ### Record round 3 reviewer recheck PASS (file channel 2/2, slice E live-verified)
 
 - **Type**: data

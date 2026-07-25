@@ -73,7 +73,20 @@ coder 自证：Chrome 1440px 与移动端实测断言全过、无横向溢出、
 - agent 天性再证：reviewer 本分完成复核未改 index.html，但主动把复核结论
   追记进审查报告并更新了 scratch 项目的 DEVELOPMENT_HISTORY。
 
+## 收官：`agent release` 首次真实验证（user 授权）
+
+- 三个 worker 依次 `agentdeck agent release --agent <id> --confirm`：全部
+  `status=released`，pane %1/%2/%3 真实回收（tmux 仅剩 shell pane），
+  `agent_released` 审计事件落账。
+- 只读投影验证：`worker_lifecycle_card` 三项均 `lifecycle_stage=released`、
+  `by_stage={released:3}`；`role_topology_card` planning/implementation 显示
+  `released`。
+- 显示细节：reviewer 在拓扑卡显示 `reviewed` 而非 `released`——review-gate
+  overlay 按契约优先于 lifecycle_stage。符合文档行为，但"已释放的 reviewer
+  仍显示 reviewed"这一层级取舍可在 GUI 设计时复核。
+
 ## 后续
 
 - 发现 1 的 recovery 优先级/信号跨状态暴露 → 候选下一切片（产品决策）。
 - a11y 小修（tabindex="-1"）可并入下一轮任务。
+- review-gate overlay 与 released 态的显示优先级 → GUI 设计时复核。
