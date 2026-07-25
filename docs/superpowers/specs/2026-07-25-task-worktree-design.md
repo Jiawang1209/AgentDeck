@@ -1,7 +1,17 @@
-# 任务级 Worktree 隔离设计草稿（待 user 评审，未实现）
+# 任务级 Worktree 隔离设计（已拍板，进入实施）
 
-- 日期：2026-07-25（隔夜 gap-loop 切片 5 产物）
-- 状态：**spec 草稿，实现是产品 fork，等待 user 拍板后另立 TDD 计划**
+- 日期：2026-07-25（隔夜 gap-loop 切片 5 产物；同日下午 user 拍板）
+- 状态：**四个开放决策已由 user 确认，实施计划见
+  `docs/superpowers/plans/2026-07-25-task-worktree-loop.md`**
+- 已定决策：**A**=dispatch prompt 声明 cd（兼容常驻 pane，MVP）；
+  **B**=人工 diff（只读 `worktree diff`）+ 显式 `worktree merge --confirm`，
+  不自动合并；**C**=`worktree prune --confirm` 只删"分支已合入主干"或
+  "已被显式 `worktree abandon --confirm` 标记"的 worktree，两路径各自审计，
+  dirty 且未标记的永不可删；**D**=reviewer 用自己的 worktree 检出 coder 的
+  任务分支（可实测、改不到 coder 目录、越权改动留在自己分支可审可弃）。
+- 实施护栏：worktree 创建仅在 `workspace_mode=worktree` 且项目为真实 git
+  仓库时发生；否则按现状派发并在 message provenance/事件中记录未启用
+  （可审计的降级，不是静默）。
 - 来源：G4 审计缺口（`workspace_mode="worktree"` 仅 config 声明未落地）+
   Line 1 live 实证（reviewer 越权顺手修 bug，共享工作区无隔离）
 

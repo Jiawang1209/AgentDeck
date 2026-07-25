@@ -4,6 +4,21 @@
 
 ## 2026-07-25
 
+### Freeze task-worktree decisions and implementation loop plan
+
+- **Type**: docs
+- **Motivation**: user 选定 worktree 任务级隔离为下一主攻方向，并拍板 spec
+  的四个开放决策（A=prompt 声明 cd、B=人工 diff+显式 merge、C=已合并或
+  显式放弃才可 prune、D=reviewer 自建 worktree 检出 coder 分支）。
+- **What**: 更新 `docs/superpowers/specs/2026-07-25-task-worktree-design.md`
+  为已拍板状态（含实施护栏：仅 worktree 模式+真实 git 仓库才创建，否则
+  可审计降级）；新增
+  `docs/superpowers/plans/2026-07-25-task-worktree-loop.md` 五切片实施循环
+  （dispatch 集成/reviewer 同分支/list+diff 只读/merge+abandon+prune 显式/
+  生命周期联动），live round 6 与二期项显式排除在 loop 外。
+- **Impact**: 纯文档；G4 后半有了冻结的执行清单。
+- **Verification**: 纯文档。
+
 ### Record round 5 full-speed walk-away loop live PASS (zero workarounds)
 
 - **Type**: data
