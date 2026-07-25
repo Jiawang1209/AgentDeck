@@ -4,6 +4,26 @@
 
 ## 2026-07-26
 
+### Record round 7 worktree-fixes live PASS
+
+- **Type**: data
+- **Motivation**: round 6 的四个修复切片需要真实整环验证（round 7，user
+  在场授权）。
+- **What**: 新增 `docs/validation/2026-07-26-copilot-line1-round7-worktree-fixes.md`。
+  任务=round 6 reviewer 留下的 M1 修复；DeepSeek 精简 2 步整环 PASS。
+  四修复验证：prompt commit 合同 PASS（coder 自主暂存/预检/commit
+  `e52f0d1`，零补充指令，对照 round 6）；in_flight prune 守卫 PASS（活跃
+  worktree 当场实测零删除）；产物钉扎 PASS（coder/reviewer 产物均落主仓库
+  artifacts 并登记）；多行 full_output_path 本轮未触发（单元测试覆盖）。
+  reviewer 自写 CDP 探针实测 WeakSet 守卫后 PASS；release 3/3
+  `dirty_worktrees` 全空；prune 两条 merge-settled 路径均走到。新数据点：
+  第二类授权框（worktree 内 git 写）确立 scoped 委托两个标准 scope；
+  G1-G3 测试缺口入池。
+- **Impact**: G4 worktree 生命周期在"worker 自主 commit"合同下完全自洽，
+  零产物丢失、零人工抢救；剩余大件均为待拍板 fork。不涉及代码行为变化。
+- **Verification**: live 整环证据见 validation 文档；merge 后 main 双回归
+  测试 exit 0；worktree/分支全回收。
+
 ### Pin worktree dispatch artifacts to the main repo artifacts dir
 
 - **Type**: fix
