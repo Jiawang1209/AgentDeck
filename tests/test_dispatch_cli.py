@@ -647,6 +647,24 @@ def test_worktree_dispatch_prompt_requires_commit_to_task_branch(tmp_path, monke
     assert "不要 push" in prompt
 
 
+def test_worktree_dispatch_prompt_pins_artifacts_to_main_repo(tmp_path, monkeypatch, capsys) -> None:
+    # round 6 live 发现：reviewer 把产物写进自己 worktree 内嵌的
+    # .agentdeck/artifacts/，prune 时连带删除；产物必须钉到主仓库。
+    root = prepare_project(tmp_path, monkeypatch)
+    _init_real_git(root)
+    _bind_agent(root, "coder", "%50")
+    fake = FakeTmuxBackend()
+    monkeypatch.setattr(cli, "TmuxBackend", lambda: fake)
+
+    exit_code = cli.main(["dispatch", "--agent", "coder", "--task", "生成分析报告"])
+
+    assert exit_code == 0
+    capsys.readouterr()
+    prompt = fake.sent[0][1]
+    assert str(root / ".agentdeck" / "artifacts") in prompt
+    assert "不要写进本 worktree" in prompt
+
+
 def test_shared_dispatch_prompt_has_no_commit_requirement(tmp_path, monkeypatch, capsys) -> None:
     root = prepare_project(tmp_path, monkeypatch)
     _init_real_git(root)

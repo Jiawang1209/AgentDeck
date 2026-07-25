@@ -16,6 +16,9 @@
   cd 外必须要求任务完成时把改动 git commit 到当前任务分支（不 push、不切换
   分支）——live 实证 worker 天性不主动 commit，而 diff/review 检出/merge
   只看任务分支上的 commit，未 commit 则整个审阅面为空。
+- Round 6 live 补充二：worktree-mode dispatch prompt 必须把产物路径钉到主
+  仓库 `.agentdeck/artifacts/`（绝对路径）——live 实证 reviewer 把 review
+  报告写进自己 worktree 内嵌的相对路径，prune 时产物会连带被删。
 - 来源：G4 审计缺口（`workspace_mode="worktree"` 仅 config 声明未落地）+
   Line 1 live 实证（reviewer 越权顺手修 bug，共享工作区无隔离）
 

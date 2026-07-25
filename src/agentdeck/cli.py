@@ -10143,8 +10143,18 @@ def build_dispatch_prompt(
     reply_file: str | None = None,
     worktree_path: str | None = None,
     worktree_branch: str | None = None,
+    artifacts_dir: str | None = None,
 ) -> str:
     skill_lines = _dispatch_skill_prompt_lines(skill_loads or [])
+    # round 6 live 发现：worktree 内嵌的产物会随 prune 一起被删除。
+    artifact_pin_lines = (
+        [
+            f"产物文件（full_output_path 指向的报告等）请写到主仓库 {artifacts_dir}/ 下（绝对路径），",
+            "不要写进本 worktree——worktree 清理时会连带删除其中的产物。",
+        ]
+        if artifacts_dir
+        else []
+    )
     worktree_lines = (
         [
             "工作目录（本任务专用 worktree）:",
@@ -10155,6 +10165,7 @@ def build_dispatch_prompt(
             # （diff、review 检出、merge）只看任务分支上的 commit。
             f"任务完成后必须在该 worktree 内把全部改动 git commit 到当前任务分支 {worktree_branch or '（当前分支）'}；",
             "不要 push，不要切换或合并分支；未 commit 的改动不会进入审阅与合并流程。",
+            *artifact_pin_lines,
             "",
         ]
         if worktree_path
@@ -10605,6 +10616,7 @@ def dispatch_command(args: argparse.Namespace) -> int:
         reply_file=str(reply_file),
         worktree_path=(worktree_info or {}).get("path"),
         worktree_branch=(worktree_info or {}).get("branch"),
+        artifacts_dir=str(Path(config.root) / ".agentdeck" / "artifacts") if worktree_info else None,
     )
     records = store.create_dispatch_records(
         args.from_agent,
@@ -18268,6 +18280,7 @@ def _dispatch_approved_approval(
         reply_file=str(reply_file),
         worktree_path=(worktree_info or {}).get("path"),
         worktree_branch=(worktree_info or {}).get("branch"),
+        artifacts_dir=str(Path(config.root) / ".agentdeck" / "artifacts") if worktree_info else None,
     )
     records = store.create_dispatch_records(
         "leader",

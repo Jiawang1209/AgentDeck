@@ -2,6 +2,26 @@
 
 本文件记录 AgentDeck 每一次开发内容。约束：每次新增功能、文档规则、项目骨架、运行环境或用户可见行为变化，都必须同步更新本文件，并在同一次 commit 中提交。
 
+## 2026-07-26
+
+### Pin worktree dispatch artifacts to the main repo artifacts dir
+
+- **Type**: fix
+- **Motivation**: round 6 live 发现 ③——reviewer 以 worktree 为 cwd，把
+  review 报告写进 worktree 内嵌的 `.agentdeck/artifacts/` 相对路径；
+  `worktree prune` 删除 worktree 时产物连带丢失，本轮靠人工抢救。
+- **What**: `build_dispatch_prompt` 新增 `artifacts_dir` 参数；worktree 模式
+  的 dispatch prompt 追加产物钉扎行：full_output_path 指向的产物必须写到
+  主仓库 `<root>/.agentdeck/artifacts/`（绝对路径），不要写进 worktree。
+  `dispatch` 与 `approval dispatch` 两条派发路径在有 worktree 时传入该目录；
+  shared 模式 prompt 不变（cwd 即主仓库，相对路径无此风险）。task-worktree
+  设计文档同步补充该护栏。
+- **Impact**: worktree 任务的产物存活期与 worktree 生命周期解耦；配合
+  in-flight prune 守卫，产物丢失窗口关闭。无契约变化。
+- **Verification**: RED 先证 worktree prompt 无产物钉扎行；GREEN 后 dispatch
+  套件 34 passed；全量 `pytest tests/ -q` 绿（pipefail）+ compileall
+  （见 commit）。
+
 ## 2026-07-25
 
 ### Parse multiline full_output_path in structured replies
