@@ -4,6 +4,25 @@
 
 ## 2026-07-25
 
+### Convert provider HTTP errors into clean bounded leader errors
+
+- **Type**: fix
+- **Motivation**: round 4 发现①——DeepSeek 返回 400 时 `leader plan` 裸
+  traceback 崩溃，未写 `leader_errors[]`/`leader_provider_failed`，违反项目
+  既有规则（round4-findings loop 切片 1）。
+- **What**: `providers/openai_compatible.py` `_legacy_plan` 的 urlopen 包
+  `HTTPError`/`URLError` 捕获：HTTPError 经 `_bounded_http_error_detail`
+  读取错误体（≤2000B、优先远端 JSON `error.message`、截断 500 字符、
+  无密钥）转 `RuntimeError("provider HTTP <code>: <detail>")`；URLError 转
+  `RuntimeError("provider request failed: <reason>")`。CLI 既有 RuntimeError
+  处理路径自然接住：干净退出 1、leader_errors 落账、事件追加、不半写 plan。
+  远端 message（如"supported API model names ..."）随错误面可见，缓解发现②。
+- **Impact**: provider 远端错误从崩溃变成可审计的 Leader 错误；semantic
+  路径（原有净化错误）不受影响。
+- **Verification**: RED 三例先证 HTTPError 逃逸（provider 级×2 + CLI 级）；
+  GREEN 后 `test_provider_openai_compatible + test_leader_cli` 269 passed；
+  全量 `pytest tests/ -q` 绿（pipefail）+ compileall（见 commit）。
+
 ### Write round-4 findings convergence loop plan (order 1-4-3-5-2)
 
 - **Type**: docs

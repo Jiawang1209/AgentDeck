@@ -14,7 +14,7 @@
 
 ## 切片清单（按序执行）
 
-### [ ] 1.（发现①）provider HTTP 错误不再裸崩 CLI
+### [x] 1.（发现①）provider HTTP 错误不再裸崩 CLI
 
 - 现象：DeepSeek 返回 400 时 `leader plan` 直接 traceback 崩溃，未写
   `leader_errors[]` / `leader_provider_failed` 事件，违反项目既有规则。

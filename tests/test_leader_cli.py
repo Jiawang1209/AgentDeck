@@ -3011,6 +3011,35 @@ def test_leader_plan_records_provider_error_without_dispatching(tmp_path, monkey
     assert '"event_type": "leader_provider_failed"' in events
 
 
+def test_leader_plan_http_error_records_leader_error_without_crash(tmp_path, monkeypatch, capsys) -> None:
+    import io
+    from urllib.error import HTTPError
+
+    root = prepare_project(tmp_path, monkeypatch)
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key")
+    body = json.dumps(
+        {"error": {"message": "The supported API model names are deepseek-v4-pro or deepseek-v4-flash."}}
+    ).encode("utf-8")
+
+    def fake_urlopen(request, timeout):
+        raise HTTPError(request.full_url, 400, "Bad Request", None, io.BytesIO(body))
+
+    monkeypatch.setattr("agentdeck.providers.openai_compatible.request.urlopen", fake_urlopen)
+
+    exit_code = cli.main(["leader", "plan", "--provider", "deepseek", "--task", "远端模型下线"])
+
+    assert exit_code == 1
+    err = capsys.readouterr().err
+    assert "leader provider failed" in err
+    assert "HTTP 400" in err
+    state = StateStore(root).load()
+    assert state["plans"] == []
+    assert state["leader_errors"][0]["mode"] == "plan"
+    assert "supported API model names" in state["leader_errors"][0]["error"]
+    events = (root / ".agentdeck" / "state" / "events.jsonl").read_text(encoding="utf-8")
+    assert '"event_type": "leader_provider_failed"' in events
+
+
 def test_leader_chat_creates_plan_from_natural_language_without_dispatching(tmp_path, monkeypatch, capsys) -> None:
     root = prepare_project(tmp_path, monkeypatch)
 

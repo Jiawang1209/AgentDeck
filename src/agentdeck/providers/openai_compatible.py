@@ -7,7 +7,7 @@ import os
 import time
 from json import JSONDecodeError
 from urllib import request
-from urllib.error import URLError
+from urllib.error import HTTPError, URLError
 
 from agentdeck.models import AgentSpec
 from agentdeck.semantic_authority import (
@@ -39,6 +39,31 @@ from .semantic_plan_schema import (
 
 MAX_API_LEADER_OUTPUT_BYTES = 2 * 1024 * 1024
 _API_READ_CHUNK_BYTES = 64 * 1024
+
+
+def _bounded_http_error_detail(error: HTTPError, limit: int = 500) -> str:
+    """Read a bounded, key-free detail string from an HTTP error body.
+
+    Prefers the remote JSON `error.message` (for example a provider's
+    supported-model hint); falls back to truncated raw text."""
+    try:
+        raw = error.read(2000).decode("utf-8", errors="replace")
+    except Exception:
+        raw = ""
+    detail = ""
+    if raw:
+        try:
+            parsed = json.loads(raw)
+            nested = parsed.get("error") if isinstance(parsed, dict) else None
+            if isinstance(nested, dict) and isinstance(nested.get("message"), str):
+                detail = nested["message"]
+        except ValueError:
+            pass
+        if not detail:
+            detail = " ".join(raw.split())
+    if not detail:
+        detail = str(error.reason)
+    return detail[:limit]
 
 
 class OpenAICompatibleProviderError(RuntimeError):
@@ -155,8 +180,15 @@ class OpenAICompatibleProvider:
             },
             method="POST",
         )
-        with request.urlopen(req, timeout=self.timeout) as response:
-            data = json.loads(response.read().decode("utf-8"))
+        try:
+            with request.urlopen(req, timeout=self.timeout) as response:
+                data = json.loads(response.read().decode("utf-8"))
+        except HTTPError as error:
+            raise RuntimeError(
+                f"provider HTTP {error.code}: {_bounded_http_error_detail(error)}"
+            ) from None
+        except URLError as error:
+            raise RuntimeError(f"provider request failed: {error.reason}") from None
         plan = self._extract_plan(data)
         self._validate_plan(plan, plan_request)
         return plan

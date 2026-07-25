@@ -493,6 +493,60 @@ def test_deepseek_provider_uses_deepseek_env_and_openai_compatible_plan_shape(tm
     assert plan["dispatch_ready"] is False
 
 
+def test_legacy_plan_converts_http_error_to_clean_runtime_error(tmp_path, monkeypatch) -> None:
+    import io
+    from urllib.error import HTTPError
+
+    root = tmp_path / "repo"
+    root.mkdir()
+    write_default_config(root)
+    config = load_config(root)
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "deepseek-secret-key")
+    body = json.dumps(
+        {
+            "error": {
+                "message": "The supported API model names are deepseek-v4-pro or deepseek-v4-flash, but you passed deepseek-chat.",
+                "type": "invalid_request_error",
+            }
+        }
+    ).encode("utf-8")
+
+    def fake_urlopen(request, timeout):
+        raise HTTPError(request.full_url, 400, "Bad Request", None, io.BytesIO(body))
+
+    monkeypatch.setattr("agentdeck.providers.openai_compatible.request.urlopen", fake_urlopen)
+    provider = leader_provider("deepseek")
+
+    with pytest.raises(RuntimeError) as excinfo:
+        provider.plan(LeaderPlanRequest(task="远端模型下线", config=config))
+
+    message = str(excinfo.value)
+    assert "HTTP 400" in message
+    assert "supported API model names" in message
+    assert "deepseek-secret-key" not in message
+
+
+def test_legacy_plan_converts_url_error_to_clean_runtime_error(tmp_path, monkeypatch) -> None:
+    from urllib.error import URLError
+
+    root = tmp_path / "repo"
+    root.mkdir()
+    write_default_config(root)
+    config = load_config(root)
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "deepseek-secret-key")
+
+    def fake_urlopen(request, timeout):
+        raise URLError("connection refused")
+
+    monkeypatch.setattr("agentdeck.providers.openai_compatible.request.urlopen", fake_urlopen)
+    provider = leader_provider("deepseek")
+
+    with pytest.raises(RuntimeError) as excinfo:
+        provider.plan(LeaderPlanRequest(task="网络失败", config=config))
+
+    assert "connection refused" in str(excinfo.value)
+
+
 def test_codex_cli_provider_runs_non_interactive_command_and_parses_json_plan(
     tmp_path, monkeypatch
 ) -> None:
