@@ -12883,6 +12883,53 @@ def test_agent_capture_flags_pending_permission_prompt(tmp_path, monkeypatch, ca
     assert payload["waiting_hint"] == "Press enter to confirm or esc to cancel"
 
 
+def test_agent_capture_flags_stuck_composer_content(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    _bind_running_planner(root)
+    fake = FakeTmuxBackend()
+    # 2026-07-25 round 4 发现⑤：多行 dispatch prompt 尾部卡在 Claude Code
+    # composer 未提交，worker 静默空转；capture 应把"输入框有未提交内容"显性化。
+    fake.capture_text = (
+        "  +1 more · /status\n"
+        "──────────────────────────────\n"
+        "❯ ）:\n"
+        "  /Users/liuyue/project/.agentdeck/replies/msg_x.reply.txt\n"
+        "──────────────────────────────\n"
+        "  [Fable 5] │ project git:(main*)\n"
+        "  Context ░░░░░░░░░░ 0%\n"
+    )
+    monkeypatch.setattr(cli, "TmuxBackend", lambda: fake)
+
+    exit_code = cli.main(["agent", "capture", "--agent", "planner"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["composer_pending"] is True
+    assert payload["composer_preview"] == "）:"
+    assert payload["waiting_for_input"] is False
+
+
+def test_agent_capture_reports_empty_composer_as_not_pending(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    _bind_running_planner(root)
+    fake = FakeTmuxBackend()
+    fake.capture_text = (
+        "✻ thinking done\n"
+        "──────────────────────────────\n"
+        "❯ \n"
+        "──────────────────────────────\n"
+        "  [Fable 5] │ project git:(main*)\n"
+    )
+    monkeypatch.setattr(cli, "TmuxBackend", lambda: fake)
+
+    exit_code = cli.main(["agent", "capture", "--agent", "planner"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["composer_pending"] is False
+    assert payload["composer_preview"] is None
+
+
 def test_agent_capture_reports_not_waiting_for_plain_output(tmp_path, monkeypatch, capsys) -> None:
     root = prepare_project(tmp_path, monkeypatch)
     _bind_running_planner(root)

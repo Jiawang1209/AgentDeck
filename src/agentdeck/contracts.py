@@ -2321,6 +2321,10 @@ AGENT_RUNTIME_CAPTURE_RESPONSE_FIELDS = (
     "agent_id",
     "pane_id",
     "output",
+    "waiting_for_input",
+    "waiting_hint",
+    "composer_pending",
+    "composer_preview",
 )
 
 AGENT_RUNTIME_TERMINAL_RESPONSE_FIELDS = LEADER_CHAT_TERMINAL_CARD_FIELDS
@@ -16714,6 +16718,10 @@ def agent_runtime_example() -> dict[str, object]:
             "agent_id": agent_id,
             "pane_id": "%42",
             "output": "status: completed\n",
+            "waiting_for_input": False,
+            "waiting_hint": None,
+            "composer_pending": False,
+            "composer_preview": None,
         },
         "terminal": {
             "ok": True,

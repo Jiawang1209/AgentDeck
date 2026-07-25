@@ -4,6 +4,26 @@
 
 ## 2026-07-25
 
+### Surface stuck TUI composer content in agent capture (read-only)
+
+- **Type**: feat
+- **Motivation**: round 4 发现⑤——多行 dispatch prompt 尾部卡在 Claude Code
+  composer 未提交，worker 静默空转（Context 0%），确认框启发式
+  `waiting_for_input` 探测不到（round4-findings loop 切片 4）。
+- **What**: `agent capture` 新增只读派生字段 `composer_pending`（bool）+
+  `composer_preview`（输入框首行或 null）：启发式取最后一个 `❯` 提示符行，
+  收集其后到分隔线边界前的非空内容（`_detect_composer_pending` +
+  `_is_composer_boundary_line`）。纯观察：不发输入、不自动提交、不重发。
+  补齐 agent-runtime capture 契约字段（连同切片 B 欠账的
+  waiting_for_input/waiting_hint 一起入 `AGENT_RUNTIME_CAPTURE_RESPONSE_FIELDS`
+  + example fixture），schema 文档记录两组启发式语义与"dispatch 送达校验
+  自动化是待 human 决策的 fork"。
+- **Impact**: round 4 靠肉眼发现的 composer 卡壳现在可被 capture/监视脚本
+  确定性探测；capture 语义与既有字段不变。
+- **Verification**: RED 两例（卡壳/空 composer）先证 KeyError；GREEN 后
+  13 例目标 + 核心回归 1144 passed；全量 `pytest tests/ -q` 绿（pipefail）
+  + compileall（见 commit）。
+
 ### Enforce sequential step order in run-loop waves
 
 - **Type**: fix

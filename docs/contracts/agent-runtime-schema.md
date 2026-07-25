@@ -205,13 +205,21 @@ The command does not attach to tmux, read pane output, send input, write state, 
 {
   "agent_id": "planner",
   "pane_id": "%42",
-  "output": "status: completed\n"
+  "output": "status: completed\n",
+  "waiting_for_input": false,
+  "waiting_hint": null,
+  "composer_pending": false,
+  "composer_preview": null
 }
 ```
 
 - `agent_id`: captured agent id.
 - `pane_id`: tmux pane id bound to the agent.
 - `output`: captured pane output.
+- `waiting_for_input` / `waiting_hint`: read-only heuristic for a pending TUI confirmation dialog (known prompt lines such as "Press enter to confirm", scanned near the tail of the capture); the hint is the matched line or `null`.
+- `composer_pending` / `composer_preview`: read-only heuristic for unsubmitted text sitting in a TUI composer (Claude Code style `❯` prompt): the last prompt-marker line's text plus following lines up to a separator boundary; the preview is the first non-empty composer line or `null`. This surfaces the "multi-line dispatch prompt tail stuck in the composer" silent-idle state that the confirmation-dialog heuristic cannot see (round 4 live finding 5).
+
+All four derived fields are observation only: capture never sends input, never auto-submits a stuck composer, and never retries a dispatch. Automated delivery verification after dispatch (post-send capture check, or segmented send with submit confirmation) is a recorded follow-up direction that requires an explicit human decision.
 
 ## Release Response Fields
 

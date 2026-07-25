@@ -53,7 +53,7 @@
   RED 用例=两步计划全 approved 双 agent running 时 wave 只派 step 1；
   step 1 回复入账后下一 wave 派 step 2；既有单步用例不回归。
 
-### [ ] 4.（发现⑤）dispatch 送达校验（只读探测 + 设计说明）
+### [x] 4.（发现⑤）dispatch 送达校验（只读探测 + 设计说明）
 
 - 现象：多行 dispatch prompt 尾部卡在 Claude Code composer，worker 静默
   空转，`waiting_for_input`（确认框启发式）探测不到。

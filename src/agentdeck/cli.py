@@ -9785,6 +9785,41 @@ def _detect_waiting_for_input(output: str) -> str | None:
     return None
 
 
+_COMPOSER_PROMPT_MARKER = "❯"
+
+
+def _is_composer_boundary_line(stripped: str) -> bool:
+    return len(stripped) >= 3 and set(stripped) <= {"─", "-", "━", "═"}
+
+
+def _detect_composer_pending(output: str) -> tuple[bool, str | None]:
+    # 2026-07-25 round 4 发现⑤：多行 dispatch prompt 尾部可能卡在 TUI composer
+    # 未提交（Claude Code 风格 `❯` 提示符），worker 静默空转且确认框启发式
+    # 探测不到。只读派生：取最后一个提示符行，收集其后到分隔线前的非空内容。
+    lines = output.splitlines()
+    marker_index = None
+    for index in range(len(lines) - 1, -1, -1):
+        if lines[index].strip().startswith(_COMPOSER_PROMPT_MARKER):
+            marker_index = index
+            break
+    if marker_index is None:
+        return False, None
+    content: list[str] = []
+    first = lines[marker_index].strip()[len(_COMPOSER_PROMPT_MARKER):].strip()
+    if first:
+        content.append(first)
+    for line in lines[marker_index + 1:]:
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if _is_composer_boundary_line(stripped):
+            break
+        content.append(stripped)
+    if not content:
+        return False, None
+    return True, content[0]
+
+
 def agent_capture_command(args: argparse.Namespace) -> int:
     config, store, exit_code = _load_project_or_error()
     if config is None or store is None:
@@ -9795,6 +9830,7 @@ def agent_capture_command(args: argparse.Namespace) -> int:
     pane_id = str(binding["pane_id"])
     output = TmuxBackend().capture_output(config.runtime, pane_id, args.lines)
     waiting_hint = _detect_waiting_for_input(output)
+    composer_pending, composer_preview = _detect_composer_pending(output)
     _print_json(
         {
             "agent_id": args.agent,
@@ -9802,6 +9838,8 @@ def agent_capture_command(args: argparse.Namespace) -> int:
             "output": output,
             "waiting_for_input": waiting_hint is not None,
             "waiting_hint": waiting_hint,
+            "composer_pending": composer_pending,
+            "composer_preview": composer_preview,
         }
     )
     return 0
