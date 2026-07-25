@@ -452,6 +452,59 @@ def test_capture_reply_prefers_reply_file_channel_over_pane(tmp_path, monkeypatc
     assert "summary: 来自文件通道" in reply["text"]
 
 
+def test_capture_reply_parses_multiline_full_output_path(tmp_path, monkeypatch, capsys) -> None:
+    # round 6 live 发现：codex 把 full_output_path 的值写在字段下一行
+    # （YAML 缩进风格），单行解析器取不到值导致 artifact 未登记。
+    root = prepare_project(tmp_path, monkeypatch)
+    bind_planner(root)
+    fake = FakeTmuxBackend()
+    monkeypatch.setattr(cli, "TmuxBackend", lambda: fake)
+    cli.main(["dispatch", "--agent", "planner", "--task", "分析首页布局"])
+    message_id = json.loads(capsys.readouterr().out)["message_id"]
+    reply_file = root / ".agentdeck" / "replies" / f"{message_id}.reply.txt"
+    reply_file.parent.mkdir(parents=True, exist_ok=True)
+    reply_file.write_text(
+        "status: completed\n"
+        "summary: 产物路径在下一行\n"
+        "full_output_path:\n"
+        "  /tmp/round6-report.md\n",
+        encoding="utf-8",
+    )
+
+    exit_code = cli.main(["capture-reply", "--agent", "planner", "--message-id", message_id])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
+    artifacts = StateStore(root).load().get("artifacts", [])
+    assert [a["path"] for a in artifacts] == ["/tmp/round6-report.md"]
+
+
+def test_capture_reply_multiline_key_without_value_registers_no_artifact(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    bind_planner(root)
+    fake = FakeTmuxBackend()
+    monkeypatch.setattr(cli, "TmuxBackend", lambda: fake)
+    cli.main(["dispatch", "--agent", "planner", "--task", "分析首页布局"])
+    message_id = json.loads(capsys.readouterr().out)["message_id"]
+    reply_file = root / ".agentdeck" / "replies" / f"{message_id}.reply.txt"
+    reply_file.parent.mkdir(parents=True, exist_ok=True)
+    # 空的 full_output_path 后面紧跟另一个 key：不得把下一个 key 行当路径。
+    reply_file.write_text(
+        "status: completed\n"
+        "summary: 没有产物\n"
+        "full_output_path:\n"
+        "risks: 无\n",
+        encoding="utf-8",
+    )
+
+    exit_code = cli.main(["capture-reply", "--agent", "planner", "--message-id", message_id])
+
+    assert exit_code == 0
+    capsys.readouterr()
+    assert StateStore(root).load().get("artifacts", []) == []
+
+
 def test_capture_reply_falls_back_to_pane_when_reply_file_has_no_status(tmp_path, monkeypatch, capsys) -> None:
     root = prepare_project(tmp_path, monkeypatch)
     bind_planner(root)

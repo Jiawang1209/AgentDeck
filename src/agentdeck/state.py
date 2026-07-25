@@ -9853,11 +9853,23 @@ class StateStore:
     @staticmethod
     def _structured_reply_value(text: str, key: str) -> str | None:
         prefix = f"{key}:"
-        for line in text.splitlines():
+        lines = text.splitlines()
+        for index, line in enumerate(lines):
             stripped = line.strip()
             if stripped.lower().startswith(prefix):
                 value = stripped[len(prefix):].strip().strip("\"'`")
-                return value or None
+                if value:
+                    return value
+                # 真实 agent 会把值写在字段下一行（YAML 缩进续行）；只接受
+                # 缩进行作为续行，顶格行是下一个字段而不是值。
+                for follow in lines[index + 1:]:
+                    if not follow.strip():
+                        continue
+                    if follow[:1] in (" ", "\t"):
+                        continuation = follow.strip().strip("\"'`")
+                        return continuation or None
+                    break
+                return None
         return None
 
     @staticmethod

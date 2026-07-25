@@ -4,6 +4,21 @@
 
 ## 2026-07-25
 
+### Parse multiline full_output_path in structured replies
+
+- **Type**: fix
+- **Motivation**: round 6 live 发现 ④——codex 把 `full_output_path:` 的值写在
+  字段下一行（YAML 缩进续行风格），单行解析器取不到值，coder 回复的产物
+  没有登记进 artifacts 账本。
+- **What**: `StateStore._structured_reply_value` 在 key 行值为空时向下扫描：
+  跳过空行，接受首个缩进行（空格/tab 开头）作为续行值；顶格行视为下一个
+  字段立即停止，绝不把其它 key 行当路径。单行格式行为不变。
+- **Impact**: `reply`/`capture-reply`/run-loop 文件摄入对两种真实 agent
+  输出格式（单行与缩进续行）都能登记 artifact；无新字段，无契约变化。
+- **Verification**: RED 先证多行格式 artifact 未登记；反向守卫测试证空值
+  后紧跟顶格 key 不误取；GREEN 后 dispatch/agent/leader/workflow 套件
+  660 passed；全量 `pytest tests/ -q` 绿（pipefail）+ compileall（见 commit）。
+
 ### Guard in-flight task worktrees from prune with ledger semantics
 
 - **Type**: fix
