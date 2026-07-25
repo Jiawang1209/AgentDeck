@@ -4,6 +4,25 @@
 
 ## 2026-07-25
 
+### Report unresolved task worktrees on agent release
+
+- **Type**: feat
+- **Motivation**: release 与 worktree 生命周期需要联动——释放 worker 时人类
+  必须一眼看到还有哪些任务产物未合并/未放弃（task-worktree loop 切片 5）。
+- **What**: `agent release --confirm` 响应新增 `dirty_worktrees[]`（该 agent
+  名下 existing 且未 abandon 且（git-dirty 或分支未合并）的 worktree，
+  `{message_id,branch,path}`），`agent_released` 事件携带
+  `dirty_worktree_count`；release 只报告绝不删除，处置走显式 worktree
+  merge/abandon/prune。`AGENT_RUNTIME_RELEASE_RESPONSE_FIELDS` 与 schema
+  文档同步。执行偏差：lifecycle 卡片计数字段取消（卡片纯 payload 派生
+  不得 shell git；provenance 计数可由 ProjectView messages 直接得出），
+  已记录于计划切片 5。
+- **Impact**: 释放动作有了完整的"未了产物"清单；task-worktree loop 五切片
+  全部完成，G4（任务级隔离）主体落地，live 验证轮（round 6）待 user 在场。
+- **Verification**: RED 先证 KeyError；GREEN 后 release 4 例 + worktree list
+  断言过，核心回归 contracts/agent/dispatch/leader 1172 passed；全量
+  `pytest tests/ -q` 绿（pipefail）+ compileall（见 commit）。
+
 ### Add explicit worktree merge/abandon/prune lifecycle commands
 
 - **Type**: feat

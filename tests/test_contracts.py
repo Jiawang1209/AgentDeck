@@ -1433,7 +1433,7 @@ def test_agent_runtime_contract_payload_is_reusable_without_cli(tmp_path: Path) 
     assert payload["send_command_template"] == "agentdeck agent send --agent <id> --text <text>"
     assert payload["stop_command_template"] == "agentdeck agent stop --agent <id>"
     assert payload["release_command_template"] == "agentdeck agent release --agent <id> --confirm"
-    assert payload["release_response_fields"] == ["ok", "mode", "agent_id", "pane_id", "status"]
+    assert payload["release_response_fields"] == ["ok", "mode", "agent_id", "pane_id", "status", "dirty_worktrees"]
     assert payload["refresh_command"] == "agentdeck agent refresh"
     assert payload["contract_path"] == str(contract_path)
     assert payload["contract_exists"] is True

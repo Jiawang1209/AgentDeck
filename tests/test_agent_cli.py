@@ -13228,6 +13228,7 @@ def test_agent_release_marks_released_and_kills_pane(tmp_path, monkeypatch, caps
         "agent_id": "planner",
         "pane_id": "%42",
         "status": "released",
+        "dirty_worktrees": [],
     }
     assert fake.killed == ["%42"]
     state = StateStore(root).load()
@@ -13243,6 +13244,49 @@ def test_agent_release_marks_released_and_kills_pane(tmp_path, monkeypatch, caps
     )
     assert planner_item["runtime_status"] == "released"
     assert planner_item["lifecycle_stage"] == "released"
+
+
+def test_agent_release_lists_unresolved_worktrees_without_deleting(tmp_path, monkeypatch, capsys) -> None:
+    import subprocess
+
+    root = prepare_project(tmp_path, monkeypatch)
+    subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+    subprocess.run(["git", "-C", str(root), "config", "user.email", "t@example.com"], check=True)
+    subprocess.run(["git", "-C", str(root), "config", "user.name", "tester"], check=True)
+    (root / "README.md").write_text("hello\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(root), "add", "README.md"], check=True)
+    subprocess.run(["git", "-C", str(root), "commit", "-qm", "init"], check=True)
+    bind_agent(root, "coder", "%50")
+    fake = FakeTmuxBackend()
+    monkeypatch.setattr(cli, "TmuxBackend", lambda: fake)
+    cli.main(["dispatch", "--agent", "coder", "--task", "worktree 任务"])
+    message_id = json.loads(capsys.readouterr().out)["message_id"]
+    cli.main(["reply", "--agent", "coder", "--message-id", message_id, "--text", "status: completed"])
+    capsys.readouterr()
+    state = StateStore(root).load()
+    wt_path = next(m for m in state["messages"] if m["message_id"] == message_id)["worktree_path"]
+    (Path(wt_path) / "wip.txt").write_text("uncommitted\n", encoding="utf-8")
+    while True:
+        cli.main(["inbox", "--agent", "coder"])
+        inbox_head = json.loads(capsys.readouterr().out).get("head_inbox_id")
+        if not inbox_head:
+            break
+        cli.main(["ack", "--agent", "coder", "--inbox-id", inbox_head])
+        capsys.readouterr()
+
+    exit_code = cli.main(["agent", "release", "--agent", "coder", "--confirm"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["status"] == "released"
+    dirty = payload["dirty_worktrees"]
+    assert [item["message_id"] for item in dirty] == [message_id]
+    assert Path(wt_path).exists()  # release 绝不删除 worktree
+
+    cli.main(["worktree", "list"])
+    listing = json.loads(capsys.readouterr().out)
+    assert [item["message_id"] for item in listing["items"]] == [message_id]
+    assert listing["items"][0]["exists"] is True
 
 
 def _seed_pending_approval(root, approval_id, agent_id):

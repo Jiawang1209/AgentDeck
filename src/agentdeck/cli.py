@@ -9996,12 +9996,26 @@ def agent_release_command(args: argparse.Namespace) -> int:
     if pane_id and binding.get("status") == "running":
         TmuxBackend().kill_pane(config.runtime, pane_id)
     store.mark_agent_released(args.agent)
+    dirty_worktrees: list[dict[str, object]] = []
+    for message in _worktree_messages(state):
+        if message.get("to_agent") != args.agent:
+            continue
+        item = _worktree_item(config, state, message)
+        if item["exists"] and not item["abandoned"] and (item["dirty"] or not item["merged"]):
+            dirty_worktrees.append(
+                {
+                    "message_id": item["message_id"],
+                    "branch": item["branch"],
+                    "path": item["path"],
+                }
+            )
     store.append_event(
         EventRecord.create(
             "agent_released",
             {
                 "agent_id": args.agent,
                 "pane_id": pane_id,
+                "dirty_worktree_count": len(dirty_worktrees),
             },
         )
     )
@@ -10012,6 +10026,7 @@ def agent_release_command(args: argparse.Namespace) -> int:
             "agent_id": args.agent,
             "pane_id": pane_id,
             "status": "released",
+            "dirty_worktrees": dirty_worktrees,
         }
     )
     return 0

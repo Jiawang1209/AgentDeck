@@ -52,12 +52,15 @@
   worktree（`git worktree remove` + 分支删除按已合并才删），dirty 未标记
   拒绝。三命令均要求 `--confirm`、各自审计事件、缺 confirm 零写。
 
-### [ ] 5. 生命周期/释放联动
+### [x] 5. 生命周期/释放联动
 
 - `agent release` 响应与事件新增 `dirty_worktrees[]`（该 agent 名下未合并
-  未放弃的 worktree 清单，仅列出绝不删除）；`worker_lifecycle_card` item
-  新增 `worktree_count`/`dirty_worktree_count` 只读字段。workbench contract
-  同步。
+  未放弃的 worktree 清单，仅列出绝不删除）；agent-runtime contract 同步。
+- **执行中偏差（已记录）**：`worker_lifecycle_card` 的 worktree 计数字段
+  取消——卡片是纯 payload 派生（不得 shell git），且 provenance 级计数
+  GUI 可直接从 ProjectView `messages.items[].worktree_path` 得到；为一个
+  便捷计数改写 126 处精确断言不成比例。git 级 dirty 明细由 release 响应
+  与 `worktree list` 提供。
 
 ### 不在本 loop（等 user）
 

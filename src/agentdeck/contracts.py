@@ -2473,6 +2473,7 @@ AGENT_RUNTIME_RELEASE_RESPONSE_FIELDS = (
     "agent_id",
     "pane_id",
     "status",
+    "dirty_worktrees",
 )
 
 AGENT_RUNTIME_CAPTURE_RESPONSE_FIELDS = (
