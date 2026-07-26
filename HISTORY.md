@@ -4,6 +4,24 @@
 
 ## 2026-07-26
 
+### Extend file-channel reply ingestion to run-loop --all
+
+- **Type**: feat
+- **Motivation**: 并行调度器此前明文"暂不做文件摄入（后续切片）"——完成的
+  step 只能靠单计划 wave 或人工 capture 才被承认，`--all` 推进会卡住。
+- **What**: 单计划 wave 的摄入块原样抽取为共享 `_ingest_plan_reply_files`
+  （单计划行为不变）；`_run_loop_all` 每计划 wave 在派发前调用它，以该
+  计划 awaiting 集为界摄入文件通道回复（同一 `record_reply` +
+  `reply_captured` `captured_from=file` + `run_loop_reply_captured` 审计
+  路径，绝不读 pane），结果记入该计划 item 的可选 `captured_replies[]`，
+  完成的 step 可在同 wave 解锁下一 step。run-loop-all schema 的
+  "No file-channel ingestion yet" 边界改写为 parity 描述，CLAUDE.md 同步。
+- **Impact**: `run-loop --all` 与单计划 wave 语义对齐，多计划走开体验不再
+  需要人工 capture 干预；安全边界（awaiting 集、绝不读 pane）不变。
+- **Verification**: RED 先证 --all 不摄入（captured_replies 空）；GREEN 后
+  follow/agent 套件 385 passed；全量 `pytest tests/ -q` 绿（pipefail）+
+  compileall（见 commit）。
+
 ### Add bounded run-loop --follow multi-wave mode with optional box release
 
 - **Type**: feat

@@ -19285,6 +19285,41 @@ def mission_resume_command(args: argparse.Namespace) -> int:
     return _mission_execution_command(args, resume=True)
 
 
+def _ingest_plan_reply_files(
+    config: ProjectConfig, store: StateStore, plan_id: str
+) -> list[dict[str, object]]:
+    """Ingest explicit file-channel replies for this plan's awaiting set
+    (dispatched-but-unreplied messages); never reads the pane."""
+    captured_replies: list[dict[str, object]] = []
+    state_now = store.load()
+    replied_messages = {
+        str(reply.get("message_id"))
+        for reply in state_now.get("replies", [])
+        if isinstance(reply, dict)
+    }
+    awaiting = [
+        (str(approval.get("message_id")), str(approval.get("agent_id")))
+        for approval in state_now.get("approvals", [])
+        if isinstance(approval, dict)
+        and approval.get("plan_id") == plan_id
+        and approval.get("status") == "dispatched"
+        and approval.get("message_id")
+        and str(approval.get("message_id")) not in replied_messages
+    ]
+    for awaiting_message, awaiting_agent in awaiting:
+        captured = _capture_reply_from_file_channel(config, store, awaiting_agent, awaiting_message)
+        if captured is None:
+            continue
+        captured_replies.append(captured)
+        store.append_event(EventRecord.create("run_loop_reply_captured", {
+            "plan_id": plan_id,
+            "message_id": captured["message_id"],
+            "reply_id": captured["reply_id"],
+            "agent_id": captured["agent_id"],
+        }))
+    return captured_replies
+
+
 def _run_loop_all(config: ProjectConfig, store: StateStore) -> int:
     """Round-robin one wave over all active plans (shared budget, skip-on-contention)."""
     policy = config.autonomous
@@ -19310,6 +19345,10 @@ def _run_loop_all(config: ProjectConfig, store: StateStore) -> int:
             store.append_event(EventRecord.create("approval_decided", {
                 "approval_id": aid, "status": "approved", "source": "autonomous"}))
         budget_remaining -= len(selected)
+        # file-channel ingestion before dispatch, same semantics as the
+        # single-plan wave (bounded by this plan's awaiting set, never reads
+        # the pane); a completed step can unlock the next step this wave.
+        plan_captured_replies = _ingest_plan_reply_files(config, store, plan_id)
         dispatched: list[dict[str, object]] = []
         blocked: list[dict[str, object]] = []
         skipped_contention: list[dict[str, object]] = []
@@ -19362,7 +19401,7 @@ def _run_loop_all(config: ProjectConfig, store: StateStore) -> int:
                 has_error = True
                 store.append_event(EventRecord.create("run_loop_dispatch_failed", {"approval_id": aid, "detail": str(exc)}))
         gate, next_command = run_loop_gate(store.leader_review(plan_id), has_error, plan_id)
-        plan_results.append({
+        plan_result: dict[str, object] = {
             "plan_id": plan_id, "task": plan.get("task"),
             "auto_approved": len(selected), "dispatched": dispatched,
             "blocked": blocked,
@@ -19372,7 +19411,10 @@ def _run_loop_all(config: ProjectConfig, store: StateStore) -> int:
             ] + sequence_held_all,
             "skipped_contention": skipped_contention,
             "gate": gate, "next_command": next_command,
-        })
+        }
+        if plan_captured_replies:
+            plan_result["captured_replies"] = plan_captured_replies
+        plan_results.append(plan_result)
     used = policy.max_approvals - budget_remaining
     totals = {
         "auto_approved": sum(int(p["auto_approved"]) for p in plan_results),
@@ -19464,33 +19506,7 @@ def _run_loop_single_wave(
     # has already announced completion by writing its explicit reply file is
     # ingested (bounded by the awaiting set, never reading the pane). Ingesting
     # first lets a completed step unlock the next step in the same wave.
-    captured_replies: list[dict[str, object]] = []
-    state_now = store.load()
-    replied_messages = {
-        str(reply.get("message_id"))
-        for reply in state_now.get("replies", [])
-        if isinstance(reply, dict)
-    }
-    awaiting = [
-        (str(approval.get("message_id")), str(approval.get("agent_id")))
-        for approval in state_now.get("approvals", [])
-        if isinstance(approval, dict)
-        and approval.get("plan_id") == plan_id
-        and approval.get("status") == "dispatched"
-        and approval.get("message_id")
-        and str(approval.get("message_id")) not in replied_messages
-    ]
-    for awaiting_message, awaiting_agent in awaiting:
-        captured = _capture_reply_from_file_channel(config, store, awaiting_agent, awaiting_message)
-        if captured is None:
-            continue
-        captured_replies.append(captured)
-        store.append_event(EventRecord.create("run_loop_reply_captured", {
-            "plan_id": plan_id,
-            "message_id": captured["message_id"],
-            "reply_id": captured["reply_id"],
-            "agent_id": captured["agent_id"],
-        }))
+    captured_replies = _ingest_plan_reply_files(config, store, plan_id)
 
     # 3) dispatch approved approvals for the earliest incomplete step only
     # (sequential plan semantics): later approved steps stay approved and are

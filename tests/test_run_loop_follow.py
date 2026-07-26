@@ -162,6 +162,32 @@ def test_run_loop_follow_advances_to_complete_as_replies_arrive(tmp_path, monkey
     assert captured == ["planner", "coder"]
 
 
+def test_run_loop_all_ingests_file_channel_replies(tmp_path, monkeypatch, capsys) -> None:
+    # 单计划 wave 的文件摄入语义补齐到 --all（此前明文标注"后续切片"）。
+    root = prepare_project(tmp_path, monkeypatch)
+    bind_agent(root, "planner", "%42")
+    fake = FakeTmuxBackend()
+    monkeypatch.setattr(cli, "TmuxBackend", lambda: fake)
+    enable_autonomous(capsys, ["planner"], 5)
+    plan_id = seed_plan(root, ["planner"])
+
+    # wave 1：--all 派发 step 1
+    assert cli.main(["run-loop", "--all", "--confirm"]) == 0
+    capsys.readouterr()
+    # worker 写出文件通道回复
+    _write_pending_reply_files(root)
+
+    # wave 2：--all 应摄入回复并把该计划推进到 complete
+    assert cli.main(["run-loop", "--all", "--confirm"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    item = next(p for p in payload["plans"] if p["plan_id"] == plan_id)
+    captured = item.get("captured_replies") or []
+    assert [c["captured_from"] for c in captured] == ["file"]
+    assert item["gate"] == "complete"
+    events = (root / ".agentdeck" / "state" / "events.jsonl").read_text(encoding="utf-8")
+    assert '"event_type": "run_loop_reply_captured"' in events
+
+
 CODEX_AUTH_BOX = (
     "  Would you like to run the following command?\n"
     "  $ node tests/regression.mjs\n"

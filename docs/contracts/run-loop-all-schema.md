@@ -14,7 +14,7 @@ Source of truth: `src/agentdeck/contracts.py` (`RUN_LOOP_ALL_RESPONSE_FIELDS`, `
 - **Skip-on-contention**: an agent with a **dispatched-but-unreplied** step (across all plans) is "busy"; the wave does not send it another task — such steps are recorded in the plan's `skipped_contention[]` (left approved), not queued. The busy set is seeded before the wave and grows as the wave dispatches.
 - **Sequential steps within a plan**: each plan's wave dispatches approved approvals for that plan's earliest incomplete step only (complete = rejected, or dispatched with a recorded reply). Later approved steps stay `approved` and are reported in the plan's `skipped[]` with `reason="awaiting earlier step completion"`. Same guard as single-plan `run-loop`.
 - **One wave then stop**: exactly one round-robin pass per invocation; the human re-runs for another wave.
-- **No file-channel ingestion yet**: unlike single-plan `run-loop`, the parallel scheduler does not ingest file-channel replies; a completed step is recognized after its reply is recorded (by a single-plan wave or explicit capture). Extending ingestion to `--all` is a noted follow-up.
+- **File-channel ingestion (parity with single-plan waves)**: each per-plan wave ingests explicit file-channel replies before dispatch, bounded by that plan's awaiting set (dispatched-but-unreplied messages), via the same shared `_ingest_plan_reply_files` path as single-plan `run-loop` (`record_reply` + `reply_captured` `captured_from=file` + one `run_loop_reply_captured` event per reply; never reads the pane). Ingested replies appear in the plan item's optional `captured_replies[]` field, and a completed step can unlock that plan's next step within the same wave.
 
 ## Response fields (`RUN_LOOP_ALL_RESPONSE_FIELDS`)
 
