@@ -4,6 +4,27 @@
 
 ## 2026-07-26
 
+### Add read-only shadow-diff comparison surface (SQLite phase 4)
+
+- **Type**: feat
+- **Motivation**: quarantine 期需要机器可验证的"镜像与权威零漂移"证据面，
+  作为推进 events 切权威（阶段 5）的质量闸门。
+- **What**: `storage/shadow.py` 新增 `reconstruct_state`（镜像逆函数：
+  records 按 position 还原 list 集合、`_DICT_COLLECTIONS` 按 record_id
+  还原 dict、singletons 原样）；实现时发现并修复真缺口——空集合没有
+  records 行导致重建丢 key，镜像现把集合清单写入 meta `collections`，
+  重建先按清单初始化空容器。新增只读 `agentdeck storage shadow-diff`：
+  重建 vs `StateStore.load()` 深比对，逐集合点名 `mismatched_collections`，
+  同步 exit 0、漂移 exit 1、未启用 exit 0，零写。**偏差记录**：不做
+  "每 writer 自动比对"（全量重写镜像后立即比对是恒真式），质量闸门改为
+  每轮 live 收尾必跑 shadow-diff 的纪律。scratch live 首验：46 集合
+  in_sync（8 轮真实数据完整往返）。spec/CLAUDE.md 同步。
+- **Impact**: SQLite 阶段 4 比对面完成；漂移可检、逐集合定位；阶段 5
+  的推进条件（N 轮零 diff）有了执行工具。
+- **Verification**: RED 先证空集合往返丢 key 与 diff 命令缺失；GREEN 后
+  shadow 套件 7 passed；scratch 真实项目 shadow-diff in_sync（46 集合）；
+  全量 `pytest tests/ -q` 绿（pipefail）+ compileall（见 commit）。
+
 ### Redefine SQLite phase 2 and land the quarantined shadow mirror (phase 3)
 
 - **Type**: feat

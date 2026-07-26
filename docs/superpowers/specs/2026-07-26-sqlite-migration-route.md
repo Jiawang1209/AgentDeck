@@ -74,8 +74,15 @@
    JSON 路径；`rm state.db` 即完全回滚）；`storage shadow-status` 只读。
    注：词法 secrets 防火墙**不**应用于镜像（state 键如 `handoff_token`
    会被误杀；防火墙留给后续规范化 canonical facts）。
-4. 影子读比对（差异写 shadow-diff.jsonl 不抛错）——质量闸门，零 diff
-   N 天才推进。
+4. ✅ 影子读比对面已落地（同日，实现偏差已记录）：`reconstruct_state`
+   （镜像逆函数；空集合靠 meta `collections` 清单恢复，否则空 key 丢失
+   ——实现时发现的真缺口）+ 只读 `agentdeck storage shadow-diff`
+   （重建 vs `StateStore.load()` 深比对，逐集合点名 mismatch，漂移
+   exit 1，零写）。**偏差**：不做"每 writer 后自动比对+写 shadow-diff.jsonl"
+   ——全量重写镜像后立即比对是恒真式；真实漂移源（JSON 落盘与镜像间的
+   crash 窗口、绕过 save 的写、镜像损坏）由显式 diff 捕获。质量闸门改为
+   纪律：每轮 live 收尾必跑 `shadow-diff`，零 diff 记录随 validation 文档
+   积累，N 轮零 diff 才推进阶段 5。scratch 首验：46 集合 in_sync。
 5. events.jsonl + approvals.jsonl + 3 个 event_outbox 先切 SQLite 权威
    （append-only 耦合最低收益最高）。
 6. 分集合切 78 writer 权威（叶子→中间→核心），每批递增

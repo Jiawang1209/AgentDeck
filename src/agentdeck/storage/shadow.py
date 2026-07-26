@@ -88,6 +88,24 @@ def mirror_state(connection: sqlite3.Connection, state: dict[str, object]) -> No
     try:
         connection.execute("DELETE FROM records")
         connection.execute("DELETE FROM singletons")
+        # 集合清单入 meta：空 list/dict 集合没有 records 行，重建时必须
+        # 靠清单恢复出空容器，否则空集合的 key 会整个丢失。
+        manifest = {
+            "lists": sorted(
+                key
+                for key, value in state.items()
+                if isinstance(value, list)
+            ),
+            "dicts": sorted(
+                key
+                for key, value in state.items()
+                if key in _DICT_COLLECTIONS and isinstance(value, dict)
+            ),
+        }
+        connection.execute(
+            "INSERT OR REPLACE INTO meta(key, value) VALUES ('collections', ?)",
+            (_dump(manifest),),
+        )
         for collection, value in state.items():
             if collection in _DICT_COLLECTIONS and isinstance(value, dict):
                 for position, (key, item) in enumerate(sorted(value.items())):
@@ -116,6 +134,40 @@ def mirror_state(connection: sqlite3.Connection, state: dict[str, object]) -> No
     except BaseException:
         connection.execute("ROLLBACK")
         raise
+
+
+def reconstruct_state(connection: sqlite3.Connection) -> dict[str, object]:
+    """Inverse of `mirror_state`: rebuild the state dict from the mirror.
+
+    List collections come back in position order; dict collections
+    (`_DICT_COLLECTIONS`) come back keyed by record_id; singletons verbatim.
+    """
+    state: dict[str, object] = {}
+    manifest_row = connection.execute(
+        "SELECT value FROM meta WHERE key = 'collections'"
+    ).fetchone()
+    if manifest_row is not None:
+        manifest = json.loads(manifest_row[0])
+        for key in manifest.get("lists", []):
+            state[key] = []
+        for key in manifest.get("dicts", []):
+            state[key] = {}
+    for collection, record_id, record_json in connection.execute(
+        "SELECT collection, record_id, record_json FROM records"
+        " ORDER BY collection, position"
+    ):
+        item = json.loads(record_json)
+        if collection in _DICT_COLLECTIONS:
+            bucket = state.setdefault(collection, {})
+            assert isinstance(bucket, dict)
+            bucket[record_id] = item
+        else:
+            bucket = state.setdefault(collection, [])
+            assert isinstance(bucket, list)
+            bucket.append(item)
+    for key, value_json in connection.execute("SELECT key, value_json FROM singletons"):
+        state[key] = json.loads(value_json)
+    return state
 
 
 def _shadow_enabled(connection: sqlite3.Connection) -> bool:

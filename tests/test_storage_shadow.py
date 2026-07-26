@@ -12,7 +12,11 @@ from agentdeck.storage.schema import (
     EXPECTED_SCHEMA_V1_FINGERPRINT,
     apply_schema_v1,
 )
-from agentdeck.storage.shadow import mirror_state, shadow_database_path
+from agentdeck.storage.shadow import (
+    mirror_state,
+    reconstruct_state,
+    shadow_database_path,
+)
 
 
 def prepare_project(tmp_path: Path, monkeypatch) -> Path:
@@ -69,6 +73,65 @@ def test_mirror_state_roundtrip_and_update() -> None:
         assert not any(c == "agents" for c, _ in rows)
     finally:
         connection.close()
+
+
+def test_reconstruct_state_roundtrips_the_mirror() -> None:
+    connection = sqlite3.connect(":memory:")
+    try:
+        apply_schema_v1(connection)
+        state = {
+            "agents": {"coder": {"agent_id": "coder"}, "planner": {"agent_id": "planner"}},
+            "messages": [
+                {"message_id": "msg_1", "task": "第一"},
+                {"message_id": "msg_2", "task": "第二", "nested": {"deep": [1, None, "x"]}},
+            ],
+            "abandoned_worktrees": ["msg_old"],
+            "plans": [],
+            "daemon_runtime": None,
+            "controller_lease": {"holder": "daemon", "generation": 3},
+        }
+        mirror_state(connection, state)
+        assert reconstruct_state(connection) == state
+    finally:
+        connection.close()
+
+
+def test_storage_shadow_diff_reports_sync_and_drift(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+
+    # 未启用：exit 0，enabled false
+    assert cli.main(["storage", "shadow-diff"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["mode"] == "storage_shadow_diff"
+    assert payload["enabled"] is False
+
+    cli.main(["storage", "shadow-enable", "--confirm"])
+    capsys.readouterr()
+    store = StateStore(root)
+    state = store.load()
+    state["plans"].append({"plan_id": "pln_diff", "task": "g", "status": "planned"})
+    store.save(state)
+    before = StateStore(root).load()
+
+    # 同步：in_sync true，exit 0，零写
+    assert cli.main(["storage", "shadow-diff"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["enabled"] is True
+    assert payload["in_sync"] is True
+    assert payload["mismatched_collections"] == []
+    assert StateStore(root).load() == before
+
+    # 人为漂移：删一行镜像记录 → in_sync false + 点名集合 + exit 1
+    connection = sqlite3.connect(shadow_database_path(root))
+    try:
+        connection.execute("DELETE FROM records WHERE collection='plans'")
+        connection.commit()
+    finally:
+        connection.close()
+    assert cli.main(["storage", "shadow-diff"]) == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["in_sync"] is False
+    assert "plans" in payload["mismatched_collections"]
 
 
 def test_storage_shadow_enable_requires_confirm_and_writes_meta(tmp_path, monkeypatch, capsys) -> None:

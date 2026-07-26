@@ -10555,6 +10555,48 @@ def storage_shadow_status_command(_args: argparse.Namespace) -> int:
     return 0
 
 
+def storage_shadow_diff_command(_args: argparse.Namespace) -> int:
+    config, store, exit_code = _load_project_or_error()
+    if config is None or store is None:
+        return exit_code
+    from agentdeck.storage import shadow as storage_shadow
+
+    database = storage_shadow.shadow_database_path(config.root)
+    payload: dict[str, object] = {
+        "ok": True,
+        "mode": "storage_shadow_diff",
+        "database": str(database),
+        "enabled": False,
+        "in_sync": None,
+        "mismatched_collections": [],
+        "enable_command": "agentdeck storage shadow-enable --confirm",
+    }
+    if not database.is_file():
+        _print_json(payload)
+        return 0
+    connection = storage_shadow.open_shadow_connection(database)
+    try:
+        enabled = storage_shadow._shadow_enabled(connection)
+        payload["enabled"] = enabled
+        if not enabled:
+            _print_json(payload)
+            return 0
+        mirrored = storage_shadow.reconstruct_state(connection)
+    finally:
+        connection.close()
+    authoritative = store.load()
+    mismatched = sorted(
+        key
+        for key in set(authoritative) | set(mirrored)
+        if authoritative.get(key) != mirrored.get(key)
+    )
+    payload["in_sync"] = not mismatched
+    payload["mismatched_collections"] = mismatched
+    payload["collection_count"] = len(authoritative)
+    _print_json(payload)
+    return 0 if not mismatched else 1
+
+
 def build_dispatch_prompt(
     agent: AgentSpec,
     task: str,
@@ -20803,6 +20845,10 @@ def build_parser() -> argparse.ArgumentParser:
         "shadow-status", help="Read-only shadow mirror status"
     )
     storage_shadow_status.set_defaults(func=storage_shadow_status_command)
+    storage_shadow_diff = storage_subparsers.add_parser(
+        "shadow-diff", help="Read-only comparison of the shadow mirror against the authoritative JSON state"
+    )
+    storage_shadow_diff.set_defaults(func=storage_shadow_diff_command)
 
     dispatch = subparsers.add_parser("dispatch", help="Send a role-aware task to a running agent")
     dispatch.add_argument("--from-agent", default="user", help="Actor or agent id that submitted this task")
