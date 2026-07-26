@@ -106,8 +106,10 @@ async function refreshControls() {
       items.map(i => `<tr><td>${esc(i.scope)}</td><td>${esc(i.kind)}</td>` +
         `<td><code>${esc(i.command)}</code></td>` +
         `<td class="${i.enabled ? "ok" : "muted"}">${esc(i.safety)}${i.enabled ? "" : " (disabled)"}</td>` +
-        `<td>${i.enabled && i.safety === "inspect" && i.control_id
-          ? `<button onclick="runInspect('${esc(i.control_id)}')">Run</button>` : ""}</td></tr>`).join("");
+        `<td>${i.enabled && i.control_id && i.safety === "inspect"
+          ? `<button onclick="runInspect('${esc(i.control_id)}')">Run</button>`
+          : i.enabled && i.control_id && (i.safety === "explicit_user" || i.safety === "explicit_runtime") && !String(i.command || "").includes("<")
+            ? `<button onclick="runExecute('${esc(i.control_id)}', this)">Execute…</button>` : ""}</td></tr>`).join("");
   } catch (e) { /* palette 缺失不致命 */ }
 }
 async function refreshEvents() {
@@ -137,6 +139,25 @@ async function runInspect(controlId) {
       ? JSON.stringify(JSON.parse(text), null, 2)
       : `refused (${response.status}): ${text}`;
   } catch (e) { box.textContent = "inspect failed: " + e; }
+}
+async function runExecute(controlId, button) {
+  const box = document.getElementById("result");
+  const command = button.closest("tr").querySelector("code").textContent;
+  // 二步确认：对话框展示将执行的完整命令，取消即零执行。
+  if (!window.confirm("Execute this command?\n\n" + command)) { return; }
+  box.textContent = "executing " + controlId + "…";
+  try {
+    const response = await fetch("/api/execute", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({control_id: controlId, confirmed: true}),
+    });
+    const text = await response.text();
+    box.textContent = response.ok
+      ? JSON.stringify(JSON.parse(text), null, 2)
+      : `refused (${response.status}): ${text}`;
+    refreshWorkbench();
+  } catch (e) { box.textContent = "execute failed: " + e; }
 }
 refreshWorkbench(); refreshControls(); refreshEvents();
 setInterval(refreshWorkbench, 5000);
@@ -184,20 +205,20 @@ class _UIRequestHandler(BaseHTTPRequestHandler):
             return
         self._send(404, "text/plain; charset=utf-8", b"not found")
 
-    def _resolve_inspect_control(self, control_id: str) -> tuple[list[str] | None, tuple[int, str] | None]:
-        """Re-resolve the control from the live registry; enforce the gates.
-
-        The browser only ever sends a control_id — the command text comes
-        exclusively from AgentDeck's own control registry, and only
-        enabled + safety=inspect + confirm-free commands are executable.
-        """
+    def _lookup_control(self, control_id: str) -> dict[str, object] | None:
+        """Re-resolve a control from the live registry — the browser only ever
+        sends a control_id; command text comes exclusively from AgentDeck's
+        own control registry."""
         payload = run_cli_json(self.project_root, ["controls", "--control-id", control_id])
         items = payload.get("items") if isinstance(payload, dict) else None
-        match = None
         for item in items or []:
             if isinstance(item, dict) and item.get("control_id") == control_id:
-                match = item
-                break
+                return item
+        return None
+
+    def _resolve_inspect_control(self, control_id: str) -> tuple[list[str] | None, tuple[int, str] | None]:
+        """Gates for /api/inspect: enabled + safety=inspect + confirm-free."""
+        match = self._lookup_control(control_id)
         if match is None:
             return None, (404, "unknown control_id")
         if not match.get("enabled"):
@@ -212,9 +233,31 @@ class _UIRequestHandler(BaseHTTPRequestHandler):
             return None, (403, "confirm-gated commands are not executable")
         return argv, None
 
+    def _resolve_execute_control(
+        self, control_id: str, confirmed: object
+    ) -> tuple[list[str] | None, tuple[int, str] | None]:
+        """Gates for /api/execute (B 档, user-approved): enabled explicit_user /
+        explicit_runtime controls only, two-step confirmed in the browser.
+        delegated stays copy-only; placeholder templates are never executable.
+        Registry commands may legitimately carry --confirm — the human
+        confirmed the sanctioned command via the two-step dialog."""
+        match = self._lookup_control(control_id)
+        if match is None:
+            return None, (404, "unknown control_id")
+        if not match.get("enabled"):
+            return None, (403, "control is disabled")
+        if match.get("safety") not in ("explicit_user", "explicit_runtime"):
+            return None, (403, "only explicit controls are executable here (inspect uses /api/inspect; delegated is copy-only)")
+        command = str(match.get("command") or "")
+        if not command.startswith("agentdeck ") or "<" in command:
+            return None, (403, "command is a template or not an agentdeck command")
+        if confirmed is not True:
+            return None, (428, "confirmation required")
+        return shlex.split(command)[1:], None
+
     def do_POST(self) -> None:  # noqa: N802 - stdlib handler naming
         parsed = urlparse(self.path)
-        if parsed.path != "/api/inspect":
+        if parsed.path not in ("/api/inspect", "/api/execute"):
             self._send(405, "text/plain; charset=utf-8", b"read-only server: GET only")
             return
         try:
@@ -226,7 +269,10 @@ class _UIRequestHandler(BaseHTTPRequestHandler):
         except (ValueError, KeyError, TypeError, UnicodeDecodeError):
             self._send(400, "text/plain; charset=utf-8", b"body must be JSON with control_id")
             return
-        argv, error = self._resolve_inspect_control(control_id)
+        if parsed.path == "/api/inspect":
+            argv, error = self._resolve_inspect_control(control_id)
+        else:
+            argv, error = self._resolve_execute_control(control_id, body.get("confirmed"))
         if argv is None:
             status, detail = error or (403, "refused")
             self._send(status, "text/plain; charset=utf-8", detail.encode("utf-8"))

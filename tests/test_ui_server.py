@@ -138,6 +138,27 @@ REGISTRY = {
             "enabled": True,
             "blocker": None,
         },
+        {
+            "control_id": "ctl_user",
+            "command": "agentdeck approval approve --approval-id apv_1",
+            "safety": "explicit_user",
+            "enabled": True,
+            "blocker": None,
+        },
+        {
+            "control_id": "ctl_delegated",
+            "command": "agentdeck approval auto --confirm",
+            "safety": "delegated",
+            "enabled": True,
+            "blocker": None,
+        },
+        {
+            "control_id": "ctl_template",
+            "command": "agentdeck agent assign-role --agent planner --role <role>",
+            "safety": "explicit_user",
+            "enabled": True,
+            "blocker": None,
+        },
     ],
 }
 
@@ -203,6 +224,63 @@ def test_inspect_endpoint_rejects_malformed_body_and_other_posts(tmp_path, monke
         connection.request("POST", "/api/workbench", body=b"{}")
         assert connection.getresponse().status == 405
         assert calls == []
+    finally:
+        server.shutdown()
+        connection.close()
+
+
+def _post_execute(connection, control_id: str, confirmed: object):
+    body = json.dumps({"control_id": control_id, "confirmed": confirmed}).encode("utf-8")
+    connection.request(
+        "POST", "/api/execute", body=body, headers={"Content-Type": "application/json"}
+    )
+    return connection.getresponse()
+
+
+def test_execute_endpoint_runs_confirmed_explicit_controls(tmp_path, monkeypatch) -> None:
+    connection, server, calls = _serve_registry(monkeypatch)
+    try:
+        # explicit_user 需要 confirmed:true
+        response = _post_execute(connection, "ctl_user", True)
+        assert response.status == 200
+        payload = json.loads(response.read())
+        assert payload["result"]["ran"] == ["approval", "approve", "--approval-id", "apv_1"]
+        # explicit_runtime 同样可执行（含 --confirm 的注册表命令合法）
+        response = _post_execute(connection, "ctl_runtime", True)
+        assert response.status == 200
+        assert json.loads(response.read())["result"]["ran"] == ["agent", "spawn", "--agent", "coder"]
+    finally:
+        server.shutdown()
+        connection.close()
+
+
+def test_execute_endpoint_requires_confirmation(tmp_path, monkeypatch) -> None:
+    connection, server, calls = _serve_registry(monkeypatch)
+    try:
+        response = _post_execute(connection, "ctl_user", False)
+        assert response.status == 428
+        response.read()
+        executed = [c for c in calls if c[0] != "controls"]
+        assert executed == []
+    finally:
+        server.shutdown()
+        connection.close()
+
+
+def test_execute_endpoint_refuses_wrong_safety_and_templates(tmp_path, monkeypatch) -> None:
+    connection, server, calls = _serve_registry(monkeypatch)
+    try:
+        # inspect 走 /api/inspect，不走 execute
+        assert _post_execute(connection, "ctl_inspect_ok", True).status == 403
+        # delegated 保持复制不可执行（拍板：B 档不含 delegated）
+        assert _post_execute(connection, "ctl_delegated", True).status == 403
+        # 占位符模板拒绝
+        assert _post_execute(connection, "ctl_template", True).status == 403
+        # disabled / 未知
+        assert _post_execute(connection, "ctl_disabled", True).status == 403
+        assert _post_execute(connection, "ctl_missing", True).status == 404
+        executed = [c for c in calls if c[0] != "controls"]
+        assert executed == []
     finally:
         server.shutdown()
         connection.close()

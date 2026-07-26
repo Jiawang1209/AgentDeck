@@ -23,11 +23,21 @@
    `agentdeck controls --control-id <id>` 从 live registry 重解析，强制
    四重门：control 存在（否则 404）、`enabled=true`、`safety=inspect`、
    命令以 `agentdeck ` 开头且不含 `--confirm`（任一不满足 403 且零执行）；
-   通过后以 shlex 解析 argv 执行并返回 JSON 结果。explicit_*/delegated
-   控件仍只展示与复制；B 档（安全分级确认按钮）需另行拍板。
+   通过后以 shlex 解析 argv 执行并返回 JSON 结果。
    实施时 live 发现并顺带修复主线契约 bug：approve/autonomous 模式下
    ask set_mode 控件 enabled 且 safety=inspect，违反"enabled set_mode 必须
    explicit_user"的注册表契约（ask/approve 切换控件现统一 explicit_user）。
+5. **执行面 B 档（同日拍板落地）：仅 explicit_\* 二步确认**。
+   `POST /api/execute`（与 /api/inspect 同为仅有的两个 POST 路径，registry
+   查找共享 `_lookup_control`）只接受 `{"control_id", "confirmed": true}`：
+   门禁=存在（404）、`enabled`（403）、safety ∈ {explicit_user,
+   explicit_runtime}（inspect 走 /api/inspect、**delegated 保持复制不可
+   执行**，403）、命令以 `agentdeck ` 开头且不含 `<占位符>`（403）、
+   `confirmed:true`（否则 428 零执行）；registry 命令合法携带的
+   `--confirm` 不拒绝——人类已通过二步对话框确认该 sanctioned 命令。页面
+   对可执行项渲染 "Execute…" 按钮，原生对话框展示完整命令原文，取消即
+   零执行，成功后自动刷新 workbench。威胁模型=防误点（server 仅绑
+   127.0.0.1，操作者即本人）；审计=被执行命令自身的事件链。
 4. **页面**：单页内联 HTML/CSS/JS（无外部资源），前端轮询
    `/api/workbench`（5s）与 `/api/events?since=<cursor>`（events 游标由
    浏览器持有，符合 events contract 的 cursor 语义）。

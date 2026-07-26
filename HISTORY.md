@@ -4,6 +4,28 @@
 
 ## 2026-07-26
 
+### Add explicit-control execution with two-step confirm to the web UI (GUI slice 3)
+
+- **Type**: feat
+- **Motivation**: user 拍板 GUI B 档=仅 explicit_* 二步确认——approve/
+  dispatch/spawn/send/stop 等人类显式动作可从浏览器完成，delegated
+  自主引擎（run-loop/approval auto）保持复制不可执行，保留终端仪式感。
+- **What**: `ui.py` 新增 `POST /api/execute`（与 /api/inspect 同为仅有的
+  两个 POST 路径，registry 查找抽取为共享 `_lookup_control`）：门禁=
+  存在（404）、enabled（403）、safety∈{explicit_user,explicit_runtime}
+  （inspect/delegated 一律 403）、命令非模板且以 `agentdeck ` 开头
+  （403）、`confirmed:true`（否则 428 且零执行）；registry 命令合法携带
+  的 `--confirm` 不拒绝（人类已二步确认该 sanctioned 命令）。页面对可
+  执行项渲染 "Execute…" 按钮，原生对话框展示完整命令原文，取消零执行，
+  成功后自动刷新 workbench。威胁模型=防误点（仅绑 127.0.0.1）；审计=
+  被执行命令自身的事件链。spec 与 CLAUDE.md 同步。
+- **Impact**: 浏览器完成"观察→下钻→显式行动"闭环（审批、派发、spawn
+  等一步确认即达）；delegated 面与模板面仍完全不可从 web 触发。
+- **Verification**: 3 例 TDD RED 先行（confirmed 执行 explicit_user/
+  explicit_runtime、缺确认 428 零执行、inspect/delegated/模板/disabled/
+  未知全拒绝零执行）后 GREEN，UI 套件 11 passed；全量 `pytest tests/ -q`
+  绿（pipefail）+ compileall（见 commit）。
+
 ### Add inspect-level execution to the local web UI (GUI slice 2)
 
 - **Type**: feat
