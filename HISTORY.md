@@ -4,6 +4,36 @@
 
 ## 2026-07-26
 
+### Redefine SQLite phase 2 and land the quarantined shadow mirror (phase 3)
+
+- **Type**: feat
+- **Motivation**: 实施阶段 2 前核实发现前提错误——主线
+  `_protocol_mutation_lock` 在关键维度强于 P1 `ProjectWriterLease`
+  （dir_fd 逐级锚定、flock 前后双重 inode 校验、阻塞排队、重入 depth），
+  照原 spec 替换会是倒退。user 批准改定义并直接推进阶段 3。
+- **What**: 阶段 2 新定义为硬规则写入 spec：SQLite 连接必须在现有
+  mutation lock 内打开、永不新开第二把锁。阶段 3 影子写骨架落地：
+  `storage/schema.py` generic mirror v1（meta/records/singletons/events
+  四表，指纹 pin `745af5fb…`，`verify_schema_v1`）；`storage/shadow.py`
+  （`mirror_state` 单 IMMEDIATE 事务全量镜像：list 集合按已知 id 字段/
+  位置入 records、agents dict 按键、None/dict 单例入 singletons；
+  `mirror_if_enabled` 绝不抛错，失败落 `logs/shadow-errors.jsonl`；
+  DELETE journal 避免 -wal/-shm）；`agentdeck storage shadow-enable
+  --confirm`（0600+O_EXCL 建库、指纹校验、`authority_state=
+  sqlite_installed_quarantined`、`storage_shadow_enabled` 事件、重复
+  enable 拒绝）与只读 `storage shadow-status`（enabled/fingerprint_ok/
+  record_counts/回滚命令）；`StateStore.save()` 在同一把锁内 JSON 原子
+  落盘后调用镜像。镜像不应用 secrets 词法防火墙（`handoff_token` 等
+  state 键会误杀，防火墙留给后续规范化 canonical facts，已记 spec）。
+  CLAUDE.md 常用命令与边界规则同步。
+- **Impact**: 影子阶段开始：JSON 唯一权威、`rm state.db` 完全回滚、
+  镜像失败零影响；为阶段 4 影子读比对提供数据面。writer registry AST
+  闭包测试保持绿（钩子在 save() 原语内，不新增 writer）。
+- **Verification**: 5 例 TDD RED 先行（指纹 pin、镜像往返+更新、enable
+  confirm/重复拒绝+事件、save 镜像+rm 回滚、status 只读）后 GREEN；
+  registry+storage 套件 107 passed；全量 `pytest tests/ -q` 绿
+  （pipefail）+ compileall（见 commit）。
+
 ### Record round 8 single-command walk-away live PASS
 
 - **Type**: data

@@ -20,6 +20,7 @@ from typing import Any, Callable, Iterable, Mapping
 import weakref
 
 from .config import CONFIG_DIR, ensure_project_layout, load_config, project_root
+from .storage.shadow import mirror_if_enabled as _shadow_mirror_if_enabled
 from .conversation.lifecycle import validate_conversation_history
 from .conversation.models import ConversationMutation
 from .daemon.lifecycle import validate_daemon_record
@@ -2947,6 +2948,10 @@ class StateStore:
             self._remember_loaded_state(
                 state, "sha256:" + hashlib.sha256(installed).hexdigest()
             )
+            # SQLite 影子镜像（quarantine 阶段）：仍在同一把 mutation lock 内
+            # 打开连接（route spec 阶段 2 硬规则），JSON 保持唯一权威，镜像
+            # 失败绝不进入本写路径（错误落 logs/shadow-errors.jsonl）。
+            _shadow_mirror_if_enabled(self.root, state)
 
     def _event_journal_source(self) -> bytes | None:
         key = str(self.root.resolve())

@@ -10451,6 +10451,110 @@ def delegation_revoke_command(args: argparse.Namespace) -> int:
     return 0
 
 
+def storage_shadow_enable_command(args: argparse.Namespace) -> int:
+    config, store, exit_code = _load_project_or_error()
+    if config is None or store is None:
+        return exit_code
+    if not args.confirm:
+        print("storage shadow-enable requires --confirm", file=sys.stderr)
+        return 1
+    from agentdeck.storage import file_safety as storage_file_safety
+    from agentdeck.storage import schema as storage_schema
+    from agentdeck.storage import shadow as storage_shadow
+
+    database = storage_shadow.shadow_database_path(config.root)
+    if database.exists():
+        print("shadow database already exists; rm it first to re-enable", file=sys.stderr)
+        return 1
+    storage_file_safety.create_private_file(database)
+    connection = storage_shadow.open_shadow_connection(database)
+    try:
+        storage_schema.apply_schema_v1(connection)
+        if not storage_schema.verify_schema_v1(connection):
+            connection.close()
+            database.unlink()
+            print("shadow schema fingerprint mismatch; database removed", file=sys.stderr)
+            return 1
+        connection.execute(
+            "INSERT OR REPLACE INTO meta(key, value) VALUES ('authority_state', ?)",
+            (storage_shadow.AUTHORITY_QUARANTINED,),
+        )
+        connection.commit()
+    finally:
+        connection.close()
+    # 立即做一次全量镜像，让 status 从启用起就有可比对内容。
+    storage_shadow.mirror_if_enabled(config.root, store.load())
+    store.append_event(
+        EventRecord.create(
+            "storage_shadow_enabled",
+            {
+                "database": str(database),
+                "schema_version": storage_schema.SCHEMA_VERSION,
+                "fingerprint": storage_schema.EXPECTED_SCHEMA_V1_FINGERPRINT,
+            },
+        )
+    )
+    _print_json(
+        {
+            "ok": True,
+            "mode": "storage_shadow_enabled",
+            "database": str(database),
+            "authority_state": storage_shadow.AUTHORITY_QUARANTINED,
+            "schema_version": storage_schema.SCHEMA_VERSION,
+            "fingerprint": storage_schema.EXPECTED_SCHEMA_V1_FINGERPRINT,
+            "rollback_command": f"rm {database}",
+        }
+    )
+    return 0
+
+
+def storage_shadow_status_command(_args: argparse.Namespace) -> int:
+    config, store, exit_code = _load_project_or_error()
+    if config is None or store is None:
+        return exit_code
+    from agentdeck.storage import schema as storage_schema
+    from agentdeck.storage import shadow as storage_shadow
+
+    database = storage_shadow.shadow_database_path(config.root)
+    payload: dict[str, object] = {
+        "ok": True,
+        "mode": "storage_shadow_status",
+        "database": str(database),
+        "enabled": False,
+        "enable_command": "agentdeck storage shadow-enable --confirm",
+    }
+    if database.is_file():
+        connection = storage_shadow.open_shadow_connection(database)
+        try:
+            meta = dict(connection.execute("SELECT key, value FROM meta"))
+            counts = {
+                str(row[0]): int(row[1])
+                for row in connection.execute(
+                    "SELECT collection, COUNT(*) FROM records GROUP BY collection"
+                )
+            }
+            singleton_count = int(
+                connection.execute("SELECT COUNT(*) FROM singletons").fetchone()[0]
+            )
+            fingerprint_ok = storage_schema.verify_schema_v1(connection)
+        finally:
+            connection.close()
+        payload.update(
+            {
+                "enabled": meta.get("authority_state") == storage_shadow.AUTHORITY_QUARANTINED,
+                "authority_state": meta.get("authority_state"),
+                "schema_version": meta.get("schema_version"),
+                "fingerprint_ok": fingerprint_ok,
+                "mirrored_at": meta.get("mirrored_at"),
+                "record_counts": counts,
+                "singleton_count": singleton_count,
+                "rollback_command": f"rm {database}",
+            }
+        )
+    _print_json(payload)
+    return 0
+
+
 def build_dispatch_prompt(
     agent: AgentSpec,
     task: str,
@@ -20687,6 +20791,18 @@ def build_parser() -> argparse.ArgumentParser:
     boxes_watch.add_argument("--interval", type=float, default=5.0, help="Seconds between iterations")
     boxes_watch.add_argument("--confirm", action="store_true", help="Explicitly confirm the watch loop")
     boxes_watch.set_defaults(func=boxes_watch_command)
+
+    storage = subparsers.add_parser("storage", help="State storage backend commands (SQLite migration)")
+    storage_subparsers = storage.add_subparsers(dest="storage_command")
+    storage_shadow_enable = storage_subparsers.add_parser(
+        "shadow-enable", help="Create the quarantined SQLite shadow mirror (explicit; JSON stays authoritative)"
+    )
+    storage_shadow_enable.add_argument("--confirm", action="store_true", help="Explicitly confirm enabling the shadow mirror")
+    storage_shadow_enable.set_defaults(func=storage_shadow_enable_command)
+    storage_shadow_status = storage_subparsers.add_parser(
+        "shadow-status", help="Read-only shadow mirror status"
+    )
+    storage_shadow_status.set_defaults(func=storage_shadow_status_command)
 
     dispatch = subparsers.add_parser("dispatch", help="Send a role-aware task to a running agent")
     dispatch.add_argument("--from-agent", default="user", help="Actor or agent id that submitted this task")

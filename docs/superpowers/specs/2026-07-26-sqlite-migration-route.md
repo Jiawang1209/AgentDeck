@@ -51,12 +51,29 @@
 ## 分阶段切片（每阶段独立 commit + 可回滚）
 
 0. ✅ 前置调查（本节）。
-1. 搬无风险零件入新 `src/agentdeck/storage/` 包（secrets 防火墙、
-   schema 指纹、文件安全 helper），零行为变更。
-2. 锁替换：`_protocol_mutation_lock` 内部换 `ProjectWriterLease`
-   （锁文件不变 + 重试保留排队语义）。
-3. schema v1（36 集合，P1 风格 revision+json 列）+ `SqliteBackend`
-   影子写（quarantined；`rm state.db` 即回滚）。
+1. ✅ 搬无风险零件入新 `src/agentdeck/storage/` 包（secrets 防火墙、
+   schema 指纹、文件安全 helper），零行为变更（63b708fb）。
+2. ✅ **改定义（2026-07-26 实施前核实，user 批准）**：原计划"锁替换为
+   P1 `ProjectWriterLease`"作废——核实发现主线 `_protocol_mutation_lock`
+   在关键维度上**强于** P1 租约（dir_fd 逐级锚定 vs 仅末级 O_NOFOLLOW；
+   flock 取得前后双重 inode 校验；阻塞排队语义；重入 depth + 跨项目嵌套
+   禁止），替换会是倒退。阶段 2 新定义为硬规则：**SQLite 连接必须在现有
+   `_protocol_mutation_lock` 内打开，单写者由同一把 flock 继承，永不新开
+   第二把锁文件**（同时消除本 spec 前文警告的"两把锁双写者"风险）。
+   P1 租约仅存的增量（uid/mode 检查、fork 检测、长寿命 validate_for）
+   留待 daemon 长连接场景（阶段 5+）在现有锁内部按需补充。零行为变更。
+3. ✅ 影子写骨架已落地（同日）：schema 采用 **generic mirror v1**
+   （`meta`/`records(collection,record_id,position,record_json)`/
+   `singletons`/`events` 四表 + 指纹 pin `745af5fb…`）而非 36 张规范化表
+   ——quarantine 阶段镜像只需忠实复刻 JSON 以供影子比对，规范化表推迟到
+   需要查询的阶段。`agentdeck storage shadow-enable --confirm` 建库
+   （0600+O_EXCL+指纹校验+`storage_shadow_enabled` 事件）置
+   `authority_state=quarantined`；`StateStore.save()` 在同一把 mutation
+   lock 内、JSON 原子落盘后调用 `mirror_if_enabled` 全量镜像（DELETE
+   journal 无 -wal/-shm；失败只写 `logs/shadow-errors.jsonl` 绝不进入
+   JSON 路径；`rm state.db` 即完全回滚）；`storage shadow-status` 只读。
+   注：词法 secrets 防火墙**不**应用于镜像（state 键如 `handoff_token`
+   会被误杀；防火墙留给后续规范化 canonical facts）。
 4. 影子读比对（差异写 shadow-diff.jsonl 不抛错）——质量闸门，零 diff
    N 天才推进。
 5. events.jsonl + approvals.jsonl + 3 个 event_outbox 先切 SQLite 权威
