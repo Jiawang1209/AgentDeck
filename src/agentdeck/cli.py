@@ -10708,6 +10708,122 @@ def _worktree_message_or_error(store: StateStore, message_id: str) -> dict[str, 
     return message
 
 
+def _merge_task_worktree(
+    config: ProjectConfig, store: StateStore, message: dict[str, object]
+) -> str | None:
+    """Merge one task branch into the current branch; returns an error detail
+    (merge aborted, repo untouched) or None on success (state marked + event)."""
+    message_id = str(message.get("message_id"))
+    branch = str(message.get("worktree_branch"))
+    merged = subprocess.run(
+        ["git", "merge", "--no-edit", branch],
+        cwd=config.root,
+        capture_output=True,
+        text=True,
+    )
+    if merged.returncode != 0:
+        subprocess.run(["git", "merge", "--abort"], cwd=config.root, capture_output=True)
+        return " ".join((merged.stderr or merged.stdout or "").split())[:200]
+    store.mark_worktree_merged(message_id)
+    store.append_event(
+        EventRecord.create(
+            "worktree_merged",
+            {
+                "message_id": message_id,
+                "agent_id": message.get("to_agent"),
+                "branch": branch,
+            },
+        )
+    )
+    return None
+
+
+def _merge_plan_worktrees(
+    config: ProjectConfig, store: StateStore, plan_id: str
+) -> dict[str, object]:
+    """Merge all task branches of a completed plan in step order. Caller is
+    responsible for the confirm + complete-gate checks."""
+    state = store.load()
+    abandoned_ids = {str(item) for item in state.get("abandoned_worktrees", [])}
+    plan_approvals = sorted(
+        (
+            a for a in state.get("approvals", [])
+            if isinstance(a, dict) and a.get("plan_id") == plan_id and a.get("message_id")
+        ),
+        key=lambda item: int(item.get("step") or 0),
+    )
+    messages_by_id = {
+        str(m.get("message_id")): m
+        for m in state.get("messages", [])
+        if isinstance(m, dict)
+    }
+    merged: list[dict[str, object]] = []
+    skipped: list[dict[str, object]] = []
+    failed: dict[str, object] | None = None
+    for approval in plan_approvals:
+        message_id = str(approval.get("message_id"))
+        message = messages_by_id.get(message_id)
+        if message is None or not message.get("worktree_branch"):
+            continue
+        branch = str(message.get("worktree_branch"))
+        if message_id in abandoned_ids:
+            skipped.append({"message_id": message_id, "branch": branch, "reason": "abandoned"})
+            continue
+        exists = subprocess.run(
+            ["git", "rev-parse", "--verify", "--quiet", branch],
+            cwd=config.root,
+            capture_output=True,
+        )
+        if exists.returncode != 0:
+            skipped.append({"message_id": message_id, "branch": branch, "reason": "branch not found"})
+            continue
+        ancestor = subprocess.run(
+            ["git", "merge-base", "--is-ancestor", branch, "HEAD"],
+            cwd=config.root,
+            capture_output=True,
+        )
+        if ancestor.returncode == 0:
+            skipped.append({"message_id": message_id, "branch": branch, "reason": "already merged"})
+            continue
+        error = _merge_task_worktree(config, store, message)
+        if error is not None:
+            failed = {"message_id": message_id, "branch": branch, "detail": error}
+            break
+        merged.append(
+            {"message_id": message_id, "branch": branch, "agent_id": message.get("to_agent")}
+        )
+    return {
+        "ok": failed is None,
+        "mode": "worktree_merge_plan",
+        "plan_id": plan_id,
+        "merged": merged,
+        "skipped": skipped,
+        "failed": failed,
+    }
+
+
+def worktree_merge_plan_command(args: argparse.Namespace) -> int:
+    config, store, exit_code = _load_project_or_error()
+    if config is None or store is None:
+        return exit_code
+    if not args.confirm:
+        print("worktree merge-plan requires --confirm", file=sys.stderr)
+        return 1
+    plan_id = args.plan_id
+    try:
+        store.plan_status(plan_id)
+    except KeyError:
+        print(f"unknown plan: {plan_id}", file=sys.stderr)
+        return 1
+    gate, _next_command = run_loop_gate(store.leader_review(plan_id), False, plan_id)
+    if gate != "complete":
+        print(f"plan is not complete (gate: {gate}); merge-plan only merges completed plans", file=sys.stderr)
+        return 1
+    payload = _merge_plan_worktrees(config, store, plan_id)
+    _print_json(payload)
+    return 0 if payload["ok"] else 1
+
+
 def worktree_merge_command(args: argparse.Namespace) -> int:
     config, store, exit_code = _load_project_or_error()
     if config is None or store is None:
@@ -10719,28 +10835,10 @@ def worktree_merge_command(args: argparse.Namespace) -> int:
         print("worktree merge requires --confirm", file=sys.stderr)
         return 1
     branch = str(message.get("worktree_branch"))
-    merged = subprocess.run(
-        ["git", "merge", "--no-edit", branch],
-        cwd=config.root,
-        capture_output=True,
-        text=True,
-    )
-    if merged.returncode != 0:
-        subprocess.run(["git", "merge", "--abort"], cwd=config.root, capture_output=True)
-        detail = " ".join((merged.stderr or merged.stdout or "").split())[:200]
-        print(f"worktree merge failed (left untouched for manual resolution): {detail}", file=sys.stderr)
+    error = _merge_task_worktree(config, store, message)
+    if error is not None:
+        print(f"worktree merge failed (left untouched for manual resolution): {error}", file=sys.stderr)
         return 1
-    store.mark_worktree_merged(args.message_id)
-    store.append_event(
-        EventRecord.create(
-            "worktree_merged",
-            {
-                "message_id": args.message_id,
-                "agent_id": message.get("to_agent"),
-                "branch": branch,
-            },
-        )
-    )
     _print_json(
         {
             "ok": True,
@@ -19690,6 +19788,7 @@ def _run_loop_follow(
         "max_waves": args.max_waves,
         "interval": args.interval,
         "release_boxes": bool(args.release_boxes),
+        "merge_on_complete": bool(getattr(args, "merge_on_complete", False)),
         "waves": waves,
         "wave_count": len(waves),
         "released_boxes": released_boxes,
@@ -19697,6 +19796,8 @@ def _run_loop_follow(
         "stopped_reason": (final or {}).get("stopped_reason"),
         "next_command": (final or {}).get("next_command"),
     }
+    if follow_payload["merge_on_complete"] and follow_payload["stopped_reason"] == "complete":
+        follow_payload["plan_merge"] = _merge_plan_worktrees(config, store, plan_id)
     validation = validate_run_loop_follow_contract(follow_payload)
     if not validation["ok"]:
         print("run-loop follow contract validation failed", file=sys.stderr)
@@ -19786,6 +19887,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--release-boxes",
         action="store_true",
         help="Between waves, release delegation-covered authorization boxes (audited)",
+    )
+    run_loop.add_argument(
+        "--merge-on-complete",
+        action="store_true",
+        help="When --follow reaches the complete gate, merge the plan's task branches in step order",
     )
     run_loop.set_defaults(func=run_loop_command)
 
@@ -20548,6 +20654,12 @@ def build_parser() -> argparse.ArgumentParser:
     worktree_prune = worktree_subparsers.add_parser("prune", help="Remove merged or abandoned task worktrees (explicit)")
     worktree_prune.add_argument("--confirm", action="store_true", help="Explicitly confirm the prune")
     worktree_prune.set_defaults(func=worktree_prune_command)
+    worktree_merge_plan = worktree_subparsers.add_parser(
+        "merge-plan", help="Merge all task branches of a completed plan in step order (explicit)"
+    )
+    worktree_merge_plan.add_argument("--plan-id", required=True, help="Completed plan id")
+    worktree_merge_plan.add_argument("--confirm", action="store_true", help="Explicitly confirm the whole-plan merge")
+    worktree_merge_plan.set_defaults(func=worktree_merge_plan_command)
 
     delegation = subparsers.add_parser("delegation", help="Scoped authorization delegation registry")
     delegation_subparsers = delegation.add_subparsers(dest="delegation_command")

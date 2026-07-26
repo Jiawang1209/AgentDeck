@@ -917,6 +917,105 @@ def test_worktree_replied_zero_commit_worktree_becomes_prunable(tmp_path, monkey
     assert not Path(wt).exists()
 
 
+def _enable_autonomous_policy(capsys, allow: list[str]) -> None:
+    cli.main([
+        "policy", "set-mode", "--mode", "autonomous", "--confirm",
+        *sum((["--allow-agent", a] for a in allow), []),
+        "--max-approvals", "5",
+    ])
+    capsys.readouterr()
+
+
+def _seed_worktree_plan(root: Path, agent_id: str) -> str:
+    store = StateStore(root)
+    state = store.load()
+    plan_id = "pln_mergeplan_1"
+    role = next(a.role for a in cli.load_config(root).agents if a.agent_id == agent_id)
+    state.setdefault("plans", []).append({
+        "plan_id": plan_id, "task": "g", "status": "planned",
+        "provider": "fake", "model": "fake-plan",
+        "plan": {
+            "goal": "g", "summary": "s",
+            "steps": [{"step": 1, "agent_id": agent_id, "role": role, "task": "do",
+                       "risk": "low", "requires_approval": True}],
+        },
+        "created_at": "2026-07-26T00:00:00+00:00",
+    })
+    store.save(state)
+    store.create_approvals_from_plan(plan_id)
+    return plan_id
+
+
+def test_worktree_merge_plan_requires_confirm_and_complete_gate(tmp_path, monkeypatch, capsys) -> None:
+    import subprocess
+
+    root = prepare_project(tmp_path, monkeypatch)
+    _init_real_git(root)
+    _bind_agent(root, "coder", "%50")
+    fake = FakeTmuxBackend()
+    monkeypatch.setattr(cli, "TmuxBackend", lambda: fake)
+    _enable_autonomous_policy(capsys, ["coder"])
+    plan_id = _seed_worktree_plan(root, "coder")
+    cli.main(["run-loop", "--plan-id", plan_id, "--confirm"])
+    capsys.readouterr()
+
+    head_before = subprocess.run(
+        ["git", "-C", str(root), "rev-parse", "HEAD"], capture_output=True, text=True
+    ).stdout.strip()
+    # 缺 confirm：拒绝零写
+    assert cli.main(["worktree", "merge-plan", "--plan-id", plan_id]) == 1
+    assert "confirm" in capsys.readouterr().err
+    # gate 未 complete（还在等回复）：拒绝零写
+    assert cli.main(["worktree", "merge-plan", "--plan-id", plan_id, "--confirm"]) == 1
+    assert "complete" in capsys.readouterr().err
+    # 未知 plan：拒绝
+    assert cli.main(["worktree", "merge-plan", "--plan-id", "pln_missing", "--confirm"]) == 1
+    capsys.readouterr()
+    head_after = subprocess.run(
+        ["git", "-C", str(root), "rev-parse", "HEAD"], capture_output=True, text=True
+    ).stdout.strip()
+    assert head_after == head_before
+
+
+def test_worktree_merge_plan_merges_completed_plan_branches(tmp_path, monkeypatch, capsys) -> None:
+    import subprocess
+
+    root = prepare_project(tmp_path, monkeypatch)
+    _init_real_git(root)
+    _bind_agent(root, "coder", "%50")
+    fake = FakeTmuxBackend()
+    monkeypatch.setattr(cli, "TmuxBackend", lambda: fake)
+    _enable_autonomous_policy(capsys, ["coder"])
+    plan_id = _seed_worktree_plan(root, "coder")
+    cli.main(["run-loop", "--plan-id", plan_id, "--confirm"])
+    capsys.readouterr()
+    state = StateStore(root).load()
+    message = next(m for m in state["messages"] if m.get("worktree_path"))
+    wt = message["worktree_path"]
+    (Path(wt) / "feature.txt").write_text("done\n", encoding="utf-8")
+    subprocess.run(["git", "-C", wt, "add", "feature.txt"], check=True)
+    subprocess.run(["git", "-C", wt, "commit", "-qm", "feature"], check=True)
+    reply_file = root / ".agentdeck" / "replies" / f"{message['message_id']}.reply.txt"
+    reply_file.write_text("status: completed\nsummary: done\n", encoding="utf-8")
+    cli.main(["run-loop", "--plan-id", plan_id, "--confirm"])
+    capsys.readouterr()
+
+    assert cli.main(["worktree", "merge-plan", "--plan-id", plan_id, "--confirm"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["mode"] == "worktree_merge_plan"
+    assert payload["plan_id"] == plan_id
+    assert [m["message_id"] for m in payload["merged"]] == [message["message_id"]]
+    assert (root / "feature.txt").is_file()
+    events = (root / ".agentdeck" / "state" / "events.jsonl").read_text(encoding="utf-8")
+    assert '"event_type": "worktree_merged"' in events
+
+    # 幂等：再跑一次全部 skip（already merged），零新 merge
+    assert cli.main(["worktree", "merge-plan", "--plan-id", plan_id, "--confirm"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["merged"] == []
+    assert [s["reason"] for s in payload["skipped"]] == ["already merged"]
+
+
 def test_worktree_prune_protects_dirty_until_abandoned(tmp_path, monkeypatch, capsys) -> None:
     root = prepare_project(tmp_path, monkeypatch)
     _init_real_git(root)

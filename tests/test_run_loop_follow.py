@@ -188,6 +188,58 @@ def test_run_loop_all_ingests_file_channel_replies(tmp_path, monkeypatch, capsys
     assert '"event_type": "run_loop_reply_captured"' in events
 
 
+def _init_real_git(root: Path) -> None:
+    import subprocess
+
+    (root / ".git").rmdir()
+    subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+    subprocess.run(["git", "-C", str(root), "config", "user.email", "t@example.com"], check=True)
+    subprocess.run(["git", "-C", str(root), "config", "user.name", "tester"], check=True)
+    (root / "README.md").write_text("hello\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(root), "add", "README.md"], check=True)
+    subprocess.run(["git", "-C", str(root), "commit", "-qm", "init"], check=True)
+
+
+def test_run_loop_follow_merge_on_complete_merges_plan_branches(tmp_path, monkeypatch, capsys) -> None:
+    import subprocess
+
+    root = prepare_project(tmp_path, monkeypatch)
+    _init_real_git(root)
+    bind_agent(root, "coder", "%50")
+    fake = FakeTmuxBackend()
+    monkeypatch.setattr(cli, "TmuxBackend", lambda: fake)
+    enable_autonomous(capsys, ["coder"], 5)
+    plan_id = seed_plan(root, ["coder"])
+
+    def _finish_work(_seconds: float) -> None:
+        state = StateStore(root).load()
+        for message in state.get("messages", []):
+            wt = message.get("worktree_path")
+            if not wt:
+                continue
+            feature = Path(wt) / "feature.txt"
+            if not feature.exists():
+                feature.write_text("done\n", encoding="utf-8")
+                subprocess.run(["git", "-C", wt, "add", "feature.txt"], check=True)
+                subprocess.run(["git", "-C", wt, "commit", "-qm", "feature"], check=True)
+        _write_pending_reply_files(root)
+
+    monkeypatch.setattr(cli.time, "sleep", _finish_work)
+
+    exit_code = cli.main([
+        "run-loop", "--plan-id", plan_id, "--confirm", "--follow",
+        "--max-waves", "4", "--interval", "1", "--merge-on-complete",
+    ])
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["stopped_reason"] == "complete"
+    assert payload["merge_on_complete"] is True
+    merge = payload["plan_merge"]
+    assert merge["mode"] == "worktree_merge_plan"
+    assert len(merge["merged"]) == 1
+    assert (root / "feature.txt").is_file()
+
+
 CODEX_AUTH_BOX = (
     "  Would you like to run the following command?\n"
     "  $ node tests/regression.mjs\n"

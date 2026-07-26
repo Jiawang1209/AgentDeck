@@ -4,6 +4,29 @@
 
 ## 2026-07-26
 
+### Add explicit whole-plan worktree merge and follow merge-on-complete
+
+- **Type**: feat
+- **Motivation**: 决策 B 二期（审批后自动 merge）。user 拍板：不从 review
+  文本推断 PASS，而是把确认粒度做成旋钮——显式整 plan 合并命令 + follow
+  的 opt-in 标志。
+- **What**: 单分支 merge 核心抽取为 `_merge_task_worktree`（单命令行为
+  不变）；新增 `agentdeck worktree merge-plan --plan-id <id> --confirm`：
+  必须 `--confirm` 且该 plan 的 run-loop gate 为 `complete`（否则拒绝
+  零写），按 step 顺序经同一核心合并任务分支（每支 `mark_worktree_merged`
+  + `worktree_merged` 事件），abandoned/缺分支/已合并进 `skipped[]`，
+  冲突 abort 记 `failed` 停止序列并非 0，重复运行幂等（全 skip）。
+  `run-loop --follow` 新增 `--merge-on-complete`：仅当最终 gate 为
+  `complete` 时复用 `_merge_plan_worktrees`，结果记入可选 `plan_merge`；
+  `merge_on_complete` 加入 `RUN_LOOP_FOLLOW_RESPONSE_FIELDS`。worktree
+  schema Lifecycle 节、run-loop schema Follow 节、CLAUDE.md 规则与常用
+  命令同步。
+- **Impact**: "确认一次走开"链路补上最后一环：一条 follow 命令可做完
+  推进+委托放框+完工合并；人工 diff+单支 merge 的保守路径原样保留。
+- **Verification**: 3 例 TDD RED 先行（confirm/complete 门+零写、整 plan
+  合并+幂等、follow 标志端到端合并）后 GREEN；dispatch+follow 套件
+  42 passed；全量 `pytest tests/ -q` 绿（pipefail）+ compileall（见 commit）。
+
 ### Extend file-channel reply ingestion to run-loop --all
 
 - **Type**: feat

@@ -68,6 +68,16 @@ into state.
   authoritative `abandoned_worktrees` list (via the registered
   `mark_worktree_abandoned` writer) plus a `worktree_abandoned` event; a second
   abandon of the same id is refused.
+- `worktree merge-plan --plan-id <id> --confirm` merges all task branches of
+  one plan in step order via the same single-branch merge core (state mark +
+  `worktree_merged` event per branch). It refuses without `--confirm`, for
+  unknown plans, and — its key gate — whenever the plan's run-loop gate is not
+  `complete`; refusals write nothing. Abandoned branches, missing branches,
+  and already-merged branches land in `skipped[]` with a reason; a conflicting
+  merge is aborted, recorded as `failed`, stops the sequence and returns
+  non-zero. Re-running a fully merged plan is idempotent (all `skipped[]` with
+  `already merged`). Response: `mode=worktree_merge_plan` with
+  `plan_id`/`merged[]`/`skipped[]`/`failed`.
 - `worktree prune --confirm` removes only worktrees that are abandoned
   (`git worktree remove --force`, branch `-D`) or merge-settled-and-clean
   (`git worktree remove`, branch `-d`), where merge-settled means the id is in

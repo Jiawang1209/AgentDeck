@@ -3136,6 +3136,7 @@ RUN_LOOP_FOLLOW_RESPONSE_FIELDS = (
     "max_waves",
     "interval",
     "release_boxes",
+    "merge_on_complete",
     "waves",
     "wave_count",
     "released_boxes",

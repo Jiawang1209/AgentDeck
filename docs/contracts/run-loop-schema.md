@@ -84,10 +84,14 @@ authorization boxes — every release audited as `auth_box_released` with
 `docs/contracts/delegation-schema.md`).
 
 The response (`RUN_LOOP_FOLLOW_RESPONSE_FIELDS`) is `mode=run_loop_follow`
-with `max_waves`, `interval`, `release_boxes`, `waves[]` (each item is a full
-single-wave `run_loop` payload plus its 1-based `wave` number, revalidated by
-`validate_run_loop_contract()`), `wave_count`, `released_boxes[]` /
-`released_box_count`, and the final wave's `stopped_reason` / `next_command`.
+with `max_waves`, `interval`, `release_boxes`, `merge_on_complete`, `waves[]`
+(each item is a full single-wave `run_loop` payload plus its 1-based `wave`
+number, revalidated by `validate_run_loop_contract()`), `wave_count`,
+`released_boxes[]` / `released_box_count`, and the final wave's
+`stopped_reason` / `next_command`. With `--merge-on-complete`, when the final
+gate is `complete` the response also carries the optional `plan_merge` object
+— the `worktree merge-plan` result for this plan (see
+`docs/contracts/worktree-schema.md`); on any other gate no merge is attempted.
 Completion appends one `run_loop_follow_completed` summary event. Discovery
 exposes `follow_command_template` and `follow_response_fields`.
 
