@@ -302,6 +302,26 @@ def test_boxes_watch_skips_non_delegated_box(tmp_path, monkeypatch, capsys) -> N
     assert '"event_type": "auth_box_released"' not in _events_text(root)
 
 
+def test_controls_contract_holds_in_all_policy_modes(tmp_path, monkeypatch, capsys) -> None:
+    # live 发现（GUI 冒烟）：approve/autonomous 模式下 ask set_mode 控件
+    # enabled 且 safety=inspect，违反"enabled set_mode 必须 explicit_user"
+    # 的注册表契约——切换 approval_mode 是配置写操作，inspect 语义错误。
+    root = prepare_project(tmp_path, monkeypatch)
+
+    for setup in (
+        ["policy", "set-mode", "--mode", "approve"],
+        ["policy", "set-mode", "--mode", "autonomous", "--confirm",
+         "--allow-agent", "coder", "--max-approvals", "3"],
+    ):
+        cli.main(setup)
+        capsys.readouterr()
+        assert cli.main(["controls"]) == 0, f"controls failed after {setup}"
+        payload = json.loads(capsys.readouterr().out)
+        for item in payload["items"]:
+            if item.get("scope") == "policy" and item.get("kind") == "set_mode" and item.get("enabled"):
+                assert item["safety"] == "explicit_user"
+
+
 def test_contract_delegation_discovery(tmp_path, monkeypatch, capsys) -> None:
     prepare_project(tmp_path, monkeypatch)
 

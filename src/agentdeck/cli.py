@@ -3273,7 +3273,11 @@ def _control_mode_set_controls(current_mode: str, available_modes: list[dict[str
         mode = str(option.get("mode"))
         enabled = bool(option.get("enabled")) and mode != current_mode
         blocker = "already current mode" if mode == current_mode else option.get("blocker")
-        safety = "explicit_user" if mode == "approve" else option.get("safety")
+        # 切换 approval_mode 是 .agentdeck/config.toml 的写操作：ask/approve
+        # 的 set_mode 控件必须是 explicit_user（available_modes 里的 safety
+        # 描述的是模式自身的性格，不是切换动作的安全级）。approve/autonomous
+        # 模式下 ask 控件 enabled，用 inspect 会违反注册表契约（live 发现）。
+        safety = "explicit_user" if mode in ("ask", "approve") else option.get("safety")
         command = f"agentdeck policy set-mode --mode {mode}"
         if mode == "autonomous":
             command = "agentdeck policy set-mode --mode autonomous --confirm --allow-agent <id> --max-approvals <N>"

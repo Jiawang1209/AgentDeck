@@ -9462,7 +9462,7 @@ def test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without
                 "kind": "set_mode",
                 "label": "Ask / inspect",
                 "command": "agentdeck policy set-mode --mode ask",
-                "safety": "inspect",
+                "safety": "explicit_user",
                 "enabled": False,
                 "blocker": "already current mode",
             },
@@ -9807,7 +9807,8 @@ def test_policy_set_mode_updates_config_and_workbench_control_mode(tmp_path, mon
         item["command"]: item for item in workbench["control_mode_card"]["active_controls"] if item["kind"] == "set_mode"
     }
     assert approve_controls["agentdeck policy set-mode --mode ask"]["enabled"] is True
-    assert approve_controls["agentdeck policy set-mode --mode ask"]["safety"] == "inspect"
+    # 切换 approval_mode 是配置写操作：enabled 的 set_mode 控件必须 explicit_user
+    assert approve_controls["agentdeck policy set-mode --mode ask"]["safety"] == "explicit_user"
     assert approve_controls["agentdeck policy set-mode --mode approve"]["enabled"] is False
     assert approve_controls["agentdeck policy set-mode --mode approve"]["blocker"] == "already current mode"
 
@@ -10131,7 +10132,7 @@ def test_controls_outputs_command_palette_without_mutating_state(tmp_path, monke
         "kind": "set_mode",
         "label": "Ask / inspect",
         "command": "agentdeck policy set-mode --mode ask",
-        "safety": "inspect",
+        "safety": "explicit_user",
         "enabled": False,
         "blocker": "already current mode",
         "agent_id": None,
