@@ -10597,6 +10597,24 @@ def storage_shadow_diff_command(_args: argparse.Namespace) -> int:
     return 0 if not mismatched else 1
 
 
+def ui_serve_command(args: argparse.Namespace) -> int:
+    config, store, exit_code = _load_project_or_error()
+    if config is None or store is None:
+        return exit_code
+    from agentdeck import ui as agentdeck_ui
+
+    server = agentdeck_ui.build_server(Path(config.root), args.port)
+    host, port = server.server_address[:2]
+    print(f"AgentDeck read-only UI: http://{host}:{port}/ (Ctrl-C to stop)", file=sys.stderr)
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        server.server_close()
+    return 0
+
+
 def build_dispatch_prompt(
     agent: AgentSpec,
     task: str,
@@ -20849,6 +20867,14 @@ def build_parser() -> argparse.ArgumentParser:
         "shadow-diff", help="Read-only comparison of the shadow mirror against the authoritative JSON state"
     )
     storage_shadow_diff.set_defaults(func=storage_shadow_diff_command)
+
+    ui_parser = subparsers.add_parser("ui", help="Local read-only web shell over the contract surface")
+    ui_subparsers = ui_parser.add_subparsers(dest="ui_command")
+    ui_serve = ui_subparsers.add_parser(
+        "serve", help="Serve the read-only workbench page on 127.0.0.1 (GET only, no mutations)"
+    )
+    ui_serve.add_argument("--port", type=int, default=8787, help="Port on 127.0.0.1 (default 8787)")
+    ui_serve.set_defaults(func=ui_serve_command)
 
     dispatch = subparsers.add_parser("dispatch", help="Send a role-aware task to a running agent")
     dispatch.add_argument("--from-agent", default="user", help="Actor or agent id that submitted this task")

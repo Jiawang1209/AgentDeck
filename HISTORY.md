@@ -4,6 +4,28 @@
 
 ## 2026-07-26
 
+### Add read-only local web UI over the contract surface (GUI slice 1)
+
+- **Type**: feat
+- **Motivation**: GUI 主线首刀。user 拍板：方向 A（stdlib http.server
+  本地 web 只读面，零新依赖）+ 数据通道走子进程 CLI JSON（完全复用 40
+  契约面与 validator 守门，未来 daemon/remote 只换通道不换渲染）。spec
+  冻结于 `docs/superpowers/specs/2026-07-26-gui-readonly-web.md`。
+- **What**: 新增 `src/agentdeck/ui.py`：`UI_API_COMMANDS` 只读命令白名单
+  （workbench / `events --limit 50`|`--since <cursor>` / controls）、
+  `run_cli_json` 子进程透传（无 shell，`since` 单 argv 元素，注入面为
+  零）、内联单页（Overview/Agents/Queues/Controls 复制面板/Events 增量
+  尾随，5s 轮询，events 游标由浏览器持有）与 `build_server`（固定绑
+  127.0.0.1，仅 GET，其它方法 405、未知路径 404）；`agentdeck ui serve
+  [--port N]`（默认 8787）前台运行。CLAUDE.md 常用命令与边界规则同步。
+- **Impact**: 40 个契约的 GUI 投资开始变现：浏览器第二屏实时观察
+  workbench/事件/命令面板，与 tmux runtime 可见性互补；执行面留二期
+  另拍板。
+- **Verification**: 5 例 TDD RED 先行（白名单只读断言、页面+三 API、
+  cursor 单参传递、404/405、CLI 接线）后 GREEN；scratch 真实项目冒烟：
+  页面渲染、workbench schema/leader 真数据、50 事件、POST 405；全量
+  `pytest tests/ -q` 绿（pipefail）+ compileall（见 commit）。
+
 ### Add read-only shadow-diff comparison surface (SQLite phase 4)
 
 - **Type**: feat
