@@ -2,6 +2,29 @@
 
 本文件记录 AgentDeck 每一次开发内容。约束：每次新增功能、文档规则、项目骨架、运行环境或用户可见行为变化，都必须同步更新本文件，并在同一次 commit 中提交。
 
+## 2026-07-27
+
+### Record round 10 F1 race-fix live PASS with shadow zero-diff #2
+
+- **Type**: data
+- **Motivation**: 闭环 round 9 遗留的 F1（高：focusedMouseleave 测试用例
+  竞态挂起），同时验证折叠框提取回退全轮表现并攒影子零 diff 证据 #2。
+- **What**: 新增
+  `docs/validation/2026-07-27-copilot-line1-round10-f1-race-fix.md`。
+  精简 2 步计划、单段 follow 41 wave 到 complete；coder 基线复现→修复
+  （await delay(750) + 页面回调空值防御）→连跑 5 次夹具证据→自主 commit
+  `fe171be`；reviewer 复核 PASS（92e0b7f）；merge-on-complete 自动合并；
+  release 零 dirty、prune 全回收。**F1 独立复验：合并后 main 连跑 5 次
+  全 exit 0 零挂起**（对照修复前首跑即 TIMEOUT）。收尾 shadow-diff
+  in_sync=true（证据 #2，两轮连续零漂移）。授权框新数据：第三类命令
+  `node -e` 内联夹具 3 框，哨兵精确报警、user 拍板"目视放行"形态，
+  发现=挂起类任务天然催生进程管理类命令，`node -e` 因内容任意性不宜进
+  前缀注册表；折叠框回退 live 复验成功提取 node -e 命令文本。
+- **Impact**: 缺陷池清空至 F2-F4 低级项；测试资产回全绿稳态；走开链路
+  三连 PASS；SQLite 阶段 5 推进证据 2/2。不涉及代码行为变化。
+- **Verification**: live 证据见 validation 文档与事件账本；carousel 5×
+  exit 0 + back-to-top exit 0（timeout 保护下）。
+
 ## 2026-07-26
 
 ### Record round 9 walk-away live PASS with GUI validation and shadow zero-diff
