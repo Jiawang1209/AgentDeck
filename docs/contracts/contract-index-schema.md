@@ -73,6 +73,7 @@ The index currently lists these contract names in order:
 - `trace`
 - `artifacts`
 - `worktree`
+- `delegation`
 
 `protocol-runtime` is discoverable through `agentdeck contract protocol-runtime [--example]`; its live read-only projection is `agentdeck protocol status`, and its durable schema is `docs/contracts/protocol-runtime-schema.md`.
 

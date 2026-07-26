@@ -4,6 +4,39 @@
 
 ## 2026-07-26
 
+### Add scoped authorization delegation with audited box release
+
+- **Type**: feat
+- **Motivation**: round 6/7 live 数据（13 个授权框，两类 scope：只读验证
+  前缀、任务 worktree 内 git 写）表明逐次放行是"确认一次走开"体验的最大
+  剩余人工点。user 拍板：执行机制走 AgentDeck 注册表 + 有界 watch（不映射
+  codex 原生 don't-ask-again，全审计、provider 无关）；委托长期有效直到
+  显式 revoke。spec 冻结于
+  `docs/superpowers/specs/2026-07-26-scoped-authorization-delegation.md`。
+- **What**: 五切片。①authoritative `delegations[]` 注册表：注册 writers
+  `grant_delegation`/`revoke_delegation`，`delegation grant --agent
+  --prefix --confirm`（未知 agent/空前缀/重复活跃对拒绝零写）+
+  `delegation_granted` 事件、`delegation list`（只读、validator 守门、派生
+  `active`）、`delegation revoke --confirm` + `delegation_revoked`。
+  ②`agent boxes --agent <id>` 只读检测面：复用 capture 的
+  waiting_for_input 尾窗启发式，新增 `_extract_auth_box_command`（`$ ` 行
+  + 缩进续行直到选项列表）与 `_match_active_delegation`（前缀命中），报告
+  box_present/command/delegated/delegation_id/release_command，零写零输入。
+  ③`agent release-box --agent <id> --confirm` 单次释放：仅命中活跃委托才
+  发回车，追加 `auth_box_released` 审计事件；无框/未命中/缺 confirm 拒绝
+  零发送。④`boxes watch --confirm --iterations N --interval S [--agent]`
+  有界循环：必须 `--confirm` 且 `approval_mode=autonomous`（与 run-loop
+  同门），逐次审计释放，未命中框进 `skipped[]` 绝不代按。⑤第 40 个契约
+  `agentdeck contract delegation`（fields/example/payload/validator）注册进
+  `CONTRACT_INDEX_SPECS`，`docs/contracts/delegation-schema.md`、contract
+  index doc、CLAUDE.md 常用命令与边界规则同步。
+- **Impact**: 人类可用窄前缀把重复授权框委托给 AgentDeck 代按，esc/拒绝
+  路径与未命中框永不自动化，全部释放可在 events/history 审计；round 8
+  live 可用 `boxes watch` 消掉大部分逐次放行。
+- **Verification**: 13 例 TDD（注册表 5、boxes/release 4、watch 3、契约 2）
+  全部 RED 先行后 GREEN；全量 `pytest tests/ -q` 绿（pipefail）+
+  compileall（见 commit）。
+
 ### Record round 7 worktree-fixes live PASS
 
 - **Type**: data

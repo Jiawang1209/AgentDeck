@@ -8934,6 +8934,38 @@ class StateStore:
             self.save(state)
         return list(merged)
 
+    def grant_delegation(self, agent_id: str, prefix: str) -> dict[str, Any]:
+        state = self.load()
+        delegations = state.setdefault("delegations", [])
+        for item in delegations:
+            if (
+                item.get("agent_id") == agent_id
+                and item.get("prefix") == prefix
+                and not item.get("revoked_at")
+            ):
+                raise ValueError(f"delegation already active for {agent_id}: {prefix}")
+        record = {
+            "delegation_id": new_id("dlg"),
+            "agent_id": agent_id,
+            "prefix": prefix,
+            "created_at": utc_now(),
+            "revoked_at": None,
+        }
+        delegations.append(record)
+        self.save(state)
+        return dict(record)
+
+    def revoke_delegation(self, delegation_id: str) -> dict[str, Any]:
+        state = self.load()
+        for item in state.get("delegations", []):
+            if item.get("delegation_id") == delegation_id:
+                if item.get("revoked_at"):
+                    raise ValueError(f"delegation already revoked: {delegation_id}")
+                item["revoked_at"] = utc_now()
+                self.save(state)
+                return dict(item)
+        raise ValueError(f"unknown delegation: {delegation_id}")
+
     def mark_agent_stale(self, agent_id: str) -> dict[str, Any]:
         state = self.load()
         agents = state.setdefault("agents", {})
@@ -11673,6 +11705,8 @@ AUTHORITATIVE_STATE_MUTATION_METHODS = (
     "interrupt_prepared_mission_attempt",
     "mark_agent_released",
     "mark_agent_stale",
+    "grant_delegation",
+    "revoke_delegation",
     "mark_worktree_abandoned",
     "mark_worktree_merged",
     "mark_agent_stopped",

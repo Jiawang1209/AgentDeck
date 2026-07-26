@@ -49,6 +49,7 @@ from .contracts import (
     approval_contract_response,
     artifacts_contract_response,
     worktree_contract_response,
+    delegation_contract_response,
     contract_index_response,
     control_registry_item_id,
     continue_contract_response,
@@ -98,6 +99,7 @@ from .contracts import (
     validate_approval_dispatch_ready_contract,
     validate_artifacts_contract,
     validate_worktree_list_contract,
+    validate_delegation_list_contract,
     validate_worktree_diff_contract,
     validate_continue_contract,
     validate_conversation_runtime_contract,
@@ -8234,6 +8236,13 @@ def contract_worktree_command(args: argparse.Namespace) -> int:
     return 0
 
 
+def contract_delegation_command(args: argparse.Namespace) -> int:
+    contract_path = Path(__file__).resolve().parents[2] / "docs" / "contracts" / "delegation-schema.md"
+    payload = delegation_contract_response(contract_path, include_example=args.example)
+    _print_json(payload)
+    return 0
+
+
 def _load_project_or_error() -> tuple[ProjectConfig | None, StateStore | None, int]:
     root = project_root()
     try:
@@ -9796,6 +9805,210 @@ def _detect_waiting_for_input(output: str) -> str | None:
     return None
 
 
+_AUTH_BOX_OPTION_PREFIXES = ("›", "Press enter")
+
+
+def _extract_auth_box_command(output: str) -> str | None:
+    # codex 确认框把待批命令放在 `$ ` 行；长命令可能折行到后续缩进行，
+    # 直到选项列表（`› 1.` / `1.` / `Press enter`）为止。
+    lines = output.splitlines()[-_WAITING_FOR_INPUT_TAIL_LINES:]
+    command_index = None
+    for index in range(len(lines) - 1, -1, -1):
+        if lines[index].strip().startswith("$ "):
+            command_index = index
+            break
+    if command_index is None:
+        return None
+    parts = [lines[command_index].strip()[2:].strip()]
+    for line in lines[command_index + 1:]:
+        stripped = line.strip()
+        if not stripped:
+            break
+        if stripped.startswith(_AUTH_BOX_OPTION_PREFIXES) or re.match(r"\d+\.\s", stripped):
+            break
+        parts.append(stripped)
+    command = " ".join(part for part in parts if part).strip()
+    return command or None
+
+
+def _match_active_delegation(
+    state: dict[str, object], agent_id: str, command: str | None
+) -> dict[str, object] | None:
+    if not command:
+        return None
+    for item in state.get("delegations", []):
+        if not isinstance(item, dict) or item.get("revoked_at"):
+            continue
+        if item.get("agent_id") != agent_id:
+            continue
+        prefix = str(item.get("prefix") or "")
+        if prefix and command.startswith(prefix):
+            return item
+    return None
+
+
+def agent_boxes_command(args: argparse.Namespace) -> int:
+    config, store, exit_code = _load_project_or_error()
+    if config is None or store is None:
+        return exit_code
+    binding, exit_code = _running_binding_or_error(store, args.agent)
+    if binding is None:
+        return exit_code
+    pane_id = str(binding["pane_id"])
+    output = TmuxBackend().capture_output(config.runtime, pane_id, 200)
+    waiting_hint = _detect_waiting_for_input(output)
+    command = _extract_auth_box_command(output) if waiting_hint else None
+    match = _match_active_delegation(store.load(), args.agent, command)
+    _print_json(
+        {
+            "ok": True,
+            "mode": "agent_boxes",
+            "agent_id": args.agent,
+            "pane_id": pane_id,
+            "box_present": waiting_hint is not None,
+            "waiting_hint": waiting_hint,
+            "command": command,
+            "delegated": match is not None,
+            "delegation_id": (match or {}).get("delegation_id"),
+            "release_command": f"agentdeck agent release-box --agent {args.agent} --confirm",
+        }
+    )
+    return 0
+
+
+def agent_release_box_command(args: argparse.Namespace) -> int:
+    config, store, exit_code = _load_project_or_error()
+    if config is None or store is None:
+        return exit_code
+    if not args.confirm:
+        print("agent release-box requires --confirm", file=sys.stderr)
+        return 1
+    binding, exit_code = _running_binding_or_error(store, args.agent)
+    if binding is None:
+        return exit_code
+    pane_id = str(binding["pane_id"])
+    backend = TmuxBackend()
+    output = backend.capture_output(config.runtime, pane_id, 200)
+    waiting_hint = _detect_waiting_for_input(output)
+    if waiting_hint is None:
+        print(f"no authorization box detected for agent: {args.agent}", file=sys.stderr)
+        return 1
+    command = _extract_auth_box_command(output)
+    match = _match_active_delegation(store.load(), args.agent, command)
+    if match is None:
+        print(
+            f"no active delegation covers this box for {args.agent}: {command or '(command not detected)'}",
+            file=sys.stderr,
+        )
+        return 1
+    backend.send_input(config.runtime, pane_id, "")
+    store.append_event(
+        EventRecord.create(
+            "auth_box_released",
+            {
+                "agent_id": args.agent,
+                "pane_id": pane_id,
+                "delegation_id": match.get("delegation_id"),
+                "prefix": match.get("prefix"),
+                "command": command,
+            },
+        )
+    )
+    _print_json(
+        {
+            "ok": True,
+            "mode": "auth_box_released",
+            "agent_id": args.agent,
+            "pane_id": pane_id,
+            "delegation_id": match.get("delegation_id"),
+            "prefix": match.get("prefix"),
+            "command": command,
+        }
+    )
+    return 0
+
+
+def boxes_watch_command(args: argparse.Namespace) -> int:
+    config, store, exit_code = _load_project_or_error()
+    if config is None or store is None:
+        return exit_code
+    if not args.confirm:
+        print("boxes watch requires --confirm", file=sys.stderr)
+        return 1
+    if config.leader.approval_mode != "autonomous":
+        print("boxes watch requires autonomous mode (agentdeck policy set-mode --mode autonomous ...)", file=sys.stderr)
+        return 1
+    if args.iterations < 1:
+        print("boxes watch requires --iterations >= 1", file=sys.stderr)
+        return 1
+    agent_ids = [args.agent] if args.agent else [agent.agent_id for agent in config.agents]
+    backend = TmuxBackend()
+    released: list[dict[str, object]] = []
+    skipped: list[dict[str, object]] = []
+    for iteration in range(1, args.iterations + 1):
+        agents_state = store.load().get("agents", {})
+        for agent_id in agent_ids:
+            binding = agents_state.get(agent_id) or {}
+            if binding.get("status") != "running" or not binding.get("pane_id"):
+                continue
+            pane_id = str(binding["pane_id"])
+            output = backend.capture_output(config.runtime, pane_id, 200)
+            waiting_hint = _detect_waiting_for_input(output)
+            if waiting_hint is None:
+                continue
+            command = _extract_auth_box_command(output)
+            match = _match_active_delegation(store.load(), agent_id, command)
+            if match is None:
+                skipped.append(
+                    {
+                        "agent_id": agent_id,
+                        "command": command,
+                        "reason": "no active delegation",
+                        "iteration": iteration,
+                    }
+                )
+                continue
+            backend.send_input(config.runtime, pane_id, "")
+            store.append_event(
+                EventRecord.create(
+                    "auth_box_released",
+                    {
+                        "agent_id": agent_id,
+                        "pane_id": pane_id,
+                        "delegation_id": match.get("delegation_id"),
+                        "prefix": match.get("prefix"),
+                        "command": command,
+                        "source": "boxes_watch",
+                    },
+                )
+            )
+            released.append(
+                {
+                    "agent_id": agent_id,
+                    "pane_id": pane_id,
+                    "delegation_id": match.get("delegation_id"),
+                    "prefix": match.get("prefix"),
+                    "command": command,
+                    "iteration": iteration,
+                }
+            )
+        if iteration < args.iterations and args.interval > 0:
+            time.sleep(args.interval)
+    _print_json(
+        {
+            "ok": True,
+            "mode": "boxes_watch",
+            "iterations": args.iterations,
+            "interval": args.interval,
+            "released": released,
+            "released_count": len(released),
+            "skipped": skipped,
+            "skipped_count": len(skipped),
+        }
+    )
+    return 0
+
+
 _COMPOSER_PROMPT_MARKER = "❯"
 
 
@@ -10134,6 +10347,87 @@ def _create_task_worktree(
         detail = " ".join((created.stderr or created.stdout or "").split())[:200]
         return None, f"git worktree add failed: {detail}"
     return {"path": str(path), "branch": branch}, None
+
+
+def delegation_grant_command(args: argparse.Namespace) -> int:
+    config, store, exit_code = _load_project_or_error()
+    if config is None or store is None:
+        return exit_code
+    if not args.confirm:
+        print("delegation grant requires --confirm", file=sys.stderr)
+        return 1
+    prefix = args.prefix.strip()
+    if not prefix:
+        print("delegation prefix must not be empty", file=sys.stderr)
+        return 1
+    known_agents = {agent.agent_id for agent in config.agents}
+    if args.agent not in known_agents:
+        print(f"unknown agent: {args.agent}", file=sys.stderr)
+        return 1
+    try:
+        record = store.grant_delegation(args.agent, prefix)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    store.append_event(
+        EventRecord.create(
+            "delegation_granted",
+            {
+                "delegation_id": record["delegation_id"],
+                "agent_id": record["agent_id"],
+                "prefix": record["prefix"],
+            },
+        )
+    )
+    _print_json({"ok": True, "mode": "delegation_granted", **record})
+    return 0
+
+
+def delegation_list_command(_args: argparse.Namespace) -> int:
+    config, store, exit_code = _load_project_or_error()
+    if config is None or store is None:
+        return exit_code
+    state = store.load()
+    items = [
+        {**item, "active": not item.get("revoked_at")}
+        for item in state.get("delegations", [])
+        if isinstance(item, dict)
+    ]
+    payload = {"ok": True, "mode": "delegation_list", "count": len(items), "items": items}
+    validation = validate_delegation_list_contract(payload)
+    if not validation["ok"]:
+        print("delegation list contract validation failed", file=sys.stderr)
+        for error in validation["errors"]:
+            print(f"- {error}", file=sys.stderr)
+        return 1
+    _print_json(payload)
+    return 0
+
+
+def delegation_revoke_command(args: argparse.Namespace) -> int:
+    config, store, exit_code = _load_project_or_error()
+    if config is None or store is None:
+        return exit_code
+    if not args.confirm:
+        print("delegation revoke requires --confirm", file=sys.stderr)
+        return 1
+    try:
+        record = store.revoke_delegation(args.delegation_id)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    store.append_event(
+        EventRecord.create(
+            "delegation_revoked",
+            {
+                "delegation_id": record["delegation_id"],
+                "agent_id": record["agent_id"],
+                "prefix": record["prefix"],
+            },
+        )
+    )
+    _print_json({"ok": True, "mode": "delegation_revoked", **record})
+    return 0
 
 
 def build_dispatch_prompt(
@@ -19894,6 +20188,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     contract_worktree.add_argument("--example", action="store_true", help="Include GUI-ready worktree examples")
     contract_worktree.set_defaults(func=contract_worktree_command)
+    contract_delegation = contract_subparsers.add_parser(
+        "delegation",
+        help="Show scoped-authorization-delegation contract discovery metadata",
+    )
+    contract_delegation.add_argument("--example", action="store_true", help="Include GUI-ready delegation examples")
+    contract_delegation.set_defaults(func=contract_delegation_command)
 
     demo = subparsers.add_parser("demo", help="Run read-only demo helpers")
     demo_subparsers = demo.add_subparsers(dest="demo_command")
@@ -19945,6 +20245,19 @@ def build_parser() -> argparse.ArgumentParser:
     agent_capture.add_argument("--agent", required=True, help="Agent id from .agentdeck/config.toml")
     agent_capture.add_argument("--lines", type=int, default=200, help="Number of recent lines to capture")
     agent_capture.set_defaults(func=agent_capture_command)
+
+    agent_boxes = agent_subparsers.add_parser(
+        "boxes", help="Detect the pending authorization box on an agent pane (read-only)"
+    )
+    agent_boxes.add_argument("--agent", required=True, help="Agent id from .agentdeck/config.toml")
+    agent_boxes.set_defaults(func=agent_boxes_command)
+
+    agent_release_box = agent_subparsers.add_parser(
+        "release-box", help="Release the pending authorization box if a delegation covers it (explicit)"
+    )
+    agent_release_box.add_argument("--agent", required=True, help="Agent id from .agentdeck/config.toml")
+    agent_release_box.add_argument("--confirm", action="store_true", help="Explicitly confirm the release")
+    agent_release_box.set_defaults(func=agent_release_box_command)
 
     agent_terminal = agent_subparsers.add_parser(
         "terminal",
@@ -20105,6 +20418,33 @@ def build_parser() -> argparse.ArgumentParser:
     worktree_prune = worktree_subparsers.add_parser("prune", help="Remove merged or abandoned task worktrees (explicit)")
     worktree_prune.add_argument("--confirm", action="store_true", help="Explicitly confirm the prune")
     worktree_prune.set_defaults(func=worktree_prune_command)
+
+    delegation = subparsers.add_parser("delegation", help="Scoped authorization delegation registry")
+    delegation_subparsers = delegation.add_subparsers(dest="delegation_command")
+    delegation_grant = delegation_subparsers.add_parser(
+        "grant", help="Grant a command-prefix delegation for one agent's authorization boxes (explicit)"
+    )
+    delegation_grant.add_argument("--agent", required=True, help="Agent id from .agentdeck/config.toml")
+    delegation_grant.add_argument("--prefix", required=True, help="Command prefix the delegation covers")
+    delegation_grant.add_argument("--confirm", action="store_true", help="Explicitly confirm the grant")
+    delegation_grant.set_defaults(func=delegation_grant_command)
+    delegation_list = delegation_subparsers.add_parser("list", help="List delegations (read-only)")
+    delegation_list.set_defaults(func=delegation_list_command)
+    delegation_revoke = delegation_subparsers.add_parser("revoke", help="Revoke a delegation (explicit)")
+    delegation_revoke.add_argument("--delegation-id", required=True, help="Delegation id from delegation list")
+    delegation_revoke.add_argument("--confirm", action="store_true", help="Explicitly confirm the revocation")
+    delegation_revoke.set_defaults(func=delegation_revoke_command)
+
+    boxes = subparsers.add_parser("boxes", help="Authorization box automation (delegation-gated)")
+    boxes_subparsers = boxes.add_subparsers(dest="boxes_command")
+    boxes_watch = boxes_subparsers.add_parser(
+        "watch", help="Bounded watch loop that releases delegation-covered authorization boxes (autonomous mode only)"
+    )
+    boxes_watch.add_argument("--agent", default=None, help="Limit watching to one agent id")
+    boxes_watch.add_argument("--iterations", type=int, default=1, help="Bounded number of scan iterations")
+    boxes_watch.add_argument("--interval", type=float, default=5.0, help="Seconds between iterations")
+    boxes_watch.add_argument("--confirm", action="store_true", help="Explicitly confirm the watch loop")
+    boxes_watch.set_defaults(func=boxes_watch_command)
 
     dispatch = subparsers.add_parser("dispatch", help="Send a role-aware task to a running agent")
     dispatch.add_argument("--from-agent", default="user", help="Actor or agent id that submitted this task")

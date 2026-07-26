@@ -287,6 +287,12 @@ CONTRACT_INDEX_SPECS = (
         "agentdeck contract worktree --example",
         "worktree-schema.md",
     ),
+    (
+        "delegation",
+        "agentdeck contract delegation",
+        "agentdeck contract delegation --example",
+        "delegation-schema.md",
+    ),
 )
 
 
@@ -888,6 +894,157 @@ def worktree_contract_response(contract_path: Path, include_example: bool = Fals
         payload["example_list"] = list_example
         payload["example_diff_fields"] = list(diff_example)
         payload["example_diff"] = diff_example
+    return payload
+
+
+DELEGATION_LIST_RESPONSE_FIELDS = (
+    "ok",
+    "mode",
+    "count",
+    "items",
+)
+
+DELEGATION_ITEM_FIELDS = (
+    "delegation_id",
+    "agent_id",
+    "prefix",
+    "created_at",
+    "revoked_at",
+    "active",
+)
+
+DELEGATION_BOXES_RESPONSE_FIELDS = (
+    "ok",
+    "mode",
+    "agent_id",
+    "pane_id",
+    "box_present",
+    "waiting_hint",
+    "command",
+    "delegated",
+    "delegation_id",
+    "release_command",
+)
+
+BOXES_WATCH_RESPONSE_FIELDS = (
+    "ok",
+    "mode",
+    "iterations",
+    "interval",
+    "released",
+    "released_count",
+    "skipped",
+    "skipped_count",
+)
+
+
+def validate_delegation_list_contract(payload: dict[str, object]) -> dict[str, object]:
+    errors: list[str] = []
+    for field in DELEGATION_LIST_RESPONSE_FIELDS:
+        if field not in payload:
+            errors.append(f"missing delegation_list field: {field}")
+    if payload.get("mode") != "delegation_list":
+        errors.append(f"delegation_list.mode must be delegation_list, got {payload.get('mode')}")
+    items = payload.get("items")
+    if not isinstance(items, list):
+        errors.append("delegation_list.items must be a list")
+    else:
+        if payload.get("count") != len(items):
+            errors.append("delegation_list.count must match items length")
+        for index, item in enumerate(items):
+            if not isinstance(item, dict):
+                errors.append(f"delegation_list.items[{index}] must be an object")
+                continue
+            for field in DELEGATION_ITEM_FIELDS:
+                if field not in item:
+                    errors.append(f"missing delegation_list.items[{index}] field: {field}")
+    return {"ok": not errors, "errors": errors}
+
+
+def delegation_list_example() -> dict[str, object]:
+    return {
+        "ok": True,
+        "mode": "delegation_list",
+        "count": 1,
+        "items": [
+            {
+                "delegation_id": "dlg_example",
+                "agent_id": "coder",
+                "prefix": "node tests/",
+                "created_at": "2026-07-26T00:00:00+00:00",
+                "revoked_at": None,
+                "active": True,
+            }
+        ],
+    }
+
+
+def delegation_boxes_example() -> dict[str, object]:
+    return {
+        "ok": True,
+        "mode": "agent_boxes",
+        "agent_id": "coder",
+        "pane_id": "%50",
+        "box_present": True,
+        "waiting_hint": "Press enter to confirm or esc to cancel",
+        "command": "node tests/focus-carousel-tab-order.mjs",
+        "delegated": True,
+        "delegation_id": "dlg_example",
+        "release_command": "agentdeck agent release-box --agent coder --confirm",
+    }
+
+
+def boxes_watch_example() -> dict[str, object]:
+    return {
+        "ok": True,
+        "mode": "boxes_watch",
+        "iterations": 2,
+        "interval": 5.0,
+        "released": [
+            {
+                "agent_id": "coder",
+                "pane_id": "%50",
+                "delegation_id": "dlg_example",
+                "prefix": "node tests/",
+                "command": "node tests/focus-carousel-tab-order.mjs",
+                "iteration": 1,
+            }
+        ],
+        "released_count": 1,
+        "skipped": [],
+        "skipped_count": 0,
+    }
+
+
+def delegation_contract_payload(contract_path: Path) -> dict[str, object]:
+    return {
+        "schema_version": PROJECT_VIEW_SCHEMA_VERSION,
+        "list_command": "agentdeck delegation list",
+        "grant_command_template": "agentdeck delegation grant --agent <agent_id> --prefix <prefix> --confirm",
+        "revoke_command_template": "agentdeck delegation revoke --delegation-id <delegation_id> --confirm",
+        "boxes_command_template": "agentdeck agent boxes --agent <agent_id>",
+        "release_box_command_template": "agentdeck agent release-box --agent <agent_id> --confirm",
+        "watch_command_template": "agentdeck boxes watch --confirm --iterations <n> --interval <seconds>",
+        "contract_path": str(contract_path),
+        "contract_exists": contract_path.exists(),
+        "list_response_fields": list(DELEGATION_LIST_RESPONSE_FIELDS),
+        "delegation_item_fields": list(DELEGATION_ITEM_FIELDS),
+        "boxes_response_fields": list(DELEGATION_BOXES_RESPONSE_FIELDS),
+        "watch_response_fields": list(BOXES_WATCH_RESPONSE_FIELDS),
+        "project_view_schema_version": PROJECT_VIEW_SCHEMA_VERSION,
+        "project_view_contract": "agentdeck contract project-view",
+    }
+
+
+def delegation_contract_response(contract_path: Path, include_example: bool = False) -> dict[str, object]:
+    payload = delegation_contract_payload(contract_path)
+    if include_example:
+        list_example = delegation_list_example()
+        payload["example"] = True
+        payload["example_list"] = list_example
+        payload["example_delegation_item_fields"] = list(list_example["items"][0])
+        payload["example_boxes"] = delegation_boxes_example()
+        payload["example_watch"] = boxes_watch_example()
     return payload
 
 
