@@ -4,6 +4,59 @@
 
 ## 2026-07-26
 
+### Record round 9 walk-away live PASS with GUI validation and shadow zero-diff
+
+- **Type**: data
+- **Motivation**: 走开链路二连实证（任务=M2 a11y 隐患修复）+ GUI 三刀
+  首次真浏览器实战 + SQLite 阶段 5 推进条件的第一份零 diff 证据。
+- **What**: 新增
+  `docs/validation/2026-07-26-copilot-line1-round9-gui-and-shadow.md`
+  （截图 `assets/agentdeck-ui-round9.png`）。两段 follow（60 wave 到
+  上限+25 wave 到 complete），委托自动放框 10 个，文件通道 3/3，
+  merge-on-complete 合并 5887b83+9304de4，release 零 dirty，prune 全
+  回收；GUI 分级渲染/事件流实战正确；收尾 `storage shadow-diff`
+  **in_sync=true（46 集合，整轮数百次写入后）**。两发现当场闭环（页面
+  JS 语法瘫痪、codex 折叠框盲区，见同日两条 fix）；F1（高：coder 新增
+  测试用例竞态挂起，main 首跑即复现 TIMEOUT，reviewer 已给修复方案）
+  与 F2-F4 入池为下一任务。
+- **Impact**: 委托/follow/合并三系统在长轮次下稳定；GUI 达实战可用；
+  影子镜像零 diff 证据 #1。不涉及代码行为变化。
+- **Verification**: live 证据见 validation 文档与事件账本；back-to-top
+  回归 exit 0；carousel 测试 F1 挂起如实记录（生产修复经 reviewer 隔离
+  验证正确，缺陷在测试用例本身）。
+
+### Fix collapsed codex box command extraction via option-prefix fallback
+
+- **Type**: fix
+- **Motivation**: round 9 live 发现——codex 折叠长框中段后 `$ 命令`行
+  不在可见 pane，`_extract_auth_box_command` 返回 None，委托无法匹配，
+  `--release-boxes` 保守跳过（行为正确但委托失效），哨兵报警需人工放行。
+- **What**: 提取器新增回退：`$ ` 行不可见时从选项 2 自身的
+  "commands that start with `…`" 反引号内容提取（行内空格保留、跨行
+  无空格拼接——观测到 TUI 在 token 中间折行）；`_match_active_delegation`
+  加空白折叠比较，兜住折行恰在真实空格处的前缀（如 `git add`）。
+  delegation schema 与 CLAUDE.md 同步。
+- **Impact**: 折叠框恢复委托自动放行（修复后同轮后续折叠框全部自动
+  命中）；提取文本仍全部来自 codex 对话框本体，信任级不变。
+- **Verification**: RED 先证折叠框 fixture 提取 None；GREEN 后
+  delegation/UI/follow 套件 33 passed；live 同轮验证后续折叠框自动放行；
+  全量 `pytest tests/ -q` 绿（pipefail）+ compileall（见 commit）。
+
+### Fix page-script newline escaping and add a JS syntax guard
+
+- **Type**: fix
+- **Motivation**: round 9 GUI 首次真浏览器渲染发现——`ui.py` `_PAGE`
+  普通 Python 字符串里的 `\n` 被解释成真换行落进 JS 双引号字符串，整个
+  `<script>` SyntaxError 拒绝解析，页面所有区块永久卡 loading（此前
+  仅 curl 冒烟测 API，从未渲染过 JS）。
+- **What**: 转义为 `\\n`；新增守卫测试：从 `_PAGE` 抽出 script 用
+  `node --check` 验证可解析性（node 缺失时 skip）。
+- **Impact**: 页面恢复完整渲染（Overview/Agents/Controls 按钮/Events
+  流）；页面脚本从此有语法级测试保护。
+- **Verification**: 浏览器 console 先证 SyntaxError；修复后真浏览器
+  完整渲染（round 9 截图）；UI 套件 12 passed；全量 `pytest tests/ -q`
+  绿（pipefail）+ compileall（见 commit）。
+
 ### Add explicit-control execution with two-step confirm to the web UI (GUI slice 3)
 
 - **Type**: feat
