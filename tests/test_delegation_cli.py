@@ -356,6 +356,41 @@ def test_contract_list_includes_delegation(tmp_path, monkeypatch, capsys) -> Non
     assert "delegation-schema.md" in out
 
 
+COLLAPSED_CODEX_AUTH_BOX = (
+    "  Environment: local\n"
+    "  Reason: 是否允许在沙箱外启动本机无头\n"
+    "  [… 10 lines] ctrl + a view all\n"
+    "› 1. Yes, proceed (y)\n"
+    "  2. Yes, and don't ask again for commands that start with `node tests/\n"
+    "     focus-carousel-tab-order.mjs` (p)\n"
+    "  3. No, and tell Codex what to do differently (esc)\n"
+    "  Press enter to confirm or esc to cancel or o to open thread\n"
+)
+
+
+def test_boxes_extracts_command_from_collapsed_box_option_text(tmp_path, monkeypatch, capsys) -> None:
+    # round 9 live 发现：codex 长框折叠中段，`$ 命令`行不在可见 pane 里，
+    # 提取返回 None 导致委托无法匹配；回退=从选项 2 的
+    # "commands that start with `…`" 反引号内容（跨行拼接）提取。
+    root = prepare_project(tmp_path, monkeypatch)
+    bind_coder(root)
+    fake = FakeTmuxBackend()
+    monkeypatch.setattr(cli, "TmuxBackend", lambda: fake)
+    fake.output = COLLAPSED_CODEX_AUTH_BOX
+    cli.main(["delegation", "grant", "--agent", "coder", "--prefix", "node tests/", "--confirm"])
+    capsys.readouterr()
+
+    assert cli.main(["agent", "boxes", "--agent", "coder"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["box_present"] is True
+    assert payload["command"] == "node tests/focus-carousel-tab-order.mjs"
+    assert payload["delegated"] is True
+
+    assert cli.main(["agent", "release-box", "--agent", "coder", "--confirm"]) == 0
+    capsys.readouterr()
+    assert fake.sent == [("%50", "")]
+
+
 def test_release_box_refuses_without_box(tmp_path, monkeypatch, capsys) -> None:
     root = prepare_project(tmp_path, monkeypatch)
     bind_coder(root)

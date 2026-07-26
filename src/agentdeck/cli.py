@@ -9822,18 +9822,35 @@ def _extract_auth_box_command(output: str) -> str | None:
         if lines[index].strip().startswith("$ "):
             command_index = index
             break
-    if command_index is None:
+    if command_index is not None:
+        parts = [lines[command_index].strip()[2:].strip()]
+        for line in lines[command_index + 1:]:
+            stripped = line.strip()
+            if not stripped:
+                break
+            if stripped.startswith(_AUTH_BOX_OPTION_PREFIXES) or re.match(r"\d+\.\s", stripped):
+                break
+            parts.append(stripped)
+        command = " ".join(part for part in parts if part).strip()
+        return command or None
+    # round 9 live 发现：codex 折叠长框中段（"[… N lines] view all"），
+    # `$ ` 行不在可见 pane 里。回退：从选项 2 自己的
+    # "commands that start with `<prefix>`" 反引号内容提取（可跨折行），
+    # 该文本同样来自 codex 对话框本体，信任级与 `$ ` 行一致。
+    tail = "\n".join(lines)
+    marker = "commands that start with `"
+    marker_index = tail.find(marker)
+    if marker_index < 0:
         return None
-    parts = [lines[command_index].strip()[2:].strip()]
-    for line in lines[command_index + 1:]:
-        stripped = line.strip()
-        if not stripped:
-            break
-        if stripped.startswith(_AUTH_BOX_OPTION_PREFIXES) or re.match(r"\d+\.\s", stripped):
-            break
-        parts.append(stripped)
-    command = " ".join(part for part in parts if part).strip()
-    return command or None
+    rest = tail[marker_index + len(marker):]
+    closing = rest.find("`")
+    if closing < 0:
+        return None
+    # TUI 折行可发生在 token 中间（观测：`node tests/` + 续行），折行点的
+    # 空格信息已丢失——行内空格保留、跨行处按无空格拼接还原；折行恰在
+    # 真实空格处的前缀（如 `git add`）靠匹配器的空白折叠比较兜住。
+    prefix = "".join(line.strip() for line in rest[:closing].splitlines())
+    return prefix.strip() or None
 
 
 def _match_active_delegation(
@@ -9847,7 +9864,15 @@ def _match_active_delegation(
         if item.get("agent_id") != agent_id:
             continue
         prefix = str(item.get("prefix") or "")
-        if prefix and command.startswith(prefix):
+        if not prefix:
+            continue
+        if command.startswith(prefix):
+            return item
+        # 折叠框回退提取会丢失折行点空格：空白折叠后再比一次，
+        # 使 "git add" 这类含空格前缀在任一断行形态下都能命中。
+        collapsed_command = "".join(command.split())
+        collapsed_prefix = "".join(prefix.split())
+        if collapsed_prefix and collapsed_command.startswith(collapsed_prefix):
             return item
     return None
 

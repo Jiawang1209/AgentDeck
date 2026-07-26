@@ -35,12 +35,18 @@ with every release audited. Data source: round 6/7 live loops
 - `agentdeck agent boxes --agent <id>` (read-only) captures the agent's pane,
   detects a pending authorization box (same tail-window heuristics as
   `agent capture`'s `waiting_for_input`), extracts the boxed `$ command`
-  (indented continuation lines joined until the option list), and reports
+  (indented continuation lines joined until the option list; when codex
+  collapses a long box body and the `$ ` line is not visible — a round 9
+  live finding — the fallback extracts the backtick-quoted prefix from the
+  box's own "commands that start with `…`" option text, joining wrapped
+  lines without inserting spaces), and reports
   `box_present`, `waiting_hint`, `command`, `delegated`, `delegation_id`, and
   the explicit `release_command`. It never writes state and never sends input.
 - `agentdeck agent release-box --agent <id> --confirm` re-detects the box and
   sends a bare Enter **only** when an active delegation for that agent covers
-  the extracted command (`command.startswith(prefix)`); success appends an
+  the extracted command (`command.startswith(prefix)`, falling back to a
+  whitespace-collapsed comparison so a wrap that landed exactly on a real
+  space — e.g. a `git add` prefix — still matches); success appends an
   `auth_box_released` event carrying the delegation id and full command. No
   box, no detected command, no covering delegation, or missing `--confirm`
   refuse with zero input sent.
