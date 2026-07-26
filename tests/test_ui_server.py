@@ -7,6 +7,8 @@ from pathlib import Path
 
 import pytest
 
+import pytest
+
 from agentdeck import cli
 from agentdeck import ui
 from agentdeck.config import write_default_config
@@ -284,6 +286,27 @@ def test_execute_endpoint_refuses_wrong_safety_and_templates(tmp_path, monkeypat
     finally:
         server.shutdown()
         connection.close()
+
+
+def test_page_script_is_parseable_javascript(tmp_path) -> None:
+    # round 9 live 发现：Python 字符串里的 \n 落进 JS 字符串成真换行，
+    # 整个 <script> SyntaxError 拒绝解析、页面全瘫；用 node --check 守门。
+    import shutil
+    import subprocess
+
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node not available")
+    page = ui._PAGE
+    start = page.index("<script>") + len("<script>")
+    end = page.index("</script>")
+    script = page[start:end]
+    script_file = tmp_path / "page.js"
+    script_file.write_text(script, encoding="utf-8")
+    completed = subprocess.run(
+        [node, "--check", str(script_file)], capture_output=True, text=True
+    )
+    assert completed.returncode == 0, completed.stderr
 
 
 def test_ui_serve_cli_is_wired(tmp_path, monkeypatch) -> None:

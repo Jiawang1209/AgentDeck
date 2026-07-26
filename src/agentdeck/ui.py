@@ -144,7 +144,7 @@ async function runExecute(controlId, button) {
   const box = document.getElementById("result");
   const command = button.closest("tr").querySelector("code").textContent;
   // 二步确认：对话框展示将执行的完整命令，取消即零执行。
-  if (!window.confirm("Execute this command?\n\n" + command)) { return; }
+  if (!window.confirm("Execute this command?\\n\\n" + command)) { return; }
   box.textContent = "executing " + controlId + "…";
   try {
     const response = await fetch("/api/execute", {
