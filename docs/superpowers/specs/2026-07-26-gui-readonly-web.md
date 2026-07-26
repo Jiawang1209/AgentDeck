@@ -16,9 +16,18 @@
    契约面；CLI 侧 validator 天然守门；未来 daemon/remote 化只换通道不换
    渲染。
 3. **只读边界**：API 端点白名单硬编码（workbench/events/controls 三条
-   只读命令），server 绝不执行任何 mutating 命令；命令面板只展示与复制
-   命令文本，不可点执行。执行面（按 safety 分级的按钮）留二期，需另行
-   拍板。
+   只读命令），server 绝不执行任何 mutating 命令。
+4. **执行面 A 档（同日拍板落地）：仅 inspect 级可点执行**。
+   `POST /api/inspect`（唯一允许的 POST 路径，其它 POST 仍 405）只接受
+   `{"control_id": …}`——浏览器绝不发送命令文本；server 用
+   `agentdeck controls --control-id <id>` 从 live registry 重解析，强制
+   四重门：control 存在（否则 404）、`enabled=true`、`safety=inspect`、
+   命令以 `agentdeck ` 开头且不含 `--confirm`（任一不满足 403 且零执行）；
+   通过后以 shlex 解析 argv 执行并返回 JSON 结果。explicit_*/delegated
+   控件仍只展示与复制；B 档（安全分级确认按钮）需另行拍板。
+   实施时 live 发现并顺带修复主线契约 bug：approve/autonomous 模式下
+   ask set_mode 控件 enabled 且 safety=inspect，违反"enabled set_mode 必须
+   explicit_user"的注册表契约（ask/approve 切换控件现统一 explicit_user）。
 4. **页面**：单页内联 HTML/CSS/JS（无外部资源），前端轮询
    `/api/workbench`（5s）与 `/api/events?since=<cursor>`（events 游标由
    浏览器持有，符合 events contract 的 cursor 语义）。

@@ -12,6 +12,7 @@ command — the palette displays commands for copying, never for clicking.
 from __future__ import annotations
 
 import json
+import shlex
 import subprocess
 import sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -61,9 +62,10 @@ _PAGE = """<!doctype html>
     <h2>Overview</h2><div id="overview" class="muted">loading…</div>
     <h2>Agents</h2><table id="agents"></table>
     <h2>Queues</h2><div id="queues" class="muted"></div>
-    <h2>Controls <span class="muted">(copy only)</span></h2><table id="controls"></table>
+    <h2>Controls <span class="muted">(inspect runnable, others copy only)</span></h2><table id="controls"></table>
   </div>
   <div>
+    <h2>Inspect result</h2><pre id="result" class="muted">click a Run button…</pre>
     <h2>Events</h2><table id="events"></table>
   </div>
 </div>
@@ -100,10 +102,12 @@ async function refreshControls() {
     const payload = await fetchJson("/api/controls");
     const items = (payload.items || []).slice(0, 40);
     document.getElementById("controls").innerHTML =
-      "<tr><th>scope</th><th>kind</th><th>command</th><th>safety</th></tr>" +
+      "<tr><th>scope</th><th>kind</th><th>command</th><th>safety</th><th></th></tr>" +
       items.map(i => `<tr><td>${esc(i.scope)}</td><td>${esc(i.kind)}</td>` +
         `<td><code>${esc(i.command)}</code></td>` +
-        `<td class="${i.enabled ? "ok" : "muted"}">${esc(i.safety)}${i.enabled ? "" : " (disabled)"}</td></tr>`).join("");
+        `<td class="${i.enabled ? "ok" : "muted"}">${esc(i.safety)}${i.enabled ? "" : " (disabled)"}</td>` +
+        `<td>${i.enabled && i.safety === "inspect" && i.control_id
+          ? `<button onclick="runInspect('${esc(i.control_id)}')">Run</button>` : ""}</td></tr>`).join("");
   } catch (e) { /* palette 缺失不致命 */ }
 }
 async function refreshEvents() {
@@ -118,6 +122,21 @@ async function refreshEvents() {
       document.getElementById("events").insertAdjacentHTML("afterbegin", rows);
     }
   } catch (e) { /* 轮询失败下轮重试 */ }
+}
+async function runInspect(controlId) {
+  const box = document.getElementById("result");
+  box.textContent = "running " + controlId + "…";
+  try {
+    const response = await fetch("/api/inspect", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({control_id: controlId}),
+    });
+    const text = await response.text();
+    box.textContent = response.ok
+      ? JSON.stringify(JSON.parse(text), null, 2)
+      : `refused (${response.status}): ${text}`;
+  } catch (e) { box.textContent = "inspect failed: " + e; }
 }
 refreshWorkbench(); refreshControls(); refreshEvents();
 setInterval(refreshWorkbench, 5000);
@@ -165,11 +184,67 @@ class _UIRequestHandler(BaseHTTPRequestHandler):
             return
         self._send(404, "text/plain; charset=utf-8", b"not found")
 
+    def _resolve_inspect_control(self, control_id: str) -> tuple[list[str] | None, tuple[int, str] | None]:
+        """Re-resolve the control from the live registry; enforce the gates.
+
+        The browser only ever sends a control_id — the command text comes
+        exclusively from AgentDeck's own control registry, and only
+        enabled + safety=inspect + confirm-free commands are executable.
+        """
+        payload = run_cli_json(self.project_root, ["controls", "--control-id", control_id])
+        items = payload.get("items") if isinstance(payload, dict) else None
+        match = None
+        for item in items or []:
+            if isinstance(item, dict) and item.get("control_id") == control_id:
+                match = item
+                break
+        if match is None:
+            return None, (404, "unknown control_id")
+        if not match.get("enabled"):
+            return None, (403, "control is disabled")
+        if match.get("safety") != "inspect":
+            return None, (403, "only inspect controls are executable")
+        command = str(match.get("command") or "")
+        if not command.startswith("agentdeck "):
+            return None, (403, "command is not an agentdeck command")
+        argv = shlex.split(command)[1:]
+        if any(token == "--confirm" for token in argv):
+            return None, (403, "confirm-gated commands are not executable")
+        return argv, None
+
+    def do_POST(self) -> None:  # noqa: N802 - stdlib handler naming
+        parsed = urlparse(self.path)
+        if parsed.path != "/api/inspect":
+            self._send(405, "text/plain; charset=utf-8", b"read-only server: GET only")
+            return
+        try:
+            length = min(int(self.headers.get("Content-Length") or 0), 4096)
+            body = json.loads(self.rfile.read(length).decode("utf-8"))
+            control_id = body["control_id"]
+            if type(control_id) is not str or not control_id or len(control_id) > 200:
+                raise ValueError("invalid control_id")
+        except (ValueError, KeyError, TypeError, UnicodeDecodeError):
+            self._send(400, "text/plain; charset=utf-8", b"body must be JSON with control_id")
+            return
+        argv, error = self._resolve_inspect_control(control_id)
+        if argv is None:
+            status, detail = error or (403, "refused")
+            self._send(status, "text/plain; charset=utf-8", detail.encode("utf-8"))
+            return
+        result = run_cli_json(self.project_root, argv)
+        self._send(
+            200,
+            "application/json; charset=utf-8",
+            json.dumps(
+                {"ok": True, "control_id": control_id, "command": "agentdeck " + " ".join(argv), "result": result},
+                ensure_ascii=False,
+            ).encode("utf-8"),
+        )
+
     def _reject_non_get(self) -> None:
         self._send(405, "text/plain; charset=utf-8", b"read-only server: GET only")
 
-    do_POST = _reject_non_get  # noqa: N815 - stdlib handler naming
-    do_PUT = _reject_non_get  # noqa: N815
+    do_PUT = _reject_non_get  # noqa: N815 - stdlib handler naming
     do_DELETE = _reject_non_get  # noqa: N815
     do_PATCH = _reject_non_get  # noqa: N815
 

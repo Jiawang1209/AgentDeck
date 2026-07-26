@@ -4,6 +4,49 @@
 
 ## 2026-07-26
 
+### Add inspect-level execution to the local web UI (GUI slice 2)
+
+- **Type**: feat
+- **Motivation**: user 拍板 GUI 执行面 A 档——仅 safety=inspect 的只读
+  命令可从命令面板点击执行，explicit_*/delegated 仍只展示复制；把
+  "观察→下钻"闭环，零变更风险。
+- **What**: `ui.py` 新增 `POST /api/inspect`（唯一允许的 POST 路径，
+  其它 POST 仍 405）：浏览器只发 `control_id`（≤200 字符，畸形 body
+  400），server 用 `agentdeck controls --control-id <id>` 从 live
+  registry 重解析并强制四重门——存在（否则 404）、enabled、
+  safety=inspect、命令以 `agentdeck ` 开头且不含 `--confirm`（任一不
+  满足 403 且零执行）——通过后 shlex 解析 argv 执行返回 JSON。页面
+  Controls 表对 enabled+inspect 项渲染 Run 按钮，结果进 Inspect result
+  面板。命令文本永远来自 AgentDeck 自己的注册表，注入面为零。spec 与
+  CLAUDE.md 同步。
+- **Impact**: 浏览器可安全下钻任何 inspect 入口（trace/plan status/
+  continue 等）；mutating 面依然完全不可从 web 触发。
+- **Verification**: 3 例 TDD RED 先行（enabled inspect 执行+registry
+  重解析、非 inspect/disabled/--confirm 混入/未知 id 全拒绝且零执行、
+  畸形 body 400+其它 POST 405）后 GREEN，UI 套件 8 passed；scratch
+  真实冒烟：live control_id 执行 `agentdeck continue` 成功、非 inspect
+  控件 403；全量 `pytest tests/ -q` 绿（pipefail）+ compileall（见
+  commit）。
+
+### Fix ask set-mode control safety in approve/autonomous modes
+
+- **Type**: fix
+- **Motivation**: GUI 冒烟 live 发现——approve/autonomous 模式下
+  `agentdeck controls` 契约自校验失败：ask 的 `set_mode` 控件 enabled
+  且 `safety=inspect`，违反"enabled set_mode 必须 explicit_user"的注册表
+  契约。该 bug 自 control_mode_card 引入以来在 approve/autonomous 模式
+  下一直存在，只因从未在这两个模式下运行过裸 `controls` 而未暴露。
+- **What**: `_control_mode_set_controls` 中 ask/approve 的切换控件统一
+  `safety=explicit_user`——切换 approval_mode 是 `.agentdeck/config.toml`
+  写操作，`available_modes[].safety` 描述的是模式自身性格而非切换动作
+  的安全级。CLAUDE.md 对应规则句同步改写。
+- **Impact**: `agentdeck controls` 在三种 policy 模式下都能通过契约
+  校验输出；GUI/TUI 渲染的模式切换按钮语义归正。
+- **Verification**: RED 先证 approve/autonomous 模式下 `controls`
+  exit 1；GREEN 后新增守卫测试断言三模式全通过且 enabled set_mode 均为
+  explicit_user；delegation+UI 套件 22 passed；全量 `pytest tests/ -q`
+  绿（pipefail）+ compileall（见 commit）。
+
 ### Add read-only local web UI over the contract surface (GUI slice 1)
 
 - **Type**: feat
