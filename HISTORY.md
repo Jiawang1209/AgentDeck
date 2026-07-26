@@ -4,6 +4,30 @@
 
 ## 2026-07-27
 
+### Land SQLite phase 5a/5b: events dual-write and events-diff surface
+
+- **Type**: feat
+- **Motivation**: 影子零 diff 2/2 后 user 批准开工阶段 5 前两子切片
+  （均零行为变更）；同时冻结阶段 5 完整设计（5a 双写→5b 比对→5c 显式
+  cutover→5d 停同步导出）入 route spec。关键前置事实：events.jsonl 是
+  独立 journal 不在 state dict 里，quarantine 镜像不含它。
+- **What**: ①5a 双写：钩在真正写单点 `_append_event_bytes_locked` 成功
+  路径末尾（覆盖 `append_event` 与 daemon outbox 批量两条调用链），
+  同一把 mutation lock 内经新 `storage.shadow.append_events_if_enabled`
+  向 events 表 `INSERT OR IGNORE`（多行解析、单 IMMEDIATE 事务；失败
+  只落 shadow-errors.jsonl，journal 权威路径零影响；错误记录抽取为共享
+  `_log_shadow_error`）。②5b 比对：只读 `agentdeck storage events-diff`
+  ——后缀对齐语义（启用前历史事件不在表里是 5a 语义而非漂移，以表首行
+  event_id 定位 baseline），此后逐条 event_id/type/payload/created_at
+  深比对，长度/内容不符非 0（详情上限 10 条），表空平凡同步。spec 与
+  CLAUDE.md 同步（每轮收尾三连检：shadow-diff + events-diff + 测试）。
+- **Impact**: events 账本进入双写观察期，为 5c 切权威（O(n²)→O(1) 的
+  最大收益点）攒证据；journal 权威与所有既有行为不变。
+- **Verification**: 3 例 TDD RED 先行（双写落表、坏库不破 journal+错误
+  落日志、diff 的未启用/同步/后缀对齐/漂移四态）后 GREEN，shadow 套件
+  10 passed；scratch live 首验 baseline 506+新增 2 条 in_sync；全量
+  `pytest tests/ -q` 绿（pipefail）+ compileall（见 commit）。
+
 ### Record round 10 F1 race-fix live PASS with shadow zero-diff #2
 
 - **Type**: data

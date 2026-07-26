@@ -83,8 +83,33 @@
    crash 窗口、绕过 save 的写、镜像损坏）由显式 diff 捕获。质量闸门改为
    纪律：每轮 live 收尾必跑 `shadow-diff`，零 diff 记录随 validation 文档
    积累，N 轮零 diff 才推进阶段 5。scratch 首验：46 集合 in_sync。
-5. events.jsonl + approvals.jsonl + 3 个 event_outbox 先切 SQLite 权威
-   （append-only 耦合最低收益最高）。
+5. events 切权威（设计冻结于 2026-07-27，实现分四子切片）。
+   **前置事实**：events.jsonl 是独立 journal，不在 state dict 里——
+   quarantine 镜像不含它，需要自己的双写→比对→切换周期。读写面已收敛：
+   写单点 `append_event`→`_append_event_journal_at`（全文重写 O(n²)，
+   64MB 上限）；读单点 `_event_journal_source()`（6 调用方：event ids、
+   3 个 outbox flush、events 列表、history）；全部在 mutation lock 内。
+   - ✅ **5a 双写已落地**（2026-07-27，零行为变更）：钩在真正的写单点
+     `_append_event_bytes_locked` 成功路径末尾（覆盖 append_event 与
+     daemon outbox 批量两条调用链），同一把 mutation lock 内向 events 表
+     `INSERT OR IGNORE`（多行解析；失败落 shadow-errors.jsonl 绝不影响
+     journal 路径）。
+   - ✅ **5b 比对面已落地**（同日）：只读 `agentdeck storage events-diff`
+     ——**后缀对齐**语义：启用前的历史 journal 事件不在表里是 5a 语义而非
+     漂移，以表首行 event_id 定位 baseline，此后逐条按 event_id/type/
+     payload/created_at 深比对，长度或内容不符即非 0（mismatches 上限
+     10 条详情）；表空=平凡同步。scratch live 首验：baseline 506、新增
+     2 条双写 in_sync。每轮 live 收尾与 shadow-diff 一起跑。
+   - **5c 切权威**（显式 `storage events-cutover --confirm`）：shadow db
+     meta 新增 `events_authority`（`journal`→`sqlite`）；切换后 append
+     以 events 表为权威、同一锁内同步导出一行到 events.jsonl 保持外部
+     可读；`_event_journal_source()` 按 authority 从表重建 bytes（6 个
+     调用方零改动）；`events --since` 对外契约保持 event_id 不变。提供
+     显式回滚命令（表导出回 JSONL 后 authority 切回 journal）。
+   - **5d 停同步导出**（观察期后另行拍板）：JSONL 改为按需导出，
+     O(n²) 写彻底消失。
+   approvals.jsonl 与 3 个 event_outbox 的迁移复用同一形态，在 5c 稳定
+   后跟进。
 6. 分集合切 78 writer 权威（叶子→中间→核心），每批递增
    `authority_generation`。
 7. `sqlite_active` + JSON 降级导出，一个发布周期后删 JSON 写路径。

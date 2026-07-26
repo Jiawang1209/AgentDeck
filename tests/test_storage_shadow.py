@@ -189,6 +189,97 @@ def test_save_mirrors_into_shadow_db_and_rm_rolls_back(tmp_path, monkeypatch, ca
     assert any(p["plan_id"] == "pln_after_rm" for p in store.load()["plans"])
 
 
+def _journal_line_count(root: Path) -> int:
+    journal = root / ".agentdeck" / "state" / "events.jsonl"
+    if not journal.exists():
+        return 0
+    return len([l for l in journal.read_text(encoding="utf-8").splitlines() if l.strip()])
+
+
+def test_append_event_dual_writes_into_shadow_events_table(tmp_path, monkeypatch, capsys) -> None:
+    from agentdeck.state import EventRecord
+
+    root = prepare_project(tmp_path, monkeypatch)
+    cli.main(["storage", "shadow-enable", "--confirm"])
+    capsys.readouterr()
+    store = StateStore(root)
+
+    store.append_event(EventRecord.create("shadow_dual_write_probe", {"k": "v"}))
+
+    connection = sqlite3.connect(shadow_database_path(root))
+    try:
+        rows = connection.execute(
+            "SELECT event_id, event_type, payload_json FROM events ORDER BY event_cursor"
+        ).fetchall()
+    finally:
+        connection.close()
+    probe = [r for r in rows if r[1] == "shadow_dual_write_probe"]
+    assert len(probe) == 1
+    assert json.loads(probe[0][2]) == {"k": "v"}
+    assert probe[0][0].startswith("evt_")
+    # journal 权威路径不受影响
+    journal = (root / ".agentdeck" / "state" / "events.jsonl").read_text(encoding="utf-8")
+    assert '"event_type": "shadow_dual_write_probe"' in journal
+
+
+def test_append_event_shadow_failure_never_breaks_journal(tmp_path, monkeypatch, capsys) -> None:
+    from agentdeck.state import EventRecord
+
+    root = prepare_project(tmp_path, monkeypatch)
+    cli.main(["storage", "shadow-enable", "--confirm"])
+    capsys.readouterr()
+    # 破坏 shadow db：写入垃圾字节
+    shadow_database_path(root).write_bytes(b"not a sqlite file")
+    store = StateStore(root)
+
+    store.append_event(EventRecord.create("journal_survives", {}))
+
+    journal = (root / ".agentdeck" / "state" / "events.jsonl").read_text(encoding="utf-8")
+    assert '"event_type": "journal_survives"' in journal
+    assert (root / ".agentdeck" / "logs" / "shadow-errors.jsonl").exists()
+
+
+def test_storage_events_diff_reports_sync_suffix_alignment_and_drift(tmp_path, monkeypatch, capsys) -> None:
+    from agentdeck.state import EventRecord
+
+    root = prepare_project(tmp_path, monkeypatch)
+    store = StateStore(root)
+    # 启用前的历史事件：不在表里，diff 需后缀对齐
+    store.append_event(EventRecord.create("historic_one", {}))
+    historic = _journal_line_count(root)
+
+    # 未启用：exit 0
+    assert cli.main(["storage", "events-diff"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["mode"] == "storage_events_diff"
+    assert payload["enabled"] is False
+
+    cli.main(["storage", "shadow-enable", "--confirm"])
+    capsys.readouterr()
+    store = StateStore(root)
+    store.append_event(EventRecord.create("mirrored_one", {"n": 1}))
+    store.append_event(EventRecord.create("mirrored_two", {"n": 2}))
+
+    assert cli.main(["storage", "events-diff"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["enabled"] is True
+    assert payload["in_sync"] is True
+    assert payload["baseline_offset"] >= historic
+    assert payload["compared_count"] >= 2
+    assert payload["mismatches"] == []
+
+    # 人为漂移：删表中一行
+    connection = sqlite3.connect(shadow_database_path(root))
+    try:
+        connection.execute("DELETE FROM events WHERE event_type='mirrored_one'")
+        connection.commit()
+    finally:
+        connection.close()
+    assert cli.main(["storage", "events-diff"]) == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["in_sync"] is False
+
+
 def test_storage_shadow_status_read_only(tmp_path, monkeypatch, capsys) -> None:
     root = prepare_project(tmp_path, monkeypatch)
 

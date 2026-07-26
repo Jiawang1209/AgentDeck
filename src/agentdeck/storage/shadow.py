@@ -178,6 +178,67 @@ def _shadow_enabled(connection: sqlite3.Connection) -> bool:
     )
 
 
+def _log_shadow_error(root: Path | str, error: Exception) -> None:
+    try:
+        log_path = _shadow_error_log_path(root)
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        with log_path.open("a", encoding="utf-8") as handle:
+            handle.write(
+                _dump(
+                    {
+                        "at": datetime.now(timezone.utc).isoformat(),
+                        "error": f"{type(error).__name__}: {error}",
+                    }
+                )
+                + "\n"
+            )
+    except OSError:
+        pass
+
+
+def append_events_if_enabled(root: Path | str, encoded: bytes) -> None:
+    """SQLite 阶段 5a：journal 权威写成功后的影子双写。
+
+    encoded 可含多行（daemon outbox 批量）；每行一个事件 JSON。失败只落
+    shadow-errors.jsonl，绝不进入 journal 写路径。调用方必须已持有
+    `_protocol_mutation_lock`（阶段 2 硬规则：连接只在该锁内打开）。
+    """
+    database = shadow_database_path(root)
+    try:
+        if not database.is_file():
+            return
+        connection = open_shadow_connection(database)
+        try:
+            if not _shadow_enabled(connection):
+                return
+            connection.execute("BEGIN IMMEDIATE")
+            try:
+                for line in encoded.decode("utf-8").splitlines():
+                    stripped = line.strip()
+                    if not stripped:
+                        continue
+                    event = json.loads(stripped)
+                    connection.execute(
+                        "INSERT OR IGNORE INTO events"
+                        " (event_id, event_type, payload_json, created_at)"
+                        " VALUES (?, ?, ?, ?)",
+                        (
+                            str(event.get("event_id")),
+                            str(event.get("event_type")),
+                            _dump(event.get("payload")),
+                            str(event.get("created_at")),
+                        ),
+                    )
+                connection.execute("COMMIT")
+            except BaseException:
+                connection.execute("ROLLBACK")
+                raise
+        finally:
+            connection.close()
+    except Exception as error:  # noqa: BLE001 - shadow must never break authority
+        _log_shadow_error(root, error)
+
+
 def mirror_if_enabled(root: Path | str, state: dict[str, object]) -> None:
     """Best-effort shadow mirror; never raises into the JSON write path."""
     database = shadow_database_path(root)
@@ -192,18 +253,4 @@ def mirror_if_enabled(root: Path | str, state: dict[str, object]) -> None:
         finally:
             connection.close()
     except Exception as error:  # noqa: BLE001 - shadow must never break authority
-        try:
-            log_path = _shadow_error_log_path(root)
-            log_path.parent.mkdir(parents=True, exist_ok=True)
-            with log_path.open("a", encoding="utf-8") as handle:
-                handle.write(
-                    _dump(
-                        {
-                            "at": datetime.now(timezone.utc).isoformat(),
-                            "error": f"{type(error).__name__}: {error}",
-                        }
-                    )
-                    + "\n"
-                )
-        except OSError:
-            pass
+        _log_shadow_error(root, error)

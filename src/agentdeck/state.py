@@ -20,7 +20,10 @@ from typing import Any, Callable, Iterable, Mapping
 import weakref
 
 from .config import CONFIG_DIR, ensure_project_layout, load_config, project_root
-from .storage.shadow import mirror_if_enabled as _shadow_mirror_if_enabled
+from .storage.shadow import (
+    append_events_if_enabled as _shadow_append_events_if_enabled,
+    mirror_if_enabled as _shadow_mirror_if_enabled,
+)
 from .conversation.lifecycle import validate_conversation_history
 from .conversation.models import ConversationMutation
 from .daemon.lifecycle import validate_daemon_record
@@ -3063,6 +3066,10 @@ class StateStore:
             finally:
                 if displaced_fd is not None:
                     os.close(displaced_fd)
+        # SQLite 阶段 5a：journal 权威写成功后，同一把 mutation lock 内向
+        # shadow db events 表双写（route spec 阶段 2 硬规则）；失败只落
+        # shadow-errors.jsonl，绝不进入本路径。
+        _shadow_append_events_if_enabled(self.root, encoded)
 
     def append_event(self, event: EventRecord) -> None:
         encoded = (

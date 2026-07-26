@@ -10644,6 +10644,102 @@ def ui_serve_command(args: argparse.Namespace) -> int:
     return 0
 
 
+def storage_events_diff_command(_args: argparse.Namespace) -> int:
+    config, store, exit_code = _load_project_or_error()
+    if config is None or store is None:
+        return exit_code
+    from agentdeck.storage import shadow as storage_shadow
+
+    database = storage_shadow.shadow_database_path(config.root)
+    payload: dict[str, object] = {
+        "ok": True,
+        "mode": "storage_events_diff",
+        "database": str(database),
+        "enabled": False,
+        "in_sync": None,
+        "baseline_offset": 0,
+        "compared_count": 0,
+        "mismatches": [],
+    }
+    if not database.is_file():
+        _print_json(payload)
+        return 0
+    connection = storage_shadow.open_shadow_connection(database)
+    try:
+        enabled = storage_shadow._shadow_enabled(connection)
+        payload["enabled"] = enabled
+        if not enabled:
+            _print_json(payload)
+            return 0
+        table_rows = connection.execute(
+            "SELECT event_id, event_type, payload_json, created_at FROM events"
+            " ORDER BY event_cursor"
+        ).fetchall()
+    finally:
+        connection.close()
+    journal_path = Path(config.root) / ".agentdeck" / "state" / "events.jsonl"
+    journal_events: list[dict[str, object]] = []
+    if journal_path.is_file():
+        for line in journal_path.read_text(encoding="utf-8").splitlines():
+            stripped = line.strip()
+            if not stripped:
+                continue
+            try:
+                journal_events.append(json.loads(stripped))
+            except ValueError:
+                journal_events.append({"event_id": "<unparseable>", "raw": stripped})
+    mismatches: list[dict[str, object]] = []
+    if not table_rows:
+        # 表为空（刚启用/尚无双写）：平凡同步，baseline=全部历史
+        payload.update({"in_sync": True, "baseline_offset": len(journal_events)})
+        _print_json(payload)
+        return 0
+    # 后缀对齐：表首行 event_id 在 journal 中定位 baseline（启用前的历史
+    # 事件不在表里，这是 5a 双写语义的一部分而非漂移）
+    first_id = str(table_rows[0][0])
+    baseline = next(
+        (idx for idx, ev in enumerate(journal_events) if str(ev.get("event_id")) == first_id),
+        None,
+    )
+    if baseline is None:
+        payload.update({"in_sync": False})
+        payload["mismatches"] = [{"reason": "table head not found in journal", "event_id": first_id}]
+        _print_json(payload)
+        return 1
+    suffix = journal_events[baseline:]
+    payload["baseline_offset"] = baseline
+    payload["compared_count"] = min(len(suffix), len(table_rows))
+    if len(suffix) != len(table_rows):
+        mismatches.append(
+            {
+                "reason": "length mismatch",
+                "journal_suffix": len(suffix),
+                "table_rows": len(table_rows),
+            }
+        )
+    for journal_event, row in zip(suffix, table_rows):
+        row_payload = json.loads(row[2])
+        if (
+            str(journal_event.get("event_id")) != str(row[0])
+            or str(journal_event.get("event_type")) != str(row[1])
+            or journal_event.get("payload") != row_payload
+            or str(journal_event.get("created_at")) != str(row[3])
+        ):
+            mismatches.append(
+                {
+                    "reason": "content mismatch",
+                    "journal_event_id": journal_event.get("event_id"),
+                    "table_event_id": row[0],
+                }
+            )
+            if len(mismatches) >= 10:
+                break
+    payload["mismatches"] = mismatches
+    payload["in_sync"] = not mismatches
+    _print_json(payload)
+    return 0 if not mismatches else 1
+
+
 def build_dispatch_prompt(
     agent: AgentSpec,
     task: str,
@@ -20896,6 +20992,10 @@ def build_parser() -> argparse.ArgumentParser:
         "shadow-diff", help="Read-only comparison of the shadow mirror against the authoritative JSON state"
     )
     storage_shadow_diff.set_defaults(func=storage_shadow_diff_command)
+    storage_events_diff = storage_subparsers.add_parser(
+        "events-diff", help="Read-only comparison of the shadow events table against the authoritative events.jsonl"
+    )
+    storage_events_diff.set_defaults(func=storage_events_diff_command)
 
     ui_parser = subparsers.add_parser("ui", help="Local read-only web shell over the contract surface")
     ui_subparsers = ui_parser.add_subparsers(dest="ui_command")
