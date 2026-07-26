@@ -4,6 +4,28 @@
 
 ## 2026-07-26
 
+### Record round 8 single-command walk-away live PASS
+
+- **Type**: data
+- **Motivation**: 同日落地的走开体验四大件需要合成整环实证（round 8，
+  user 在场授权）。
+- **What**: 新增
+  `docs/validation/2026-07-26-copilot-line1-round8-walkaway-single-command.md`。
+  预授 15 条窄前缀委托（registry live 首用）后，approve-plan 之外的唯一
+  人类命令是一条 `run-loop --follow --release-boxes --merge-on-complete`：
+  31 wave 自主推进，3 步文件通道摄入 3/3，4 个授权框全部由委托自动放行
+  （`source=run_loop_follow`），complete 后自动合并两条任务分支
+  （ca1f057 测试提交 + 227f710 审查文档），`run_loop_follow_completed`
+  汇总事件；收尾 release 3/3 零 dirty、prune 全回收、main 双回归绿、
+  summary ready。对照：round 6=7 框人工+人工 merge，round 7=6 框人工+
+  人工 merge，round 8=**0 框人工+0 人工 merge**。任务本身补齐 G1/G2
+  测试缺口（WeakSet 守卫回归防护）。
+- **Impact**: "确认一次走开"收敛为单命令，全链路事件审计完整；观察：
+  codex 本轮未对 worktree git 写弹框（会话内先例），空轮询 wave 占比
+  2/3（可接受，动态间隔留作可选优化）。不涉及代码行为变化。
+- **Verification**: live 整环证据见 validation 文档与事件账本；merge 后
+  main 双测试 exit 0；worktree/分支全回收仅剩 main。
+
 ### Freeze SQLite migration route and land phase 0+1 (risk-free parts)
 
 - **Type**: feat
