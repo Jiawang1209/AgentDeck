@@ -4,6 +4,32 @@
 
 ## 2026-07-26
 
+### Add bounded run-loop --follow multi-wave mode with optional box release
+
+- **Type**: feat
+- **Motivation**: round 7 整环需要人工敲 3 次 `run-loop --confirm`——"确认
+  一次走开"的最后推进缺口。user 拍板：机制走前台有界 `--follow` 循环
+  （daemon 化为二期），并以可选 `--release-boxes` 组合 scoped 委托。
+- **What**: 单 wave 引擎原样抽取为 `_run_loop_single_wave`（单 wave 行为与
+  输出逐字节不变）；新增 `run-loop --plan-id <id> --confirm --follow
+  --max-waves N --interval S [--release-boxes]`：重复单 wave 直到 gate 非
+  `waiting_for_reply` 或达上限；`--all --follow` 与 `--max-waves < 1`
+  拒绝；`--release-boxes` 在 wave 间隙复用新抽取的共享 helper
+  `_scan_release_delegated_boxes`（boxes watch 同源）只释放委托命中的授权
+  框（`auth_box_released` `source=run_loop_follow` 逐次审计）。响应
+  `mode=run_loop_follow`（`RUN_LOOP_FOLLOW_RESPONSE_FIELDS`），`waves[]`
+  每项是完整单 wave payload+`wave` 序号并逐项过 `validate_run_loop_contract()`，
+  输出前过新 `validate_run_loop_follow_contract()`，完成追加
+  `run_loop_follow_completed` 事件。run-loop contract discovery 增加
+  `follow_command_template`/`follow_response_fields`，schema 文档新增
+  Follow mode 节，CLAUDE.md 规则与常用命令同步。
+- **Impact**: 一次确认后 plan 可自动推进多个 wave（含文件摄入解锁下一步），
+  配合 `--release-boxes` 实现单命令走开体验；所有边界（autonomous 双门、
+  step 顺序守卫、绝不 force-spawn、绝不读 pane、委托前缀收窄）不变。
+- **Verification**: 4 例 TDD RED 先行（上限拒绝、bound 停止、双步推进到
+  complete、box 组合释放审计）后 GREEN；delegation/follow/agent 套件
+  397 passed；全量 `pytest tests/ -q` 绿（pipefail）+ compileall（见 commit）。
+
 ### Add scoped authorization delegation with audited box release
 
 - **Type**: feat

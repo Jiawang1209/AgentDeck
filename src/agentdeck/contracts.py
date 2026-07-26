@@ -3127,6 +3127,56 @@ RUN_LOOP_STOP_REASONS = (
     "idle",
 )
 
+RUN_LOOP_FOLLOW_RESPONSE_FIELDS = (
+    "ok",
+    "mode",
+    "plan_id",
+    "requires_explicit_user",
+    "safety",
+    "max_waves",
+    "interval",
+    "release_boxes",
+    "waves",
+    "wave_count",
+    "released_boxes",
+    "released_box_count",
+    "stopped_reason",
+    "next_command",
+)
+
+
+def validate_run_loop_follow_contract(payload: dict[str, object]) -> dict[str, object]:
+    errors: list[str] = []
+    for field in RUN_LOOP_FOLLOW_RESPONSE_FIELDS:
+        if field not in payload:
+            errors.append(f"missing run_loop_follow field: {field}")
+    if payload.get("mode") != "run_loop_follow":
+        errors.append(f"run_loop_follow.mode must be run_loop_follow, got {payload.get('mode')}")
+    if payload.get("stopped_reason") not in RUN_LOOP_STOP_REASONS:
+        errors.append(f"run_loop_follow.stopped_reason must be one of {RUN_LOOP_STOP_REASONS}")
+    waves = payload.get("waves")
+    if not isinstance(waves, list) or not waves:
+        errors.append("run_loop_follow.waves must be a non-empty list")
+    else:
+        if payload.get("wave_count") != len(waves):
+            errors.append("run_loop_follow.wave_count must match waves length")
+        for index, wave in enumerate(waves):
+            if not isinstance(wave, dict):
+                errors.append(f"run_loop_follow.waves[{index}] must be an object")
+                continue
+            if wave.get("wave") != index + 1:
+                errors.append(f"run_loop_follow.waves[{index}].wave must be {index + 1}")
+            inner = {key: value for key, value in wave.items() if key != "wave"}
+            inner_validation = validate_run_loop_contract(inner)
+            for error in inner_validation["errors"]:
+                errors.append(f"run_loop_follow.waves[{index}]: {error}")
+    released = payload.get("released_boxes")
+    if not isinstance(released, list):
+        errors.append("run_loop_follow.released_boxes must be a list")
+    elif payload.get("released_box_count") != len(released):
+        errors.append("run_loop_follow.released_box_count must match released_boxes length")
+    return {"ok": not errors, "errors": errors}
+
 RUN_LOOP_ALL_RESPONSE_FIELDS = (
     "ok", "mode", "requires_explicit_user", "safety",
     "plan_count", "active_count", "budget", "totals", "plans",
@@ -5745,6 +5795,8 @@ def run_loop_contract_payload(contract_path: Path) -> dict[str, object]:
         "contract_path": str(contract_path),
         "contract_exists": contract_path.exists(),
         "run_loop_response_fields": list(RUN_LOOP_RESPONSE_FIELDS),
+        "follow_command_template": "agentdeck run-loop --plan-id <id> --confirm --follow --max-waves <n> --interval <seconds>",
+        "follow_response_fields": list(RUN_LOOP_FOLLOW_RESPONSE_FIELDS),
         "stop_reasons": list(RUN_LOOP_STOP_REASONS),
         "loop_contract": "agentdeck contract loop",
         "approvals_contract": "agentdeck contract approvals",

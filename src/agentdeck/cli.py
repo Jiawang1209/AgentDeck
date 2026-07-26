@@ -123,6 +123,7 @@ from .contracts import (
     validate_project_view_contract,
     validate_protocol_runtime_contract,
     validate_run_loop_contract,
+    validate_run_loop_follow_contract,
     validate_run_start_contract,
     validate_trace_contract,
     validate_workbench_contract,
@@ -9928,6 +9929,67 @@ def agent_release_box_command(args: argparse.Namespace) -> int:
     return 0
 
 
+def _scan_release_delegated_boxes(
+    config: ProjectConfig,
+    store: StateStore,
+    backend: object,
+    agent_ids: list[str],
+    iteration: int,
+    source: str = "boxes_watch",
+) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
+    """Scan running agents once; release only delegation-covered boxes, each
+    release audited. Returns (released, skipped)."""
+    released: list[dict[str, object]] = []
+    skipped: list[dict[str, object]] = []
+    agents_state = store.load().get("agents", {})
+    for agent_id in agent_ids:
+        binding = agents_state.get(agent_id) or {}
+        if binding.get("status") != "running" or not binding.get("pane_id"):
+            continue
+        pane_id = str(binding["pane_id"])
+        output = backend.capture_output(config.runtime, pane_id, 200)
+        waiting_hint = _detect_waiting_for_input(output)
+        if waiting_hint is None:
+            continue
+        command = _extract_auth_box_command(output)
+        match = _match_active_delegation(store.load(), agent_id, command)
+        if match is None:
+            skipped.append(
+                {
+                    "agent_id": agent_id,
+                    "command": command,
+                    "reason": "no active delegation",
+                    "iteration": iteration,
+                }
+            )
+            continue
+        backend.send_input(config.runtime, pane_id, "")
+        store.append_event(
+            EventRecord.create(
+                "auth_box_released",
+                {
+                    "agent_id": agent_id,
+                    "pane_id": pane_id,
+                    "delegation_id": match.get("delegation_id"),
+                    "prefix": match.get("prefix"),
+                    "command": command,
+                    "source": source,
+                },
+            )
+        )
+        released.append(
+            {
+                "agent_id": agent_id,
+                "pane_id": pane_id,
+                "delegation_id": match.get("delegation_id"),
+                "prefix": match.get("prefix"),
+                "command": command,
+                "iteration": iteration,
+            }
+        )
+    return released, skipped
+
+
 def boxes_watch_command(args: argparse.Namespace) -> int:
     config, store, exit_code = _load_project_or_error()
     if config is None or store is None:
@@ -9946,52 +10008,11 @@ def boxes_watch_command(args: argparse.Namespace) -> int:
     released: list[dict[str, object]] = []
     skipped: list[dict[str, object]] = []
     for iteration in range(1, args.iterations + 1):
-        agents_state = store.load().get("agents", {})
-        for agent_id in agent_ids:
-            binding = agents_state.get(agent_id) or {}
-            if binding.get("status") != "running" or not binding.get("pane_id"):
-                continue
-            pane_id = str(binding["pane_id"])
-            output = backend.capture_output(config.runtime, pane_id, 200)
-            waiting_hint = _detect_waiting_for_input(output)
-            if waiting_hint is None:
-                continue
-            command = _extract_auth_box_command(output)
-            match = _match_active_delegation(store.load(), agent_id, command)
-            if match is None:
-                skipped.append(
-                    {
-                        "agent_id": agent_id,
-                        "command": command,
-                        "reason": "no active delegation",
-                        "iteration": iteration,
-                    }
-                )
-                continue
-            backend.send_input(config.runtime, pane_id, "")
-            store.append_event(
-                EventRecord.create(
-                    "auth_box_released",
-                    {
-                        "agent_id": agent_id,
-                        "pane_id": pane_id,
-                        "delegation_id": match.get("delegation_id"),
-                        "prefix": match.get("prefix"),
-                        "command": command,
-                        "source": "boxes_watch",
-                    },
-                )
-            )
-            released.append(
-                {
-                    "agent_id": agent_id,
-                    "pane_id": pane_id,
-                    "delegation_id": match.get("delegation_id"),
-                    "prefix": match.get("prefix"),
-                    "command": command,
-                    "iteration": iteration,
-                }
-            )
+        round_released, round_skipped = _scan_release_delegated_boxes(
+            config, store, backend, agent_ids, iteration, source="boxes_watch"
+        )
+        released.extend(round_released)
+        skipped.extend(round_skipped)
         if iteration < args.iterations and args.interval > 0:
             time.sleep(args.interval)
     _print_json(
@@ -19394,6 +19415,9 @@ def run_loop_command(args: argparse.Namespace) -> int:
     if getattr(args, "all", False) and args.plan_id:
         print("run-loop takes either --plan-id or --all, not both", file=sys.stderr)
         return 1
+    if getattr(args, "all", False) and getattr(args, "follow", False):
+        print("run-loop --follow supports --plan-id only", file=sys.stderr)
+        return 1
     if getattr(args, "all", False):
         return _run_loop_all(config, store)
     if not args.plan_id:
@@ -19405,7 +19429,20 @@ def run_loop_command(args: argparse.Namespace) -> int:
     except KeyError:
         print(f"unknown plan: {plan_id}", file=sys.stderr)
         return 1
+    if getattr(args, "follow", False):
+        return _run_loop_follow(config, store, args, plan_id)
+    payload = _run_loop_single_wave(config, store, plan_id)
+    if payload is None:
+        return 1
+    _print_json(payload)
+    return 0
 
+
+def _run_loop_single_wave(
+    config: ProjectConfig, store: StateStore, plan_id: str
+) -> dict[str, object] | None:
+    """One auto-approve + file-ingest + dispatch wave; returns the validated
+    run_loop payload, or None after printing contract errors."""
     policy = config.autonomous
     plan_approvals = [
         a for a in store.load().get("approvals", [])
@@ -19592,8 +19629,77 @@ def run_loop_command(args: argparse.Namespace) -> int:
         for error in validation["errors"]:
             print(f"- {error}", file=sys.stderr)
         store.append_event(EventRecord.create("run_loop_contract_failed", {"errors": validation["errors"]}))
+        return None
+    return payload
+
+
+def _run_loop_follow(
+    config: ProjectConfig, store: StateStore, args: argparse.Namespace, plan_id: str
+) -> int:
+    if args.max_waves < 1:
+        print("run-loop --follow requires --max-waves >= 1", file=sys.stderr)
         return 1
-    _print_json(payload)
+    backend = TmuxBackend() if args.release_boxes else None
+    waves: list[dict[str, object]] = []
+    released_boxes: list[dict[str, object]] = []
+    final: dict[str, object] | None = None
+    for wave_number in range(1, args.max_waves + 1):
+        payload = _run_loop_single_wave(config, store, plan_id)
+        if payload is None:
+            return 1
+        waves.append({**payload, "wave": wave_number})
+        final = payload
+        if payload.get("stopped_reason") != "waiting_for_reply":
+            break
+        if wave_number >= args.max_waves:
+            break
+        if backend is not None:
+            released, _skipped = _scan_release_delegated_boxes(
+                config,
+                store,
+                backend,
+                [agent.agent_id for agent in config.agents],
+                wave_number,
+                source="run_loop_follow",
+            )
+            released_boxes.extend(released)
+        if args.interval > 0:
+            time.sleep(args.interval)
+    follow_payload = {
+        "ok": True,
+        "mode": "run_loop_follow",
+        "plan_id": plan_id,
+        "requires_explicit_user": True,
+        "safety": "delegated",
+        "max_waves": args.max_waves,
+        "interval": args.interval,
+        "release_boxes": bool(args.release_boxes),
+        "waves": waves,
+        "wave_count": len(waves),
+        "released_boxes": released_boxes,
+        "released_box_count": len(released_boxes),
+        "stopped_reason": (final or {}).get("stopped_reason"),
+        "next_command": (final or {}).get("next_command"),
+    }
+    validation = validate_run_loop_follow_contract(follow_payload)
+    if not validation["ok"]:
+        print("run-loop follow contract validation failed", file=sys.stderr)
+        for error in validation["errors"]:
+            print(f"- {error}", file=sys.stderr)
+        store.append_event(EventRecord.create("run_loop_contract_failed", {"errors": validation["errors"]}))
+        return 1
+    store.append_event(
+        EventRecord.create(
+            "run_loop_follow_completed",
+            {
+                "plan_id": plan_id,
+                "wave_count": len(waves),
+                "released_boxes": len(released_boxes),
+                "stopped_reason": follow_payload["stopped_reason"],
+            },
+        )
+    )
+    _print_json(follow_payload)
     return 0
 
 
@@ -19657,6 +19763,14 @@ def build_parser() -> argparse.ArgumentParser:
     run_loop.add_argument("--plan-id", required=False, default=None, help="Plan to drive forward")
     run_loop.add_argument("--all", action="store_true", help="Drive every active plan one round-robin wave")
     run_loop.add_argument("--confirm", action="store_true", help="Explicitly confirm the autonomous wave")
+    run_loop.add_argument("--follow", action="store_true", help="Keep running bounded waves until a human gate")
+    run_loop.add_argument("--max-waves", type=int, default=10, help="Bounded number of waves in --follow mode")
+    run_loop.add_argument("--interval", type=float, default=10.0, help="Seconds between waves in --follow mode")
+    run_loop.add_argument(
+        "--release-boxes",
+        action="store_true",
+        help="Between waves, release delegation-covered authorization boxes (audited)",
+    )
     run_loop.set_defaults(func=run_loop_command)
 
     workflow = subparsers.add_parser(

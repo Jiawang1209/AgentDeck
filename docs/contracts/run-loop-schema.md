@@ -67,6 +67,30 @@ The pure gate-diagnosis function `run_loop_gate(review, has_error, plan_id)` liv
 | `summarize` / complete | `complete` | `agentdeck leader summary --plan-id <id>` |
 | nothing actionable | `idle` | `agentdeck run --plan-id <id>` |
 
+## Follow mode (bounded multi-wave)
+
+`agentdeck run-loop --plan-id <id> --confirm --follow --max-waves <n>
+--interval <seconds> [--release-boxes]` repeats single waves in the foreground
+until the gate is anything other than `waiting_for_reply` (a human gate,
+`complete`, `error`, or `idle`) or the `--max-waves` bound is reached.
+`--follow` supports `--plan-id` only (`--all --follow` is refused), inherits
+the same `--confirm` + `approval_mode=autonomous` double gate, and refuses
+`--max-waves < 1`. Each wave is the unchanged single-wave engine (same
+auto-approve/ingest/dispatch semantics, same audit events); between waves,
+with `--release-boxes`, it runs one delegation scan
+(`_scan_release_delegated_boxes`) that releases only delegation-covered
+authorization boxes — every release audited as `auth_box_released` with
+`source=run_loop_follow`, non-covered boxes never touched (see
+`docs/contracts/delegation-schema.md`).
+
+The response (`RUN_LOOP_FOLLOW_RESPONSE_FIELDS`) is `mode=run_loop_follow`
+with `max_waves`, `interval`, `release_boxes`, `waves[]` (each item is a full
+single-wave `run_loop` payload plus its 1-based `wave` number, revalidated by
+`validate_run_loop_contract()`), `wave_count`, `released_boxes[]` /
+`released_box_count`, and the final wave's `stopped_reason` / `next_command`.
+Completion appends one `run_loop_follow_completed` summary event. Discovery
+exposes `follow_command_template` and `follow_response_fields`.
+
 ## Validation
 
-The live `run-loop` payload is validated by `validate_run_loop_contract()` before printing. On failure it returns non-zero, prints no half-baked JSON, and records a `run_loop_contract_failed` event.
+The live `run-loop` payload is validated by `validate_run_loop_contract()` before printing. On failure it returns non-zero, prints no half-baked JSON, and records a `run_loop_contract_failed` event. The `--follow` payload is validated by `validate_run_loop_follow_contract()` under the same rule (each nested wave revalidates against the single-wave contract).
