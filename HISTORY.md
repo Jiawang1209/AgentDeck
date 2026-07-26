@@ -4,6 +4,33 @@
 
 ## 2026-07-26
 
+### Freeze SQLite migration route and land phase 0+1 (risk-free parts)
+
+- **Type**: feat
+- **Motivation**: user 批准 SQLite 迁移路线（"以 P1 为底座 + rewrite 挑
+  零件"）并要求从阶段 0+1 开始。调研发现两个 donor 都是 main 历史祖先且
+  代码已被移除（第三次尝试）、都未完成真实数据映射；主线 78 个 writer 经
+  单一装饰器收敛 + AST 闭包测试守卫，"同接口换后端"可行。
+- **What**: 路线 spec 冻结于
+  `docs/superpowers/specs/2026-07-26-sqlite-migration-route.md`（底座/零件
+  选型、8 阶段切片、核心纪律=在 state.py 内部换后端绝不另起炉灶）。阶段 0
+  调查入档：读侧 `load()` 外部调用点 131 个（cli 112/daemon 9/mission 6/
+  conversation 4）、events.jsonl 仅 history.py 只读消费、donor 移出主线
+  原因=产品 pivot 非技术否决。阶段 1 新建 `src/agentdeck/storage/` 包
+  （零行为变更，主线尚无任何 import）：`secrets.py` 秘密防火墙（rewrite
+  donor 逐字移植，仅换独立异常 `SecretFactError`，加 `validate_fact_tree`
+  嵌套遍历）、`fingerprint.py` 可执行 schema 形状指纹（P1 donor：
+  sqlite_master DDL + table_xinfo/foreign_keys/index_xinfo 规范化 JSON →
+  sha256）、`file_safety.py` 文件身份安全（rewrite donor：拒 symlink/
+  hardlink、O_EXCL+O_NOFOLLOW 0600 建库、inode 身份复验）。
+- **Impact**: SQLite 迁移有了冻结路线与已测零件底座；live JSON 路径零
+  变更。下一步=阶段 2（写者租约替换，行为变更需单独发布）。
+- **Verification**: 三模块全部 RED 先行（import error）后 GREEN，37 例
+  单测（含 donor 防火墙用例移植：融合词/复数/嵌套/语义家族拒绝、digest/
+  source label/token_count 白名单、指纹对 DDL 敏感对数据不敏感、symlink/
+  hardlink/inode 换体检测）；全量 `pytest tests/ -q` 绿（pipefail）+
+  compileall（见 commit）。
+
 ### Add explicit whole-plan worktree merge and follow merge-on-complete
 
 - **Type**: feat
