@@ -4,6 +4,29 @@
 
 ## 2026-07-28
 
+### Land G2 S3: planner-stage brief schema, snapshot hash, and prompt template
+
+- **Type**: feat
+- **Motivation**: G2 spec S3 切片——planner 段的数据面与 prompt 面,
+  全新隔离模块,不接线任何现有调用链(接线在 S4 orchestrator 串联)。
+- **What**: 新增 `src/agentdeck/providers/planner_brief.py`:
+  `PLANNER_BRIEF_SCHEMA_VERSION=planner-brief/v1`、
+  `validate_planner_brief()`(goal 非空字符串、acceptance_criteria/
+  macro_steps 非空字符串列表、risks 可空字符串列表、未知/缺失 key 与
+  非法类型一律 `planner brief schema is invalid` fail-closed)、
+  `planner_brief_content_hash()`(canonical JSON sha256)、
+  `planner_brief_snapshot()`(schema_version + 四字段 + content_hash,
+  即 spec 冻结的 plan 记录 `planner_brief` 快照形状)、
+  `build_planner_prompt()`(JSON-only 宏观 brief 指令,明确禁止 agent
+  指派,复用 `leader_skill_context_prompt_lines` 注入 compact skill
+  context)。
+- **Impact**: 零行为变化——模块尚无消费方;S4 将用它串联
+  planner→orchestrator 两段推理落单条 plan。
+- **Verification**: TDD——`tests/test_planner_brief.py` 22 例先 RED
+  (ImportError)后 GREEN;与 S2 测试合跑 32 passed;
+  `tests/test_leader_cli.py` 235 passed;`python -m compileall src`
+  通过。
+
 ### Land G2 S2: leader planner/orchestrator sub-config and resolution helpers
 
 - **Type**: feat

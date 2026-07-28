@@ -9,8 +9,11 @@ Updated: 2026-07-28
 (S1 完成)。切片顺序 S2 config+数据模型(**完成**:
 `LeaderSubroleConfig` + `[leader.planner]`/`[leader.orchestrator]`
 解析 fail-closed + `resolved_*_backend()` 回落 helper,10 例 TDD)→
-S3 planner 段 → S4 orchestrator 段 → S5 provenance+契约面 → S6
-acceptance_criteria 只读展示(G5 前置)。硬兼容承诺:`[leader.planner]`/`[leader.orchestrator]`
+S3 planner 段(**完成**:`providers/planner_brief.py`——
+`planner-brief/v1` validator fail-closed、snapshot+content_hash、
+JSON-only 无 agent 指派 prompt 模板,22 例 TDD,暂无消费方)→ S4
+orchestrator 段(brief→steps 串联落单条 plan)→ S5 provenance+契约面
+→ S6 acceptance_criteria 只读展示(G5 前置)。硬兼容承诺:`[leader.planner]`/`[leader.orchestrator]`
 子段都缺省时行为逐字节不变。STOP fork(等 human):orchestrator 工具
 调用、briefs 独立集合、G1 frontdesk 增强、SQLite 5c cutover。
 
