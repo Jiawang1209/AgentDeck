@@ -4,6 +4,23 @@
 
 ## 2026-07-28
 
+### Execute live events cutover on the scratch project (SQLite 5c first real flip)
+
+- **Type**: data
+- **Motivation**: 5c 能力落地后在 scratch 项目执行首次真实权威切换,
+  作为 5d(停同步导出)前的观察期起点。
+- **What**: `agentdeck storage events-cutover --confirm` 于
+  `~/Desktop/agentdeck-live-scratch`:backfilled=680、total=680、
+  字节校验通过、authority=sqlite;`storage_events_cutover` 事件本身
+  经新权威路径写入(表写+同锁导出)。验证:shadow-status
+  events_authority=sqlite;events-diff in_sync(681 条,含 cutover
+  事件);`agentdeck events` 读取正常(从表重建);shadow-diff
+  in_sync。回滚通道:`storage events-rollback --confirm`。
+- **Impact**: scratch 的 events 账本权威已是 SQLite,journal 转为
+  同步导出镜像;后续 live round 三连检继续攒导出零漂移证据,5d
+  拍板后 O(n²) 写消失。
+- **Verification**: 见上述四面验证输出;主仓库全量 4713 passed。
+
 ### Land SQLite phase 5c: explicit events authority cutover with byte-exact gate
 
 - **Type**: feat
