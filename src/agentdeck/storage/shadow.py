@@ -196,6 +196,118 @@ def _log_shadow_error(root: Path | str, error: Exception) -> None:
         pass
 
 
+EVENTS_AUTHORITY_JOURNAL = "journal"
+EVENTS_AUTHORITY_SQLITE = "sqlite"
+
+
+def log_shadow_error(root: Path | str, error: Exception) -> None:
+    """Public alias for export-path failures once the table is authoritative."""
+    _log_shadow_error(root, error)
+
+
+def events_authority(root: Path | str) -> str:
+    """Current events authority: 'sqlite' only after an explicit cutover.
+
+    Fail-safe: any read problem degrades to 'journal' — the synchronous
+    export keeps events.jsonl complete, so no data is lost by degrading.
+    """
+    database = shadow_database_path(root)
+    try:
+        if not database.is_file():
+            return EVENTS_AUTHORITY_JOURNAL
+        connection = open_shadow_connection(database)
+        try:
+            if not _shadow_enabled(connection):
+                return EVENTS_AUTHORITY_JOURNAL
+            meta = dict(connection.execute("SELECT key, value FROM meta"))
+            if meta.get("events_authority") == EVENTS_AUTHORITY_SQLITE:
+                return EVENTS_AUTHORITY_SQLITE
+            return EVENTS_AUTHORITY_JOURNAL
+        finally:
+            connection.close()
+    except Exception:  # noqa: BLE001 - degrade to the journal, never crash reads
+        return EVENTS_AUTHORITY_JOURNAL
+
+
+def set_events_authority(connection: sqlite3.Connection, value: str) -> None:
+    if value not in {EVENTS_AUTHORITY_JOURNAL, EVENTS_AUTHORITY_SQLITE}:
+        raise ValueError("unknown events authority")
+    connection.execute(
+        "INSERT OR REPLACE INTO meta(key, value) VALUES ('events_authority', ?)",
+        (value,),
+    )
+
+
+def insert_event_lines(connection: sqlite3.Connection, encoded: bytes) -> int:
+    """Parse encoded journal lines and INSERT OR IGNORE them. Returns inserted count."""
+    inserted = 0
+    for line in encoded.decode("utf-8").splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        event = json.loads(stripped)
+        cursor = connection.execute(
+            "INSERT OR IGNORE INTO events"
+            " (event_id, event_type, payload_json, created_at)"
+            " VALUES (?, ?, ?, ?)",
+            (
+                str(event.get("event_id")),
+                str(event.get("event_type")),
+                _dump(event.get("payload")),
+                str(event.get("created_at")),
+            ),
+        )
+        inserted += cursor.rowcount if cursor.rowcount > 0 else 0
+    return inserted
+
+
+def append_events_authoritative(root: Path | str, encoded: bytes) -> None:
+    """Post-cutover authoritative append: any failure raises (never swallowed)."""
+    database = shadow_database_path(root)
+    connection = open_shadow_connection(database)
+    try:
+        connection.execute("BEGIN IMMEDIATE")
+        try:
+            insert_event_lines(connection, encoded)
+            connection.execute("COMMIT")
+        except BaseException:
+            connection.execute("ROLLBACK")
+            raise
+    finally:
+        connection.close()
+
+
+def journal_bytes_from_table(root: Path | str) -> bytes:
+    """Rebuild the exact journal byte stream from the events table.
+
+    Rows are re-serialized with the same options `append_event` uses
+    (ensure_ascii=False, sort_keys=True), so a verified cutover keeps this
+    byte-identical to events.jsonl. Any failure raises.
+    """
+    database = shadow_database_path(root)
+    connection = open_shadow_connection(database)
+    try:
+        lines: list[str] = []
+        for event_id, event_type, payload_json, created_at in connection.execute(
+            "SELECT event_id, event_type, payload_json, created_at"
+            " FROM events ORDER BY event_cursor"
+        ):
+            lines.append(
+                _dump(
+                    {
+                        "created_at": created_at,
+                        "event_id": event_id,
+                        "event_type": event_type,
+                        "payload": json.loads(payload_json),
+                    }
+                )
+                + "\n"
+            )
+        return "".join(lines).encode("utf-8")
+    finally:
+        connection.close()
+
+
 def append_events_if_enabled(root: Path | str, encoded: bytes) -> None:
     """SQLite 阶段 5a：journal 权威写成功后的影子双写。
 
@@ -213,22 +325,7 @@ def append_events_if_enabled(root: Path | str, encoded: bytes) -> None:
                 return
             connection.execute("BEGIN IMMEDIATE")
             try:
-                for line in encoded.decode("utf-8").splitlines():
-                    stripped = line.strip()
-                    if not stripped:
-                        continue
-                    event = json.loads(stripped)
-                    connection.execute(
-                        "INSERT OR IGNORE INTO events"
-                        " (event_id, event_type, payload_json, created_at)"
-                        " VALUES (?, ?, ?, ?)",
-                        (
-                            str(event.get("event_id")),
-                            str(event.get("event_type")),
-                            _dump(event.get("payload")),
-                            str(event.get("created_at")),
-                        ),
-                    )
+                insert_event_lines(connection, encoded)
                 connection.execute("COMMIT")
             except BaseException:
                 connection.execute("ROLLBACK")

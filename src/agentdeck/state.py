@@ -21,6 +21,11 @@ import weakref
 
 from .config import CONFIG_DIR, ensure_project_layout, load_config, project_root
 from .storage.shadow import (
+    EVENTS_AUTHORITY_SQLITE as _EVENTS_AUTHORITY_SQLITE,
+    append_events_authoritative as _shadow_append_events_authoritative,
+    events_authority as _shadow_events_authority,
+    journal_bytes_from_table as _shadow_journal_bytes_from_table,
+    log_shadow_error as _shadow_log_error,
     append_events_if_enabled as _shadow_append_events_if_enabled,
     mirror_if_enabled as _shadow_mirror_if_enabled,
 )
@@ -2958,6 +2963,13 @@ class StateStore:
             _shadow_mirror_if_enabled(self.root, state)
 
     def _event_journal_source(self) -> bytes | None:
+        # SQLite 阶段 5c：cutover 后事件字节流从权威 events 表重建
+        # （六个调用方零改动）；重建失败冒泡，绝不静默回退半份数据。
+        if _shadow_events_authority(self.root) == _EVENTS_AUTHORITY_SQLITE:
+            rebuilt = _shadow_journal_bytes_from_table(self.root)
+            if len(rebuilt) > _EVENT_JOURNAL_MAX_BYTES:
+                raise ValueError("event journal exceeds size limit")
+            return rebuilt
         key = str(self.root.resolve())
         entry = _state_lock_entries().get(key)
         if entry is not None:
@@ -2997,6 +3009,24 @@ class StateStore:
         return int(anchored[0]), int(anchored[1])
 
     def _append_event_bytes_locked(self, encoded: bytes) -> None:
+        # SQLite 阶段 5c：显式 cutover 后 events 表是权威——表写失败必须
+        # 冒泡；journal 变成同锁内的同步导出，导出失败只落 shadow-errors
+        # （events-diff 会暴露漂移）。未 cutover 时保持 5a 语义不变。
+        if _shadow_events_authority(self.root) == _EVENTS_AUTHORITY_SQLITE:
+            self._verify_current_mutation_anchor()
+            _shadow_append_events_authoritative(self.root, encoded)
+            try:
+                self._append_event_bytes_journal(encoded)
+            except Exception as error:  # noqa: BLE001 - export mirror only
+                _shadow_log_error(self.root, error)
+            return
+        self._append_event_bytes_journal(encoded)
+        # SQLite 阶段 5a：journal 权威写成功后，同一把 mutation lock 内向
+        # shadow db events 表双写（route spec 阶段 2 硬规则）；失败只落
+        # shadow-errors.jsonl，绝不进入本路径。
+        _shadow_append_events_if_enabled(self.root, encoded)
+
+    def _append_event_bytes_journal(self, encoded: bytes) -> None:
         _deck_fd, state_fd = self._verify_current_mutation_anchor()
         entry = _state_lock_entries()[str(self.root.resolve())]
         lock_fd = entry["lock_fd"]
@@ -3067,10 +3097,6 @@ class StateStore:
             finally:
                 if displaced_fd is not None:
                     os.close(displaced_fd)
-        # SQLite 阶段 5a：journal 权威写成功后，同一把 mutation lock 内向
-        # shadow db events 表双写（route spec 阶段 2 硬规则）；失败只落
-        # shadow-errors.jsonl，绝不进入本路径。
-        _shadow_append_events_if_enabled(self.root, encoded)
 
     def append_event(self, event: EventRecord) -> None:
         encoded = (
@@ -3078,6 +3104,113 @@ class StateStore:
         ).encode("utf-8")
         with self._protocol_mutation_lock():
             self._append_event_bytes_locked(encoded)
+
+    def _event_journal_file_bytes_locked(self) -> bytes:
+        _deck_fd, state_fd = self._verify_current_mutation_anchor()
+        source = _read_event_journal_at(state_fd)
+        self._verify_current_mutation_anchor()
+        return source or b""
+
+    def events_cutover(self) -> dict[str, Any]:
+        """SQLite 阶段 5c：把 events 权威从 journal 切到 events 表。
+
+        锁内回填 journal 全量历史、逐字节校验表重建与 journal 相同后才
+        翻转 meta `events_authority`；任何不一致都拒绝且零改动。
+        """
+        from .storage import shadow as storage_shadow
+
+        database = storage_shadow.shadow_database_path(self.root)
+        if not database.is_file():
+            raise ValueError("shadow database is not enabled")
+        with self._protocol_mutation_lock():
+            if (
+                storage_shadow.events_authority(self.root)
+                == storage_shadow.EVENTS_AUTHORITY_SQLITE
+            ):
+                raise ValueError("events authority is already sqlite")
+            journal = self._event_journal_file_bytes_locked()
+            connection = storage_shadow.open_shadow_connection(database)
+            try:
+                if not storage_shadow._shadow_enabled(connection):
+                    raise ValueError("shadow database is not enabled")
+                # 5a 双写让启用后事件先占了低 cursor；整表按 journal 顺序
+                # 重建（同事务 DELETE + 全量插入），使表序=journal 序。
+                connection.execute("BEGIN IMMEDIATE")
+                try:
+                    connection.execute("DELETE FROM events")
+                    backfilled = storage_shadow.insert_event_lines(connection, journal)
+                    connection.execute("COMMIT")
+                except BaseException:
+                    connection.execute("ROLLBACK")
+                    raise
+                rebuilt = storage_shadow.journal_bytes_from_table(self.root)
+                if rebuilt != journal:
+                    raise ValueError(
+                        "events table rebuild is not byte-identical to the journal; "
+                        "authority stays journal"
+                    )
+                connection.execute("BEGIN IMMEDIATE")
+                try:
+                    storage_shadow.set_events_authority(
+                        connection, storage_shadow.EVENTS_AUTHORITY_SQLITE
+                    )
+                    connection.execute("COMMIT")
+                except BaseException:
+                    connection.execute("ROLLBACK")
+                    raise
+                total = int(
+                    connection.execute("SELECT COUNT(*) FROM events").fetchone()[0]
+                )
+            finally:
+                connection.close()
+        self.append_event(
+            EventRecord.create(
+                "storage_events_cutover",
+                {"backfilled": backfilled, "total_events": total},
+            )
+        )
+        return {"backfilled": backfilled, "total_events": total}
+
+    def events_rollback(self) -> dict[str, Any]:
+        """SQLite 阶段 5c 回滚：验证导出无漂移后把权威切回 journal。"""
+        from .storage import shadow as storage_shadow
+
+        database = storage_shadow.shadow_database_path(self.root)
+        if not database.is_file():
+            raise ValueError("shadow database is not enabled")
+        with self._protocol_mutation_lock():
+            if (
+                storage_shadow.events_authority(self.root)
+                != storage_shadow.EVENTS_AUTHORITY_SQLITE
+            ):
+                raise ValueError("events authority is not sqlite")
+            journal = self._event_journal_file_bytes_locked()
+            rebuilt = storage_shadow.journal_bytes_from_table(self.root)
+            if journal != rebuilt:
+                raise ValueError(
+                    "events.jsonl export drifted from the authoritative table; "
+                    "inspect .agentdeck/logs/shadow-errors.jsonl before rollback"
+                )
+            connection = storage_shadow.open_shadow_connection(database)
+            try:
+                connection.execute("BEGIN IMMEDIATE")
+                try:
+                    storage_shadow.set_events_authority(
+                        connection, storage_shadow.EVENTS_AUTHORITY_JOURNAL
+                    )
+                    connection.execute("COMMIT")
+                except BaseException:
+                    connection.execute("ROLLBACK")
+                    raise
+                total = int(
+                    connection.execute("SELECT COUNT(*) FROM events").fetchone()[0]
+                )
+            finally:
+                connection.close()
+        self.append_event(
+            EventRecord.create("storage_events_rollback", {"total_events": total})
+        )
+        return {"total_events": total}
 
     def record_governance_preview(
         self,

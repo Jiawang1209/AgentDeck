@@ -4,6 +4,43 @@
 
 ## 2026-07-28
 
+### Land SQLite phase 5c: explicit events authority cutover with byte-exact gate
+
+- **Type**: feat
+- **Motivation**: 零 diff 证据 3/3 后 user 拍板开工 5c——events 账本
+  权威从 journal 切到 shadow db events 表,为 5d 停同步导出
+  (O(n²) 写消失点)铺路。
+- **What**: ①`storage/shadow.py`:`events_authority()`(meta 行读取,
+  任何异常 fail-safe 降级 journal——同步导出保证降级无数据丢失)、
+  `set_events_authority()`、共享 `insert_event_lines()`(5a 双写体
+  收敛复用)、`append_events_authoritative()`(失败冒泡)、
+  `journal_bytes_from_table()`(按 event_cursor 序以同款
+  ensure_ascii=False+sort_keys 重建字节流)、公开 `log_shadow_error`。
+  ②`state.py`:`_append_event_bytes_locked` 拆为权威分流 dispatcher +
+  `_append_event_bytes_journal`——authority=sqlite 时表写先行且必须
+  成功,journal 变同锁导出(失败只落 shadow-errors);
+  `_event_journal_source()` 按 authority 从表重建(六调用方零改动,
+  沿用 64MB 上限);`events_cutover()`(mutation lock 内**整表按
+  journal 顺序重建**——实施偏差:5a 双写使启用后事件先占低 cursor,
+  直接回填历史会错序,同事务 DELETE+全量插入修正;随后逐字节校验
+  重建==journal 才翻权威,不一致拒绝且零改动;成功后经新路径追加
+  `storage_events_cutover` 事件)与 `events_rollback()`(验证导出
+  零漂移才切回,追加 `storage_events_rollback`)。③cli:
+  `storage events-cutover/--confirm`、`storage events-rollback/
+  --confirm` 薄壳,`shadow-status` 增 `events_authority` 字段。
+  ④route spec 5c 条目标记落地(含偏差记录),CLAUDE.md 常用命令与
+  纪律段同步。
+- **Impact**: cutover 后 events 表是权威、journal 是可读导出镜像,
+  events-diff 语义反转为导出漂移检测;`rm state.db` 不再是无损回滚
+  (须先 events-rollback);5d 才拿到 O(1) 写收益。scratch 项目
+  cutover 见后续 data 条目。
+- **Verification**: TDD——`tests/test_events_cutover.py` 6 例先 RED
+  后 GREEN(含 confirm/enabled 双门、回填+翻转+读一致、post-cutover
+  表权威+导出+events-diff 同步、rollback 双向、shadow-status 字段);
+  字节校验门在开发中真实拦下一次表序错误(证明 gate 有效);
+  `test_agent_cli + test_contracts` 910 passed;
+  `python -m compileall src` 通过;全量 `pytest tests/ -q` 见 commit。
+
 ### Land G5 verdict auto-merge gate on run-loop merge-on-complete
 
 - **Type**: feat

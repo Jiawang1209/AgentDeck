@@ -10554,6 +10554,7 @@ def storage_shadow_status_command(_args: argparse.Namespace) -> int:
         "mode": "storage_shadow_status",
         "database": str(database),
         "enabled": False,
+        "events_authority": storage_shadow.events_authority(config.root),
         "enable_command": "agentdeck storage shadow-enable --confirm",
     }
     if database.is_file():
@@ -10645,6 +10646,61 @@ def ui_serve_command(args: argparse.Namespace) -> int:
         pass
     finally:
         server.server_close()
+    return 0
+
+
+def storage_events_cutover_command(args: argparse.Namespace) -> int:
+    config, store, exit_code = _load_project_or_error()
+    if config is None or store is None:
+        return exit_code
+    if not args.confirm:
+        print("storage events-cutover requires --confirm", file=sys.stderr)
+        return 1
+    from agentdeck.storage import shadow as storage_shadow
+
+    try:
+        result = store.events_cutover()
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    _print_json(
+        {
+            "ok": True,
+            "mode": "storage_events_cutover",
+            "database": str(storage_shadow.shadow_database_path(config.root)),
+            "authority": storage_shadow.EVENTS_AUTHORITY_SQLITE,
+            "backfilled": result["backfilled"],
+            "total_events": result["total_events"],
+            "rollback_command": "agentdeck storage events-rollback --confirm",
+        }
+    )
+    return 0
+
+
+def storage_events_rollback_command(args: argparse.Namespace) -> int:
+    config, store, exit_code = _load_project_or_error()
+    if config is None or store is None:
+        return exit_code
+    if not args.confirm:
+        print("storage events-rollback requires --confirm", file=sys.stderr)
+        return 1
+    from agentdeck.storage import shadow as storage_shadow
+
+    try:
+        result = store.events_rollback()
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    _print_json(
+        {
+            "ok": True,
+            "mode": "storage_events_rollback",
+            "database": str(storage_shadow.shadow_database_path(config.root)),
+            "authority": storage_shadow.EVENTS_AUTHORITY_JOURNAL,
+            "total_events": result["total_events"],
+            "cutover_command": "agentdeck storage events-cutover --confirm",
+        }
+    )
     return 0
 
 
@@ -21139,6 +21195,18 @@ def build_parser() -> argparse.ArgumentParser:
         "events-diff", help="Read-only comparison of the shadow events table against the authoritative events.jsonl"
     )
     storage_events_diff.set_defaults(func=storage_events_diff_command)
+    storage_events_cutover = storage_subparsers.add_parser(
+        "events-cutover",
+        help="Explicitly flip events authority from events.jsonl to the shadow events table (SQLite phase 5c)",
+    )
+    storage_events_cutover.add_argument("--confirm", action="store_true")
+    storage_events_cutover.set_defaults(func=storage_events_cutover_command)
+    storage_events_rollback = storage_subparsers.add_parser(
+        "events-rollback",
+        help="Explicitly flip events authority back to events.jsonl after verifying the export is drift-free",
+    )
+    storage_events_rollback.add_argument("--confirm", action="store_true")
+    storage_events_rollback.set_defaults(func=storage_events_rollback_command)
 
     ui_parser = subparsers.add_parser("ui", help="Local read-only web shell over the contract surface")
     ui_subparsers = ui_parser.add_subparsers(dest="ui_command")

@@ -100,12 +100,19 @@
      payload/created_at 深比对，长度或内容不符即非 0（mismatches 上限
      10 条详情）；表空=平凡同步。scratch live 首验：baseline 506、新增
      2 条双写 in_sync。每轮 live 收尾与 shadow-diff 一起跑。
-   - **5c 切权威**（显式 `storage events-cutover --confirm`）：shadow db
-     meta 新增 `events_authority`（`journal`→`sqlite`）；切换后 append
-     以 events 表为权威、同一锁内同步导出一行到 events.jsonl 保持外部
-     可读；`_event_journal_source()` 按 authority 从表重建 bytes（6 个
-     调用方零改动）；`events --since` 对外契约保持 event_id 不变。提供
-     显式回滚命令（表导出回 JSONL 后 authority 切回 journal）。
+   - ✅ **5c 切权威已落地**（2026-07-28 user 拍板，显式
+     `storage events-cutover --confirm`）：shadow db meta 新增
+     `events_authority`（`journal`→`sqlite`）；cutover 在 mutation lock
+     内**整表按 journal 顺序重建**（实施偏差：5a 双写使启用后事件先占
+     低 cursor，直接回填历史会错序——同事务 DELETE+全量插入使表序=
+     journal 序），随后**逐字节校验**表重建与 journal 相同才翻转权威,
+     任何不一致拒绝且零改动；切换后 append 表写为权威（失败冒泡）、
+     同锁同步导出到 events.jsonl（导出失败只落 shadow-errors,
+     events-diff 可见）；`_event_journal_source()` 按 authority 从表
+     重建 bytes（6 个调用方零改动）；`events --since` 对外契约不变。
+     `storage events-rollback --confirm` 验证导出零漂移后切回 journal;
+     `shadow-status` 暴露 `events_authority`。authority 读取任何异常
+     fail-safe 降级 journal（同步导出保证无数据丢失）。
    - **5d 停同步导出**（观察期后另行拍板）：JSONL 改为按需导出，
      O(n²) 写彻底消失。
    approvals.jsonl 与 3 个 event_outbox 的迁移复用同一形态，在 5c 稳定
