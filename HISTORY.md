@@ -4,6 +4,34 @@
 
 ## 2026-07-28
 
+### Land G2 S4: two-stage split planning engine with staged failure semantics
+
+- **Type**: feat
+- **Motivation**: G2 spec S4 切片——planner→orchestrator 两段推理串联
+  落单条 plan,失败分段可审计,现有单段路径保持不变。
+- **What**: ①`providers/base.py` 的 `LeaderPlanRequest` 增可选
+  `planner_brief` 字段(缺省 None,provenance 构建为显式字段枚举,
+  不受影响);②`orchestration/leader.py` 的 `plan()`/`plan_result()`
+  增可选 `planner_brief` 透传(含 semantic 路径的 provider_request
+  重建);③`providers/fake.py` 增 `plan_brief()` 确定性 brief(fake
+  provider 先行,真实 provider 的 brief 能力与 prompt 接线留待后续
+  切片);④新增 `orchestration/split_planning.py`:
+  `run_split_planning()` 先调 planner provider `plan_brief` 并经
+  `validate_planner_brief` + `planner_brief_snapshot` 守门,再以
+  validated brief 注入 request 调 `LeaderOrchestrator.plan`(复用既有
+  plan schema validator 全部规则),返回
+  `SplitPlanResult{plan, planner_brief, planner_backend,
+  orchestrator_backend}`;任一段失败抛 `SplitPlanningError`
+  (`stage=planner|orchestrator`),planner 失败不进入 orchestrator、
+  不落半写 plan。引擎不 dispatch、不建审批、不触 tmux。
+- **Impact**: 引擎尚无 CLI 消费方(S5 接线 `leader plan`/`run --task`
+  并落 provenance 与契约面);未配置拆分时全链路行为逐字节不变。
+- **Verification**: TDD——`tests/test_split_planning.py` 6 例先 RED
+  (ImportError)后 GREEN;G2 三测试文件合跑 38 passed;热路径回归
+  `test_leader_cli + test_agent_cli + test_dispatch_cli +
+  test_conversation_mission` 703 passed;`python -m compileall src`
+  通过;全量 `pytest tests/ -q` 见 commit。
+
 ### Land G2 S3: planner-stage brief schema, snapshot hash, and prompt template
 
 - **Type**: feat

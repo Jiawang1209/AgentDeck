@@ -183,6 +183,7 @@ class LeaderOrchestrator:
         step_count: int | None = None,
         timeout_seconds: int | None = None,
         semantic_authority: dict[str, object] | None = None,
+        planner_brief: dict[str, Any] | None = None,
     ) -> dict[str, object]:
         return self.plan_result(
             task,
@@ -192,6 +193,7 @@ class LeaderOrchestrator:
             step_count=step_count,
             timeout_seconds=timeout_seconds,
             semantic_authority=semantic_authority,
+            planner_brief=planner_brief,
         ).plan
 
     def plan_result(
@@ -204,6 +206,7 @@ class LeaderOrchestrator:
         step_count: int | None = None,
         timeout_seconds: int | None = None,
         semantic_authority: dict[str, object] | None = None,
+        planner_brief: dict[str, Any] | None = None,
     ) -> LeaderPlanResult:
         if self.provider is None:
             raise RuntimeError("leader provider is not configured")
@@ -237,6 +240,7 @@ class LeaderOrchestrator:
             step_count=step_count,
             timeout_seconds=timeout_seconds,
             semantic_authority=authority_snapshot,
+            planner_brief=planner_brief,
         )
         if authority_snapshot is None:
             resolved_agent_ids, resolved_step_count = leader_plan_authority(request)
@@ -266,6 +270,7 @@ class LeaderOrchestrator:
                 timeout_seconds=request.timeout_seconds,
                 semantic_authority=deepcopy(authority_snapshot),
                 regeneration_diagnostic=request.regeneration_diagnostic,
+                planner_brief=request.planner_brief,
             )
         if callable(native_plan_result):
             result = native_plan_result(provider_request)

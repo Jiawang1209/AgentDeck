@@ -54,6 +54,24 @@ class FakeLeaderProvider:
             ),
         )
 
+    def plan_brief(
+        self,
+        *,
+        task: str,
+        model: str | None = None,
+        skill_context: dict[str, object] | None = None,
+    ) -> dict[str, object]:
+        del model, skill_context
+        return {
+            "goal": f"完成任务: {task}",
+            "acceptance_criteria": [
+                f"任务 '{task}' 的产出已生成并通过检查",
+                "全部相关验证通过",
+            ],
+            "risks": ["任务范围理解偏差"],
+            "macro_steps": ["理解并拆解目标", "执行核心工作", "验证并汇总结果"],
+        }
+
     def _legacy_plan(self, request: LeaderPlanRequest) -> dict[str, object]:
         steps = []
         for index, agent in enumerate(request.config.agents, start=1):

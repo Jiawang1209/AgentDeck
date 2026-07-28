@@ -27,6 +27,7 @@ class LeaderPlanRequest:
     timeout_seconds: int | None = None
     semantic_authority: dict[str, object] | None = None
     regeneration_diagnostic: str | None = None
+    planner_brief: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)
