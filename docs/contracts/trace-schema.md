@@ -83,6 +83,8 @@ Use `agentdeck contract trace --example` to include a stable GUI-ready lineage f
 
 `inbox_items[]` records mailbox delivery events, including both `task_request` and `task_reply` items. Missing direction fields are normalized to `null` so GUI clients can render a stable table without checking event type first.
 
+`replies[]` items include `verdict`, the optional G5 `review-verdict/v1` payload parsed from a `verdict:` reply line (`null` when absent). It mirrors the ProjectView `replies.items[].verdict` field and is display/audit evidence only — never gate, approval, or dispatch authority.
+
 ## Boundaries
 
 - The contract command is read-only.

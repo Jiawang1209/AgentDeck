@@ -1639,6 +1639,7 @@ PROJECT_VIEW_REPLY_ITEM_FIELDS = (
     "job_id",
     "from_agent",
     "to_actor",
+    "verdict",
     "created_at",
     "trace_command",
 )
@@ -3523,6 +3524,7 @@ TRACE_REPLY_FIELDS = (
     "from_agent",
     "to_actor",
     "text",
+    "verdict",
     "created_at",
 )
 
@@ -13904,6 +13906,7 @@ def project_view_example() -> dict[str, object]:
                     "job_id": "job_example",
                     "from_agent": "planner",
                     "to_actor": "leader",
+                    "verdict": None,
                     "created_at": "2026-07-04T00:00:01+00:00",
                     "trace_command": "agentdeck trace --id rep_example",
                 }
@@ -18185,6 +18188,7 @@ def trace_example() -> dict[str, object]:
                 "from_agent": "planner",
                 "to_actor": "coder",
                 "text": "status: completed\nsummary: Plan is actionable.",
+                "verdict": None,
                 "created_at": "2026-07-04T00:00:01+00:00",
             }
         ],

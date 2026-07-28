@@ -47,6 +47,7 @@ from .mission import (
     mission_commands,
     mission_status_transition_allowed,
 )
+from .review_verdict import parse_verdict_line
 from .mission_authority import (
     SEMANTIC_MISSION_COMPACT_FIELDS,
     canonical_workflow_plan_hash,
@@ -9854,6 +9855,12 @@ class StateStore:
         message = next((item for item in messages if item.get("message_id") == message_id), None)
         if message is None:
             raise KeyError(message_id)
+        verdict: dict[str, Any] | None = None
+        verdict_invalid = False
+        try:
+            verdict = parse_verdict_line(text)
+        except ValueError:
+            verdict_invalid = True
         attempt = next(
             (
                 item
@@ -9880,6 +9887,8 @@ class StateStore:
             "text": text,
             "created_at": utc_now(),
         }
+        if verdict is not None:
+            reply["verdict"] = verdict
         state.setdefault("replies", []).append(reply)
         artifacts = self._artifacts_from_reply(reply, text)
         state.setdefault("artifacts", []).extend(artifacts)
@@ -9906,6 +9915,31 @@ class StateStore:
                 }
             )
         self.save(state)
+        if verdict is not None:
+            self.append_event(
+                EventRecord.create(
+                    "review_verdict_recorded",
+                    {
+                        "reply_id": reply["reply_id"],
+                        "message_id": message_id,
+                        "from_agent": from_agent,
+                        "overall": verdict["overall"],
+                        "criteria_count": len(verdict["criteria"]),
+                        "score": verdict.get("score"),
+                    },
+                )
+            )
+        elif verdict_invalid:
+            self.append_event(
+                EventRecord.create(
+                    "review_verdict_invalid",
+                    {
+                        "reply_id": reply["reply_id"],
+                        "message_id": message_id,
+                        "from_agent": from_agent,
+                    },
+                )
+            )
         return {**reply, "artifacts": artifacts}
 
     @classmethod
@@ -10110,6 +10144,7 @@ class StateStore:
             "from_agent": reply.get("from_agent"),
             "to_actor": reply.get("to_actor"),
             "text": reply.get("text"),
+            "verdict": copy.deepcopy(reply.get("verdict")),
             "created_at": reply.get("created_at"),
         }
 
@@ -10738,6 +10773,7 @@ class StateStore:
                     "job_id": reply.get("job_id"),
                     "from_agent": reply.get("from_agent"),
                     "to_actor": reply.get("to_actor"),
+                    "verdict": copy.deepcopy(reply.get("verdict")),
                     "created_at": reply.get("created_at"),
                     "trace_command": self._trace_command(reply.get("reply_id")),
                 }

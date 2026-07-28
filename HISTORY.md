@@ -4,6 +4,33 @@
 
 ## 2026-07-28
 
+### Land G5 V3: reply-channel verdict ingestion with ProjectView/trace exposure
+
+- **Type**: feat
+- **Motivation**: G5 spec V3 切片——把 verdict 从纯模块接进真实回复
+  账本,单点覆盖全部回复通道。
+- **What**: ①`state.py record_reply()`(reply / capture-reply /
+  run-loop 文件摄入 / workflow 四调用方的唯一共享写点)解析可选
+  `verdict:` 行:有效 → reply 记录增可选 `verdict` 字段 + 保存后追加
+  `review_verdict_recorded` 事件(reply_id/message_id/from_agent/
+  overall/criteria_count/score);无效 → reply 照常入账(text/状态流
+  转/inbox/artifacts 全部不变)+ 追加 `review_verdict_invalid` 事件;
+  无 verdict 行 → 逐字节不变。②`_reply_summaries`(ProjectView
+  `replies.items[]`,workbench ledger 同源)与 `_trace_reply` 投影
+  增 `verdict` 键(deepcopy,null 占位遵循投影约定)。③contracts:
+  `PROJECT_VIEW_REPLY_ITEM_FIELDS` / `TRACE_REPLY_FIELDS` 加
+  `verdict`,project-view 与 trace example fixture 补 null 键。
+  ④同步 `docs/contracts/project-view-schema.md` 与 `trace-schema.md`
+  (additive 字段、宽容纪律、display-only 边界)。
+- **Impact**: review worker 现在只要在结构化回复里带一行 verdict
+  JSON,量化验收就进账本、可 trace、GUI 可读;所有 gate 行为不变。
+  剩余 V4 摘要面、V5 review prompt 注入。
+- **Verification**: TDD——`tests/test_review_verdict_ingestion.py`
+  5 例先 RED(4 failed/1 baseline passed)后 GREEN;fixture 同步后
+  `test_contracts + test_dispatch_cli + test_agent_cli + 新文件`
+  951 passed;`python -m compileall src` 通过;全量 `pytest tests/ -q`
+  见 commit。
+
 ### Land G5 V2: review verdict schema, reply-line parser, and alignment
 
 - **Type**: feat
