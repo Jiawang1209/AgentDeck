@@ -24,6 +24,8 @@ class FakeTmuxBackend:
 
     def send_input(self, _config, pane_id: str, text: str) -> None:
         self.sent.append((pane_id, text))
+        # 真实 TUI 在回车后授权框消失;静态输出会让框被重复扫描。
+        self.output = ""
 
     def capture_output(self, _config, pane_id: str, lines: int = 200) -> str:
         return self.output
@@ -246,6 +248,30 @@ CODEX_AUTH_BOX = (
     "› 1. Yes, proceed (y)\n"
     "  Press enter to confirm or esc to cancel\n"
 )
+
+
+def test_run_loop_follow_release_boxes_scans_at_segment_start(tmp_path, monkeypatch, capsys) -> None:
+    # Round 11 live 发现 #4：委托框在两段 follow 之间弹出时,只在 wave
+    # 间隙扫描会整段错过——段首必须也扫一次(max-waves 1 时唯一机会)。
+    root = prepare_project(tmp_path, monkeypatch)
+    bind_agent(root, "coder", "%50")
+    fake = FakeTmuxBackend()
+    monkeypatch.setattr(cli, "TmuxBackend", lambda: fake)
+    enable_autonomous(capsys, ["coder"], 5)
+    cli.main(["delegation", "grant", "--agent", "coder", "--prefix", "node tests/", "--confirm"])
+    capsys.readouterr()
+    plan_id = seed_plan(root, ["coder"])
+    fake.output = CODEX_AUTH_BOX
+
+    exit_code = cli.main([
+        "run-loop", "--plan-id", plan_id, "--confirm", "--follow",
+        "--max-waves", "1", "--interval", "0", "--release-boxes",
+    ])
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["released_box_count"] == 1
+    assert payload["released_boxes"][0]["agent_id"] == "coder"
+    assert ("%50", "") in fake.sent
 
 
 def test_run_loop_follow_release_boxes_releases_delegated_box(tmp_path, monkeypatch, capsys) -> None:

@@ -20232,6 +20232,19 @@ def _run_loop_follow(
     waves: list[dict[str, object]] = []
     released_boxes: list[dict[str, object]] = []
     final: dict[str, object] | None = None
+    if backend is not None:
+        # Round 11 live 发现 #4：委托框可能在两段 follow 之间弹出——只在
+        # wave 间隙扫描会整段错过,段首(wave 0)也扫一次。语义不变:仍
+        # 只放行命中活跃委托前缀的框,逐次审计。
+        released, _skipped = _scan_release_delegated_boxes(
+            config,
+            store,
+            backend,
+            [agent.agent_id for agent in config.agents],
+            0,
+            source="run_loop_follow",
+        )
+        released_boxes.extend(released)
     for wave_number in range(1, args.max_waves + 1):
         payload = _run_loop_single_wave(config, store, plan_id)
         if payload is None:

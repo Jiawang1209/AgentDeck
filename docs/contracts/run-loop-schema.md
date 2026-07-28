@@ -77,7 +77,7 @@ until the gate is anything other than `waiting_for_reply` (a human gate,
 the same `--confirm` + `approval_mode=autonomous` double gate, and refuses
 `--max-waves < 1`. Each wave is the unchanged single-wave engine (same
 auto-approve/ingest/dispatch semantics, same audit events); between waves,
-with `--release-boxes`, it runs one delegation scan
+with `--release-boxes`, it runs one delegation scan at segment start (wave 0 — boxes that appeared between follow segments are otherwise missed; round 11 finding, 2026-07-29) and one delegation scan
 (`_scan_release_delegated_boxes`) that releases only delegation-covered
 authorization boxes — every release audited as `auth_box_released` with
 `source=run_loop_follow`, non-covered boxes never touched (see
