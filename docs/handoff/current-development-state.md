@@ -51,8 +51,14 @@ step/无 criteria/直接 dispatch 逐字节不变)。
 
 **G5 V1–V5 全部完成。** 待 human 拍板的 STOP fork:verdict 驱动
 gate(`overall=fail` 阻止 merge-on-complete/下一轮)、round_reviewer
-独立角色与 provider binding、多 reviewer 聚合。live 验证建议与 G2
-双 backend 验证同场跑一轮 Line 1 round。硬承诺:所有
+独立角色与 provider binding、多 reviewer 聚合。
+
+**Round 11 runbook 已备好**(user 在场即可执行):
+`docs/validation/2026-07-28-copilot-line1-round11-runbook.md`——一轮
+走开环同验 G2 双 backend(deepseek planner + claude-cli
+orchestrator)、G5 verdict 全链与 SQLite 三连检证据 #3。自主可做的
+开发切片已清空;剩余全部为 user 在场项(round 11)或拍板项
+(SQLite 5c、verdict gate、round_reviewer、F5 稳定化、daemon 收拢)。硬承诺:所有
 gate 行为零变化,无 `verdict:` 行时逐字节不变;verdict 驱动 gate、
 round_reviewer 独立角色、多 reviewer 聚合列 STOP fork。其余待排期或
 human 拍板:

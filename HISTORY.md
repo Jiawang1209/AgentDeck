@@ -4,6 +4,25 @@
 
 ## 2026-07-28
 
+### Add round 11 runbook for G2 dual-backend and G5 verdict live validation
+
+- **Type**: docs
+- **Motivation**: G2/G5 开发面全部落地后,live 首验需要 user 在场;
+  沿 round 3 runbook 先例把执行手册预先备好,user 坐下即可单命令开跑。
+- **What**: 新增
+  `docs/validation/2026-07-28-copilot-line1-round11-runbook.md`:
+  前置(key 钥匙串导出、doctor/delegation/shadow 检查)、scratch
+  config 双子段变更(planner=deepseek-v4-pro,orchestrator=
+  claude-cli,含选型依据与回滚)、任务选择(F2–F4 池,须含
+  implement→review 两步)、走开环命令、8 项 live 首验观察点
+  (G2 双段/三 provenance/brief 质量;G5 prompt 注入/verdict 产出与
+  宽容纪律/三面摘要;gate 零变化;授权框第四轮数据)、收尾三连检
+  (shadow-diff+events-diff+回归,即 SQLite 5c 证据 #3)与风险预案
+  (DeepSeek brief 合规性 fail-closed 属预期发现)。
+- **Impact**: 纯文档;live 执行与证据文档留待 user 在场的 round 11。
+- **Verification**: 步骤对照 scratch 当前 config(只读核实)与
+  round 8/10 已验命令序列;无代码改动。
+
 ### Land G5 V5: inject acceptance criteria and verdict format into review-step prompts
 
 - **Type**: feat
