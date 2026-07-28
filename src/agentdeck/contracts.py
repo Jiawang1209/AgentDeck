@@ -3004,6 +3004,7 @@ LEADER_REVIEW_RESPONSE_FIELDS = (
     "agent_id",
     "message_id",
     "replies",
+    "acceptance_criteria",
     "next_command",
     "controls",
 )
@@ -3366,6 +3367,7 @@ RUN_PROGRESS_RESPONSE_FIELDS = (
     "model",
     "counts",
     "steps",
+    "acceptance_criteria",
     "review",
     "approval_card",
     "next_command",
@@ -9514,6 +9516,17 @@ def validate_run_start_contract(payload: dict[str, object]) -> dict[str, object]
         errors.append(f"{mode or 'run'}.requires_explicit_user must be true")
     if payload.get("safety") != "approval_gated":
         errors.append(f"{mode or 'run'}.safety must be approval_gated")
+    if mode == "run_progress":
+        acceptance_criteria = payload.get("acceptance_criteria")
+        if acceptance_criteria is not None and (
+            not isinstance(acceptance_criteria, list)
+            or any(
+                type(item) is not str or not item for item in acceptance_criteria
+            )
+        ):
+            errors.append(
+                "run_progress.acceptance_criteria must be null or a list of non-empty strings"
+            )
     plan_id = payload.get("plan_id")
     review_command = payload.get("review_command")
     if plan_id and review_command != f"agentdeck leader review --plan-id {plan_id}":
@@ -9657,6 +9670,14 @@ def validate_leader_review_contract(payload: dict[str, object]) -> dict[str, obj
         _validate_leader_backend(errors, "leader_review", leader_backend)
     else:
         errors.append("leader_review.leader_backend must be an object")
+    acceptance_criteria = payload.get("acceptance_criteria")
+    if acceptance_criteria is not None:
+        if not isinstance(acceptance_criteria, list) or any(
+            type(item) is not str or not item for item in acceptance_criteria
+        ):
+            errors.append(
+                "leader_review.acceptance_criteria must be null or a list of non-empty strings"
+            )
     controls = payload.get("controls")
     if isinstance(controls, list):
         for control in controls:
@@ -17568,6 +17589,7 @@ def run_progress_example() -> dict[str, object]:
                 "job_id": None,
             }
         ],
+        "acceptance_criteria": None,
         "review": {
             "plan_id": plan_id,
             "next_action": "dispatch_approved",
@@ -17576,6 +17598,7 @@ def run_progress_example() -> dict[str, object]:
             "agent_id": "coder",
             "message_id": None,
             "replies": [],
+            "acceptance_criteria": None,
             "leader_backend": dict(leader_backend),
             "next_command": next_command,
             "controls": [
@@ -17852,6 +17875,7 @@ def leader_review_example() -> dict[str, object]:
         "agent_id": "planner",
         "message_id": "msg_example",
         "replies": [],
+        "acceptance_criteria": None,
         "next_command": "agentdeck capture-reply --agent planner --message-id msg_example",
         "controls": [
             {

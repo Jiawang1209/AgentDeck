@@ -23,8 +23,17 @@ orchestrator_backend/planner_brief 三 provenance,失败审计带
 stage)→ S5b 只读暴露+契约同步(**完成**:plans.items 投影 + trace
 plan 三键 null 占位、`PROJECT_VIEW_PLAN_ITEM_FIELDS`/validator/
 example fixture、project-view-schema.md、README)→ S6
-acceptance_criteria 只读展示(leader review / run_progress_card,
-G5 前置)。硬兼容承诺:`[leader.planner]`/`[leader.orchestrator]`
+acceptance_criteria 只读展示(**完成**:`leader_review()` 出口注入 +
+`run_progress` 顶层镜像,review/run contract 字段表、validator、
+example、文档同步)。
+
+**G2 S1–S6 全部完成。** 后续独立切片(未开工,待排期或 human 拍板):
+①真实 provider(deepseek/openai-compatible/codex-cli/claude-cli)的
+`plan_brief` 能力与 `planner_brief` prompt 行接线(fake 已通,真实
+provider 未实现 brief 调用);②G5 量化验收(round_reviewer、按
+acceptance_criteria 打分);③live 双 backend 验证(需 user 在场跑
+Line 1 round);④spec 标注的 STOP fork(orchestrator 工具调用、
+briefs 独立集合、G1 frontdesk 增强、SQLite 5c cutover)。硬兼容承诺:`[leader.planner]`/`[leader.orchestrator]`
 子段都缺省时行为逐字节不变。STOP fork(等 human):orchestrator 工具
 调用、briefs 独立集合、G1 frontdesk 增强、SQLite 5c cutover。
 

@@ -4,6 +4,34 @@
 
 ## 2026-07-28
 
+### Land G2 S6: read-only acceptance criteria in leader review and run progress
+
+- **Type**: feat
+- **Motivation**: G2 spec S6 收口切片——把 planner brief 的
+  acceptance_criteria 以只读形式送进人类复核面,为 G5 量化验收铺
+  数据入口(本切片只存只显,不打分、不 gate)。
+- **What**: ①`state.py` `leader_review()` 拆为 thin wrapper +
+  `_leader_review_core()`,统一出口注入 `acceptance_criteria`
+  (新 `_plan_acceptance_criteria()`:拆分 plan 返回 brief 列表,
+  单段 plan 返回 null);CLI `_leader_review_payload` 经 `**review`
+  自动携带,所有嵌入 review 的面(run progress、workbench、chat)
+  同源获得;②`_run_progress_payload` 顶层新增 `acceptance_criteria`
+  镜像 `review.acceptance_criteria`;③contracts:
+  `LEADER_REVIEW_RESPONSE_FIELDS` / `RUN_PROGRESS_RESPONSE_FIELDS`
+  加字段,两 validator 增 null-or-非空字符串列表轻校验,leader
+  review 与 run_progress example fixture 补 null 键;④同步
+  `docs/contracts/leader-review-schema.md` 与 `run-schema.md`
+  (明确 display-only、不授权、G5 前置)。
+- **Impact**: G2 S1–S6 全部切片完成:拆分配置 → 两段推理 → 单 plan
+  三 provenance → GUI/审计/复核面只读可见。真实 provider 的
+  `plan_brief` 能力与 planner_brief prompt 接线、G5 量化打分是
+  后续独立切片;live 双 backend 验证待 user 在场的 Line 1 round。
+- **Verification**: TDD——4 例 review/run 展示测试先 RED(KeyError)
+  后 GREEN(test_split_planning_cli 共 13 passed);
+  `test_contracts + test_leader_cli + test_agent_cli +
+  test_dispatch_cli` 1181 passed;`python -m compileall src` 通过;
+  全量 `pytest tests/ -q` 见 commit。
+
 ### Land G2 S5b: expose split provenance in ProjectView/trace and sync contracts
 
 - **Type**: feat

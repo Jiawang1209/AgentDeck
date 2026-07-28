@@ -12011,6 +12011,7 @@ def _run_progress_payload(store: StateStore, plan_id: str) -> dict[str, object]:
         "model": status.get("model"),
         "counts": status.get("counts"),
         "steps": status.get("steps"),
+        "acceptance_criteria": review.get("acceptance_criteria"),
         "review": review,
         "approval_card": approval_card,
         "next_command": next_command,

@@ -194,6 +194,59 @@ def test_project_view_plan_items_null_split_fields_without_split(
     assert item["planner_brief"] is None
 
 
+def test_leader_review_exposes_acceptance_criteria_for_split_plan(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    _enable_split(root)
+    assert cli.main(["leader", "plan", "--task", "验收标准展示"]) == 0
+    plan_id = json.loads(capsys.readouterr().out)["plan_id"]
+
+    assert cli.main(["leader", "review", "--plan-id", plan_id]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    record = StateStore(root).load()["plans"][0]
+    assert payload["acceptance_criteria"] == record["planner_brief"]["acceptance_criteria"]
+    assert payload["acceptance_criteria"]
+
+
+def test_leader_review_acceptance_criteria_null_without_split(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    prepare_project(tmp_path, monkeypatch)
+    assert cli.main(["leader", "plan", "--task", "无拆分复核"]) == 0
+    plan_id = json.loads(capsys.readouterr().out)["plan_id"]
+
+    assert cli.main(["leader", "review", "--plan-id", plan_id]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["acceptance_criteria"] is None
+
+
+def test_run_progress_exposes_acceptance_criteria_for_split_plan(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    _enable_split(root)
+    assert cli.main(["leader", "plan", "--task", "run 卡片验收标准"]) == 0
+    plan_id = json.loads(capsys.readouterr().out)["plan_id"]
+
+    assert cli.main(["run", "--plan-id", plan_id]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    record = StateStore(root).load()["plans"][0]
+    assert payload["acceptance_criteria"] == record["planner_brief"]["acceptance_criteria"]
+
+
+def test_run_progress_acceptance_criteria_null_without_split(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    prepare_project(tmp_path, monkeypatch)
+    assert cli.main(["leader", "plan", "--task", "无拆分 run 卡片"]) == 0
+    plan_id = json.loads(capsys.readouterr().out)["plan_id"]
+
+    assert cli.main(["run", "--plan-id", plan_id]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["acceptance_criteria"] is None
+
+
 def test_run_task_split_records_provenance(tmp_path, monkeypatch, capsys) -> None:
     root = prepare_project(tmp_path, monkeypatch)
     _enable_split(root)

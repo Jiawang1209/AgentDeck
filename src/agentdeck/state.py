@@ -9381,7 +9381,28 @@ class StateStore:
             "steps": status_steps,
         }
 
+    def _plan_acceptance_criteria(self, plan_id: str) -> list[str] | None:
+        state = self.load()
+        plan = next(
+            (item for item in state.get("plans", []) if item.get("plan_id") == plan_id),
+            None,
+        )
+        if plan is None:
+            return None
+        brief = plan.get("planner_brief")
+        if not isinstance(brief, dict):
+            return None
+        criteria = brief.get("acceptance_criteria")
+        if not isinstance(criteria, list):
+            return None
+        return list(criteria)
+
     def leader_review(self, plan_id: str) -> dict[str, Any]:
+        review = self._leader_review_core(plan_id)
+        review["acceptance_criteria"] = self._plan_acceptance_criteria(plan_id)
+        return review
+
+    def _leader_review_core(self, plan_id: str) -> dict[str, Any]:
         status = self.plan_status(plan_id)
         leader_backend = status.get("leader_backend")
         state = self.load()
