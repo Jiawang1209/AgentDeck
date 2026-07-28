@@ -2,6 +2,28 @@
 
 本文件记录 AgentDeck 每一次开发内容。约束：每次新增功能、文档规则、项目骨架、运行环境或用户可见行为变化，都必须同步更新本文件，并在同一次 commit 中提交。
 
+## 2026-07-28
+
+### Freeze G2 planner/orchestrator split design spec
+
+- **Type**: docs
+- **Motivation**: 北极星第二圈深度差距 #2(gap-review 2026-07-24):
+  planner 与 orchestrator 混在一个 Leader 身份、共用 provider,无独立
+  brief 数据模型。user 拍板走开链路三连 PASS 后开工 G2,先冻结设计再
+  逐片 TDD。
+- **What**: 新增
+  `docs/superpowers/specs/2026-07-28-g2-planner-orchestrator-split-design.md`。
+  冻结决策:逻辑子角色不占 pane;可选 `[leader.planner]` /
+  `[leader.orchestrator]` 配置子段缺省回落 `[leader]`(两段都缺省时
+  行为逐字节不变);两段推理落单条 plan(planner 出 brief +
+  acceptance_criteria,orchestrator 出既有 schema 的 steps,复用全部
+  validator);provenance 三份(planner_backend/orchestrator_backend/
+  planner_brief 快照);失败分段审计不落半写 plan;acceptance_criteria
+  本切片只存不判(G5 铺垫)。切片 S1–S6 排定;orchestrator 工具调用、
+  briefs 独立集合、G1 frontdesk 增强列为 STOP fork 待 human 拍板。
+- **Impact**: 纯文档,零行为变化;后续 S2–S6 以此为调度门。
+- **Verification**: 对照 roadmap G2 验收标准逐条覆盖;无代码改动。
+
 ## 2026-07-27
 
 ### Land SQLite phase 5a/5b: events dual-write and events-diff surface

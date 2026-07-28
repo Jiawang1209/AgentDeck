@@ -1,6 +1,21 @@
 # AgentDeck Current Development State
 
-Updated: 2026-07-24
+Updated: 2026-07-28
+
+## Active slice — G2 planner/orchestrator split (自主 loop 推进中)
+
+2026-07-28 user 拍板开工 G2(北极星第二圈深度差距 #2)。设计已冻结:
+`docs/superpowers/specs/2026-07-28-g2-planner-orchestrator-split-design.md`
+(S1 完成)。切片顺序 S2 config+数据模型 → S3 planner 段 → S4
+orchestrator 段 → S5 provenance+契约面 → S6 acceptance_criteria 只读
+展示(G5 前置)。硬兼容承诺:`[leader.planner]`/`[leader.orchestrator]`
+子段都缺省时行为逐字节不变。STOP fork(等 human):orchestrator 工具
+调用、briefs 独立集合、G1 frontdesk 增强、SQLite 5c cutover。
+
+背景:Line 1 走开链路 round 8–10 三连 PASS;SQLite 5a/5b 落地
+(events 双写 + events-diff),影子零 diff 证据 2/2,5c 等拍板;GUI
+三刀落地实战可用;缺陷池仅剩 F2–F4 低级项。每轮 live 收尾三连检
+(shadow-diff + events-diff + 测试)照旧。
 
 ## Active goal — Line 1 co-pilot route: knob-by-knob convergence to the north star
 
