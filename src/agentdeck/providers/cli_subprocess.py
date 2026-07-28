@@ -25,6 +25,7 @@ from agentdeck.semantic_planning import (
 from .base import (
     LeaderPlanRequest,
     LeaderPlanResult,
+    leader_planner_brief_prompt_lines,
     leader_skill_context_prompt_lines,
     validate_provider_plan_schema,
 )
@@ -518,6 +519,7 @@ class CliLeaderProvider:
             f"Available worker agents: {json.dumps(workers, ensure_ascii=False)}",
         ]
         lines.extend(leader_skill_context_prompt_lines(request.skill_context))
+        lines.extend(leader_planner_brief_prompt_lines(request.planner_brief))
         lines.append(f"Goal: {request.task}")
         return "\n".join(lines)
 

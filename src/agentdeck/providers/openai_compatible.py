@@ -26,6 +26,7 @@ from agentdeck.semantic_planning import (
 from .base import (
     LeaderPlanRequest,
     LeaderPlanResult,
+    leader_planner_brief_prompt_lines,
     leader_skill_context_prompt_lines,
     validate_provider_plan_schema,
 )
@@ -546,6 +547,7 @@ class OpenAICompatibleProvider:
             f"Available workers: {json.dumps(workers, ensure_ascii=False)}",
         ]
         lines.extend(leader_skill_context_prompt_lines(request.skill_context))
+        lines.extend(leader_planner_brief_prompt_lines(request.planner_brief))
         return "\n".join(lines)
 
     @staticmethod

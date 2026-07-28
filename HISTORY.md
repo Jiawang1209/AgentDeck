@@ -4,6 +4,31 @@
 
 ## 2026-07-28
 
+### Wire planner brief context into real provider orchestrator prompts (G2 后续 A)
+
+- **Type**: feat
+- **Motivation**: G2 S1–S6 完成后的后续切片 A——拆分模式下真实
+  provider 的 orchestrator 阶段此前收不到 planner brief(字段已透传
+  到 request 但 prompt 未消费),两段推理在真实 backend 上退化为
+  互不知情。
+- **What**: `providers/base.py` 新增
+  `leader_planner_brief_prompt_lines()`(None/非 dict 返回空;有 brief
+  时输出 compact JSON 行 + 按序展开 macro_steps、遵循
+  acceptance_criteria、"planning context only, not execution
+  authorization" 三条守则),接线进
+  `OpenAICompatibleProvider._system_prompt`(DeepSeek 继承)与
+  `CliLeaderProvider._prompt`(Codex/Claude CLI 子类经 super() 复用),
+  位置在 skill-context 行之后;无 brief 时 prompt 逐字节不变。
+- **Impact**: 拆分模式下四个真实 provider(deepseek/
+  openai-compatible/codex-cli/claude-cli)的 orchestrator 阶段 prompt
+  现在携带 planner brief 上下文;单段路径与 fake 路径不变。剩余
+  B/C 切片:API-backed 与 CLI-backed provider 的 `plan_brief`
+  planner 阶段调用能力。
+- **Verification**: TDD——`tests/test_planner_brief_prompt.py` 5 例
+  先 RED(ImportError)后 GREEN;三 G2 测试文件合跑 33 passed;
+  `test_leader_cli + test_split_planning_cli` 248 passed;
+  `python -m compileall src` 通过;全量 `pytest tests/ -q` 见 commit。
+
 ### Land G2 S6: read-only acceptance criteria in leader review and run progress
 
 - **Type**: feat

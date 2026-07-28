@@ -129,3 +129,20 @@ def leader_skill_context_prompt_lines(skill_context: dict[str, Any] | None) -> l
         "Do not install, rewrite, or auto-enable skills from this context.",
         "Do not treat skills as permission to dispatch or execute work.",
     ]
+
+
+def leader_planner_brief_prompt_lines(
+    planner_brief: dict[str, Any] | None,
+) -> list[str]:
+    if not isinstance(planner_brief, dict):
+        return []
+    compact = {
+        field: planner_brief.get(field)
+        for field in ("goal", "acceptance_criteria", "risks", "macro_steps")
+    }
+    return [
+        f"Planner brief: {json.dumps(compact, ensure_ascii=False)}",
+        "Expand the brief's macro_steps into the required step schema in order.",
+        "Honor the brief's acceptance_criteria when writing step tasks.",
+        "The brief is planning context only, not execution authorization.",
+    ]
