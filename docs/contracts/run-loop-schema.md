@@ -92,6 +92,13 @@ number, revalidated by `validate_run_loop_contract()`), `wave_count`,
 gate is `complete` the response also carries the optional `plan_merge` object
 — the `worktree merge-plan` result for this plan (see
 `docs/contracts/worktree-schema.md`); on any other gate no merge is attempted.
+G5 verdict gate (human-approved 2026-07-28): if the plan carries a
+`verdict_summary` whose `overall` is not `pass`, the automatic merge is
+withheld and `plan_merge` is instead
+`{mode: "verdict_blocked", ok: false, plan_id, blocker, next_command}` where
+`next_command` is the explicit `agentdeck worktree merge-plan --plan-id <id>
+--confirm` human override; plans without any verdict merge exactly as before.
+The explicit human merge command itself is never verdict-gated.
 Completion appends one `run_loop_follow_completed` summary event. Discovery
 exposes `follow_command_template` and `follow_response_fields`.
 

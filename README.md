@@ -65,7 +65,11 @@ AgentDeck › Mission started. Use /status or open the workbench to inspect it.
   derive a read-only `verdict_summary` aligned with the plan's acceptance
   criteria (`unverified`/`extra` gaps included); invalid verdicts never block
   reply ingestion, replies without a verdict are byte-identical to before, and
-  a verdict never changes any gate, approval, or merge behavior; review-step
+  the only verdict-driven behavior is the auto-merge gate: `run-loop --follow
+  --merge-on-complete` withholds the automatic merge when `overall` is not
+  `pass` (reporting `plan_merge.mode=verdict_blocked` plus the explicit
+  human `worktree merge-plan --confirm` override, which is never gated);
+  review-step
   approval dispatches (a later step whose plan already has an earlier task
   branch) additionally embed the plan's acceptance criteria and the verdict
   output format in the worker prompt — prompt context only, never authority.

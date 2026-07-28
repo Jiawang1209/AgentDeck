@@ -4,6 +4,29 @@
 
 ## 2026-07-28
 
+### Land G5 verdict auto-merge gate on run-loop merge-on-complete
+
+- **Type**: feat
+- **Motivation**: G5 spec 的 STOP fork "verdict 驱动 gate" 经 user
+  拍板落地(2026-07-28)。冻结语义:只有**自动**合并路径受 gate,
+  人类显式命令永不受限,无 verdict 行为不变。
+- **What**: cli.py 新增纯 helper `_verdict_merge_blocker(store,
+  plan_id)`(plan 无 verdict_summary → None;overall=pass → None;
+  否则返回 blocker 文案);`run-loop --follow --merge-on-complete`
+  在最终 gate=complete 时先过该 gate——被挡时 `plan_merge` 输出
+  `{mode: verdict_blocked, ok: false, plan_id, blocker,
+  next_command}`(next_command=显式 `worktree merge-plan --confirm`
+  人工覆盖),放行时照旧走 `_merge_plan_worktrees`。同步
+  run-loop-schema.md、G5 spec fork 条目(标记已拍板落地)与 README。
+- **Impact**: 走开环在 reviewer 判 fail/needs_changes 时不再自动
+  合并,把最终裁量交回人类;`worktree merge-plan --confirm` 与单发
+  `run-loop`(无 merge-on-complete)语义不变。
+- **Verification**: TDD——3 例(needs_changes 挡 + pass 放行 + 无
+  verdict 不变)先 RED(1 failed/2 baseline passed)后 GREEN
+  (test_review_verdict_ingestion 共 14 passed);
+  `test_agent_cli + test_dispatch_cli + test_contracts` 946 passed;
+  `python -m compileall src` 通过;全量 `pytest tests/ -q` 见 commit。
+
 ### Fix F5 flaky fast-exit probe test with deterministic child reap
 
 - **Type**: fix

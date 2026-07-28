@@ -52,7 +52,11 @@ acceptance_criteria 的结构化验收,同时**不改变任何现有 gate 行为
 
 ## STOP fork(待 human,不在本 spec 内开工)
 
-- verdict 驱动 gate(`overall=fail` 阻止 merge-on-complete / 下一轮)。
+- ~~verdict 驱动 gate~~(**2026-07-28 user 拍板落地**:仅自动合并
+  路径受 gate——`--merge-on-complete` 在 plan 有 verdict 且
+  `overall != pass` 时改出 `plan_merge.mode=verdict_blocked` 并给出
+  显式人工 merge-plan 命令;人类 `worktree merge-plan --confirm`
+  永不受 verdict gate,无 verdict plan 行为不变)。
 - 独立 round_reviewer 角色、专属卡片与 provider binding。
 - 多 reviewer 投票 / 分数聚合策略。
 

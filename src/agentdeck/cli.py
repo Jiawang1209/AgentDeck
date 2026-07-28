@@ -11685,6 +11685,16 @@ def _record_leader_provider_failure(
     store.append_event(EventRecord.create("leader_provider_failed", payload))
 
 
+def _verdict_merge_blocker(store: StateStore, plan_id: str) -> str | None:
+    summary = store.plan_verdict_summary(plan_id)
+    if summary is None:
+        return None
+    overall = summary.get("overall")
+    if overall == "pass":
+        return None
+    return f"review verdict overall is {overall}; auto-merge withheld"
+
+
 def _generate_leader_plan(
     config: ProjectConfig,
     store: StateStore,
@@ -20206,7 +20216,20 @@ def _run_loop_follow(
         "next_command": (final or {}).get("next_command"),
     }
     if follow_payload["merge_on_complete"] and follow_payload["stopped_reason"] == "complete":
-        follow_payload["plan_merge"] = _merge_plan_worktrees(config, store, plan_id)
+        verdict_blocker = _verdict_merge_blocker(store, plan_id)
+        if verdict_blocker:
+            # G5 verdict gate (human-approved 2026-07-28): only the automatic
+            # merge path is withheld; explicit `worktree merge-plan --confirm`
+            # remains the human override.
+            follow_payload["plan_merge"] = {
+                "mode": "verdict_blocked",
+                "ok": False,
+                "plan_id": plan_id,
+                "blocker": verdict_blocker,
+                "next_command": f"agentdeck worktree merge-plan --plan-id {plan_id} --confirm",
+            }
+        else:
+            follow_payload["plan_merge"] = _merge_plan_worktrees(config, store, plan_id)
     validation = validate_run_loop_follow_contract(follow_payload)
     if not validation["ok"]:
         print("run-loop follow contract validation failed", file=sys.stderr)

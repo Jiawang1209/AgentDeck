@@ -305,6 +305,78 @@ def test_verdict_summary_null_without_any_verdict(tmp_path, monkeypatch, capsys)
     assert progress["verdict_summary"] is None
 
 
+def _enable_autonomous(root: Path) -> None:
+    config_path = root / ".agentdeck" / "config.toml"
+    text = config_path.read_text(encoding="utf-8").replace(
+        'approval_mode = "confirm"', 'approval_mode = "autonomous"', 1
+    )
+    text += '\n[autonomous]\nallowed_agents = ["planner", "coder", "reviewer"]\nmax_approvals = 5\n'
+    config_path.write_text(text, encoding="utf-8")
+
+
+def test_merge_on_complete_withheld_when_verdict_not_pass(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    _enable_split(root)
+    _enable_autonomous(root)
+    verdict = _summary_verdict("量化验收目标")  # overall=needs_changes
+    plan_id, _ = _run_plan_to_replies(
+        root, monkeypatch, capsys, json.dumps(verdict, ensure_ascii=False)
+    )
+
+    exit_code = cli.main(
+        ["run-loop", "--plan-id", plan_id, "--confirm", "--follow", "--max-waves", "2", "--interval", "1", "--merge-on-complete"]
+    )
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["waves"][-1]["stopped_reason"] == "complete"
+    merge = payload["plan_merge"]
+    assert merge["mode"] == "verdict_blocked"
+    assert merge["ok"] is False
+    assert "needs_changes" in merge["blocker"]
+    assert merge["next_command"] == f"agentdeck worktree merge-plan --plan-id {plan_id} --confirm"
+
+
+def test_merge_on_complete_proceeds_when_verdict_pass(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    _enable_split(root)
+    _enable_autonomous(root)
+    verdict = _summary_verdict("量化验收目标")
+    verdict["overall"] = "pass"
+    plan_id, _ = _run_plan_to_replies(
+        root, monkeypatch, capsys, json.dumps(verdict, ensure_ascii=False)
+    )
+
+    exit_code = cli.main(
+        ["run-loop", "--plan-id", plan_id, "--confirm", "--follow", "--max-waves", "2", "--interval", "1", "--merge-on-complete"]
+    )
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    merge = payload["plan_merge"]
+    assert merge["mode"] == "worktree_merge_plan"
+
+
+def test_merge_on_complete_unchanged_without_verdict(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    _enable_autonomous(root)
+    plan_id, _ = _run_plan_to_replies(root, monkeypatch, capsys, None)
+
+    exit_code = cli.main(
+        ["run-loop", "--plan-id", plan_id, "--confirm", "--follow", "--max-waves", "2", "--interval", "1", "--merge-on-complete"]
+    )
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["plan_merge"]["mode"] == "worktree_merge_plan"
+
+
 def _init_real_git(root: Path) -> None:
     import subprocess
 
