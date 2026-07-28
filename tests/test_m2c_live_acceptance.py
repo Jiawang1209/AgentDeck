@@ -12008,7 +12008,11 @@ def test_probe_fast_exit_after_scope_seal_failure_emits_no_signal(tmp_path) -> N
 
     assert outcome.blocker == "probe_scope_unverified"
     assert signalled == []
-    assert len(spawned) == 1 and spawned[0].returncode == 0
+    assert len(spawned) == 1
+    # The fast-exit child terminates naturally but may not be reaped yet when
+    # the probe returns on the scope-seal failure path; reap it deterministically
+    # before asserting the natural exit code (F5 flake, 2026-07-28).
+    assert spawned[0].wait(timeout=10) == 0
 
 
 def test_probe_live_unsealable_process_emits_no_guessed_signal(tmp_path) -> None:

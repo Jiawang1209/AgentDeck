@@ -4,6 +4,21 @@
 
 ## 2026-07-28
 
+### Fix F5 flaky fast-exit probe test with deterministic child reap
+
+- **Type**: fix
+- **Motivation**: F5(2026-07-28 入池,user 拍板修复):
+  `test_probe_fast_exit_after_scope_seal_failure_emits_no_signal`
+  在负载下偶发失败——scope-seal 失败路径返回时 fast-exit 子进程
+  可能尚未被收割,`returncode` 仍为 None;干净树可复现、单测重跑
+  即过。
+- **What**: 断言前 `spawned[0].wait(timeout=10)` 确定性收割子进程,
+  断言自然退出码 0;测试语义不变(仍证明零信号 + 自然退出),仅
+  消除观察竞态。M2c 证据文档与 live authority 零改动。
+- **Impact**: 全量套件不再受该竞态干扰;M2c 冻结证据不受影响。
+- **Verification**: 修复后连跑 8 次全部 1 passed(修复前当日曾在
+  全量与单测中各失败一次)。
+
 ### Record round 11 G2 dual-backend and G5 verdict live PASS with shadow zero-diff #3
 
 - **Type**: data
