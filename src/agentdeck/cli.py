@@ -10752,8 +10752,22 @@ def build_dispatch_prompt(
     worktree_path: str | None = None,
     worktree_branch: str | None = None,
     artifacts_dir: str | None = None,
+    review_criteria: list[str] | None = None,
 ) -> str:
     skill_lines = _dispatch_skill_prompt_lines(skill_loads or [])
+    review_lines = (
+        [
+            "",
+            "验收标准（review 步骤）:",
+            "请逐条对照以下 planner 验收标准复核实现产物:",
+            *[f"- {criterion}" for criterion in review_criteria],
+            "并在结构化回复中额外输出一行判定（单行 JSON，schema review-verdict/v1）:",
+            'verdict: {"schema_version":"review-verdict/v1","criteria":[{"criterion":"<标准原文>","verdict":"pass|fail|unknown","evidence":"<可选证据>"}],"overall":"pass|fail|needs_changes","score":<0-100 可选整数>}',
+            "criterion 请使用上述标准原文；判定只是复核证据，不代表授权、阻断或合并决定。",
+        ]
+        if review_criteria
+        else []
+    )
     # round 6 live 发现：worktree 内嵌的产物会随 prune 一起被删除。
     artifact_pin_lines = (
         [
@@ -10793,6 +10807,7 @@ def build_dispatch_prompt(
         "当前任务:",
         task,
         *skill_lines,
+        *review_lines,
         "",
         "请按以下格式返回:",
         "status: completed | blocked | failed",
@@ -19074,6 +19089,11 @@ def _dispatch_approved_approval(
     worktree_info, worktree_skip = _create_task_worktree(config, agent, message_id, base_branch=base_branch)
     reply_file = _reply_file_path(config.root, message_id)
     reply_file.parent.mkdir(parents=True, exist_ok=True)
+    review_criteria = (
+        store._plan_acceptance_criteria(str(approval.get("plan_id") or ""))
+        if base_branch
+        else None
+    )
     prompt = build_dispatch_prompt(
         agent,
         task,
@@ -19082,6 +19102,7 @@ def _dispatch_approved_approval(
         worktree_path=(worktree_info or {}).get("path"),
         worktree_branch=(worktree_info or {}).get("branch"),
         artifacts_dir=str(Path(config.root) / ".agentdeck" / "artifacts") if worktree_info else None,
+        review_criteria=review_criteria,
     )
     records = store.create_dispatch_records(
         "leader",

@@ -4,6 +4,34 @@
 
 ## 2026-07-28
 
+### Land G5 V5: inject acceptance criteria and verdict format into review-step prompts
+
+- **Type**: feat
+- **Motivation**: G5 spec V5 收口切片——review worker 只有知道验收
+  标准和输出格式,量化判定才会自然产生;闭合 G2 criteria → worker
+  复核 → verdict 入账 → 摘要面的完整环。
+- **What**: ①`build_dispatch_prompt()` 增可选 `review_criteria`:
+  非空时在任务与技能段后追加"验收标准(review 步骤)"段——逐条列出
+  planner 验收标准 + `verdict:` 单行 JSON(`review-verdict/v1`)输出
+  说明 + "判定只是复核证据,不代表授权、阻断或合并决定"守则;None/
+  空时 prompt 逐字节不变(回归锁定)。②approval dispatch 站点:复用
+  现有 review-step 判定信号(`_plan_base_worktree_branch` 非 None,
+  即同 plan 更早 step 已有任务分支)且 plan 有 acceptance_criteria
+  (G2 拆分 plan)时传入;非 review step、无 criteria 的 plan、直接
+  `dispatch` 路径全部不变。③README G5 bullet 补 review prompt 注入
+  说明(prompt context only, never authority)。
+- **Impact**: **G5 V1–V5 全部切片完成**:拆分 plan 的 review step
+  现在端到端自动获得量化验收指令,判定回流账本并在三个复核面可见。
+  STOP fork 待拍板:verdict 驱动 gate、round_reviewer 独立角色、多
+  reviewer 聚合。live 验证并入下一轮 Line 1 round(与 G2 双 backend
+  验证同场)。
+- **Verification**: TDD——3 例先 RED(2 单元 + 1 真 git 全链:split
+  plan→approve-plan→逐 step dispatch,首 step prompt 无注入、review
+  step prompt 含标准原文与 verdict 格式)后 GREEN
+  (test_review_verdict_ingestion 共 11 passed);
+  `test_dispatch_cli + test_agent_cli + test_contracts` 946 passed;
+  `python -m compileall src` 通过;全量 `pytest tests/ -q` 见 commit。
+
 ### Land G5 V4: verdict_summary read-only surface in review, summary, and run progress
 
 - **Type**: feat
