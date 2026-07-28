@@ -4,6 +4,35 @@
 
 ## 2026-07-28
 
+### Land G2 S5a: wire split planning into CLI plan paths with staged audit
+
+- **Type**: feat
+- **Motivation**: G2 spec S5 第一刀——把 `run_split_planning` 接进三条
+  plan 生成路径并把三份 provenance 落进 plan 记录,失败分段进审计账本。
+- **What**: ①cli.py 新增共享 `_generate_leader_plan()`:拆分仅在
+  `leader_split_enabled` 且无显式 `--provider/--model` override 时启用
+  (override 是 dry-run 逃生阀,保持单段路径逐字节不变);planner/
+  orchestrator provider 经 S2 回落 helper 解析,`SplitPlanningError`
+  按 stage 归因到对应 provider/model 并记
+  `leader_provider_failed`(payload 新增可选 `stage=planner|
+  orchestrator`;单段失败事件形状不变);②`leader plan` /
+  `run --task`(`_create_run_start_payload`)/ `leader chat` plan 路由
+  三个调用点全部改走该 helper,错误处理语义保持(unknown provider →
+  ValueError 不记失败事件;provider 失败 → 记事件后原样返回/抛出);
+  ③`state.py record_plan` 增可选 `split_provenance`:落
+  `planner_backend` / `orchestrator_backend`(`leader_backend_identity`
+  同源形状)与 `planner_brief` 快照,顶层 provider/model/leader_backend
+  即 orchestrator backend(spec 决策 4);未拆分时记录形状逐字节不变。
+- **Impact**: 拆分配置后三条入口即产生双 backend 单 plan 记录;
+  ProjectView/plan status/workbench/leader summary 的只读暴露与
+  contract 文档同步是 S5b。
+- **Verification**: TDD——`tests/test_split_planning_cli.py` 7 例
+  (拆分三 provenance、无拆分形状回归、override 旁路、planner/
+  orchestrator 分段审计、单段事件形状、run --task 接线)先 RED
+  (4 failed/3 baseline passed)后 GREEN 7 passed;热路径回归 741
+  passed;`python -m compileall src` 通过;全量 `pytest tests/ -q`
+  见 commit。
+
 ### Land G2 S4: two-stage split planning engine with staged failure semantics
 
 - **Type**: feat

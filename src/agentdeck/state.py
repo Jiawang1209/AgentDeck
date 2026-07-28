@@ -9023,6 +9023,7 @@ class StateStore:
         plan: dict[str, Any],
         skill_context: dict[str, Any] | None = None,
         leader_generation: dict[str, object] | None = None,
+        split_provenance: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         state = self.load()
         record = {
@@ -9039,6 +9040,18 @@ class StateStore:
             "plan": plan,
             "created_at": utc_now(),
         }
+        if split_provenance is not None:
+            planner_provider, planner_model = split_provenance["planner_backend"]
+            orchestrator_provider, orchestrator_model = split_provenance[
+                "orchestrator_backend"
+            ]
+            record["planner_backend"] = leader_backend_identity(
+                planner_provider, planner_model
+            )
+            record["orchestrator_backend"] = leader_backend_identity(
+                orchestrator_provider, orchestrator_model
+            )
+            record["planner_brief"] = split_provenance["planner_brief"]
         if leader_generation is not None:
             steps = plan.get("steps")
             record["leader_generation"] = self._plan_leader_generation(

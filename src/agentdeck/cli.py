@@ -31,8 +31,11 @@ from . import __version__
 
 from .config import (
     config_path,
+    leader_split_enabled,
     load_config,
     project_root,
+    resolved_orchestrator_backend,
+    resolved_planner_backend,
     update_agent_role,
     update_autonomous_policy,
     update_leader_approval_mode,
@@ -154,6 +157,7 @@ from .mission_orchestration import (
     run_mission,
 )
 from .orchestration.leader import LeaderOrchestrator
+from .orchestration.split_planning import SplitPlanningError, run_split_planning
 from .providers import DeepSeekProvider, OpenAICompatibleProvider, leader_provider
 from .dashboard import render_workbench_dashboard
 from .history import render_history_markdown
@@ -11650,21 +11654,88 @@ def _record_leader_provider_failure(
     model: str | None,
     task: str,
     error: Exception,
+    stage: str | None = None,
 ) -> None:
     record = store.record_leader_error(mode, provider, model, task, str(error))
-    store.append_event(
-        EventRecord.create(
-            "leader_provider_failed",
-            {
-                "error_id": record["error_id"],
-                "mode": mode,
-                "provider": provider,
-                "model": model,
-                "task_length": len(task),
-                "error": str(error),
-            },
-        )
+    payload: dict[str, object] = {
+        "error_id": record["error_id"],
+        "mode": mode,
+        "provider": provider,
+        "model": model,
+        "task_length": len(task),
+        "error": str(error),
+    }
+    if stage is not None:
+        payload["stage"] = stage
+    store.append_event(EventRecord.create("leader_provider_failed", payload))
+
+
+def _generate_leader_plan(
+    config: ProjectConfig,
+    store: StateStore,
+    *,
+    task: str,
+    provider_override: str | None,
+    model_override: str | None,
+    skill_context: dict[str, object],
+    source: str,
+) -> tuple[dict[str, object], str, str, dict[str, object] | None]:
+    """Generate one plan via the configured Leader.
+
+    Explicit --provider/--model overrides always use the existing
+    single-stage path; the G2 planner/orchestrator split runs only when
+    configured and not overridden. Provider failures are audited here
+    (split failures carry stage=planner|orchestrator) and re-raised.
+    """
+    provider_name = _leader_provider_name(config, provider_override)
+    model_label = _leader_model_label(config, model_override)
+    use_split = (
+        leader_split_enabled(config.leader)
+        and provider_override is None
+        and model_override is None
     )
+    if not use_split:
+        provider = leader_provider(provider_name)
+        orchestrator = LeaderOrchestrator(config, provider)
+        try:
+            plan = orchestrator.plan(task, model_label, skill_context=skill_context)
+        except RuntimeError as exc:
+            _record_leader_provider_failure(
+                store, source, provider.name, model_label, task, exc
+            )
+            raise
+        return plan, provider.name, model_label, None
+    planner_provider_name, planner_model = resolved_planner_backend(config.leader)
+    orchestrator_provider_name, orchestrator_model = resolved_orchestrator_backend(
+        config.leader
+    )
+    planner_provider = leader_provider(planner_provider_name)
+    orchestrator_provider = leader_provider(orchestrator_provider_name)
+    try:
+        result = run_split_planning(
+            config,
+            task,
+            planner_provider=planner_provider,
+            orchestrator_provider=orchestrator_provider,
+            planner_model=planner_model,
+            orchestrator_model=orchestrator_model,
+            skill_context=skill_context,
+        )
+    except SplitPlanningError as exc:
+        if exc.stage == "planner":
+            failed_provider, failed_model = planner_provider_name, planner_model
+        else:
+            failed_provider, failed_model = orchestrator_provider_name, orchestrator_model
+        _record_leader_provider_failure(
+            store, source, failed_provider, failed_model, task, exc, stage=exc.stage
+        )
+        raise
+    split_provenance: dict[str, object] = {
+        "planner_backend": result.planner_backend,
+        "orchestrator_backend": result.orchestrator_backend,
+        "planner_brief": result.planner_brief,
+    }
+    return result.plan, orchestrator_provider_name, orchestrator_model, split_provenance
 
 
 def _leader_provider_name(config: ProjectConfig, requested_provider: str | None) -> str:
@@ -11693,22 +11764,31 @@ def leader_plan_command(args: argparse.Namespace) -> int:
     config, store, exit_code = _load_project_or_error()
     if config is None or store is None:
         return exit_code
-    provider_name = _leader_provider_name(config, args.provider)
-    model_label = _leader_model_label(config, args.model)
+    skill_context = _leader_skill_context(config, store)
     try:
-        provider = leader_provider(provider_name)
+        plan, record_provider, record_model, split_provenance = _generate_leader_plan(
+            config,
+            store,
+            task=args.task,
+            provider_override=args.provider,
+            model_override=args.model,
+            skill_context=skill_context,
+            source="plan",
+        )
     except ValueError as exc:
         print(str(exc), file=sys.stderr)
         return 1
-    orchestrator = LeaderOrchestrator(config, provider)
-    skill_context = _leader_skill_context(config, store)
-    try:
-        plan = orchestrator.plan(args.task, model_label, skill_context=skill_context)
     except RuntimeError as exc:
-        _record_leader_provider_failure(store, "plan", provider.name, model_label, args.task, exc)
         print(f"leader provider failed: {exc}", file=sys.stderr)
         return 1
-    record = store.record_plan(args.task, provider.name, model_label, plan, skill_context=skill_context)
+    record = store.record_plan(
+        args.task,
+        record_provider,
+        record_model,
+        plan,
+        skill_context=skill_context,
+        split_provenance=split_provenance,
+    )
     store.append_event(
         EventRecord.create(
             "leader_plan_created",
@@ -11789,17 +11869,24 @@ def _create_run_start_payload(
     model_override: str | None,
     source: str,
 ) -> tuple[dict[str, object], dict[str, object], list[dict[str, object]]]:
-    provider_name = _leader_provider_name(config, provider_override)
-    model_label = _leader_model_label(config, model_override)
-    provider = leader_provider(provider_name)
-    orchestrator = LeaderOrchestrator(config, provider)
     skill_context = _leader_skill_context(config, store)
-    try:
-        plan = orchestrator.plan(task, model_label, skill_context=skill_context)
-    except RuntimeError as exc:
-        _record_leader_provider_failure(store, source, provider.name, model_label, task, exc)
-        raise
-    record = store.record_plan(task, provider.name, model_label, plan, skill_context=skill_context)
+    plan, record_provider, record_model, split_provenance = _generate_leader_plan(
+        config,
+        store,
+        task=task,
+        provider_override=provider_override,
+        model_override=model_override,
+        skill_context=skill_context,
+        source=source,
+    )
+    record = store.record_plan(
+        task,
+        record_provider,
+        record_model,
+        plan,
+        skill_context=skill_context,
+        split_provenance=split_provenance,
+    )
     approvals = store.create_approvals_from_plan(record["plan_id"])
     store.append_event(
         EventRecord.create(
@@ -18496,22 +18583,31 @@ def leader_chat_command(args: argparse.Namespace) -> int:
         )
         return _print_leader_chat_payload_or_error(payload, store, task=args.message)
 
+    skill_context = _leader_skill_context(config, store)
     try:
-        provider_name = _leader_provider_name(config, args.provider)
-        model_label = _leader_model_label(config, args.model)
-        provider = leader_provider(provider_name)
+        plan, record_provider, record_model, split_provenance = _generate_leader_plan(
+            config,
+            store,
+            task=args.message,
+            provider_override=args.provider,
+            model_override=args.model,
+            skill_context=skill_context,
+            source="chat",
+        )
     except ValueError as exc:
         print(str(exc), file=sys.stderr)
         return 1
-    orchestrator = LeaderOrchestrator(config, provider)
-    skill_context = _leader_skill_context(config, store)
-    try:
-        plan = orchestrator.plan(args.message, model_label, skill_context=skill_context)
     except RuntimeError as exc:
-        _record_leader_provider_failure(store, "chat", provider.name, model_label, args.message, exc)
         print(f"leader provider failed: {exc}", file=sys.stderr)
         return 1
-    record = store.record_plan(args.message, provider.name, model_label, plan, skill_context=skill_context)
+    record = store.record_plan(
+        args.message,
+        record_provider,
+        record_model,
+        plan,
+        skill_context=skill_context,
+        split_provenance=split_provenance,
+    )
     action = store.suggest_leader_action(str(record["plan_id"]))
     action_detail = store.leader_action_detail(str(action["action_id"]))
     project_view_with_action = _project_view_payload_or_error(config, store)

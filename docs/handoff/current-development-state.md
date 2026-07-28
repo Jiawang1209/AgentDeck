@@ -16,8 +16,13 @@ orchestrator 段(**完成**:`orchestration/split_planning.py`
 `run_split_planning()` 两段串联落单条 plan、`SplitPlanningError`
 分段失败语义;`LeaderPlanRequest.planner_brief` 可选透传;fake
 provider `plan_brief` 先行——真实 provider 的 brief 能力与 prompt
-接线留待 S5/后续)→ S5 provenance+契约面(CLI 接线 `leader plan`/
-`run --task`、plan 记录三份 provenance、contract 同步)→ S6
+接线留待后续)→ S5a CLI 接线(**完成**:`_generate_leader_plan`
+共享 helper 接进 leader plan / run --task / leader chat 三路径,
+override 旁路拆分,`record_plan` 落 planner_backend/
+orchestrator_backend/planner_brief 三 provenance,失败审计带
+stage)→ S5b 只读暴露+契约同步(ProjectView `plans.items[]`、
+`plan status`、workbench、leader summary 暴露拆分字段;同步
+project-view contract 文档、validator 字段表、README)→ S6
 acceptance_criteria 只读展示(G5 前置)。硬兼容承诺:`[leader.planner]`/`[leader.orchestrator]`
 子段都缺省时行为逐字节不变。STOP fork(等 human):orchestrator 工具
 调用、briefs 独立集合、G1 frontdesk 增强、SQLite 5c cutover。
