@@ -33,7 +33,10 @@ backend 验证仍待 user 在场)。
 
 **当前活跃:G5 量化验收(user "继续" 授权,2026-07-28,自主 loop)。**
 设计已冻结:`docs/superpowers/specs/2026-07-28-g5-quantified-review-design.md`
-(V1 完成)。切片 V2 verdict schema+解析器 → V3 reply 通道入账 →
+(V1 完成)。切片 V2 verdict schema+解析器(**完成**:
+`review_verdict.py`——`review-verdict/v1` fail-closed validator、
+`parse_verdict_line` 零行=None、`align_verdict_with_criteria` 产出
+verdict_summary 形状,29 例 TDD,暂无消费方)→ V3 reply 通道入账 →
 V4 review/summary/run 摘要面 → V5 review prompt 注入。硬承诺:所有
 gate 行为零变化,无 `verdict:` 行时逐字节不变;verdict 驱动 gate、
 round_reviewer 独立角色、多 reviewer 聚合列 STOP fork。其余待排期或

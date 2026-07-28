@@ -4,6 +4,28 @@
 
 ## 2026-07-28
 
+### Land G5 V2: review verdict schema, reply-line parser, and alignment
+
+- **Type**: feat
+- **Motivation**: G5 spec V2 切片——量化验收的数据面纯模块,先把
+  schema/解析/对齐做成零消费方的可测单元(接线在 V3/V4)。
+- **What**: 新增 `src/agentdeck/review_verdict.py`:
+  `validate_review_verdict()`(`review-verdict/v1`:非空 criteria[]
+  每项 criterion/verdict∈pass|fail|unknown/可选 evidence,overall∈
+  pass|fail|needs_changes,可选 score 0–100 整数(bool 拒)与非空
+  notes,未知 key/坏类型一律 `review verdict is invalid` fail-closed);
+  `parse_verdict_line()`(从结构化回复文本提取可选 `verdict:` 单行
+  JSON——零行返回 None 保证逐字节不变路径,重复行/坏 JSON/坏 schema
+  抛 invalid);`align_verdict_with_criteria()`(纯对齐:按 criterion
+  文本与 plan acceptance_criteria 精确匹配,产出 criteria_total/
+  passed/failed/unknown/overall/score/unverified/extra 的
+  `verdict_summary` 形状,plan 无 criteria 时 unverified/extra 退化为
+  空)。
+- **Impact**: 零行为变化——模块尚无消费方;V3 将接进 reply 三通道
+  入账,V4 用 `verdict_summary` 形状进 review/summary/run 面。
+- **Verification**: TDD——`tests/test_review_verdict.py` 29 例先 RED
+  (ImportError)后 GREEN;`python -m compileall src` 通过。
+
 ### Freeze G5 quantified review design spec
 
 - **Type**: docs
