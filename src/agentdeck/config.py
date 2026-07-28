@@ -4,12 +4,14 @@ import os
 from pathlib import Path
 import stat
 import tomllib
+from typing import Any
 
 from .models import (
     AgentSpec,
     AutonomousPolicy,
     DaemonConfig,
     LeaderConfig,
+    LeaderSubroleConfig,
     ProjectConfig,
     RuntimeConfig,
 )
@@ -198,6 +200,45 @@ def write_default_config(root: Path | None = None) -> Path:
     return path
 
 
+def _parse_leader_subrole(
+    leader_raw: dict[str, Any], key: str
+) -> LeaderSubroleConfig | None:
+    raw_sub = leader_raw.get(key)
+    if raw_sub is None:
+        return None
+    if type(raw_sub) is not dict:
+        raise ValueError(f"invalid Leader {key} configuration")
+    unknown = set(raw_sub) - {"provider", "model"}
+    if unknown:
+        raise ValueError(f"invalid Leader {key} configuration")
+    provider = raw_sub.get("provider")
+    model = raw_sub.get("model")
+    for value in (provider, model):
+        if value is not None and (not isinstance(value, str) or not value.strip()):
+            raise ValueError(f"invalid Leader {key} configuration")
+    return LeaderSubroleConfig(provider=provider, model=model)
+
+
+def leader_split_enabled(leader: LeaderConfig) -> bool:
+    return leader.planner is not None or leader.orchestrator is not None
+
+
+def _resolved_subrole_backend(
+    leader: LeaderConfig, sub: LeaderSubroleConfig | None
+) -> tuple[str, str]:
+    provider = sub.provider if sub is not None and sub.provider is not None else leader.provider
+    model = sub.model if sub is not None and sub.model is not None else leader.model
+    return provider, model
+
+
+def resolved_planner_backend(leader: LeaderConfig) -> tuple[str, str]:
+    return _resolved_subrole_backend(leader, leader.planner)
+
+
+def resolved_orchestrator_backend(leader: LeaderConfig) -> tuple[str, str]:
+    return _resolved_subrole_backend(leader, leader.orchestrator)
+
+
 def load_config(root: Path | None = None) -> ProjectConfig:
     base = root or project_root()
     path = config_path(base)
@@ -218,6 +259,8 @@ def load_config(root: Path | None = None) -> ProjectConfig:
         backend_kind=leader_raw.get("backend_kind"),
         transport=leader_raw.get("transport"),
         transport_command=tuple(raw_leader_command),
+        planner=_parse_leader_subrole(leader_raw, "planner"),
+        orchestrator=_parse_leader_subrole(leader_raw, "orchestrator"),
     )
     explicit_leader = leader.backend_kind is not None or leader.transport is not None or bool(leader.transport_command)
     if explicit_leader:

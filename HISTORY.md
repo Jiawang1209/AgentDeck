@@ -4,6 +4,33 @@
 
 ## 2026-07-28
 
+### Land G2 S2: leader planner/orchestrator sub-config and resolution helpers
+
+- **Type**: feat
+- **Motivation**: G2 spec S2 切片——拆分的 config 与数据模型地基,先让
+  `[leader.planner]` / `[leader.orchestrator]` 可解析、可回落、可
+  fail-closed,不改任何现有行为。
+- **What**: `models.py` 新增 frozen `LeaderSubroleConfig(provider,
+  model)`(均可选),`LeaderConfig` 增 `planner`/`orchestrator` 可选
+  字段(缺省 None);`config.py` 新增 `_parse_leader_subrole`(非
+  table、未知 key、空串/非字符串值一律 `invalid Leader <key>
+  configuration` fail-closed)、`leader_split_enabled()`、
+  `resolved_planner_backend()` / `resolved_orchestrator_backend()`
+  纯 helper(逐字段回落 `[leader]` 的 provider/model)。空子段
+  `[leader.planner]` 视为启用拆分且全回落。
+- **Impact**: 零行为变化——两个子段都缺省时 LeaderConfig 仅多两个
+  None 字段,无任何消费方;S3/S4 将在此之上接 planner/orchestrator
+  两段推理。
+- **Verification**: TDD——新增 `tests/test_leader_subrole_config.py`
+  10 例先 RED(ImportError)后 GREEN;config 消费大户回归
+  `test_leader_cli.py + test_agent_cli.py + test_dispatch_cli.py`
+  651 passed;`python -m compileall src` 通过;全量 `pytest tests/ -q`
+  为 4606 passed + 1 failed,唯一失败
+  `test_m2c_live_acceptance.py::test_probe_fast_exit_after_scope_seal_failure_emits_no_signal`
+  经 stash 隔离证实与本切片无关(干净树同样失败、单测重跑通过,
+  fast-exit returncode 竞态 flaky),已作为 F5 记入 handoff 缺陷池
+  待 human 拍板。
+
 ### Freeze G2 planner/orchestrator split design spec
 
 - **Type**: docs

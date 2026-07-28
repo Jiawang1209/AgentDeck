@@ -56,6 +56,12 @@ class DaemonConfig:
 
 
 @dataclass(frozen=True)
+class LeaderSubroleConfig:
+    provider: str | None = None
+    model: str | None = None
+
+
+@dataclass(frozen=True)
 class LeaderConfig:
     agent_id: str = "leader"
     provider: str = "deepseek"
@@ -64,6 +70,8 @@ class LeaderConfig:
     backend_kind: str | None = None
     transport: str | None = None
     transport_command: tuple[str, ...] = ()
+    planner: LeaderSubroleConfig | None = None
+    orchestrator: LeaderSubroleConfig | None = None
 
 
 @dataclass(frozen=True)
