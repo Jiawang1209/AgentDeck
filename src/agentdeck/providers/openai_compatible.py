@@ -31,6 +31,7 @@ from .base import (
     validate_provider_plan_schema,
 )
 from .plan_schema import build_leader_generation_provenance, leader_plan_authority
+from .planner_brief import build_planner_prompt, validate_planner_brief
 from .semantic_plan_schema import (
     SemanticPlanSchemaAuthorityError,
     resolve_semantic_leader_plan_context,
@@ -152,6 +153,51 @@ class OpenAICompatibleProvider:
                 ),
             )
         return self._semantic_plan_result(plan_request)
+
+    def plan_brief(
+        self,
+        *,
+        task: str,
+        model: str | None = None,
+        skill_context: dict[str, object] | None = None,
+    ) -> dict[str, object]:
+        api_key = os.environ.get(self.api_key_env)
+        if not api_key:
+            raise RuntimeError(f"{self.api_key_env} is not set")
+        payload = {
+            "model": model or self.model,
+            "response_format": {"type": "json_object"},
+            "messages": [
+                {
+                    "role": "system",
+                    "content": build_planner_prompt(task, skill_context),
+                },
+                {
+                    "role": "user",
+                    "content": task,
+                },
+            ],
+        }
+        body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        req = request.Request(
+            f"{self.base_url}/chat/completions",
+            data=body,
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
+            method="POST",
+        )
+        try:
+            with request.urlopen(req, timeout=self.timeout) as response:
+                data = json.loads(response.read().decode("utf-8"))
+        except HTTPError as error:
+            raise RuntimeError(
+                f"provider HTTP {error.code}: {_bounded_http_error_detail(error)}"
+            ) from None
+        except URLError as error:
+            raise RuntimeError(f"provider request failed: {error.reason}") from None
+        return validate_planner_brief(self._extract_plan(data))
 
     def _legacy_plan(self, plan_request: LeaderPlanRequest) -> dict[str, object]:
         api_key = os.environ.get(self.api_key_env)

@@ -29,6 +29,7 @@ from .base import (
     leader_skill_context_prompt_lines,
     validate_provider_plan_schema,
 )
+from .planner_brief import build_planner_prompt, validate_planner_brief
 from .plan_schema import (
     LEADER_CONSTRAINT_MODES,
     LEADER_PLAN_DIAGNOSTIC_CODES,
@@ -294,6 +295,41 @@ class CliLeaderProvider:
 
     def plan(self, request: LeaderPlanRequest) -> dict[str, object]:
         return self.plan_result(request).plan
+
+    def plan_brief(
+        self,
+        *,
+        task: str,
+        model: str | None = None,
+        skill_context: dict[str, object] | None = None,
+    ) -> dict[str, object]:
+        prompt = build_planner_prompt(task, skill_context)
+        command = self._command_with_model(model) if model else list(self.command)
+        try:
+            result = subprocess.run(
+                command,
+                input=prompt,
+                text=True,
+                capture_output=True,
+                timeout=self.timeout,
+                check=False,
+            )
+        except subprocess.TimeoutExpired:
+            raise CliLeaderProviderError("timeout") from None
+        except OSError:
+            raise CliLeaderProviderError("nonzero") from None
+        if result.returncode != 0:
+            raise CliLeaderProviderError("nonzero")
+        if len(result.stdout.encode("utf-8")) > MAX_CLI_LEADER_OUTPUT_BYTES:
+            raise CliLeaderProviderError("oversize")
+        try:
+            parsed = self._brief_json(result.stdout)
+        except (RuntimeError, JSONDecodeError):
+            raise CliLeaderProviderError("json_parse") from None
+        return validate_planner_brief(parsed)
+
+    def _brief_json(self, stdout: str) -> object:
+        return self._load_json_plan(stdout.strip())
 
     def plan_result(self, request: LeaderPlanRequest) -> LeaderPlanResult:
         prompt = self._prompt(request)
@@ -1008,6 +1044,16 @@ class ClaudeCliProvider(CliLeaderProvider):
         "--output-format",
         "--no-session-persistence",
     )
+
+    def _brief_json(self, stdout: str) -> object:
+        text = stdout.strip()
+        try:
+            envelope = json.loads(text)
+        except JSONDecodeError:
+            return super()._brief_json(stdout)
+        if isinstance(envelope, dict) and isinstance(envelope.get("result"), str):
+            return self._load_json_plan(envelope["result"].strip())
+        return envelope
 
     def _prompt(self, request: LeaderPlanRequest) -> str:
         return super()._prompt(request).replace(

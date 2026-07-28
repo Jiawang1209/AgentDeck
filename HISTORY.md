@@ -4,6 +4,35 @@
 
 ## 2026-07-28
 
+### Add plan_brief planner-stage capability to API and CLI Leader providers (G2 后续 B/C)
+
+- **Type**: feat
+- **Motivation**: G2 后续切片 B/C——让四个真实 provider 具备 planner
+  阶段的 brief 生成能力,拆分模式从"仅 fake 可跑"变为真实 backend
+  可配置(live 验证仍待 user 在场)。
+- **What**: ①B API-backed:`OpenAICompatibleProvider.plan_brief()`
+  (DeepSeek 继承)——复用 `_legacy_plan` 同款 chat/completions 流程
+  (api_key env 缺失即拒、`response_format=json_object`、system prompt
+  用 `build_planner_prompt`、HTTP/URL 错误 bounded 包装),响应经
+  `_extract_plan` 通用 JSON 抽取后必过 `validate_planner_brief`
+  fail-closed;②C CLI-backed:`CliLeaderProvider.plan_brief()`
+  (Codex/Claude 子类继承)——`--model` 注入复用
+  `_command_with_model`,stdin 喂 brief prompt,超时/非零/超限
+  fail-closed 复用 `CliLeaderProviderError` 枚举,stdout 经新
+  `_brief_json` 钩子解析(基类走 `_load_json_plan` 含 fenced JSON
+  回退;`ClaudeCliProvider` 覆写拆 `--output-format json` 的
+  `result` 信封后再解析),同样必过 `validate_planner_brief`。
+- **Impact**: `[leader.planner]` 现可配置 deepseek/openai-compatible/
+  codex-cli/claude-cli 中任意 provider;brief 调用不走 native schema
+  路径(prompt-only + fail-closed 解析),失败在
+  `run_split_planning` 中归因 `stage=planner`。A/B/C 后续切片全部
+  完成。
+- **Verification**: TDD——`tests/test_plan_brief_providers.py` 11 例
+  (API 5 例先 RED 后 GREEN,CLI 6 例先 RED 后 GREEN,全部 mock
+  urlopen/subprocess.run,零真实调用);provider/G2 面回归 281
+  passed;`python -m compileall src` 通过;全量 `pytest tests/ -q`
+  见 commit。
+
 ### Wire planner brief context into real provider orchestrator prompts (G2 后续 A)
 
 - **Type**: feat
