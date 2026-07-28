@@ -56,12 +56,14 @@ def test_planner_and_orchestrator_sections_parse(tmp_path: Path) -> None:
 
 
 def test_partial_subrole_falls_back_per_field(tmp_path: Path) -> None:
-    extra = "[leader.planner]\n" 'provider = "codex-cli"\n'
+    # 合法的逐字段回落方向:只给 model,provider 回落 [leader];反方向
+    # (跨 provider 缺 model)自 round 11 起 fail-closed,见下方专测。
+    extra = "[leader.planner]\n" 'model = "deepseek-v4-flash"\n'
     leader = load_config(_write_config(tmp_path, extra)).leader
-    assert leader.planner == LeaderSubroleConfig(provider="codex-cli", model=None)
+    assert leader.planner == LeaderSubroleConfig(provider=None, model="deepseek-v4-flash")
     assert leader.orchestrator is None
     assert leader_split_enabled(leader) is True
-    assert resolved_planner_backend(leader) == ("codex-cli", leader.model)
+    assert resolved_planner_backend(leader) == (leader.provider, "deepseek-v4-flash")
     assert resolved_orchestrator_backend(leader) == (leader.provider, leader.model)
 
 
@@ -97,3 +99,31 @@ def test_invalid_subrole_values_fail_closed(tmp_path: Path, value: str) -> None:
     extra = "[leader.orchestrator]\n" + value + "\n"
     with pytest.raises(ValueError, match="invalid Leader orchestrator configuration"):
         load_config(_write_config(tmp_path, extra))
+
+
+def test_different_provider_without_model_fails_closed(tmp_path: Path) -> None:
+    # Round 11 live 发现 #2：orchestrator=claude-cli 缺 model 时逐字段回落
+    # 把 leader 的 deepseek 模型名喂给 claude CLI → nonzero。跨 provider
+    # 子段必须显式给 model。
+    extra = "[leader.orchestrator]\n" 'provider = "claude-cli"\n'
+    with pytest.raises(
+        ValueError,
+        match="leader orchestrator with a different provider requires an explicit model",
+    ):
+        load_config(_write_config(tmp_path, extra))
+
+
+def test_different_provider_with_model_parses(tmp_path: Path) -> None:
+    extra = (
+        "[leader.planner]\n"
+        'provider = "codex-cli"\n'
+        'model = "gpt-5.5"\n'
+    )
+    leader = load_config(_write_config(tmp_path, extra)).leader
+    assert resolved_planner_backend(leader) == ("codex-cli", "gpt-5.5")
+
+
+def test_same_provider_without_model_still_falls_back(tmp_path: Path) -> None:
+    extra = "[leader.planner]\n" 'provider = "deepseek"\n'
+    leader = load_config(_write_config(tmp_path, extra)).leader
+    assert resolved_planner_backend(leader) == ("deepseek", leader.model)

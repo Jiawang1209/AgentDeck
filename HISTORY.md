@@ -2,6 +2,46 @@
 
 本文件记录 AgentDeck 每一次开发内容。约束：每次新增功能、文档规则、项目骨架、运行环境或用户可见行为变化，都必须同步更新本文件，并在同一次 commit 中提交。
 
+## 2026-07-29
+
+### Scan delegated auth boxes at follow segment start (round 11 发现 #4)
+
+- **Type**: fix
+- **Motivation**: round 11 live 发现 #4——委托前缀框在两段 follow 之间
+  弹出时,只在 wave 间隙扫描会整段错过(coder 的 `node tests/` 框实
+  测被跳过,需人工 release-box),`--max-waves 1` 时扫描更是永不运行。
+- **What**: `_run_loop_follow` 在进入 wave 循环前(wave 0)先跑一次
+  `_scan_release_delegated_boxes`(source 不变、逐次审计
+  `auth_box_released`、未命中框绝不代按——语义与间隙扫描完全一致,
+  只是补上时机);run-loop contract 文档与 CLAUDE.md 扫描时机描述
+  同步。测试侧 FakeTmuxBackend 的 send_input 现在清空 output(真实
+  TUI 回车后框消失,静态输出会让框被重复扫描)。
+- **Impact**: 段间隙弹框不再需要人工放行;委托安全边界不变。
+- **Verification**: TDD——`--max-waves 1` 段首放行测试先 RED 后
+  GREEN;`test_run_loop_follow` 全套 7 passed;全量 `pytest tests/ -q`
+  见 commit。
+
+### Fail closed when a leader sub-role names a different provider without a model (round 11 发现 #2)
+
+- **Type**: fix
+- **Motivation**: round 11 live 发现 #2——`[leader.orchestrator]` 只写
+  provider=claude-cli 时,S2 逐字段回落把 `[leader].model`
+  (deepseek-v4-pro)喂给 claude CLI → nonzero。跨 provider 回落
+  model 是必错路径,且 plan provenance 必须是具体模型串,不能用
+  "目标 provider 默认"这类不可知标签。
+- **What**: `load_config` 在构造 LeaderConfig 后校验:子段 provider
+  与 `[leader].provider` 不同且未写 model → 拒绝加载
+  (`leader <key> with a different provider requires an explicit
+  model`)。同 provider 的逐字段回落不变(原 S2 测试改为合法方向:
+  只给 model、provider 回落)。G2 spec 决策 2 修订记录与 README 同步。
+- **Impact**: 该类配置错误从"运行时 CLI nonzero"提前到"config 加载
+  即拒",错误信息直指修法;既有合法配置不受影响。
+- **Verification**: TDD——3 例新增(跨 provider 缺 model 拒/带 model
+  过/同 provider 回落不变)先 RED 后 GREEN;
+  `test_leader_subrole_config + test_split_planning_cli +
+  test_review_verdict_ingestion + test_leader_cli` 275 passed;
+  `python -m compileall src` 通过;全量 `pytest tests/ -q` 见 commit。
+
 ## 2026-07-28
 
 ### Execute live events cutover on the scratch project (SQLite 5c first real flip)

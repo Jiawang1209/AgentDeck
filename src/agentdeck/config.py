@@ -262,6 +262,20 @@ def load_config(root: Path | None = None) -> ProjectConfig:
         planner=_parse_leader_subrole(leader_raw, "planner"),
         orchestrator=_parse_leader_subrole(leader_raw, "orchestrator"),
     )
+    # Round 11 live 发现 #2：跨 provider 子段若缺 model,逐字段回落会把
+    # `[leader].model`(另一个 provider 的模型名)喂给目标 backend——
+    # fail-closed 要求显式 model,保证 provenance 始终是具体模型串。
+    for subrole_key in ("planner", "orchestrator"):
+        subrole = getattr(leader, subrole_key)
+        if (
+            subrole is not None
+            and subrole.provider is not None
+            and subrole.provider != leader.provider
+            and subrole.model is None
+        ):
+            raise ValueError(
+                f"leader {subrole_key} with a different provider requires an explicit model"
+            )
     explicit_leader = leader.backend_kind is not None or leader.transport is not None or bool(leader.transport_command)
     if explicit_leader:
         valid_pair = (leader.backend_kind, leader.transport) in {

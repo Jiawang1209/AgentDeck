@@ -50,7 +50,10 @@ AgentDeck › Mission started. Use /status or open the workbench to inspect it.
 - ProjectView and versioned GUI-ready contracts for conversation, Leader, and Worker transport facts;
 - governed Skill and Memory provenance;
 - optional G2 planner/orchestrator split: add `[leader.planner]` / `[leader.orchestrator]`
-  sub-sections (each with optional `provider` / `model`, falling back to `[leader]`)
+  sub-sections (each with optional `provider` / `model`, falling back to `[leader]`;
+  a sub-section naming a different provider must give an explicit `model` —
+  config loading fails closed instead of feeding another provider's model name
+  to the target backend)
   and `leader plan` / `run --task` / natural-language plan requests run two reasoning
   stages — a planner macro brief with acceptance criteria, then an orchestrator step
   expansion — landing one plan whose record and ProjectView item carry

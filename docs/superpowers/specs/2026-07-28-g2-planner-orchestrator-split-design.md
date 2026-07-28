@@ -15,7 +15,12 @@ worker 选择、结果聚合)——同时保持既有行为在未配置时逐字
 2. **配置是可选叠加,缺省回落。** `.agentdeck/config.toml` 新增可选
    `[leader.planner]` / `[leader.orchestrator]` 子段,字段仅
    `provider` / `model`;任一子段缺失时该子角色回落到 `[leader]` 的
-   provider/model。**两个子段都缺省时,全链路行为与今天逐字节相同**
+   provider/model。**修订(round 11 live 发现 #2,2026-07-29)**:
+   子段 provider 与 `[leader].provider` 不同且未写 model 时,config
+   加载 fail-closed 拒绝(`leader <key> with a different provider
+   requires an explicit model`)——跨 provider 回落 model 会把另一个
+   provider 的模型名喂给目标 backend,且 provenance 必须是具体模型串。
+   同 provider 的逐字段回落不变。**两个子段都缺省时,全链路行为与今天逐字节相同**
    (单次 provider 调用、plan 记录形状不变、无新事件)。这是本切片的
    硬兼容承诺,复用 run-loop/worktree 旋钮的 opt-in 先例。
 3. **两段推理,一条 plan 主线。** 拆分启用时(至少一个子段显式配置):
