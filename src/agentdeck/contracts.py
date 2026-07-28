@@ -3006,8 +3006,20 @@ LEADER_REVIEW_RESPONSE_FIELDS = (
     "message_id",
     "replies",
     "acceptance_criteria",
+    "verdict_summary",
     "next_command",
     "controls",
+)
+
+REVIEW_VERDICT_SUMMARY_FIELDS = (
+    "criteria_total",
+    "passed",
+    "failed",
+    "unknown",
+    "overall",
+    "score",
+    "unverified",
+    "extra",
 )
 
 LEADER_REVIEW_CONTROL_FIELDS = (
@@ -3030,6 +3042,7 @@ LEADER_SUMMARY_RESPONSE_FIELDS = (
     "counts",
     "reply_count",
     "artifact_count",
+    "verdict_summary",
     "summary",
     "plan_status_command",
     "review_command",
@@ -3369,6 +3382,7 @@ RUN_PROGRESS_RESPONSE_FIELDS = (
     "counts",
     "steps",
     "acceptance_criteria",
+    "verdict_summary",
     "review",
     "approval_card",
     "next_command",
@@ -9529,6 +9543,9 @@ def validate_run_start_contract(payload: dict[str, object]) -> dict[str, object]
             errors.append(
                 "run_progress.acceptance_criteria must be null or a list of non-empty strings"
             )
+        _validate_verdict_summary(
+            errors, "run_progress", payload.get("verdict_summary")
+        )
     plan_id = payload.get("plan_id")
     review_command = payload.get("review_command")
     if plan_id and review_command != f"agentdeck leader review --plan-id {plan_id}":
@@ -9662,6 +9679,34 @@ def validate_inbox_contract(payload: dict[str, object]) -> dict[str, object]:
     return {"ok": not errors, "errors": errors}
 
 
+def _validate_verdict_summary(
+    errors: list[str], prefix: str, value: object
+) -> None:
+    if value is None:
+        return
+    if not isinstance(value, dict) or set(value) != set(REVIEW_VERDICT_SUMMARY_FIELDS):
+        errors.append(f"{prefix}.verdict_summary must be null or a verdict summary object")
+        return
+    for count_field in ("criteria_total", "passed", "failed", "unknown"):
+        if type(value.get(count_field)) is not int or value.get(count_field) < 0:
+            errors.append(
+                f"{prefix}.verdict_summary.{count_field} must be a non-negative integer"
+            )
+    if value.get("overall") not in {"pass", "fail", "needs_changes"}:
+        errors.append(f"{prefix}.verdict_summary.overall is invalid")
+    score = value.get("score")
+    if score is not None and (type(score) is not int or score < 0 or score > 100):
+        errors.append(f"{prefix}.verdict_summary.score must be null or an integer 0-100")
+    for list_field in ("unverified", "extra"):
+        items = value.get(list_field)
+        if not isinstance(items, list) or any(
+            type(item) is not str or not item for item in items
+        ):
+            errors.append(
+                f"{prefix}.verdict_summary.{list_field} must be a list of non-empty strings"
+            )
+
+
 def validate_leader_review_contract(payload: dict[str, object]) -> dict[str, object]:
     errors: list[str] = []
     for field in LEADER_REVIEW_RESPONSE_FIELDS:
@@ -9680,6 +9725,7 @@ def validate_leader_review_contract(payload: dict[str, object]) -> dict[str, obj
             errors.append(
                 "leader_review.acceptance_criteria must be null or a list of non-empty strings"
             )
+    _validate_verdict_summary(errors, "leader_review", payload.get("verdict_summary"))
     controls = payload.get("controls")
     if isinstance(controls, list):
         for control in controls:
@@ -9712,6 +9758,7 @@ def validate_leader_summary_contract(payload: dict[str, object]) -> dict[str, ob
     for field in LEADER_SUMMARY_RESPONSE_FIELDS:
         if field not in payload:
             errors.append(f"missing leader_summary field: {field}")
+    _validate_verdict_summary(errors, "leader_summary", payload.get("verdict_summary"))
     leader_backend = payload.get("leader_backend")
     if isinstance(leader_backend, dict):
         _validate_leader_backend(errors, "leader_summary", leader_backend)
@@ -17593,6 +17640,7 @@ def run_progress_example() -> dict[str, object]:
             }
         ],
         "acceptance_criteria": None,
+        "verdict_summary": None,
         "review": {
             "plan_id": plan_id,
             "next_action": "dispatch_approved",
@@ -17602,6 +17650,7 @@ def run_progress_example() -> dict[str, object]:
             "message_id": None,
             "replies": [],
             "acceptance_criteria": None,
+            "verdict_summary": None,
             "leader_backend": dict(leader_backend),
             "next_command": next_command,
             "controls": [
@@ -17879,6 +17928,7 @@ def leader_review_example() -> dict[str, object]:
         "message_id": "msg_example",
         "replies": [],
         "acceptance_criteria": None,
+        "verdict_summary": None,
         "next_command": "agentdeck capture-reply --agent planner --message-id msg_example",
         "controls": [
             {
@@ -17932,6 +17982,7 @@ def leader_summary_example() -> dict[str, object]:
         },
         "reply_count": 1,
         "artifact_count": 1,
+        "verdict_summary": None,
         "summary": "1 dispatched step has replies; 1 artifact recorded.",
         "plan_status_command": "agentdeck plan status --plan-id pln_example",
         "review_command": "agentdeck leader review --plan-id pln_example",

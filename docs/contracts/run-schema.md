@@ -66,6 +66,7 @@ Reusable helpers live in `src/agentdeck/contracts.py`:
 - `counts`
 - `steps`
 - `acceptance_criteria`
+- `verdict_summary`
 - `review`
 - `approval_card`
 - `next_command`
@@ -77,7 +78,7 @@ Reusable helpers live in `src/agentdeck/contracts.py`:
 - `safety`
 - `requires_explicit_user`
 
-`mode` must be `run_progress`. `leader_backend` must match the saved plan's normalized Leader identity card. `review` reuses the `agentdeck leader review --plan-id <id>` response shape, and `next_command` must match `review.next_command`. `acceptance_criteria` mirrors `review.acceptance_criteria`: `null` for single-stage plans, the G2 planner-brief acceptance-criteria list for split plans; it is read-only display data for the future G5 quantified review and never gates or authorizes dispatch.
+`mode` must be `run_progress`. `leader_backend` must match the saved plan's normalized Leader identity card. `review` reuses the `agentdeck leader review --plan-id <id>` response shape, and `next_command` must match `review.next_command`. `acceptance_criteria` mirrors `review.acceptance_criteria`: `null` for single-stage plans, the G2 planner-brief acceptance-criteria list for split plans; it is read-only display data and never gates or authorizes dispatch. `verdict_summary` mirrors `review.verdict_summary` — the G5 quantified projection of the plan's latest valid `review-verdict/v1` reply aligned with those criteria (`criteria_total/passed/failed/unknown/overall/score/unverified/extra`, `null` when absent) — and is equally display-only: it never changes the run gate or approval semantics.
 
 ## Controls
 

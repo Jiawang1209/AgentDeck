@@ -40,7 +40,11 @@ verdict_summary 形状,29 例 TDD,暂无消费方)→ V3 reply 通道入账
 (**完成**:`record_reply` 单点解析覆盖四调用方,有效落 reply.verdict
 + `review_verdict_recorded`,无效不阻断入账 + `review_verdict_invalid`,
 ProjectView `replies.items[]`/trace reply 投影 null 占位暴露,契约与
-文档同步)→ V4 review/summary/run 摘要面 → V5 review prompt 注入。硬承诺:所有
+文档同步)→ V4 review/summary/run 摘要面(**完成**:
+`plan_verdict_summary()` 最新有效 verdict 对齐 criteria,
+`leader_review` 出口注入 + run_progress/summary 镜像,共享
+`_validate_verdict_summary` 进三 validator,契约/example/README
+同步)→ V5 review prompt 注入。硬承诺:所有
 gate 行为零变化,无 `verdict:` 行时逐字节不变;verdict 驱动 gate、
 round_reviewer 独立角色、多 reviewer 聚合列 STOP fork。其余待排期或
 human 拍板:

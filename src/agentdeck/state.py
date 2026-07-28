@@ -47,7 +47,7 @@ from .mission import (
     mission_commands,
     mission_status_transition_allowed,
 )
-from .review_verdict import parse_verdict_line
+from .review_verdict import align_verdict_with_criteria, parse_verdict_line
 from .mission_authority import (
     SEMANTIC_MISSION_COMPACT_FIELDS,
     canonical_workflow_plan_hash,
@@ -9398,9 +9398,32 @@ class StateStore:
             return None
         return list(criteria)
 
+    def plan_verdict_summary(self, plan_id: str) -> dict[str, Any] | None:
+        state = self.load()
+        message_ids = {
+            approval.get("message_id")
+            for approval in state.get("approvals", [])
+            if approval.get("plan_id") == plan_id and approval.get("message_id")
+        }
+        latest_verdict: dict[str, Any] | None = None
+        for reply in state.get("replies", []):
+            if reply.get("message_id") in message_ids and isinstance(
+                reply.get("verdict"), dict
+            ):
+                latest_verdict = reply["verdict"]
+        if latest_verdict is None:
+            return None
+        try:
+            return align_verdict_with_criteria(
+                latest_verdict, self._plan_acceptance_criteria(plan_id)
+            )
+        except ValueError:
+            return None
+
     def leader_review(self, plan_id: str) -> dict[str, Any]:
         review = self._leader_review_core(plan_id)
         review["acceptance_criteria"] = self._plan_acceptance_criteria(plan_id)
+        review["verdict_summary"] = self.plan_verdict_summary(plan_id)
         return review
 
     def _leader_review_core(self, plan_id: str) -> dict[str, Any]:

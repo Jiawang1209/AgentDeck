@@ -33,7 +33,8 @@ The live review response is a deterministic next-action card:
 - `agent_id`: agent target when the next action is agent specific.
 - `message_id`: message target when the next action is waiting for or capturing a reply.
 - `replies`: reply records already associated with the reviewed plan.
-- `acceptance_criteria`: read-only display of the reviewed plan's G2 planner-brief acceptance criteria — `null` for single-stage plans, a list of non-empty strings for split plans. This is display/audit data only for the future G5 quantified review; the current review gate does not score against it, and it never authorizes dispatch.
+- `acceptance_criteria`: read-only display of the reviewed plan's G2 planner-brief acceptance criteria — `null` for single-stage plans, a list of non-empty strings for split plans. This is display/audit data only; the current review gate does not score against it, and it never authorizes dispatch.
+- `verdict_summary`: read-only G5 quantified-review projection derived from the plan's latest reply that carried a valid `review-verdict/v1` payload, aligned with the plan's acceptance criteria. Exactly `criteria_total`, `passed`, `failed`, `unknown`, `overall`, `score` (nullable), `unverified[]` (plan criteria the verdict did not cover), and `extra[]` (verdict criteria not in the plan); `null` when no reply carries a verdict. It never changes the review gate, `next_action`, or any approval/dispatch behavior.
 - `next_command`: the command a human or GUI may offer as the primary next step.
 - `controls`: GUI-ready control items that mirror or preview `next_command`.
 

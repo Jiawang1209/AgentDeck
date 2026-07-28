@@ -57,7 +57,15 @@ AgentDeck › Mission started. Use /status or open the workbench to inspect it.
   `planner_backend`, `orchestrator_backend`, and the frozen `planner_brief` snapshot;
   explicit `--provider/--model` overrides and unconfigured projects keep the
   single-stage path byte-identical, and stage failures are audited as
-  `leader_provider_failed` with `stage=planner|orchestrator`.
+  `leader_provider_failed` with `stage=planner|orchestrator`;
+- G5 quantified review: a review worker may add one `verdict: <single-line JSON>`
+  (`review-verdict/v1`: per-criterion `pass|fail|unknown`, `overall`, optional
+  `score`) to its structured reply — valid verdicts land on the reply record and
+  in ProjectView/trace, and `leader review` / `leader summary` / `run --plan-id`
+  derive a read-only `verdict_summary` aligned with the plan's acceptance
+  criteria (`unverified`/`extra` gaps included); invalid verdicts never block
+  reply ingestion, replies without a verdict are byte-identical to before, and
+  a verdict never changes any gate, approval, or merge behavior.
 
 Useful observation commands:
 

@@ -4,6 +4,40 @@
 
 ## 2026-07-28
 
+### Land G5 V4: verdict_summary read-only surface in review, summary, and run progress
+
+- **Type**: feat
+- **Motivation**: G5 spec V4 切片——把入账的 verdict 对照 G2
+  acceptance_criteria 聚合成量化摘要,送进人类/GUI 的三个复核面。
+- **What**: ①`state.py` 新增 `plan_verdict_summary(plan_id)`:由该
+  plan 的 approvals→message_ids 找最新携带有效 verdict 的 reply,经
+  `align_verdict_with_criteria` 与 `_plan_acceptance_criteria` 对齐,
+  产出 `criteria_total/passed/failed/unknown/overall/score/unverified/
+  extra`;无 verdict 时 null。`leader_review()` 出口注入
+  `verdict_summary`(与 S6 acceptance_criteria 同模式,所有嵌入
+  review 的面同源获得)。②cli:`_run_progress_payload` 顶层镜像
+  `review.verdict_summary`;`_leader_summary_payload` 直接调 store
+  helper。③contracts:`LEADER_REVIEW_RESPONSE_FIELDS` /
+  `RUN_PROGRESS_RESPONSE_FIELDS` / `LEADER_SUMMARY_RESPONSE_FIELDS`
+  加 `verdict_summary`,新增共享 `REVIEW_VERDICT_SUMMARY_FIELDS` +
+  `_validate_verdict_summary()`(null-or-exact-shape,计数非负整数、
+  overall 枚举、score null|0–100、unverified/extra 非空字符串列表)
+  接进三个 validator;review/run/summary example fixture 补 null 键;
+  `test_agent_cli` 硬编码 summary 字段表同步。④同步
+  leader-review-schema.md / leader-summary-schema.md / run-schema.md
+  与 README(G5 用法 bullet:verdict 行、宽容纪律、display-only)。
+- **Impact**: 复核三面现在能一眼看到按 criterion 的量化结果与
+  unverified/extra 缺口;workbench `leader_summary_card`/leader chat
+  嵌入面经同源 payload 自动获得。gate 语义零变化。剩余 V5:review
+  step dispatch prompt 注入。
+- **Verification**: TDD——3 例全链 CLI 测试(plan→approve-plan→逐
+  step dispatch→reply,末步带 verdict)先 RED 后 GREEN
+  (test_review_verdict_ingestion 共 8 passed);
+  `test_contracts + test_leader_cli + test_agent_cli +
+  test_dispatch_cli` 1181 passed(仅 summary 契约发现测试按新字段表
+  同步);`python -m compileall src` 通过;全量 `pytest tests/ -q`
+  见 commit。
+
 ### Land G5 V3: reply-channel verdict ingestion with ProjectView/trace exposure
 
 - **Type**: feat

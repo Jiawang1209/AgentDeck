@@ -7216,6 +7216,7 @@ def test_contract_leader_summary_discovers_schema_for_gui_clients(capsys) -> Non
         "counts",
         "reply_count",
         "artifact_count",
+        "verdict_summary",
         "summary",
         "plan_status_command",
         "review_command",

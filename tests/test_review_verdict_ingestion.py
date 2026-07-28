@@ -167,6 +167,139 @@ def test_project_view_and_trace_expose_reply_verdict(
     assert trace["replies"][0]["verdict"] == _verdict()
 
 
+def _enable_split(root: Path) -> None:
+    config_path = root / ".agentdeck" / "config.toml"
+    config_path.write_text(
+        config_path.read_text(encoding="utf-8")
+        + '\n[leader.planner]\nprovider = "fake"\nmodel = "fake-planner"\n'
+        + '\n[leader.orchestrator]\nprovider = "fake"\nmodel = "fake-orchestrator"\n',
+        encoding="utf-8",
+    )
+
+
+def _bind_agent(root: Path, agent_id: str, pane_id: str) -> None:
+    store = StateStore(root)
+    state = store.load()
+    state["agents"][agent_id] = {
+        "agent_id": agent_id,
+        "pane_id": pane_id,
+        "session_name": "agentdeck",
+        "cwd": str(root),
+        "status": "running",
+    }
+    store.save(state)
+
+
+def _run_plan_to_replies(
+    root: Path, monkeypatch, capsys, verdict_text: str | None
+) -> tuple[str, list[str]]:
+    """Plan → approve-plan → dispatch each step → reply each; last reply may carry a verdict."""
+    fake = FakeTmuxBackend()
+    monkeypatch.setattr(cli, "TmuxBackend", lambda: fake)
+    fake_config = root / ".agentdeck" / "config.toml"
+    fake_config.write_text(
+        fake_config.read_text(encoding="utf-8").replace('provider = "deepseek"', 'provider = "fake"', 1).replace(
+            'model = "deepseek-chat"', 'model = "fake-plan"', 1
+        ),
+        encoding="utf-8",
+    )
+    assert cli.main(["leader", "plan", "--task", "量化验收目标"]) == 0
+    plan_id = json.loads(capsys.readouterr().out)["plan_id"]
+    assert cli.main(["approval", "create-from-plan", "--plan-id", plan_id]) == 0
+    capsys.readouterr()
+    assert cli.main(["approval", "approve-plan", "--plan-id", plan_id, "--confirm"]) == 0
+    capsys.readouterr()
+    state = StateStore(root).load()
+    approvals = [item for item in state["approvals"] if item.get("plan_id") == plan_id]
+    message_ids: list[str] = []
+    for index, approval in enumerate(approvals):
+        agent_id = approval["agent_id"]
+        _bind_agent(root, agent_id, f"%{40 + index}")
+        assert cli.main(["approval", "dispatch", "--approval-id", approval["approval_id"]]) == 0
+        message_id = json.loads(capsys.readouterr().out)["message_id"]
+        message_ids.append(message_id)
+        is_last = index == len(approvals) - 1
+        text = "status: completed\nsummary: 完成"
+        if is_last and verdict_text is not None:
+            text += f"\nverdict: {verdict_text}"
+        assert cli.main(["reply", "--agent", agent_id, "--message-id", message_id, "--text", text]) == 0
+        capsys.readouterr()
+    return plan_id, message_ids
+
+
+def _expected_summary(task: str) -> dict[str, object]:
+    return {
+        "criteria_total": 2,
+        "passed": 1,
+        "failed": 1,
+        "unknown": 0,
+        "overall": "needs_changes",
+        "score": 70,
+        "unverified": ["全部相关验证通过"],
+        "extra": ["额外检查项"],
+    }
+
+
+def _summary_verdict(task: str) -> dict[str, object]:
+    return {
+        "schema_version": "review-verdict/v1",
+        "criteria": [
+            {"criterion": f"任务 '{task}' 的产出已生成并通过检查", "verdict": "pass"},
+            {"criterion": "额外检查项", "verdict": "fail"},
+        ],
+        "overall": "needs_changes",
+        "score": 70,
+    }
+
+
+def test_leader_review_and_run_progress_expose_verdict_summary(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    _enable_split(root)
+    task = "量化验收目标"
+    verdict = _summary_verdict(task)
+    plan_id, _ = _run_plan_to_replies(
+        root, monkeypatch, capsys, json.dumps(verdict, ensure_ascii=False)
+    )
+
+    assert cli.main(["leader", "review", "--plan-id", plan_id]) == 0
+    review = json.loads(capsys.readouterr().out)
+    assert review["verdict_summary"] == _expected_summary(task)
+
+    assert cli.main(["run", "--plan-id", plan_id]) == 0
+    progress = json.loads(capsys.readouterr().out)
+    assert progress["verdict_summary"] == _expected_summary(task)
+
+
+def test_leader_summary_exposes_verdict_summary(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    _enable_split(root)
+    task = "量化验收目标"
+    verdict = _summary_verdict(task)
+    plan_id, _ = _run_plan_to_replies(
+        root, monkeypatch, capsys, json.dumps(verdict, ensure_ascii=False)
+    )
+
+    assert cli.main(["leader", "summary", "--plan-id", plan_id]) == 0
+    summary = json.loads(capsys.readouterr().out)
+    assert summary["verdict_summary"] == _expected_summary(task)
+
+
+def test_verdict_summary_null_without_any_verdict(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    plan_id, _ = _run_plan_to_replies(root, monkeypatch, capsys, None)
+
+    assert cli.main(["leader", "review", "--plan-id", plan_id]) == 0
+    review = json.loads(capsys.readouterr().out)
+    assert "verdict_summary" in review
+    assert review["verdict_summary"] is None
+
+    assert cli.main(["run", "--plan-id", plan_id]) == 0
+    progress = json.loads(capsys.readouterr().out)
+    assert progress["verdict_summary"] is None
+
+
 def test_project_view_reply_without_verdict_projects_null(
     tmp_path, monkeypatch, capsys
 ) -> None:
