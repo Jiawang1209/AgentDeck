@@ -27,13 +27,17 @@ acceptance_criteria 只读展示(**完成**:`leader_review()` 出口注入 +
 `run_progress` 顶层镜像,review/run contract 字段表、validator、
 example、文档同步)。
 
-**G2 S1–S6 + 后续 A/B/C 全部完成。** A prompt 接线、B API-backed
-`plan_brief`(OpenAICompatible/DeepSeek)、C CLI-backed `plan_brief`
-(Codex 裸 stdout + fenced 回退、Claude result 信封拆解)均已落地,
-全部 mock 验证零真实调用;`[leader.planner]`/`[leader.orchestrator]`
-现可配置任意真实 provider 组合。**下一个自然节点:live 双 backend
-验证**(需 user 在场跑 Line 1 round,建议 DeepSeek planner +
-claude-cli orchestrator 或反之)。其余待排期或 human 拍板:
+**G2 S1–S6 + 后续 A/B/C 全部完成。** `[leader.planner]`/
+`[leader.orchestrator]` 现可配置任意真实 provider 组合(live 双
+backend 验证仍待 user 在场)。
+
+**当前活跃:G5 量化验收(user "继续" 授权,2026-07-28,自主 loop)。**
+设计已冻结:`docs/superpowers/specs/2026-07-28-g5-quantified-review-design.md`
+(V1 完成)。切片 V2 verdict schema+解析器 → V3 reply 通道入账 →
+V4 review/summary/run 摘要面 → V5 review prompt 注入。硬承诺:所有
+gate 行为零变化,无 `verdict:` 行时逐字节不变;verdict 驱动 gate、
+round_reviewer 独立角色、多 reviewer 聚合列 STOP fork。其余待排期或
+human 拍板:
 ②G5 量化验收(round_reviewer、按 acceptance_criteria 打分);
 ③live 双 backend 验证(需 user 在场跑 Line 1 round);④spec 标注的
 STOP fork(orchestrator 工具调用、briefs 独立集合、G1 frontdesk

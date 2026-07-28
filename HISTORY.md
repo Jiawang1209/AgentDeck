@@ -4,6 +4,26 @@
 
 ## 2026-07-28
 
+### Freeze G5 quantified review design spec
+
+- **Type**: docs
+- **Motivation**: 北极星第二圈差距 #4(gap-review 2026-07-24):review
+  gate 二元化、无量化验收、未对照 planner acceptance_criteria。G2 的
+  criteria 数据面落地后,user 授权继续,按 G2 同款模式先冻结设计。
+- **What**: 新增
+  `docs/superpowers/specs/2026-07-28-g5-quantified-review-design.md`。
+  冻结决策:验收判定由 review worker(LLM)语义输出、程序只解析存储
+  展示;传输复用结构化回复的可选 `verdict:` 单行 JSON
+  (`review-verdict/v1`:criteria[]/overall/score?/notes?,fail-closed
+  validator);无效 verdict 绝不阻断 reply 入账(宽容纪律优先,记
+  `review_verdict_invalid` 事件);对齐 acceptance_criteria 是展示层
+  语义(covered/unverified/extra)非硬校验;所有 gate 行为零变化,
+  verdict 驱动 gate / round_reviewer 独立角色 / 多 reviewer 聚合列为
+  STOP fork。切片 V1–V5 排定(schema+解析 → 入账 → 摘要面 → review
+  prompt 注入)。
+- **Impact**: 纯文档,零行为变化;后续 V2–V5 以此为调度门。
+- **Verification**: 对照 roadmap G5 验收标准逐条覆盖;无代码改动。
+
 ### Add plan_brief planner-stage capability to API and CLI Leader providers (G2 后续 B/C)
 
 - **Type**: feat
