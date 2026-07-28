@@ -20,10 +20,11 @@ provider `plan_brief` 先行——真实 provider 的 brief 能力与 prompt
 共享 helper 接进 leader plan / run --task / leader chat 三路径,
 override 旁路拆分,`record_plan` 落 planner_backend/
 orchestrator_backend/planner_brief 三 provenance,失败审计带
-stage)→ S5b 只读暴露+契约同步(ProjectView `plans.items[]`、
-`plan status`、workbench、leader summary 暴露拆分字段;同步
-project-view contract 文档、validator 字段表、README)→ S6
-acceptance_criteria 只读展示(G5 前置)。硬兼容承诺:`[leader.planner]`/`[leader.orchestrator]`
+stage)→ S5b 只读暴露+契约同步(**完成**:plans.items 投影 + trace
+plan 三键 null 占位、`PROJECT_VIEW_PLAN_ITEM_FIELDS`/validator/
+example fixture、project-view-schema.md、README)→ S6
+acceptance_criteria 只读展示(leader review / run_progress_card,
+G5 前置)。硬兼容承诺:`[leader.planner]`/`[leader.orchestrator]`
 子段都缺省时行为逐字节不变。STOP fork(等 human):orchestrator 工具
 调用、briefs 独立集合、G1 frontdesk 增强、SQLite 5c cutover。
 

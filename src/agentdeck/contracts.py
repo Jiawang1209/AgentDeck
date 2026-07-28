@@ -561,6 +561,9 @@ PROJECT_VIEW_PLAN_ITEM_FIELDS = (
     "leader_backend",
     "leader_generation",
     "semantic_authority",
+    "planner_backend",
+    "orchestrator_backend",
+    "planner_brief",
     "model",
     "status",
     "dispatch_ready",
@@ -9129,6 +9132,38 @@ def _validate_project_view_plan_items(errors: list[str], payload: dict[str, obje
             _validate_leader_backend(errors, prefix, leader_backend)
         else:
             errors.append(f"{prefix}.leader_backend must be an object")
+        for split_backend_field in ("planner_backend", "orchestrator_backend"):
+            split_backend = item.get(split_backend_field)
+            if isinstance(split_backend, dict):
+                for backend_field in LEADER_BACKEND_FIELDS:
+                    if backend_field not in split_backend:
+                        errors.append(
+                            f"{prefix}.{split_backend_field} missing field: {backend_field}"
+                        )
+                if split_backend.get("runtime_kind") != "logical_leader":
+                    errors.append(
+                        f"{prefix}.{split_backend_field}.runtime_kind must be logical_leader"
+                    )
+            elif split_backend is not None:
+                errors.append(
+                    f"{prefix}.{split_backend_field} must be an object or null"
+                )
+        planner_brief = item.get("planner_brief")
+        if isinstance(planner_brief, dict):
+            for brief_field in ("schema_version", "content_hash"):
+                if (
+                    type(planner_brief.get(brief_field)) is not str
+                    or not planner_brief.get(brief_field)
+                ):
+                    errors.append(
+                        f"{prefix}.planner_brief.{brief_field} must be a non-empty string"
+                    )
+            if type(planner_brief.get("acceptance_criteria")) is not list:
+                errors.append(
+                    f"{prefix}.planner_brief.acceptance_criteria must be a list"
+                )
+        elif planner_brief is not None:
+            errors.append(f"{prefix}.planner_brief must be an object or null")
         exact_selected_agent_facts = None
         missions = payload.get("missions")
         if type(missions) is dict and type(missions.get("items")) is list:
@@ -13745,6 +13780,9 @@ def project_view_example() -> dict[str, object]:
                         "step_count": 2,
                     },
                     "semantic_authority": None,
+                    "planner_backend": None,
+                    "orchestrator_backend": None,
+                    "planner_brief": None,
                     "model": "fake-plan",
                     "status": "planned",
                     "dispatch_ready": False,
@@ -18061,6 +18099,9 @@ def trace_example() -> dict[str, object]:
                 "selected_agent_ids": ["planner", "reviewer"],
                 "step_count": 2,
             },
+            "planner_backend": None,
+            "orchestrator_backend": None,
+            "planner_brief": None,
             "model": "fake-plan",
             "status": "planned",
             "dispatch_ready": False,

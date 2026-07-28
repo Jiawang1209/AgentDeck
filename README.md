@@ -48,7 +48,16 @@ AgentDeck › Mission started. Use /status or open the workbench to inspect it.
 - ACP Worker routing when configured and ready, with no silent transport fallback;
 - visible read-only tmux mirrors, explicit reroute/takeover, and single-writer ownership;
 - ProjectView and versioned GUI-ready contracts for conversation, Leader, and Worker transport facts;
-- governed Skill and Memory provenance.
+- governed Skill and Memory provenance;
+- optional G2 planner/orchestrator split: add `[leader.planner]` / `[leader.orchestrator]`
+  sub-sections (each with optional `provider` / `model`, falling back to `[leader]`)
+  and `leader plan` / `run --task` / natural-language plan requests run two reasoning
+  stages — a planner macro brief with acceptance criteria, then an orchestrator step
+  expansion — landing one plan whose record and ProjectView item carry
+  `planner_backend`, `orchestrator_backend`, and the frozen `planner_brief` snapshot;
+  explicit `--provider/--model` overrides and unconfigured projects keep the
+  single-stage path byte-identical, and stage failures are audited as
+  `leader_provider_failed` with `stage=planner|orchestrator`.
 
 Useful observation commands:
 

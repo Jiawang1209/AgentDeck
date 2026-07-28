@@ -10034,6 +10034,9 @@ class StateStore:
                 step_count=len(steps) if isinstance(steps, list) else 0,
                 plan=body,
             ),
+            "planner_backend": copy.deepcopy(plan.get("planner_backend")),
+            "orchestrator_backend": copy.deepcopy(plan.get("orchestrator_backend")),
+            "planner_brief": copy.deepcopy(plan.get("planner_brief")),
             "model": plan.get("model"),
             "dispatch_ready": plan.get("dispatch_ready"),
             "skill_context": StateStore._plan_skill_context(plan.get("skill_context")),
@@ -10344,6 +10347,11 @@ class StateStore:
                     "semantic_authority": copy.deepcopy(
                         semantic_by_plan.get(id(plan))
                     ),
+                    "planner_backend": copy.deepcopy(plan.get("planner_backend")),
+                    "orchestrator_backend": copy.deepcopy(
+                        plan.get("orchestrator_backend")
+                    ),
+                    "planner_brief": copy.deepcopy(plan.get("planner_brief")),
                     "model": plan.get("model"),
                     "dispatch_ready": plan.get("dispatch_ready"),
                     "skill_context": StateStore._plan_skill_context(plan.get("skill_context")),

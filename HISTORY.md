@@ -4,6 +4,34 @@
 
 ## 2026-07-28
 
+### Land G2 S5b: expose split provenance in ProjectView/trace and sync contracts
+
+- **Type**: feat
+- **Motivation**: G2 spec S5 第二刀——把 S5a 落进 plan 记录的拆分
+  provenance 以只读投影暴露给 GUI/审计面,并同步契约。
+- **What**: ①`state.py` plans.items 投影与 `_trace_plan_for_message`
+  各新增 `planner_backend` / `orchestrator_backend` / `planner_brief`
+  三键(deepcopy,未拆分记录投影为 null 占位,遵循投影固定字段集
+  约定);②`contracts.py` `PROJECT_VIEW_PLAN_ITEM_FIELDS` 加入三字段
+  (`TRACE_PLAN_FIELDS` 同源跟随),validator 新增 object-or-null
+  轻校验(backend 需 `LEADER_BACKEND_FIELDS` 全字段 +
+  `runtime_kind=logical_leader`,brief 需非空 `schema_version`/
+  `content_hash` + `acceptance_criteria` 列表),project-view 与
+  trace example fixture 补 null 三键;③同步
+  `docs/contracts/project-view-schema.md`(新增 additive 字段段落,
+  明确 provenance-not-authorization 与 trace 同源)与 README
+  (`[leader.planner]`/`[leader.orchestrator]` 用法、override 旁路、
+  分段审计);④`test_agent_cli.py` status 精确形状断言随契约更新。
+- **Impact**: GUI/TUI 现在能从 `agentdeck status`/`trace` 直接读取
+  拆分 provenance;`latest_plan`/workbench 复用同一投影自动获得字段。
+  剩余 S6:acceptance_criteria 进 leader review / run_progress_card
+  只读展示。
+- **Verification**: TDD——2 例投影测试先 RED(KeyError)后 GREEN
+  (test_split_planning_cli 共 9 passed);trace/contract fixture 同步
+  后 `test_contracts + test_agent_cli + test_leader_cli +
+  test_dispatch_cli + test_split_planning_cli` 1190 passed;
+  `python -m compileall src` 通过;全量 `pytest tests/ -q` 见 commit。
+
 ### Land G2 S5a: wire split planning into CLI plan paths with staged audit
 
 - **Type**: feat

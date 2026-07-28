@@ -161,6 +161,39 @@ def test_single_stage_failure_event_keeps_shape_without_stage(
     assert "stage" not in payload
 
 
+def test_project_view_plan_items_expose_split_provenance(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    _enable_split(root)
+    assert cli.main(["leader", "plan", "--task", "投影验证"]) == 0
+    capsys.readouterr()
+
+    assert cli.main(["status"]) == 0
+    view = json.loads(capsys.readouterr().out)
+    item = view["plans"]["items"][0]
+    assert item["planner_backend"]["model"] == "fake-planner"
+    assert item["planner_backend"]["runtime_kind"] == "logical_leader"
+    assert item["orchestrator_backend"]["model"] == "fake-orchestrator"
+    assert item["planner_brief"]["schema_version"] == PLANNER_BRIEF_SCHEMA_VERSION
+    assert item["planner_brief"]["acceptance_criteria"]
+
+
+def test_project_view_plan_items_null_split_fields_without_split(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    prepare_project(tmp_path, monkeypatch)
+    assert cli.main(["leader", "plan", "--task", "无拆分投影"]) == 0
+    capsys.readouterr()
+
+    assert cli.main(["status"]) == 0
+    view = json.loads(capsys.readouterr().out)
+    item = view["plans"]["items"][0]
+    assert item["planner_backend"] is None
+    assert item["orchestrator_backend"] is None
+    assert item["planner_brief"] is None
+
+
 def test_run_task_split_records_provenance(tmp_path, monkeypatch, capsys) -> None:
     root = prepare_project(tmp_path, monkeypatch)
     _enable_split(root)
