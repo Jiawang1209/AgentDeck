@@ -4,6 +4,32 @@
 
 ## 2026-07-28
 
+### Record round 11 G2 dual-backend and G5 verdict live PASS with shadow zero-diff #3
+
+- **Type**: data
+- **Motivation**: G2/G5 开发面落地后的 live 首验(user 在场授权,
+  操作者驱动);同时攒 SQLite 三连检证据 #3。
+- **What**: 新增
+  `docs/validation/2026-07-28-copilot-line1-round11-g2g5-live.md`。
+  任务=F3 焦点/悬停缺陷修复 + F4 文档欠账;DeepSeek v4-pro brief
+  (一次过 fail-closed validator,5 条可检标准)→ claude-fable-5
+  拆 3 步;approve-plan 一次批准 + 6 段 follow 到 complete;文件
+  通道 3/3、摄入前移两次同 wave 解锁、自动合并两分支(088c93a fix
+  + 5981483 audit)、release 3/3 零 dirty。G5 全链:注入段带标准
+  原文进 reviewer prompt(隔离 worktree 检出 coder 分支),claude
+  reviewer 首见格式即正确输出 verdict(overall=pass/score 92/5 全
+  pass 用原文),三面 verdict_summary 同源一致,gate 零变化。F3
+  合并后独立复验 exit 0。三连检:shadow-diff in_sync(46 集合,
+  零 diff #3)+ events-diff in_sync(163 条)。五条发现:分段审计
+  生效(好);跨 provider model 回落陷阱(候选修复待拍板);第五类
+  MCP tool 授权框(委托注册表不覆盖=报警正确,scope 扩展待拍板);
+  段间隙框错过扫描(候选:段首补扫);worker 天性两则。
+- **Impact**: G2/G5 均获 live PASS 证据;走开链路四连 PASS;SQLite
+  零 diff 3/3。不涉及代码行为变化。
+- **Verification**: live 证据见 validation 文档与事件账本;
+  `review_verdict_recorded` ×1 零 invalid;scratch main 焦点测试
+  exit 0。
+
 ### Add round 11 runbook for G2 dual-backend and G5 verdict live validation
 
 - **Type**: docs
