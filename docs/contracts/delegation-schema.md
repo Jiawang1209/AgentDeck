@@ -69,7 +69,14 @@ Commands:
   collapses a long box body and the `$ ` line is not visible — a round 9
   live finding — the fallback extracts the backtick-quoted prefix from the
   box's own "commands that start with `…`" option text, joining wrapped
-  lines without inserting spaces), and reports
+  lines without inserting spaces). Command extraction is region-anchored to
+  the pending box by the same rule as the MCP extractor (only lines after
+  the second-to-last waiting-marker line are searched, so a stale box's
+  `$ ` line above the pending box is never extracted; the pending box's own
+  `$ ` line and option-2 backtick text sit below the box's own
+  second-to-last marker and are never excluded), and the collapsed-box
+  fallback takes the **last** occurrence of the option-2 marker text in the
+  region (same reverse-scan rationale). It reports
   `box_present`, `waiting_hint`, `command`, `box_kind`
   (`command` | `mcp_tool` | null), `mcp_server`, `mcp_tool`, `delegated`,
   `delegation_id`, and the explicit `release_command`. It never writes state

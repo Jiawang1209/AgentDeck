@@ -4,6 +4,30 @@
 
 ## 2026-07-30
 
+### Anchor command box extraction to the pending box (re-review residual B)
+
+- **Type**: fix
+- **Motivation**: 6e71ab59 re-review residual B(E2E 复现,先于本轮
+  存在):`_extract_auth_box_command` 倒扫最后一个 `$ ` 行但从未区域
+  锚定,折叠回退还用首次出现 `find`——旧命令框残留的 `$ node
+  tests/a.mjs` 行在待批 MCP 框之上获胜,`node tests/` 前缀委托对着
+  待批 MCP 框按了回车(审计记成 box_kind=command)。对称套用 MCP
+  提取器同一标准。
+- **What**: 抽出共用 `_pending_box_region(lines)` helper(尾窗内只保留
+  倒数第二个 waiting marker 行之后的行),`_extract_auth_box_command`
+  与 `_extract_mcp_tool_target` 共用;折叠回退的选项 2 marker 文本改取
+  末次出现(`rfind`,与倒序扫描理由一致)。挂起命令框自身的 `$ ` 行/
+  反引号文本在框自身标题 marker 之下,永不被排除——round 9 折叠框
+  fixture 与全部既有命令框测试不动、保持绿。schema doc 命令提取段与
+  CLAUDE.md bullet 同步对称锚定语义。
+- **Impact**: 旧框残留 `$ ` 行不再可能被当成待批框命令放行(repro 改
+  为 fail-closed 拒绝并指向待批 MCP 框);命令框正常提取路径行为不变。
+- **Verification**: TDD——residual B E2E 回归(错误放行:rc=0 且
+  Enter 已发)与提取器锚定单元测试先 RED 后 GREEN;`conda run -n
+  agentdeck pytest tests/test_delegation_cli.py -q` 30 passed(含
+  round 9 折叠框回归);完整 ladder(contracts/agent/leader、
+  compileall、diff --check、全量 suite)见 commit。
+
 ### Require the live selector glyph after the MCP box sentence (re-review residual A)
 
 - **Type**: fix

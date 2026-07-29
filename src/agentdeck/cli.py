@@ -9817,10 +9817,27 @@ def _detect_waiting_for_input(output: str) -> str | None:
 _AUTH_BOX_OPTION_PREFIXES = ("›", "Press enter")
 
 
+def _pending_box_region(lines: list[str]) -> list[str]:
+    # 区域锚定（两个框提取器共用标准）：只保留最近一个"先前输入行"
+    # （倒数第二个 waiting marker 行）之后的行。已答复旧框保留自身
+    # footer（marker 行）时，其正文（`$ ` 行 / MCP 句子）必在该 footer
+    # 之上，随之被排除；当前挂起框的正文在末 marker 之上、前一 marker
+    # 之下（框标题行自身是 marker 时恰为前一 marker），永不被排除。
+    marker_indices = [
+        index
+        for index, line in enumerate(lines)
+        if any(marker in line for marker in _WAITING_FOR_INPUT_MARKERS)
+    ]
+    start = marker_indices[-2] + 1 if len(marker_indices) >= 2 else 0
+    return lines[start:]
+
+
 def _extract_auth_box_command(output: str) -> str | None:
     # codex 确认框把待批命令放在 `$ ` 行；长命令可能折行到后续缩进行，
     # 直到选项列表（`› 1.` / `1.` / `Press enter`）为止。
-    lines = output.splitlines()[-_WAITING_FOR_INPUT_TAIL_LINES:]
+    # 区域锚定（评审 residual B）：旧框残留的 `$ ` 行绝不能作为待批框
+    # 的命令被提取——只在挂起框区域内倒扫。
+    lines = _pending_box_region(output.splitlines()[-_WAITING_FOR_INPUT_TAIL_LINES:])
     command_index = None
     for index in range(len(lines) - 1, -1, -1):
         if lines[index].strip().startswith("$ "):
@@ -9843,7 +9860,9 @@ def _extract_auth_box_command(output: str) -> str | None:
     # 该文本同样来自 codex 对话框本体，信任级与 `$ ` 行一致。
     tail = "\n".join(lines)
     marker = "commands that start with `"
-    marker_index = tail.find(marker)
+    # 末次出现（与倒序扫描理由一致）：区域内若仍有多段选项文本，
+    # 离真实输入点最近的才属于挂起框。
+    marker_index = tail.rfind(marker)
     if marker_index < 0:
         return None
     rest = tail[marker_index + len(marker):]
@@ -9888,14 +9907,8 @@ def _extract_mcp_tool_target(output: str) -> _McpToolTarget | None:
     # 2) 末次匹配——区域内取最后一个匹配，与 _detect_waiting_for_input 的
     #    倒序扫描理由一致（离真实输入点最近的才是挂起框）。
     # 任何解析失败返回 None（fail-closed：未命中绝不代按）。
-    lines = output.splitlines()[-_WAITING_FOR_INPUT_TAIL_LINES:]
-    marker_indices = [
-        index
-        for index, line in enumerate(lines)
-        if any(marker in line for marker in _WAITING_FOR_INPUT_MARKERS)
-    ]
-    start = marker_indices[-2] + 1 if len(marker_indices) >= 2 else 0
-    collapsed = "".join("\n".join(lines[start:]).split())
+    region = _pending_box_region(output.splitlines()[-_WAITING_FOR_INPUT_TAIL_LINES:])
+    collapsed = "".join("\n".join(region).split())
     match = None
     for match in _MCP_TOOL_BOX_PATTERN.finditer(collapsed):
         pass

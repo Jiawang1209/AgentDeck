@@ -816,6 +816,52 @@ def test_release_box_ignores_collapsed_stale_mcp_sentence(tmp_path, monkeypatch,
     assert '"event_type": "auth_box_released"' not in _events_text(root)
 
 
+STALE_COMMAND_BOX_THEN_PENDING_MCP_BOX = (
+    "  Would you like to run the following command?\n"
+    "  $ node tests/a.mjs\n"
+    "› 1. Yes, proceed (y)\n"
+    "  Press enter to confirm or esc to cancel\n"
+    "  Allow the chrome-devtools MCP server to run tool evaluate_script?\n"
+    "› 1. Yes, proceed (y)\n"
+    "  Press enter to confirm or esc to cancel\n"
+)
+
+
+def test_release_box_ignores_stale_command_line_above_pending_mcp_box(tmp_path, monkeypatch, capsys) -> None:
+    # 评审 residual B：已答复命令框的 `$ node tests/a.mjs` 行仍留在尾窗高处,
+    # 待批框是 MCP evaluate_script 框。命令提取器倒扫 `$ ` 行且无区域锚定时
+    # 旧命令行获胜——`node tests/` 前缀委托绝不能因此放行下方 MCP 框。
+    root = prepare_project(tmp_path, monkeypatch)
+    bind_coder(root)
+    fake = FakeTmuxBackend()
+    monkeypatch.setattr(cli, "TmuxBackend", lambda: fake)
+    fake.output = STALE_COMMAND_BOX_THEN_PENDING_MCP_BOX
+    cli.main(["delegation", "grant", "--agent", "coder", "--prefix", "node tests/", "--confirm"])
+    capsys.readouterr()
+
+    assert cli.main(["agent", "release-box", "--agent", "coder", "--confirm"]) == 1
+    err = capsys.readouterr().err
+    assert "no active delegation" in err
+    # 拒绝理由必须指向待批的 MCP 框,而不是高处旧命令行
+    assert "evaluate_script" in err
+    assert fake.sent == []
+    assert '"event_type": "auth_box_released"' not in _events_text(root)
+
+
+def test_extract_auth_box_command_anchors_to_pending_box() -> None:
+    # 命令提取器与 MCP 提取器同标准区域锚定:旧框 `$ ` 行不入区
+    assert cli._extract_auth_box_command(STALE_COMMAND_BOX_THEN_PENDING_MCP_BOX) is None
+    # 待批命令框自身的 `$ ` 行与折叠框选项 2 反引号文本永不被排除(回归)
+    assert (
+        cli._extract_auth_box_command(CODEX_AUTH_BOX)
+        == "node tests/focus-carousel-tab-order.mjs"
+    )
+    assert (
+        cli._extract_auth_box_command(COLLAPSED_CODEX_AUTH_BOX)
+        == "node tests/focus-carousel-tab-order.mjs"
+    )
+
+
 def test_delegation_grant_rejects_invalid_mcp_charset(tmp_path, monkeypatch, capsys) -> None:
     # 提取器字符集是 [A-Za-z0-9_-]+;grant 放进去的越界值 sentinel 永远
     # 提取不出——walk-away 期间静默无效。grant 时即拒绝(CLI 与 writer 双层)。
