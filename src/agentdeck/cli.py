@@ -9857,8 +9857,13 @@ def _extract_auth_box_command(output: str) -> str | None:
     return prefix.strip() or None
 
 
+# 句尾 `?` 后必须紧跟活动选择器字形 `›1.`（折叠后）：待批 codex MCP 框在
+# 句子正下方渲染 "› 1. Yes, proceed (y)"，折叠邻接必然成立（含跨折行）；
+# 折叠成单行历史的已答复句子（"? -> Yes" 等）后面不是选择器 → 不匹配。
+# 该结构性约束同时保证：只有当预选项正是选项 1（裸回车将按下的那一项）
+# 时提取才会成功。
 _MCP_TOOL_BOX_PATTERN = re.compile(
-    r"Allowthe(?P<server>[A-Za-z0-9_\-]+)MCPservertoruntool(?P<tool>[A-Za-z0-9_\-]+)\?"
+    r"Allowthe(?P<server>[A-Za-z0-9_\-]+)MCPservertoruntool(?P<tool>[A-Za-z0-9_\-]+)\?(?=›1\.)"
 )
 
 
@@ -9872,12 +9877,14 @@ def _extract_mcp_tool_target(output: str) -> _McpToolTarget | None:
     # "Allow the <server> MCP server to run tool <tool>?"。TUI 折行可发生在
     # 任意位置（含 token 中间），折行点空格信息已丢失——与折叠命令框同策略：
     # 全空白折叠后按框自身句式匹配，句尾 `?` 是硬边界。
-    # 两层锚定把提取绑到"当前挂起的框"（评审 repro：已答复旧框的句子仍留在
-    # 尾窗高处时，绝不能拿旧句子放行下方无关或异 tool 的待批框）：
+    # 提取必须绑到"当前挂起的框"（评审 repro：已答复旧框的句子仍留在尾窗
+    # 高处时，绝不能拿旧句子放行下方无关或异 tool 的待批框）。硬保证是
+    # pattern 里的选择器字形约束（`?` 后紧跟 `›1.`，见 pattern 注释）；
+    # 其上再叠两层启发式纵深：
     # 1) 区域锚定——只搜最近一个"先前输入行"（倒数第二个 waiting marker 行）
-    #    之后的行；旧框句子必在其自身 footer（marker 行）之上，随之被排除；
-    #    当前框自身的句子不含 marker 且必在末 marker 之上、前一 marker 之下，
-    #    永不被排除；
+    #    之后的行；保留自身 footer（marker 行）的旧框句子随之被排除（折叠成
+    #    单行历史、footer 已消失的旧句子靠字形约束兜住）；当前框自身的句子
+    #    不含 marker，永不被排除；
     # 2) 末次匹配——区域内取最后一个匹配，与 _detect_waiting_for_input 的
     #    倒序扫描理由一致（离真实输入点最近的才是挂起框）。
     # 任何解析失败返回 None（fail-closed：未命中绝不代按）。
@@ -10512,6 +10519,10 @@ def delegation_grant_command(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
         return 1
+    known_agents = {agent.agent_id for agent in config.agents}
+    if args.agent not in known_agents:
+        print(f"unknown agent: {args.agent}", file=sys.stderr)
+        return 1
     if wants_mcp:
         # box 提取器字符集是 [A-Za-z0-9_-]+：越界值永远匹配不到屏上框，
         # 委托会在 walk-away 期间静默失效——grant 时即拒绝零写。
@@ -10522,10 +10533,6 @@ def delegation_grant_command(args: argparse.Namespace) -> int:
                     file=sys.stderr,
                 )
                 return 1
-    known_agents = {agent.agent_id for agent in config.agents}
-    if args.agent not in known_agents:
-        print(f"unknown agent: {args.agent}", file=sys.stderr)
-        return 1
     try:
         record = store.grant_delegation(args.agent, prefix, mcp_server=mcp_server, mcp_tool=mcp_tool)
     except ValueError as exc:

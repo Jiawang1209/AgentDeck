@@ -78,18 +78,26 @@ Commands:
   tool authorization boxes carry the body sentence
   `Allow the <server> MCP server to run tool <tool>?`. Command extraction is
   tried first (byte-for-byte unchanged); only when it yields nothing is the
-  MCP extractor tried. The MCP extractor anchors its search to the pending
-  box: within the tail window it only searches lines after the second-to-last
-  waiting-marker line (an already-answered box's sentence always sits above
-  that box's own marker footer, so stale sentences are excluded; the pending
-  box's sentence can never be excluded because it carries no marker itself),
-  then collapses all whitespace in that region (TUI folds can land mid-token;
-  fold-point spaces are lost), matches the box's own sentence form with the
-  trailing `?` as a hard boundary, and takes the **last** match in the region
-  (same reverse-scan rationale as waiting-hint detection: the sentence
-  nearest the real input point belongs to the pending box). Any parse failure
-  returns null — fail-closed: an unparsable or unknown wording degrades to
-  the sentinel's existing skip behavior, never to a wrong release.
+  MCP extractor tried. The hard guarantee is a **structural tie to the live
+  box**: after whitespace collapse, the sentence's trailing `?` must be
+  immediately followed by the live selected-option glyph sequence `›1.` — a
+  pending codex MCP box renders "› 1. Yes, proceed (y)" directly under its
+  sentence (collapse restores the adjacency across folds), while an
+  already-answered sentence collapsed into a one-line history entry is
+  followed by other text (e.g. `-> Yes`) and never matches. This also means
+  extraction only succeeds when option 1 ("Yes, proceed") is the pre-selected
+  option — exactly what the bare Enter will press. Two heuristic layers sit
+  on top as defense in depth: region anchoring (within the tail window, only
+  lines after the second-to-last waiting-marker line are searched — an
+  answered box that still retains its own marker footer keeps its sentence
+  out of the region; the pending box's sentence carries no marker and is
+  never excluded) and last-match bias (the last match in the region wins,
+  same reverse-scan rationale as waiting-hint detection). The extractor also
+  collapses all whitespace in the region before matching (TUI folds can land
+  mid-token; fold-point spaces are lost) with the trailing `?` as a hard
+  boundary. Any parse failure returns null — fail-closed: an unparsable or
+  unknown wording degrades to the sentinel's existing skip behavior, never to
+  a wrong release.
 - `agentdeck agent release-box --agent <id> --confirm` re-detects the box and
   sends a bare Enter **only** when an active delegation for that agent covers
   the box: for command boxes the extracted command

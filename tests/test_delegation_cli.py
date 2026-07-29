@@ -579,6 +579,16 @@ def test_extract_mcp_tool_target_fail_closed() -> None:
         "  Press enter to confirm or esc to cancel\n"
     )
     assert cli._extract_mcp_tool_target(stale_mcp_then_command_box) is None
+    # 结构性硬约束:句尾 ? 后必须紧跟活动选项字形 ›1.(裸回车按下的正是
+    # 预选项 1);折叠成单行历史的旧句子(? 后跟 "-> Yes")绝不匹配
+    collapsed_history_only = (
+        "  Allow the chrome-devtools MCP server to run tool hover? -> Yes\n"
+        "  Tool use: Bash\n"
+        "  rm -rf build/\n"
+        "  1. Yes   2. No\n"
+        "  Press enter to submit\n"
+    )
+    assert cli._extract_mcp_tool_target(collapsed_history_only) is None
 
 
 def test_match_active_delegation_mcp_arm() -> None:
@@ -776,6 +786,36 @@ def test_release_box_matches_pending_not_stale_mcp_box(tmp_path, monkeypatch, ca
     assert '"event_type": "auth_box_released"' not in _events_text(root)
 
 
+def test_release_box_ignores_collapsed_stale_mcp_sentence(tmp_path, monkeypatch, capsys) -> None:
+    # 评审 residual A：已答复 MCP 框折叠成单行历史("…run tool hover? -> Yes",
+    # 自身 footer marker 已消失),其下是只带一个 marker 的待批工具框
+    # (Claude Code 风格 "Press enter to submit")。窗内仅一个 marker 时区域
+    # 锚定退化为整窗,旧句子重新入区且是唯一匹配——选择器字形硬约束
+    # (句尾 ? 后必须紧跟活动选项 ›1.)必须让提取失败:绝不能用只读 hover
+    # 委托放行下方无关的 rm -rf 工具框。
+    root = prepare_project(tmp_path, monkeypatch)
+    bind_coder(root)
+    fake = FakeTmuxBackend()
+    monkeypatch.setattr(cli, "TmuxBackend", lambda: fake)
+    fake.output = (
+        "  Allow the chrome-devtools MCP server to run tool hover? -> Yes\n"
+        "  Tool use: Bash\n"
+        "  rm -rf build/\n"
+        "  1. Yes   2. No\n"
+        "  Press enter to submit\n"
+    )
+    cli.main([
+        "delegation", "grant", "--agent", "coder",
+        "--mcp-server", "chrome-devtools", "--mcp-tool", "hover", "--confirm",
+    ])
+    capsys.readouterr()
+
+    assert cli.main(["agent", "release-box", "--agent", "coder", "--confirm"]) == 1
+    assert "no active delegation" in capsys.readouterr().err
+    assert fake.sent == []
+    assert '"event_type": "auth_box_released"' not in _events_text(root)
+
+
 def test_delegation_grant_rejects_invalid_mcp_charset(tmp_path, monkeypatch, capsys) -> None:
     # 提取器字符集是 [A-Za-z0-9_-]+;grant 放进去的越界值 sentinel 永远
     # 提取不出——walk-away 期间静默无效。grant 时即拒绝(CLI 与 writer 双层)。
@@ -791,6 +831,14 @@ def test_delegation_grant_rejects_invalid_mcp_charset(tmp_path, monkeypatch, cap
             "--mcp-server", server, "--mcp-tool", tool, "--confirm",
         ]) == 1
         assert "must match" in capsys.readouterr().err
+    assert StateStore(root).load().get("delegations", []) == []
+
+    # 未知 agent 优先于 charset 报错(仍零写)
+    assert cli.main([
+        "delegation", "grant", "--agent", "ghost",
+        "--mcp-server", "chrome.devtools", "--mcp-tool", "hover", "--confirm",
+    ]) == 1
+    assert "unknown agent" in capsys.readouterr().err
     assert StateStore(root).load().get("delegations", []) == []
 
     # writer 同层拒绝零写

@@ -4,6 +4,32 @@
 
 ## 2026-07-30
 
+### Require the live selector glyph after the MCP box sentence (re-review residual A)
+
+- **Type**: fix
+- **Motivation**: 6e71ab59 re-review residual A(E2E 复现):区域锚定假设
+  已答复框总保留自身 footer marker——当旧 MCP 句子折叠成单行历史
+  ("…run tool hover? -> Yes",footer 消失)且待批框只带一个 marker 时,
+  区域退化为整窗,旧句子重新入区并作为唯一匹配放行下方无关待批框
+  (repro:只读 hover 委托放行 Bash `rm -rf build/` 工具框)。
+- **What**: `_MCP_TOOL_BOX_PATTERN` 增加结构性硬约束:折叠后句尾 `?`
+  必须紧跟活动选择器字形 `›1.`(lookahead `\?(?=›1\.)`)。待批 codex MCP
+  框在句子正下方渲染 "› 1. Yes, proceed (y)",折叠邻接必然成立(含跨
+  折行);折叠历史句后面是 "-> Yes" 等文本,绝不匹配。这同时把安全性
+  升级为:只有预选项正是裸回车将按下的选项 1 时提取才成功。既有区域
+  锚定 + 末次匹配保留为启发式纵深;schema doc 软化 "旧框句子必在自身
+  footer 之上" 的表述为启发层,并把字形约束记为硬保证,CLAUDE.md
+  bullet 同步。附带 cosmetic:`delegation_grant_command` 的未知 agent
+  检查移到 mcp charset 检查之前(零写语义不变,报错次序可观察并有
+  测试断言)。
+- **Impact**: 折叠成单行历史的旧 MCP 句子不再可能放行任何待批框;
+  预选项不是选项 1 的框(若存在)也拒绝提取;既有 full/folded MCP
+  fixture 提取行为不变;grant 对未知 agent 先报 `unknown agent`。
+- **Verification**: TDD——residual A E2E 回归(错误放行:rc=0 且
+  Enter 已发)、提取器单元负例、grant 报错次序三处先 RED 后 GREEN;
+  `conda run -n agentdeck pytest tests/test_delegation_cli.py -q`
+  28 passed;完整 ladder 见 commit。
+
 ### Anchor MCP box extraction to the pending box (code review 收口)
 
 - **Type**: fix
