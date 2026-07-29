@@ -4,6 +4,23 @@
 
 ## 2026-07-30
 
+### Sync delegation schema wording and handoff state after MCP delegation review closure
+
+- **Type**: docs
+- **Motivation**: 三轮 subagent 审查以 APPROVE 收官后,
+  delegation-schema.md 第 87 行仍残留 "byte-for-byte unchanged"
+  过期措辞(残余 B 修复已让命令提取器区域锚定),handoff 顶部也未
+  反映 MCP tool 委托 scope 已落地与 round 11 发现 ①/③ 已闭环。
+- **What**: 修正 schema 措辞为 "now region-anchored to the pending
+  box";`docs/handoff/current-development-state.md` 顶部标记发现
+  ①(5f4957fc)/③(af2a5724)闭环,新增 MCP tool 委托 scope 落地段
+  (5 commits af7023ed→5bef5457、最终不变量、live 验证待下轮、剩余
+  拍板项清单)。
+- **Impact**: 纯文档;权威 handoff 与代码行为一致,续开发入口不再
+  误导。
+- **Verification**: 复审 verdict(APPROVE)指出的唯一残留即该措辞;
+  全量 4732 passed, 3 skipped 见前两条目。
+
 ### Anchor command box extraction to the pending box (re-review residual B)
 
 - **Type**: fix

@@ -57,11 +57,10 @@ gate(`overall=fail` 阻止 merge-on-complete/下一轮)、round_reviewer
 `docs/validation/2026-07-28-copilot-line1-round11-g2g5-live.md`——
 G2 双 backend(DeepSeek brief 一次过 validator + claude-fable-5 拆
 步)与 G5 verdict 全链(注入→reviewer 自然输出 pass/92→三面摘要)
-一次通过;走开链路四连 PASS;影子零 diff 3/3。live 发现待处理:
-①跨 provider model 回落陷阱(子段 provider≠leader.provider 且缺
-model 时误用 leader.model,候选=回落目标 provider 默认或
-fail-closed,待拍板);②第五类 MCP tool 授权框(委托 scope 扩展
-待拍板);③follow 段首补扫框(小件待排期)。scratch config 已留
+一次通过;走开链路四连 PASS;影子零 diff 3/3。live 发现:
+①跨 provider model 回落陷阱(**已闭环** 5f4957fc,config 加载
+fail-closed);②第五类 MCP tool 授权框(**已落地**,见下段);
+③follow 段首补扫框(**已闭环** af2a5724)。scratch config 已留
 双子段(orchestrator 显式 model=claude-fable-5)。硬承诺:所有
 gate 行为零变化,无 `verdict:` 行时逐字节不变;verdict 驱动 gate、
 round_reviewer 独立角色、多 reviewer 聚合列 STOP fork。其余待排期或
@@ -72,6 +71,28 @@ STOP fork(orchestrator 工具调用、briefs 独立集合、G1 frontdesk
 增强、SQLite 5c cutover)。硬兼容承诺:`[leader.planner]`/`[leader.orchestrator]`
 子段都缺省时行为逐字节不变。STOP fork(等 human):orchestrator 工具
 调用、briefs 独立集合、G1 frontdesk 增强、SQLite 5c cutover。
+
+**MCP tool 委托 scope 已落地(2026-07-29/30,user 拍板 (server,tool)
+粒度 + 单表 kind 判别方案 A,5 commits af7023ed→5bef5457,全量 4732
+绿)**:spec `docs/superpowers/specs/2026-07-29-mcp-tool-delegation-scope-design.md`,
+plan `docs/superpowers/plans/2026-07-29-mcp-tool-delegation-scope.md`。
+`delegations[]` 加 kind(缺省读作 `command_prefix` 兼容旧记录 |
+`mcp_tool` 带 mcp_server/mcp_tool),`delegation grant` 加
+`--mcp-server/--mcp-tool` 互斥形态(grant 时按提取器字符集
+`[A-Za-z0-9_-]+` 校验,防"grant 成功但哨兵永不放行"的静默空转),
+fail-closed 提取 + (server,tool) 精确等值匹配,boxes/release-box/
+watch/run-loop --release-boxes 共享路径全覆盖,`auth_box_released`
+增 box_kind/mcp_server/mcp_tool/waiting_hint 审计证据。三轮
+subagent 审查共修掉 6 个复现级 fail-open 盘面,最终不变量比原设计
+更强:双提取器都经 `_pending_box_region` 区域锚定到当前挂起框
+(陈旧框句子/`$ ` 行永不外溢),MCP 句尾 `?` 必须紧跟活选择器
+`›1.`(仅当预选项=选项 1——裸回车真正会按的那一项——才可能放行)。
+放行不变量不变:裸回车、绝不选 2/3、未命中绝不代按、逐次审计;
+指引=只对只读性 MCP 工具 grant(hover/press_key/screenshot 类),
+绝不对 navigate/fill/evaluate_script 类。**live 验证待下轮 Line 1
+round**(预授 planner chrome-devtools hover/press_key 两条观察自动
+放行)。剩余拍板项:SQLite 5d 停同步导出(建议先攒导出零漂移证据)、
+round_reviewer 独立角色、G1 frontdesk 增强、daemon 背景续跑收拢。
 
 背景:Line 1 走开链路 round 8–10 三连 PASS;SQLite 5a/5b 落地
 (events 双写 + events-diff),影子零 diff 证据 2/2,5c 等拍板;GUI

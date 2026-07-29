@@ -84,8 +84,8 @@ Commands:
 - MCP tool boxes (the fifth box class, round 11 live finding #3): codex MCP
   tool authorization boxes carry the body sentence
   `Allow the <server> MCP server to run tool <tool>?`. Command extraction is
-  tried first (byte-for-byte unchanged); only when it yields nothing is the
-  MCP extractor tried. The hard guarantee is a **structural tie to the live
+  tried first (now region-anchored to the pending box, see above); only when
+  it yields nothing is the MCP extractor tried. The hard guarantee is a **structural tie to the live
   box**: after whitespace collapse, the sentence's trailing `?` must be
   immediately followed by the live selected-option glyph sequence `›1.` — a
   pending codex MCP box renders "› 1. Yes, proceed (y)" directly under its
