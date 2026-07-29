@@ -24,7 +24,7 @@ import signal
 import stat
 import sys
 import time
-from typing import Any, TextIO
+from typing import Any, NamedTuple, TextIO
 
 from acp import schema
 from . import __version__
@@ -9862,18 +9862,50 @@ _MCP_TOOL_BOX_PATTERN = re.compile(
 )
 
 
-def _extract_mcp_tool_box(output: str) -> tuple[str, str] | None:
+class _McpToolTarget(NamedTuple):
+    server: str
+    tool: str
+
+
+def _extract_mcp_tool_target(output: str) -> _McpToolTarget | None:
     # 第五类框（round 11 live）：codex MCP tool 授权框正文
     # "Allow the <server> MCP server to run tool <tool>?"。TUI 折行可发生在
     # 任意位置（含 token 中间），折行点空格信息已丢失——与折叠命令框同策略：
-    # 尾窗全空白折叠后按框自身句式匹配，句尾 `?` 是硬边界。
+    # 全空白折叠后按框自身句式匹配，句尾 `?` 是硬边界。
+    # 两层锚定把提取绑到"当前挂起的框"（评审 repro：已答复旧框的句子仍留在
+    # 尾窗高处时，绝不能拿旧句子放行下方无关或异 tool 的待批框）：
+    # 1) 区域锚定——只搜最近一个"先前输入行"（倒数第二个 waiting marker 行）
+    #    之后的行；旧框句子必在其自身 footer（marker 行）之上，随之被排除；
+    #    当前框自身的句子不含 marker 且必在末 marker 之上、前一 marker 之下，
+    #    永不被排除；
+    # 2) 末次匹配——区域内取最后一个匹配，与 _detect_waiting_for_input 的
+    #    倒序扫描理由一致（离真实输入点最近的才是挂起框）。
     # 任何解析失败返回 None（fail-closed：未命中绝不代按）。
-    tail = "\n".join(output.splitlines()[-_WAITING_FOR_INPUT_TAIL_LINES:])
-    collapsed = "".join(tail.split())
-    match = _MCP_TOOL_BOX_PATTERN.search(collapsed)
+    lines = output.splitlines()[-_WAITING_FOR_INPUT_TAIL_LINES:]
+    marker_indices = [
+        index
+        for index, line in enumerate(lines)
+        if any(marker in line for marker in _WAITING_FOR_INPUT_MARKERS)
+    ]
+    start = marker_indices[-2] + 1 if len(marker_indices) >= 2 else 0
+    collapsed = "".join("\n".join(lines[start:]).split())
+    match = None
+    for match in _MCP_TOOL_BOX_PATTERN.finditer(collapsed):
+        pass
     if match is None:
         return None
-    return match.group("server"), match.group("tool")
+    return _McpToolTarget(match.group("server"), match.group("tool"))
+
+
+def _box_fields(
+    command: str | None, mcp_box: _McpToolTarget | None
+) -> dict[str, object]:
+    # boxes/release/scan 三面与审计事件共用的框身份三元组。
+    return {
+        "box_kind": "command" if command else ("mcp_tool" if mcp_box else None),
+        "mcp_server": mcp_box.server if mcp_box else None,
+        "mcp_tool": mcp_box.tool if mcp_box else None,
+    }
 
 
 def _match_active_delegation(
@@ -9893,11 +9925,10 @@ def _match_active_delegation(
         if kind == "mcp_tool":
             if mcp_box is None:
                 continue
+            # grant 时已强制 [A-Za-z0-9_-]+ 字符集：两侧直接精确等值，
+            # 不做任何单侧归一化（归一化是 fail-open 放宽）。
             server, tool = mcp_box
-            if (
-                "".join(str(item.get("mcp_server") or "").split()) == server
-                and "".join(str(item.get("mcp_tool") or "").split()) == tool
-            ):
+            if item.get("mcp_server") == server and item.get("mcp_tool") == tool:
                 return item
             continue
         if not command:
@@ -9928,10 +9959,11 @@ def agent_boxes_command(args: argparse.Namespace) -> int:
     waiting_hint = _detect_waiting_for_input(output)
     command = _extract_auth_box_command(output) if waiting_hint else None
     mcp_box = (
-        _extract_mcp_tool_box(output) if waiting_hint is not None and command is None else None
+        _extract_mcp_tool_target(output)
+        if waiting_hint is not None and command is None
+        else None
     )
     match = _match_active_delegation(store.load(), args.agent, command, mcp_box)
-    box_kind = "command" if command else ("mcp_tool" if mcp_box else None)
     _print_json(
         {
             "ok": True,
@@ -9941,9 +9973,7 @@ def agent_boxes_command(args: argparse.Namespace) -> int:
             "box_present": waiting_hint is not None,
             "waiting_hint": waiting_hint,
             "command": command,
-            "box_kind": box_kind,
-            "mcp_server": mcp_box[0] if mcp_box else None,
-            "mcp_tool": mcp_box[1] if mcp_box else None,
+            **_box_fields(command, mcp_box),
             "delegated": match is not None,
             "delegation_id": (match or {}).get("delegation_id"),
             "release_command": f"agentdeck agent release-box --agent {args.agent} --confirm",
@@ -9970,11 +10000,10 @@ def agent_release_box_command(args: argparse.Namespace) -> int:
         print(f"no authorization box detected for agent: {args.agent}", file=sys.stderr)
         return 1
     command = _extract_auth_box_command(output)
-    mcp_box = _extract_mcp_tool_box(output) if command is None else None
+    mcp_box = _extract_mcp_tool_target(output) if command is None else None
     match = _match_active_delegation(store.load(), args.agent, command, mcp_box)
-    box_kind = "command" if command else ("mcp_tool" if mcp_box else None)
     if match is None:
-        described = command or (f"mcp:{mcp_box[0]}/{mcp_box[1]}" if mcp_box else None)
+        described = command or (f"mcp:{mcp_box.server}/{mcp_box.tool}" if mcp_box else None)
         print(
             f"no active delegation covers this box for {args.agent}: {described or '(command not detected)'}",
             file=sys.stderr,
@@ -9990,9 +10019,8 @@ def agent_release_box_command(args: argparse.Namespace) -> int:
                 "delegation_id": match.get("delegation_id"),
                 "prefix": match.get("prefix"),
                 "command": command,
-                "box_kind": box_kind,
-                "mcp_server": mcp_box[0] if mcp_box else None,
-                "mcp_tool": mcp_box[1] if mcp_box else None,
+                **_box_fields(command, mcp_box),
+                "waiting_hint": waiting_hint,
             },
         )
     )
@@ -10005,9 +10033,7 @@ def agent_release_box_command(args: argparse.Namespace) -> int:
             "delegation_id": match.get("delegation_id"),
             "prefix": match.get("prefix"),
             "command": command,
-            "box_kind": box_kind,
-            "mcp_server": mcp_box[0] if mcp_box else None,
-            "mcp_tool": mcp_box[1] if mcp_box else None,
+            **_box_fields(command, mcp_box),
         }
     )
     return 0
@@ -10036,17 +10062,14 @@ def _scan_release_delegated_boxes(
         if waiting_hint is None:
             continue
         command = _extract_auth_box_command(output)
-        mcp_box = _extract_mcp_tool_box(output) if command is None else None
+        mcp_box = _extract_mcp_tool_target(output) if command is None else None
         match = _match_active_delegation(store.load(), agent_id, command, mcp_box)
-        box_kind = "command" if command else ("mcp_tool" if mcp_box else None)
         if match is None:
             skipped.append(
                 {
                     "agent_id": agent_id,
                     "command": command,
-                    "box_kind": box_kind,
-                    "mcp_server": mcp_box[0] if mcp_box else None,
-                    "mcp_tool": mcp_box[1] if mcp_box else None,
+                    **_box_fields(command, mcp_box),
                     "reason": "no active delegation",
                     "iteration": iteration,
                 }
@@ -10062,9 +10085,8 @@ def _scan_release_delegated_boxes(
                     "delegation_id": match.get("delegation_id"),
                     "prefix": match.get("prefix"),
                     "command": command,
-                    "box_kind": box_kind,
-                    "mcp_server": mcp_box[0] if mcp_box else None,
-                    "mcp_tool": mcp_box[1] if mcp_box else None,
+                    **_box_fields(command, mcp_box),
+                    "waiting_hint": waiting_hint,
                     "source": source,
                 },
             )
@@ -10076,9 +10098,7 @@ def _scan_release_delegated_boxes(
                 "delegation_id": match.get("delegation_id"),
                 "prefix": match.get("prefix"),
                 "command": command,
-                "box_kind": box_kind,
-                "mcp_server": mcp_box[0] if mcp_box else None,
-                "mcp_tool": mcp_box[1] if mcp_box else None,
+                **_box_fields(command, mcp_box),
                 "iteration": iteration,
             }
         )
@@ -10492,6 +10512,16 @@ def delegation_grant_command(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
         return 1
+    if wants_mcp:
+        # box 提取器字符集是 [A-Za-z0-9_-]+：越界值永远匹配不到屏上框，
+        # 委托会在 walk-away 期间静默失效——grant 时即拒绝零写。
+        for label, value in (("--mcp-server", mcp_server), ("--mcp-tool", mcp_tool)):
+            if not re.fullmatch(r"[A-Za-z0-9_\-]+", value or ""):
+                print(
+                    f"{label} must match [A-Za-z0-9_-]+ (the box extractor charset); got: {value}",
+                    file=sys.stderr,
+                )
+                return 1
     known_agents = {agent.agent_id for agent in config.agents}
     if args.agent not in known_agents:
         print(f"unknown agent: {args.agent}", file=sys.stderr)

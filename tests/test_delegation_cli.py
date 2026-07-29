@@ -533,22 +533,52 @@ def test_delegation_contract_exposes_mcp_fields(capsys) -> None:
     assert kinds == {"command_prefix", "mcp_tool"}
 
 
-def test_extract_mcp_tool_box_fail_closed() -> None:
-    assert cli._extract_mcp_tool_box(CODEX_MCP_TOOL_BOX) == ("chrome-devtools", "hover")
+def test_extract_mcp_tool_target_fail_closed() -> None:
+    target = cli._extract_mcp_tool_target(CODEX_MCP_TOOL_BOX)
+    assert target == ("chrome-devtools", "hover")
+    assert target.server == "chrome-devtools"
+    assert target.tool == "hover"
     # token 中间折行:全空白折叠还原
-    assert cli._extract_mcp_tool_box(CODEX_MCP_TOOL_BOX_FOLDED) == (
+    assert cli._extract_mcp_tool_target(CODEX_MCP_TOOL_BOX_FOLDED) == (
         "chrome-devtools",
         "press_key",
     )
     # 非框文本 / 命令框 / 句尾缺 ? :一律 None(fail-closed)
-    assert cli._extract_mcp_tool_box("worker is thinking...\n") is None
-    assert cli._extract_mcp_tool_box(CODEX_AUTH_BOX) is None
-    assert cli._extract_mcp_tool_box(
+    assert cli._extract_mcp_tool_target("worker is thinking...\n") is None
+    assert cli._extract_mcp_tool_target(CODEX_AUTH_BOX) is None
+    assert cli._extract_mcp_tool_target(
         "  Allow the chrome-devtools MCP server to run tool hover\n"
         "  Reason: replay\n"
     ) is None
     # 命令框提取器对 MCP 框返回 None(两类互不干扰)
     assert cli._extract_auth_box_command(CODEX_MCP_TOOL_BOX) is None
+    # 区域锚定:已答复框(自带 marker 行)之上的旧句子不参与提取;
+    # 末次匹配:同区域多句取最靠近输入点的一句
+    stale_then_pending = (
+        "  Allow the chrome-devtools MCP server to run tool hover?\n"
+        "› 1. Yes, proceed (y)\n"
+        "  Press enter to confirm or esc to cancel\n"
+        "  ran tool hover\n"
+        "  Allow the chrome-devtools MCP server to run tool evaluate_script?\n"
+        "› 1. Yes, proceed (y)\n"
+        "  Press enter to confirm or esc to cancel\n"
+    )
+    assert cli._extract_mcp_tool_target(stale_then_pending) == (
+        "chrome-devtools",
+        "evaluate_script",
+    )
+    # 旧 MCP 句子 + 待批命令框(命令框自身无 MCP 句式):提取必须为 None
+    stale_mcp_then_command_box = (
+        "  Allow the chrome-devtools MCP server to run tool hover?\n"
+        "› 1. Yes, proceed (y)\n"
+        "  Press enter to confirm or esc to cancel\n"
+        "  ran tool hover\n"
+        "  Would you like to run the following command?\n"
+        "  … [24 lines] view all\n"
+        "› 1. Yes, proceed (y)\n"
+        "  Press enter to confirm or esc to cancel\n"
+    )
+    assert cli._extract_mcp_tool_target(stale_mcp_then_command_box) is None
 
 
 def test_match_active_delegation_mcp_arm() -> None:
@@ -621,6 +651,8 @@ def test_agent_boxes_reports_mcp_tool_box(tmp_path, monkeypatch, capsys) -> None
     payload = json.loads(capsys.readouterr().out)
     assert payload["box_kind"] == "command"
     assert payload["mcp_server"] is None
+    # 只有 MCP 委托活跃:命令框绝不跨 kind 命中
+    assert payload["delegated"] is False
 
 
 def test_release_box_releases_delegated_mcp_box_with_audit(tmp_path, monkeypatch, capsys) -> None:
@@ -650,6 +682,8 @@ def test_release_box_releases_delegated_mcp_box_with_audit(tmp_path, monkeypatch
     events = _events_text(root)
     assert '"event_type": "auth_box_released"' in events
     assert '"mcp_tool": "press_key"' in events
+    # 审计事件必须留下屏上框的证据(waiting_hint)
+    assert '"waiting_hint": "Press enter to confirm or esc to cancel"' in events
 
 
 def test_boxes_watch_releases_delegated_mcp_box(tmp_path, monkeypatch, capsys) -> None:
@@ -676,6 +710,97 @@ def test_boxes_watch_releases_delegated_mcp_box(tmp_path, monkeypatch, capsys) -
     assert released["mcp_tool"] == "hover"
     assert fake.sent == [("%50", "")]
     assert '"event_type": "auth_box_released"' in _events_text(root)
+
+
+def test_release_box_ignores_stale_mcp_sentence_above_pending_command_box(tmp_path, monkeypatch, capsys) -> None:
+    # 评审 repro 1（cross-kind release）：已答复的 hover MCP 框句子仍留在尾窗
+    # 高处，其下是折叠命令框（`$ ` 行与选项 2 文本均不可见 → 命令提取 None）。
+    # 唯一活跃委托是只读 hover——绝不能放行无任何委托覆盖的命令框。
+    root = prepare_project(tmp_path, monkeypatch)
+    bind_coder(root)
+    fake = FakeTmuxBackend()
+    monkeypatch.setattr(cli, "TmuxBackend", lambda: fake)
+    fake.output = (
+        "  Allow the chrome-devtools MCP server to run tool hover?\n"
+        "› 1. Yes, proceed (y)\n"
+        "  Press enter to confirm or esc to cancel\n"
+        "  ran tool hover\n"
+        "  Would you like to run the following command?\n"
+        "  … [24 lines] view all\n"
+        "› 1. Yes, proceed (y)\n"
+        "  3. No, and tell Codex what to do differently (esc)\n"
+        "  Press enter to confirm or esc to cancel\n"
+    )
+    cli.main([
+        "delegation", "grant", "--agent", "coder",
+        "--mcp-server", "chrome-devtools", "--mcp-tool", "hover", "--confirm",
+    ])
+    capsys.readouterr()
+
+    assert cli.main(["agent", "release-box", "--agent", "coder", "--confirm"]) == 1
+    assert "no active delegation" in capsys.readouterr().err
+    assert fake.sent == []
+    assert '"event_type": "auth_box_released"' not in _events_text(root)
+
+
+def test_release_box_matches_pending_not_stale_mcp_box(tmp_path, monkeypatch, capsys) -> None:
+    # 评审 repro 2（wrong-tool release）：已答复 hover 框 + 待批 evaluate_script
+    # 框同在尾窗;只有 hover 委托——绝不能放行页面变更类 evaluate_script 框。
+    root = prepare_project(tmp_path, monkeypatch)
+    bind_coder(root)
+    fake = FakeTmuxBackend()
+    monkeypatch.setattr(cli, "TmuxBackend", lambda: fake)
+    fake.output = (
+        "  Allow the chrome-devtools MCP server to run tool hover?\n"
+        "› 1. Yes, proceed (y)\n"
+        "  Press enter to confirm or esc to cancel\n"
+        "  ran tool hover\n"
+        "  Allow the chrome-devtools MCP server to run tool evaluate_script?\n"
+        "› 1. Yes, proceed (y)\n"
+        "  2. Yes, and don't ask again this session\n"
+        "  3. No, and tell Codex what to do differently (esc)\n"
+        "  Press enter to confirm or esc to cancel\n"
+    )
+    cli.main([
+        "delegation", "grant", "--agent", "coder",
+        "--mcp-server", "chrome-devtools", "--mcp-tool", "hover", "--confirm",
+    ])
+    capsys.readouterr()
+
+    assert cli.main(["agent", "release-box", "--agent", "coder", "--confirm"]) == 1
+    err = capsys.readouterr().err
+    assert "no active delegation" in err
+    # 拒绝理由必须指向待批的 evaluate_script,而不是高处已答复的 hover
+    assert "evaluate_script" in err
+    assert fake.sent == []
+    assert '"event_type": "auth_box_released"' not in _events_text(root)
+
+
+def test_delegation_grant_rejects_invalid_mcp_charset(tmp_path, monkeypatch, capsys) -> None:
+    # 提取器字符集是 [A-Za-z0-9_-]+;grant 放进去的越界值 sentinel 永远
+    # 提取不出——walk-away 期间静默无效。grant 时即拒绝(CLI 与 writer 双层)。
+    root = prepare_project(tmp_path, monkeypatch)
+    for server, tool in (
+        ("chrome.devtools", "hover"),
+        ("chrome-devtools", "run/hover"),
+        ("chrome devtools", "hover"),
+        ("chrome-devtools", "press key"),
+    ):
+        assert cli.main([
+            "delegation", "grant", "--agent", "coder",
+            "--mcp-server", server, "--mcp-tool", tool, "--confirm",
+        ]) == 1
+        assert "must match" in capsys.readouterr().err
+    assert StateStore(root).load().get("delegations", []) == []
+
+    # writer 同层拒绝零写
+    store = StateStore(root)
+    try:
+        store.grant_delegation("coder", mcp_server="chrome.devtools", mcp_tool="hover")
+        raise AssertionError("expected ValueError")
+    except ValueError:
+        pass
+    assert StateStore(root).load().get("delegations", []) == []
 
 
 def test_release_box_refuses_without_box(tmp_path, monkeypatch, capsys) -> None:

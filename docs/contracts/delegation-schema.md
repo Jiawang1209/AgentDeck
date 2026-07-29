@@ -41,8 +41,11 @@ Commands:
   mcp_tool, created_at, revoked_at=null}` plus a `delegation_granted` event
   carrying `kind`/`mcp_server`/`mcp_tool`. Giving both `--prefix` and the MCP
   pair, neither, only one of `--mcp-server`/`--mcp-tool`, an empty server or
-  tool, an unknown agent, or a duplicate active `(agent, server, tool)`
-  triple refuse with zero writes. Duplicate-active refusal is per kind:
+  tool, a server or tool not fully matching `[A-Za-z0-9_-]+` (the box
+  extractor's charset — an out-of-charset value could never be released
+  during walk-away, a silent no-op; both the CLI and the
+  `grant_delegation` writer reject it), an unknown agent, or a duplicate
+  active `(agent, server, tool)` triple refuse with zero writes. Duplicate-active refusal is per kind:
   `(agent, prefix)` for `command_prefix`, `(agent, mcp_server, mcp_tool)`
   for `mcp_tool` — the same server with a different tool is a new grant.
 - `agentdeck delegation list` (read-only) returns `mode=delegation_list` with
@@ -75,24 +78,33 @@ Commands:
   tool authorization boxes carry the body sentence
   `Allow the <server> MCP server to run tool <tool>?`. Command extraction is
   tried first (byte-for-byte unchanged); only when it yields nothing is the
-  MCP extractor tried. The MCP extractor collapses all whitespace in the same
-  tail window (TUI folds can land mid-token; fold-point spaces are lost) and
-  matches the box's own sentence form, with the trailing `?` as a hard
-  boundary. Any parse failure returns null — fail-closed: an unparsable or
-  unknown wording degrades to the sentinel's existing skip behavior, never to
-  a wrong release.
+  MCP extractor tried. The MCP extractor anchors its search to the pending
+  box: within the tail window it only searches lines after the second-to-last
+  waiting-marker line (an already-answered box's sentence always sits above
+  that box's own marker footer, so stale sentences are excluded; the pending
+  box's sentence can never be excluded because it carries no marker itself),
+  then collapses all whitespace in that region (TUI folds can land mid-token;
+  fold-point spaces are lost), matches the box's own sentence form with the
+  trailing `?` as a hard boundary, and takes the **last** match in the region
+  (same reverse-scan rationale as waiting-hint detection: the sentence
+  nearest the real input point belongs to the pending box). Any parse failure
+  returns null — fail-closed: an unparsable or unknown wording degrades to
+  the sentinel's existing skip behavior, never to a wrong release.
 - `agentdeck agent release-box --agent <id> --confirm` re-detects the box and
   sends a bare Enter **only** when an active delegation for that agent covers
   the box: for command boxes the extracted command
   (`command.startswith(prefix)`, falling back to a whitespace-collapsed
   comparison so a wrap that landed exactly on a real space — e.g. a
-  `git add` prefix — still matches); for MCP tool boxes an exact
-  `(mcp_server, mcp_tool)` equality per field (compared after whitespace
-  collapse, matching only `kind="mcp_tool"` records for the same agent);
-  success appends an `auth_box_released` event carrying the delegation id,
-  full command (null for MCP boxes), `box_kind`, `mcp_server`, `mcp_tool`.
-  No box, no extractable command or MCP pair, no covering delegation, or
-  missing `--confirm` refuse with zero input sent.
+  `git add` prefix — still matches); for MCP tool boxes a plain exact
+  `(mcp_server, mcp_tool)` equality per field with no normalization on
+  either side (grant-time charset validation makes `==` correct; one-sided
+  normalization would be fail-open widening), matching only
+  `kind="mcp_tool"` records for the same agent; success appends an
+  `auth_box_released` event carrying the delegation id, full command (null
+  for MCP boxes), `box_kind`, `mcp_server`, `mcp_tool`, and `waiting_hint`
+  (on-screen evidence of the box that was released). No box, no extractable
+  command or MCP pair, no covering delegation, or missing `--confirm` refuse
+  with zero input sent.
 - `agentdeck boxes watch --confirm --iterations <n> --interval <seconds>
   [--agent <id>]` is the bounded delegated-automation loop: it requires
   `--confirm` **and** `config.leader.approval_mode == "autonomous"` (the same

@@ -2,6 +2,42 @@
 
 本文件记录 AgentDeck 每一次开发内容。约束：每次新增功能、文档规则、项目骨架、运行环境或用户可见行为变化，都必须同步更新本文件，并在同一次 commit 中提交。
 
+## 2026-07-30
+
+### Anchor MCP box extraction to the pending box (code review 收口)
+
+- **Type**: fix
+- **Motivation**: 91662241 的 code review 复现两条错误放行(Critical):
+  尾窗内残留"已答复的 MCP 框句子"时,`_extract_mcp_tool_box` 首次匹配
+  命中旧句子——(1) 旧 hover 句 + 折叠命令框(命令提取 None)→ 用 hover
+  委托放行无委托覆盖的命令框;(2) 旧 hover 句 + 待批 evaluate_script 框
+  → 放行页面变更类工具框且审计记成 hover。提取必须锚定到当前挂起的框。
+- **What**: 提取器改名 `_extract_mcp_tool_target`(返回 NamedTuple
+  `.server`/`.tool`)并加两层锚定:区域锚定(只搜尾窗倒数第二个 waiting
+  marker 行之后——旧框句子必在其自身 footer 之上随之排除,当前框句子
+  自身无 marker 永不被排除)+ 末次匹配(区域内取最后一个匹配,与
+  `_detect_waiting_for_input` 倒序扫描同理);任何解析失败仍 None
+  (fail-closed)。审计:`auth_box_released` 事件(release-box 与 scan
+  两处)新增 `waiting_hint` 屏上框证据。grant 双层拒绝超出提取器字符集
+  `[A-Za-z0-9_-]+` 的 mcp_server/mcp_tool(CLI stderr + writer
+  ValueError,零写——越界值 walk-away 期间静默失效);匹配臂改双侧无
+  归一化精确等值(单侧空白折叠是 fail-open 放宽,grant 字符集强制后
+  `==` 即正确);新增 `_box_fields` helper 统一五处
+  `box_kind`/`mcp_server`/`mcp_tool` 三元组;补 `agent boxes` 命令框
+  路径 `delegated is False` 跨 kind 断言。schema doc 同步锚定/末次
+  匹配/精确等值/grant 字符集/`waiting_hint` 审计字段,CLAUDE.md
+  delegation bullet 同步。
+- **Impact**: 旧框句子残留窗内不再可能放行下方无关或异 tool 的待批框
+  (两条 repro 均改为 fail-closed skip);审计事件带屏上证据;越界
+  charset 委托在 grant 时即失败而非静默无效;命令框/prefix 路径行为
+  不变;`DELEGATION_BOXES_RESPONSE_FIELDS` 无新响应字段,contracts.py
+  未动。
+- **Verification**: TDD——评审两条 repro 转为回归测试先 RED(错误
+  放行:rc=0 且 Enter 已发)后 GREEN;charset/waiting_hint 测试同 RED
+  → GREEN;`conda run -n agentdeck pytest tests/test_delegation_cli.py
+  -q` 27 passed;contracts/agent/leader 三文件、`python -m compileall
+  src tests`、`git diff --check`、全量 `pytest tests/ -q` 见 commit。
+
 ## 2026-07-29
 
 ### MCP tool delegation scope: 第五类框检测与放行 (round 11 发现 #3 收口)

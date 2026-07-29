@@ -9096,6 +9096,14 @@ class StateStore:
             )
         if wants_mcp and (not mcp_server or not mcp_tool):
             raise ValueError("mcp delegation requires both mcp_server and mcp_tool")
+        if wants_mcp:
+            # box 提取器字符集是 [A-Za-z0-9_-]+：越界值 sentinel 永远提取
+            # 不出对应框，委托在 walk-away 期间静默失效——grant 时即拒绝。
+            for label, value in (("mcp_server", mcp_server), ("mcp_tool", mcp_tool)):
+                if not re.fullmatch(r"[A-Za-z0-9_\-]+", value or ""):
+                    raise ValueError(
+                        f"{label} must match [A-Za-z0-9_-]+ (got: {value})"
+                    )
         state = self.load()
         delegations = state.setdefault("delegations", [])
         for item in delegations:
