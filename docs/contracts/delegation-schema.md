@@ -1,8 +1,9 @@
 # Delegation Contract (`delegation/v1` via `project-view/v1`)
 
 Discovery entrypoint: `agentdeck contract delegation` (`--example` adds stable
-GUI-ready examples). Source of truth for fields, examples, payload and the
-list validator is `src/agentdeck/contracts.py`
+GUI-ready examples; the payload exposes both `grant_command_template` and
+`mcp_grant_command_template`). Source of truth for fields, examples, payload
+and the list validator is `src/agentdeck/contracts.py`
 (`DELEGATION_LIST_RESPONSE_FIELDS`, `DELEGATION_ITEM_FIELDS`,
 `DELEGATION_BOXES_RESPONSE_FIELDS`, `BOXES_WATCH_RESPONSE_FIELDS`,
 `validate_delegation_list_contract()`).
@@ -15,15 +16,41 @@ with every release audited. Data source: round 6/7 live loops
 
 ## Registry Shapes
 
+`delegations[]` items are a discriminated union on `kind`:
+
+- `kind="command_prefix"` — the original prefix shape. Legacy records written
+  before the discriminator existed have no `kind` field on disk; readers
+  (including `delegation list`) must treat a missing `kind` as
+  `command_prefix` — zero migration.
+- `kind="mcp_tool"` — one grant covers exactly one
+  `(agent, mcp_server, mcp_tool)` pair (no whole-server wildcard;
+  `hover` + `press_key` require two grants).
+
+Commands:
+
 - `agentdeck delegation grant --agent <agent_id> --prefix <prefix> --confirm`
   appends to the authoritative `delegations[]` list (registered
-  `grant_delegation` writer): `{delegation_id, agent_id, prefix, created_at,
-  revoked_at=null}` plus a `delegation_granted` event. Unknown agent, empty
-  prefix, missing `--confirm`, or a duplicate active `(agent, prefix)` pair
-  refuse with zero writes.
+  `grant_delegation` writer): `{delegation_id, agent_id,
+  kind="command_prefix", prefix, mcp_server=null, mcp_tool=null, created_at,
+  revoked_at=null}` plus a `delegation_granted` event (now carrying `kind`
+  and the null MCP fields). Unknown agent, empty prefix, missing `--confirm`,
+  or a duplicate active `(agent, prefix)` pair refuse with zero writes.
+- `agentdeck delegation grant --agent <agent_id> --mcp-server <server>
+  --mcp-tool <tool> --confirm` is the mutually exclusive MCP form: it writes
+  `{delegation_id, agent_id, kind="mcp_tool", prefix=null, mcp_server,
+  mcp_tool, created_at, revoked_at=null}` plus a `delegation_granted` event
+  carrying `kind`/`mcp_server`/`mcp_tool`. Giving both `--prefix` and the MCP
+  pair, neither, only one of `--mcp-server`/`--mcp-tool`, an empty server or
+  tool, an unknown agent, or a duplicate active `(agent, server, tool)`
+  triple refuse with zero writes. Duplicate-active refusal is per kind:
+  `(agent, prefix)` for `command_prefix`, `(agent, mcp_server, mcp_tool)`
+  for `mcp_tool` — the same server with a different tool is a new grant.
 - `agentdeck delegation list` (read-only) returns `mode=delegation_list` with
   `count`/`items[]`; each item carries the stored fields plus derived
-  `active` (`revoked_at` is null). Validates with
+  `active` (`revoked_at` is null), a normalized `kind`
+  (`command_prefix` default for legacy kind-less records), and explicit
+  `mcp_server`/`mcp_tool` (null on `command_prefix` items; `prefix` is null
+  on `mcp_tool` items). Validates with
   `validate_delegation_list_contract()` before printing.
 - `agentdeck delegation revoke --delegation-id <id> --confirm` sets
   `revoked_at` (registered `revoke_delegation` writer) plus a

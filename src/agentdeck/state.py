@@ -9080,20 +9080,43 @@ class StateStore:
             self.save(state)
         return list(merged)
 
-    def grant_delegation(self, agent_id: str, prefix: str) -> dict[str, Any]:
+    def grant_delegation(
+        self,
+        agent_id: str,
+        prefix: str | None = None,
+        *,
+        mcp_server: str | None = None,
+        mcp_tool: str | None = None,
+    ) -> dict[str, Any]:
+        wants_prefix = prefix is not None
+        wants_mcp = mcp_server is not None or mcp_tool is not None
+        if wants_prefix == wants_mcp:
+            raise ValueError(
+                "delegation requires exactly one of prefix or (mcp_server, mcp_tool)"
+            )
+        if wants_mcp and (not mcp_server or not mcp_tool):
+            raise ValueError("mcp delegation requires both mcp_server and mcp_tool")
         state = self.load()
         delegations = state.setdefault("delegations", [])
         for item in delegations:
-            if (
-                item.get("agent_id") == agent_id
-                and item.get("prefix") == prefix
-                and not item.get("revoked_at")
-            ):
+            if item.get("revoked_at") or item.get("agent_id") != agent_id:
+                continue
+            if wants_prefix and item.get("prefix") == prefix:
                 raise ValueError(f"delegation already active for {agent_id}: {prefix}")
+            if wants_mcp and (
+                item.get("mcp_server") == mcp_server
+                and item.get("mcp_tool") == mcp_tool
+            ):
+                raise ValueError(
+                    f"delegation already active for {agent_id}: {mcp_server}/{mcp_tool}"
+                )
         record = {
             "delegation_id": new_id("dlg"),
             "agent_id": agent_id,
+            "kind": "command_prefix" if wants_prefix else "mcp_tool",
             "prefix": prefix,
+            "mcp_server": mcp_server,
+            "mcp_tool": mcp_tool,
             "created_at": utc_now(),
             "revoked_at": None,
         }

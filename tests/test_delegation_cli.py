@@ -391,6 +391,132 @@ def test_boxes_extracts_command_from_collapsed_box_option_text(tmp_path, monkeyp
     assert fake.sent == [("%50", "")]
 
 
+def test_grant_delegation_writer_mcp_pair_and_mutual_exclusion(tmp_path, monkeypatch) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    store = StateStore(root)
+
+    record = store.grant_delegation("coder", mcp_server="chrome-devtools", mcp_tool="hover")
+    assert record["kind"] == "mcp_tool"
+    assert record["mcp_server"] == "chrome-devtools"
+    assert record["mcp_tool"] == "hover"
+    assert record["prefix"] is None
+    assert record["revoked_at"] is None
+
+    # prefix 记录带显式 kind，且 mcp 字段为 null
+    prefix_record = store.grant_delegation("coder", "node tests/")
+    assert prefix_record["kind"] == "command_prefix"
+    assert prefix_record["mcp_server"] is None
+    assert prefix_record["mcp_tool"] is None
+
+    # 重复活跃 (agent, server, tool) 拒绝零写
+    try:
+        store.grant_delegation("coder", mcp_server="chrome-devtools", mcp_tool="hover")
+        raise AssertionError("expected ValueError")
+    except ValueError:
+        pass
+    assert len(store.load()["delegations"]) == 2
+
+    # 同 server 异 tool 是新委托，不算重复
+    second = store.grant_delegation("coder", mcp_server="chrome-devtools", mcp_tool="press_key")
+    assert second["mcp_tool"] == "press_key"
+
+    # 二选一：都给或都不给都拒绝
+    for kwargs in (
+        {"prefix": "node tests/x", "mcp_server": "s", "mcp_tool": "t"},
+        {},
+        {"mcp_server": "chrome-devtools"},
+        {"mcp_tool": "hover"},
+    ):
+        try:
+            store.grant_delegation("coder", **kwargs)
+            raise AssertionError(f"expected ValueError for {kwargs}")
+        except ValueError:
+            pass
+    assert len(store.load()["delegations"]) == 3
+
+
+def test_delegation_grant_mcp_form_and_mutual_exclusion(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+
+    # 互斥：两种形态同时给 / 都不给 / MCP 对不完整 → 拒绝零写
+    assert cli.main([
+        "delegation", "grant", "--agent", "coder", "--prefix", "node tests/",
+        "--mcp-server", "chrome-devtools", "--mcp-tool", "hover", "--confirm",
+    ]) == 1
+    assert "exactly one" in capsys.readouterr().err
+    assert cli.main(["delegation", "grant", "--agent", "coder", "--confirm"]) == 1
+    capsys.readouterr()
+    assert cli.main([
+        "delegation", "grant", "--agent", "coder", "--mcp-server", "chrome-devtools", "--confirm",
+    ]) == 1
+    capsys.readouterr()
+    assert cli.main([
+        "delegation", "grant", "--agent", "coder",
+        "--mcp-server", "  ", "--mcp-tool", "hover", "--confirm",
+    ]) == 1
+    capsys.readouterr()
+    assert StateStore(root).load().get("delegations", []) == []
+
+    # MCP 形态 happy path：入账 + 审计
+    assert cli.main([
+        "delegation", "grant", "--agent", "coder",
+        "--mcp-server", "chrome-devtools", "--mcp-tool", "hover", "--confirm",
+    ]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["mode"] == "delegation_granted"
+    assert payload["kind"] == "mcp_tool"
+    assert payload["mcp_server"] == "chrome-devtools"
+    assert payload["mcp_tool"] == "hover"
+    assert payload["prefix"] is None
+    assert '"event_type": "delegation_granted"' in _events_text(root)
+    assert '"mcp_server": "chrome-devtools"' in _events_text(root)
+
+
+def test_delegation_list_projects_kind_and_legacy_records(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    # 直接写一条旧形态记录（无 kind/mcp 字段）模拟既有数据
+    store = StateStore(root)
+    state = store.load()
+    state.setdefault("delegations", []).append(
+        {
+            "delegation_id": "dlg_legacy",
+            "agent_id": "coder",
+            "prefix": "node tests/",
+            "created_at": "2026-07-26T00:00:00+00:00",
+            "revoked_at": None,
+        }
+    )
+    store.save(state)
+    cli.main([
+        "delegation", "grant", "--agent", "coder",
+        "--mcp-server", "chrome-devtools", "--mcp-tool", "press_key", "--confirm",
+    ])
+    capsys.readouterr()
+
+    assert cli.main(["delegation", "list"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["count"] == 2
+    legacy = payload["items"][0]
+    assert legacy["kind"] == "command_prefix"
+    assert legacy["mcp_server"] is None
+    assert legacy["mcp_tool"] is None
+    mcp = payload["items"][1]
+    assert mcp["kind"] == "mcp_tool"
+    assert mcp["prefix"] is None
+    assert mcp["active"] is True
+
+
+def test_delegation_contract_exposes_mcp_fields(capsys) -> None:
+    assert cli.main(["contract", "delegation", "--example"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    for field in ("kind", "mcp_server", "mcp_tool"):
+        assert field in payload["delegation_item_fields"]
+    assert "mcp_grant_command_template" in payload
+    assert "--mcp-server <server>" in payload["mcp_grant_command_template"]
+    kinds = {item["kind"] for item in payload["example_list"]["items"]}
+    assert kinds == {"command_prefix", "mcp_tool"}
+
+
 def test_release_box_refuses_without_box(tmp_path, monkeypatch, capsys) -> None:
     root = prepare_project(tmp_path, monkeypatch)
     bind_coder(root)

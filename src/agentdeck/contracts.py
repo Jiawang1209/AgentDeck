@@ -910,6 +910,9 @@ DELEGATION_LIST_RESPONSE_FIELDS = (
 DELEGATION_ITEM_FIELDS = (
     "delegation_id",
     "agent_id",
+    "kind",
+    "mcp_server",
+    "mcp_tool",
     "prefix",
     "created_at",
     "revoked_at",
@@ -968,16 +971,30 @@ def delegation_list_example() -> dict[str, object]:
     return {
         "ok": True,
         "mode": "delegation_list",
-        "count": 1,
+        "count": 2,
         "items": [
             {
                 "delegation_id": "dlg_example",
                 "agent_id": "coder",
+                "kind": "command_prefix",
                 "prefix": "node tests/",
+                "mcp_server": None,
+                "mcp_tool": None,
                 "created_at": "2026-07-26T00:00:00+00:00",
                 "revoked_at": None,
                 "active": True,
-            }
+            },
+            {
+                "delegation_id": "dlg_mcp_example",
+                "agent_id": "planner",
+                "kind": "mcp_tool",
+                "prefix": None,
+                "mcp_server": "chrome-devtools",
+                "mcp_tool": "hover",
+                "created_at": "2026-07-29T00:00:00+00:00",
+                "revoked_at": None,
+                "active": True,
+            },
         ],
     }
 
@@ -1024,6 +1041,7 @@ def delegation_contract_payload(contract_path: Path) -> dict[str, object]:
         "schema_version": PROJECT_VIEW_SCHEMA_VERSION,
         "list_command": "agentdeck delegation list",
         "grant_command_template": "agentdeck delegation grant --agent <agent_id> --prefix <prefix> --confirm",
+        "mcp_grant_command_template": "agentdeck delegation grant --agent <agent_id> --mcp-server <server> --mcp-tool <tool> --confirm",
         "revoke_command_template": "agentdeck delegation revoke --delegation-id <delegation_id> --confirm",
         "boxes_command_template": "agentdeck agent boxes --agent <agent_id>",
         "release_box_command_template": "agentdeck agent release-box --agent <agent_id> --confirm",

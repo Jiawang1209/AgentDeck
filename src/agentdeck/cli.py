@@ -10410,16 +10410,32 @@ def delegation_grant_command(args: argparse.Namespace) -> int:
     if not args.confirm:
         print("delegation grant requires --confirm", file=sys.stderr)
         return 1
-    prefix = args.prefix.strip()
-    if not prefix:
+    prefix = args.prefix.strip() if args.prefix is not None else None
+    mcp_server = args.mcp_server.strip() if args.mcp_server is not None else None
+    mcp_tool = args.mcp_tool.strip() if args.mcp_tool is not None else None
+    wants_prefix = args.prefix is not None
+    wants_mcp = args.mcp_server is not None or args.mcp_tool is not None
+    if wants_prefix == wants_mcp:
+        print(
+            "delegation grant requires exactly one of --prefix or --mcp-server/--mcp-tool",
+            file=sys.stderr,
+        )
+        return 1
+    if wants_prefix and not prefix:
         print("delegation prefix must not be empty", file=sys.stderr)
+        return 1
+    if wants_mcp and (not mcp_server or not mcp_tool):
+        print(
+            "mcp delegation requires non-empty --mcp-server and --mcp-tool",
+            file=sys.stderr,
+        )
         return 1
     known_agents = {agent.agent_id for agent in config.agents}
     if args.agent not in known_agents:
         print(f"unknown agent: {args.agent}", file=sys.stderr)
         return 1
     try:
-        record = store.grant_delegation(args.agent, prefix)
+        record = store.grant_delegation(args.agent, prefix, mcp_server=mcp_server, mcp_tool=mcp_tool)
     except ValueError as exc:
         print(str(exc), file=sys.stderr)
         return 1
@@ -10430,6 +10446,9 @@ def delegation_grant_command(args: argparse.Namespace) -> int:
                 "delegation_id": record["delegation_id"],
                 "agent_id": record["agent_id"],
                 "prefix": record["prefix"],
+                "kind": record["kind"],
+                "mcp_server": record["mcp_server"],
+                "mcp_tool": record["mcp_tool"],
             },
         )
     )
@@ -10443,7 +10462,13 @@ def delegation_list_command(_args: argparse.Namespace) -> int:
         return exit_code
     state = store.load()
     items = [
-        {**item, "active": not item.get("revoked_at")}
+        {
+            **item,
+            "kind": item.get("kind") or "command_prefix",
+            "mcp_server": item.get("mcp_server"),
+            "mcp_tool": item.get("mcp_tool"),
+            "active": not item.get("revoked_at"),
+        }
         for item in state.get("delegations", [])
         if isinstance(item, dict)
     ]
@@ -21168,7 +21193,9 @@ def build_parser() -> argparse.ArgumentParser:
         "grant", help="Grant a command-prefix delegation for one agent's authorization boxes (explicit)"
     )
     delegation_grant.add_argument("--agent", required=True, help="Agent id from .agentdeck/config.toml")
-    delegation_grant.add_argument("--prefix", required=True, help="Command prefix the delegation covers")
+    delegation_grant.add_argument("--prefix", help="Command prefix the delegation covers")
+    delegation_grant.add_argument("--mcp-server", dest="mcp_server", help="MCP server name the delegation covers")
+    delegation_grant.add_argument("--mcp-tool", dest="mcp_tool", help="MCP tool name the delegation covers")
     delegation_grant.add_argument("--confirm", action="store_true", help="Explicitly confirm the grant")
     delegation_grant.set_defaults(func=delegation_grant_command)
     delegation_list = delegation_subparsers.add_parser("list", help="List delegations (read-only)")

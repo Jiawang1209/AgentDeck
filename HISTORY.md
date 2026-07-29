@@ -4,6 +4,37 @@
 
 ## 2026-07-29
 
+### MCP tool delegation scope: registry dual shape (round 11 发现 #3 前半)
+
+- **Type**: feat
+- **Motivation**: round 11 live 发现 #3——codex 的第五类授权框是
+  MCP tool 框("Allow the chrome-devtools MCP server to run tool
+  hover"),前缀委托天然不覆盖,sentinel 只能拒按、人工放行。按
+  `docs/superpowers/specs/2026-07-29-mcp-tool-delegation-scope-design.md`
+  (user 拍板:granularity=每 (agent, server, tool) 一条;registry=
+  单列表 + `kind` discriminator)先落 registry 双形态,box 提取/匹配/
+  release 面留给下一 commit。
+- **What**: `StateStore.grant_delegation` 改为二选一签名:prefix 或
+  `(mcp_server, mcp_tool)` 对,重复活跃按 kind 分别比对
+  (`(agent, prefix)` / `(agent, server, tool)`),两种形态统一写显式
+  `kind` + null 化未用字段;既有 kind-less 记录零迁移,读者按
+  `command_prefix` 解释。CLI `delegation grant` 新增互斥
+  `--mcp-server/--mcp-tool` 形态(双给/都不给/半对/空白值拒绝零写),
+  `delegation_granted` 事件携带 kind/mcp 字段;`delegation list` 投影
+  normalized `kind` 和显式 mcp 字段。contract:
+  `DELEGATION_ITEM_FIELDS` + `mcp_grant_command_template` + 双 kind
+  example(count=2);`docs/contracts/delegation-schema.md` Registry
+  Shapes 同步 discriminator 语义。
+- **Impact**: 注册表可表达 MCP tool 委托并入账审计,但本 commit 尚未
+  接 box 提取/匹配/release——MCP 框仍由人工放行;委托依旧不是权限
+  授权,安全边界不变;既有 prefix 委托记录与行为不变。
+- **Verification**: TDD——writer/CLI/contract 三条新测试先 RED
+  (TypeError: unexpected keyword `mcp_server`;argparse SystemExit 2;
+  缺 `kind` 字段)后 GREEN;`pytest tests/test_delegation_cli.py -q`
+  19 passed;`pytest tests/test_delegation_cli.py tests/test_contracts.py
+  -q`、`pytest tests/test_agent_cli.py tests/test_leader_cli.py -q`、
+  `python -m compileall src tests`、`git diff --check` 全通过。
+
 ### Scan delegated auth boxes at follow segment start (round 11 发现 #4)
 
 - **Type**: fix
