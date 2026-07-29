@@ -67,16 +67,32 @@ Commands:
   live finding — the fallback extracts the backtick-quoted prefix from the
   box's own "commands that start with `…`" option text, joining wrapped
   lines without inserting spaces), and reports
-  `box_present`, `waiting_hint`, `command`, `delegated`, `delegation_id`, and
-  the explicit `release_command`. It never writes state and never sends input.
+  `box_present`, `waiting_hint`, `command`, `box_kind`
+  (`command` | `mcp_tool` | null), `mcp_server`, `mcp_tool`, `delegated`,
+  `delegation_id`, and the explicit `release_command`. It never writes state
+  and never sends input.
+- MCP tool boxes (the fifth box class, round 11 live finding #3): codex MCP
+  tool authorization boxes carry the body sentence
+  `Allow the <server> MCP server to run tool <tool>?`. Command extraction is
+  tried first (byte-for-byte unchanged); only when it yields nothing is the
+  MCP extractor tried. The MCP extractor collapses all whitespace in the same
+  tail window (TUI folds can land mid-token; fold-point spaces are lost) and
+  matches the box's own sentence form, with the trailing `?` as a hard
+  boundary. Any parse failure returns null — fail-closed: an unparsable or
+  unknown wording degrades to the sentinel's existing skip behavior, never to
+  a wrong release.
 - `agentdeck agent release-box --agent <id> --confirm` re-detects the box and
   sends a bare Enter **only** when an active delegation for that agent covers
-  the extracted command (`command.startswith(prefix)`, falling back to a
-  whitespace-collapsed comparison so a wrap that landed exactly on a real
-  space — e.g. a `git add` prefix — still matches); success appends an
-  `auth_box_released` event carrying the delegation id and full command. No
-  box, no detected command, no covering delegation, or missing `--confirm`
-  refuse with zero input sent.
+  the box: for command boxes the extracted command
+  (`command.startswith(prefix)`, falling back to a whitespace-collapsed
+  comparison so a wrap that landed exactly on a real space — e.g. a
+  `git add` prefix — still matches); for MCP tool boxes an exact
+  `(mcp_server, mcp_tool)` equality per field (compared after whitespace
+  collapse, matching only `kind="mcp_tool"` records for the same agent);
+  success appends an `auth_box_released` event carrying the delegation id,
+  full command (null for MCP boxes), `box_kind`, `mcp_server`, `mcp_tool`.
+  No box, no extractable command or MCP pair, no covering delegation, or
+  missing `--confirm` refuse with zero input sent.
 - `agentdeck boxes watch --confirm --iterations <n> --interval <seconds>
   [--agent <id>]` is the bounded delegated-automation loop: it requires
   `--confirm` **and** `config.leader.approval_mode == "autonomous"` (the same
@@ -84,7 +100,9 @@ Commands:
   iteration, releases only delegation-covered boxes (each release audited as
   `auth_box_released` with `source=boxes_watch`), records non-covered boxes in
   `skipped[]` with `reason=no active delegation`, and always stops at the
-  iteration bound.
+  iteration bound. `released[]` and `skipped[]` items (and the shared
+  `_scan_release_delegated_boxes` used by `run-loop --release-boxes`) carry
+  the same `box_kind`/`mcp_server`/`mcp_tool` fields as `release-box`.
 
 ## Boundaries
 
@@ -94,6 +112,15 @@ Commands:
 - Guidance: grant prefixes only for local read-only verification commands
   (e.g. `node tests/`) and task-worktree-scoped git writes; never for push,
   install, or network mutation prefixes.
+- Guidance (MCP): grant MCP delegations only for read-only-natured tools
+  (the hover/press_key/screenshot class), never for page-mutating tools
+  (the navigate/fill/evaluate_script class). AgentDeck cannot verify a
+  tool's nature; the human owns that judgment at grant time.
+- Release invariants are unchanged for MCP boxes: only a bare Enter on the
+  pre-selected option ("Yes, proceed"); the session-level allow (option 2)
+  and reject/esc (option 3) are never selected; option navigation is never
+  automated; a recurring tool box is released one box at a time, each
+  audited.
 - `delegation list` / `agent boxes` are inspection-only: no state writes, no
   tmux input, no provider calls.
 - Every automated release is auditable via `auth_box_released` events in

@@ -53,6 +53,22 @@ CODEX_AUTH_BOX = (
     "  Press enter to confirm or esc to cancel\n"
 )
 
+CODEX_MCP_TOOL_BOX = (
+    "  Allow the chrome-devtools MCP server to run tool hover?\n"
+    "› 1. Yes, proceed (y)\n"
+    "  2. Yes, and don't ask again this session\n"
+    "  3. No, and tell Codex what to do differently (esc)\n"
+    "  Press enter to confirm or esc to cancel\n"
+)
+
+CODEX_MCP_TOOL_BOX_FOLDED = (
+    "  Allow the chrome-dev\n"
+    "  tools MCP server to run tool\n"
+    "  press_key?\n"
+    "› 1. Yes, proceed (y)\n"
+    "  Press enter to confirm or esc to cancel\n"
+)
+
 
 def _events_text(root: Path) -> str:
     return (root / ".agentdeck" / "state" / "events.jsonl").read_text(encoding="utf-8")
@@ -515,6 +531,151 @@ def test_delegation_contract_exposes_mcp_fields(capsys) -> None:
     assert "--mcp-server <server>" in payload["mcp_grant_command_template"]
     kinds = {item["kind"] for item in payload["example_list"]["items"]}
     assert kinds == {"command_prefix", "mcp_tool"}
+
+
+def test_extract_mcp_tool_box_fail_closed() -> None:
+    assert cli._extract_mcp_tool_box(CODEX_MCP_TOOL_BOX) == ("chrome-devtools", "hover")
+    # token 中间折行:全空白折叠还原
+    assert cli._extract_mcp_tool_box(CODEX_MCP_TOOL_BOX_FOLDED) == (
+        "chrome-devtools",
+        "press_key",
+    )
+    # 非框文本 / 命令框 / 句尾缺 ? :一律 None(fail-closed)
+    assert cli._extract_mcp_tool_box("worker is thinking...\n") is None
+    assert cli._extract_mcp_tool_box(CODEX_AUTH_BOX) is None
+    assert cli._extract_mcp_tool_box(
+        "  Allow the chrome-devtools MCP server to run tool hover\n"
+        "  Reason: replay\n"
+    ) is None
+    # 命令框提取器对 MCP 框返回 None(两类互不干扰)
+    assert cli._extract_auth_box_command(CODEX_MCP_TOOL_BOX) is None
+
+
+def test_match_active_delegation_mcp_arm() -> None:
+    state = {
+        "delegations": [
+            {
+                "delegation_id": "dlg_prefix",
+                "agent_id": "coder",
+                "prefix": "node tests/",
+                "revoked_at": None,
+            },
+            {
+                "delegation_id": "dlg_mcp",
+                "agent_id": "planner",
+                "kind": "mcp_tool",
+                "prefix": None,
+                "mcp_server": "chrome-devtools",
+                "mcp_tool": "hover",
+                "revoked_at": None,
+            },
+        ]
+    }
+    hit = cli._match_active_delegation(state, "planner", None, ("chrome-devtools", "hover"))
+    assert hit["delegation_id"] == "dlg_mcp"
+    # 同 server 异 tool / 同 tool 异 server / 异 agent / prefix 记录:都不命中
+    assert cli._match_active_delegation(state, "planner", None, ("chrome-devtools", "press_key")) is None
+    assert cli._match_active_delegation(state, "planner", None, ("other-server", "hover")) is None
+    assert cli._match_active_delegation(state, "coder", None, ("chrome-devtools", "hover")) is None
+    # revoked 不命中
+    state["delegations"][1]["revoked_at"] = "2026-07-29T00:00:00+00:00"
+    assert cli._match_active_delegation(state, "planner", None, ("chrome-devtools", "hover")) is None
+    # 旧签名（无 mcp_box）prefix 路径不变
+    assert cli._match_active_delegation(state, "coder", "node tests/x.mjs")["delegation_id"] == "dlg_prefix"
+    # 双 None 直接 miss
+    assert cli._match_active_delegation(state, "coder", None, None) is None
+
+
+def test_agent_boxes_reports_mcp_tool_box(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    bind_coder(root)
+    fake = FakeTmuxBackend()
+    monkeypatch.setattr(cli, "TmuxBackend", lambda: fake)
+    fake.output = CODEX_MCP_TOOL_BOX
+
+    # 未委托:检测到 MCP 框但 delegated=False,零写零输入
+    before = StateStore(root).load()
+    assert cli.main(["agent", "boxes", "--agent", "coder"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["box_present"] is True
+    assert payload["box_kind"] == "mcp_tool"
+    assert payload["command"] is None
+    assert payload["mcp_server"] == "chrome-devtools"
+    assert payload["mcp_tool"] == "hover"
+    assert payload["delegated"] is False
+    assert StateStore(root).load() == before
+    assert fake.sent == []
+
+    # grant 后命中;命令框路径 box_kind=command 回归
+    cli.main([
+        "delegation", "grant", "--agent", "coder",
+        "--mcp-server", "chrome-devtools", "--mcp-tool", "hover", "--confirm",
+    ])
+    granted = json.loads(capsys.readouterr().out)
+    assert cli.main(["agent", "boxes", "--agent", "coder"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["delegated"] is True
+    assert payload["delegation_id"] == granted["delegation_id"]
+    fake.output = CODEX_AUTH_BOX
+    assert cli.main(["agent", "boxes", "--agent", "coder"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["box_kind"] == "command"
+    assert payload["mcp_server"] is None
+
+
+def test_release_box_releases_delegated_mcp_box_with_audit(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    bind_coder(root)
+    fake = FakeTmuxBackend()
+    monkeypatch.setattr(cli, "TmuxBackend", lambda: fake)
+    fake.output = CODEX_MCP_TOOL_BOX_FOLDED
+
+    # 未委托拒绝,零输入
+    assert cli.main(["agent", "release-box", "--agent", "coder", "--confirm"]) == 1
+    assert "no active delegation" in capsys.readouterr().err
+    assert fake.sent == []
+
+    cli.main([
+        "delegation", "grant", "--agent", "coder",
+        "--mcp-server", "chrome-devtools", "--mcp-tool", "press_key", "--confirm",
+    ])
+    capsys.readouterr()
+    assert cli.main(["agent", "release-box", "--agent", "coder", "--confirm"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["mode"] == "auth_box_released"
+    assert payload["box_kind"] == "mcp_tool"
+    assert payload["mcp_server"] == "chrome-devtools"
+    assert payload["mcp_tool"] == "press_key"
+    assert fake.sent == [("%50", "")]
+    events = _events_text(root)
+    assert '"event_type": "auth_box_released"' in events
+    assert '"mcp_tool": "press_key"' in events
+
+
+def test_boxes_watch_releases_delegated_mcp_box(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    bind_coder(root)
+    fake = DismissingTmuxBackend()
+    monkeypatch.setattr(cli, "TmuxBackend", lambda: fake)
+    fake.output = CODEX_MCP_TOOL_BOX
+    cli.main([
+        "delegation", "grant", "--agent", "coder",
+        "--mcp-server", "chrome-devtools", "--mcp-tool", "hover", "--confirm",
+    ])
+    granted = json.loads(capsys.readouterr().out)
+    _enable_autonomous(capsys)
+    fake.sent.clear()
+
+    assert cli.main(["boxes", "watch", "--agent", "coder", "--confirm", "--iterations", "1", "--interval", "0"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["released_count"] == 1
+    released = payload["released"][0]
+    assert released["delegation_id"] == granted["delegation_id"]
+    assert released["box_kind"] == "mcp_tool"
+    assert released["mcp_server"] == "chrome-devtools"
+    assert released["mcp_tool"] == "hover"
+    assert fake.sent == [("%50", "")]
+    assert '"event_type": "auth_box_released"' in _events_text(root)
 
 
 def test_release_box_refuses_without_box(tmp_path, monkeypatch, capsys) -> None:

@@ -4,6 +4,39 @@
 
 ## 2026-07-29
 
+### MCP tool delegation scope: 第五类框检测与放行 (round 11 发现 #3 收口)
+
+- **Type**: feat
+- **Motivation**: round 11 live 发现 #3 后半——registry 双形态已入账
+  (上一 commit),但 box 提取/匹配/release 面尚未接线,MCP tool 框
+  ("Allow the chrome-devtools MCP server to run tool hover?")仍需人工
+  放行。按 `docs/superpowers/specs/2026-07-29-mcp-tool-delegation-scope-design.md`
+  收口:预授的 MCP 委托应让 sentinel 自动放行精确命中的框。
+- **What**: 新增 fail-closed 提取器 `_extract_mcp_tool_box`(尾窗全
+  空白折叠后按框自身句式匹配,句尾 `?` 硬边界,token 中间折行可还原,
+  任何解析失败返回 None 绝不代按);命令提取优先,无果才试 MCP 提取,
+  两类框互不干扰。`_match_active_delegation` 增加第二臂:
+  `kind="mcp_tool"` 记录按 `(server, tool)` 空白折叠后精确等值,prefix
+  臂逐字节不变。`agent boxes` / `agent release-box` /
+  `_scan_release_delegated_boxes`(boxes watch 与 run-loop
+  `--release-boxes` 共用)响应、skipped/released 项和
+  `auth_box_released` 事件统一携带 `box_kind`/`mcp_server`/`mcp_tool`;
+  放行不变量不变:只在预选项发裸回车,绝不选 option 2/3。contract:
+  `DELEGATION_BOXES_RESPONSE_FIELDS` + boxes/watch examples 同步;
+  `docs/contracts/delegation-schema.md` Box Shapes/Boundaries 与
+  CLAUDE.md delegation bullet 同步(含只对只读性 MCP 工具 grant 的
+  人类判断边界)。
+- **Impact**: 预授 (agent, server, tool) 委托的 MCP 框进入 walk-away
+  放行闭环;未命中/解析失败框仍等待人类(与既有 sentinel 行为一致);
+  命令框路径与既有 prefix 委托行为逐字节不变;委托仍不是权限授权。
+- **Verification**: TDD——提取器(AttributeError)、匹配臂
+  (TypeError)、boxes/release/watch 三面(缺 `box_kind`/MCP 拒放)
+  先 RED 后 GREEN;`conda run -n agentdeck pytest
+  tests/test_delegation_cli.py -q` 24 passed;
+  `pytest tests/test_contracts.py tests/test_agent_cli.py
+  tests/test_leader_cli.py -q`、`python -m compileall src tests`、
+  `git diff --check`、全量 `pytest tests/ -q` 见 commit。
+
 ### MCP tool delegation scope: registry dual shape (round 11 发现 #3 前半)
 
 - **Type**: feat
