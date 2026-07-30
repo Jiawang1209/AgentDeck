@@ -331,3 +331,83 @@ def test_serve_signal_finishes_current_wave_then_exits(tmp_path, monkeypatch, ca
     record = read_host_record(root)
     assert record["wave_count"] == 1  # 当前 wave 完整跑完
     assert record["stopped_reason"] == "signalled"
+
+
+def test_stop_requires_confirm_and_refuses_without_record(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    assert cli.main(["run-loop-host", "stop"]) == 1
+    assert "confirm" in capsys.readouterr().err
+    assert cli.main(["run-loop-host", "stop", "--confirm"]) == 1
+    assert "no run-loop host" in capsys.readouterr().err
+    assert read_host_record(root) is None
+
+
+def test_stop_signals_live_host_and_reports(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    write_host_record(root, {
+        "pid": 999_010, "plan_id": "pln_host_1", "wave_count": 6, "max_waves": 40,
+        "interval": 10.0, "last_gate": "waiting_for_reply", "last_wave_at": None,
+        "stopped_reason": None, "log_path": ".agentdeck/run-loop-host/host.log",
+    })
+    signals: list[tuple[int, int]] = []
+    liveness = {"alive": True}
+
+    def fake_kill(pid: int, number: int) -> None:
+        signals.append((pid, number))
+        liveness["alive"] = False  # 子进程接受信号后退出
+
+    monkeypatch.setattr(cli.os, "kill", fake_kill)
+    monkeypatch.setattr(cli, "_host_pid_alive", lambda _pid: liveness["alive"])
+    monkeypatch.setattr(cli.time, "sleep", lambda _s: None)
+
+    assert cli.main(["run-loop-host", "stop", "--confirm"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["mode"] == "run_loop_host_stopped"
+    assert payload["pid"] == 999_010
+    assert payload["wave_count"] == 6
+    import signal as signal_module
+    assert signals == [(999_010, signal_module.SIGTERM)]
+    assert read_host_record(root)["pid"] is None
+    events = (root / ".agentdeck" / "state" / "events.jsonl").read_text(encoding="utf-8")
+    assert '"event_type": "run_loop_host_stopped"' in events
+    assert '"source": "explicit"' in events
+
+
+def test_stop_timeout_keeps_record_and_never_kills(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    write_host_record(root, {
+        "pid": 999_011, "plan_id": "pln_host_1", "wave_count": 2, "max_waves": 40,
+        "interval": 10.0, "last_gate": "waiting_for_reply", "last_wave_at": None,
+        "stopped_reason": None, "log_path": ".agentdeck/run-loop-host/host.log",
+    })
+    signals: list[tuple[int, int]] = []
+    monkeypatch.setattr(cli.os, "kill", lambda pid, number: signals.append((pid, number)))
+    monkeypatch.setattr(cli, "_host_pid_alive", lambda _pid: True)  # 永不退出
+    monkeypatch.setattr(cli.time, "sleep", lambda _s: None)
+    # 缩短有界等待,避免测试真实忙等 60s;超时语义本身不变
+    monkeypatch.setattr(cli, "_HOST_STOP_TIMEOUT_SECONDS", 0.05)
+
+    assert cli.main(["run-loop-host", "stop", "--confirm"]) == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["mode"] == "run_loop_host_stop_timed_out"
+    import signal as signal_module
+    assert {number for _pid, number in signals} == {signal_module.SIGTERM}  # 绝不 SIGKILL
+    assert read_host_record(root)["pid"] == 999_011  # 记录保留给人工
+
+
+def test_stop_clears_stale_record(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    write_host_record(root, {
+        "pid": 999_012, "plan_id": "pln_host_1", "wave_count": 3, "max_waves": 40,
+        "interval": 10.0, "last_gate": "waiting_for_reply", "last_wave_at": None,
+        "stopped_reason": None, "log_path": ".agentdeck/run-loop-host/host.log",
+    })
+    monkeypatch.setattr(cli, "_host_pid_alive", lambda _pid: False)
+    killed: list[int] = []
+    monkeypatch.setattr(cli.os, "kill", lambda pid, _n: killed.append(pid))
+
+    assert cli.main(["run-loop-host", "stop", "--confirm"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["mode"] == "run_loop_host_stale_cleared"
+    assert killed == []  # 死进程不发信号
+    assert read_host_record(root)["pid"] is None

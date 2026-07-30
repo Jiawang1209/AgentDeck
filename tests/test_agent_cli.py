@@ -6156,6 +6156,7 @@ def test_contract_list_discovers_all_gui_contracts(capsys) -> None:
         "run",
         "run-loop",
         "run-loop-all",
+        "run-loop-host",
         "workflow",
             "mission",
             "migration",

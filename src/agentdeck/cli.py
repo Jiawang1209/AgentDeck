@@ -20431,6 +20431,92 @@ def run_loop_host_status_command(_args: argparse.Namespace) -> int:
     return 0
 
 
+_HOST_STOP_TIMEOUT_SECONDS = 60.0
+_HOST_STOP_POLL_SECONDS = 0.5
+
+
+def run_loop_host_stop_command(args: argparse.Namespace) -> int:
+    config, store, exit_code = _load_project_or_error()
+    if config is None or store is None:
+        return exit_code
+    if not args.confirm:
+        print("run-loop-host stop requires --confirm", file=sys.stderr)
+        return 1
+    root = Path(config.root)
+    record, running, stale = _host_liveness_or_none(root)
+    if record is None:
+        print("no run-loop host record for this project", file=sys.stderr)
+        return 1
+    plan_id = record.get("plan_id")
+    pid = record.get("pid")
+    wave_count = record.get("wave_count")
+    if not running:
+        cleared = {**record, "pid": None}
+        write_host_record(root, cleared)
+        payload = {
+            "ok": True,
+            "mode": "run_loop_host_stale_cleared",
+            "plan_id": plan_id,
+            "pid": pid if stale else None,
+            "wave_count": wave_count,
+            "stopped_reason": record.get("stopped_reason"),
+            "next_command": "agentdeck run-loop-host status",
+        }
+    else:
+        os.kill(int(pid), signal.SIGTERM)
+        deadline = time.monotonic() + _HOST_STOP_TIMEOUT_SECONDS
+        exited = False
+        while time.monotonic() < deadline:
+            if not _host_pid_alive(int(pid)):
+                exited = True
+                break
+            time.sleep(_HOST_STOP_POLL_SECONDS)
+        if not exited:
+            # 有界超时:绝不升级到 SIGKILL,保留记录交人工。
+            payload = {
+                "ok": False,
+                "mode": "run_loop_host_stop_timed_out",
+                "plan_id": plan_id,
+                "pid": pid,
+                "wave_count": wave_count,
+                "stopped_reason": None,
+                "next_command": "agentdeck run-loop-host status",
+            }
+            validation = validate_run_loop_host_stop_contract(payload)
+            if not validation["ok"]:
+                print("run-loop-host stop contract validation failed", file=sys.stderr)
+                for error in validation["errors"]:
+                    print(f"- {error}", file=sys.stderr)
+                return 1
+            _print_json(payload)
+            return 1
+        latest = read_host_record(root) or record
+        write_host_record(root, {**latest, "pid": None})
+        store.append_event(EventRecord.create("run_loop_host_stopped", {
+            "plan_id": plan_id,
+            "wave_count": latest.get("wave_count", wave_count),
+            "stopped_reason": latest.get("stopped_reason") or "signalled",
+            "source": "explicit",
+        }))
+        payload = {
+            "ok": True,
+            "mode": "run_loop_host_stopped",
+            "plan_id": plan_id,
+            "pid": pid,
+            "wave_count": latest.get("wave_count", wave_count),
+            "stopped_reason": latest.get("stopped_reason") or "signalled",
+            "next_command": "agentdeck run-loop-host status",
+        }
+    validation = validate_run_loop_host_stop_contract(payload)
+    if not validation["ok"]:
+        print("run-loop-host stop contract validation failed", file=sys.stderr)
+        for error in validation["errors"]:
+            print(f"- {error}", file=sys.stderr)
+        return 1
+    _print_json(payload)
+    return 0
+
+
 def _run_loop_host_finish(
     root: Path,
     store: StateStore,
@@ -21018,6 +21104,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="Merge task branches when the final gate is complete",
     )
     host_serve.set_defaults(func=run_loop_host_serve_command)
+
+    host_stop = run_loop_host_subparsers.add_parser("stop", help="Stop the background host")
+    host_stop.add_argument("--confirm", action="store_true", help="Explicitly confirm the stop")
+    host_stop.set_defaults(func=run_loop_host_stop_command)
 
     workflow = subparsers.add_parser(
         "workflow",

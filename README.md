@@ -75,7 +75,17 @@ AgentDeck › Mission started. Use /status or open the workbench to inspect it.
   review-step
   approval dispatches (a later step whose plan already has an earlier task
   branch) additionally embed the plan's acceptance criteria and the verdict
-  output format in the worker prompt — prompt context only, never authority.
+  output format in the worker prompt — prompt context only, never authority;
+- run-loop background host: `agentdeck run-loop-host start --plan-id <id>
+  --confirm --max-waves <n> [--interval <s>] [--release-boxes]
+  [--merge-on-complete]` runs the unchanged single-wave run-loop engine in a
+  detached process that survives client disconnect (autonomous-mode gated,
+  mandatory wave budget, single instance per project); `agentdeck
+  run-loop-host status` is read-only; `agentdeck run-loop-host stop --confirm`
+  sends SIGTERM, the child finishes its current wave, and there is no SIGKILL
+  escalation — flipping `approval_mode` away from `autonomous` also stops the
+  host at the next wave (`stopped_reason=policy_revoked`); discovery:
+  `agentdeck contract run-loop-host`.
 
 Useful observation commands:
 

@@ -4,6 +4,32 @@
 
 ## 2026-07-30
 
+### Add run-loop-host stop with bounded SIGTERM and no SIGKILL escalation
+
+- **Type**: feat
+- **Motivation**: 背景宿主收尾刀——给 detached 宿主一个显式、有界、
+  绝不粗暴终止的人类停止入口,并把整个 run-loop-host 面写进
+  CLAUDE.md 规则与 README。
+- **What**: `cli.py` 新增 `run-loop-host stop --confirm`:无 `--confirm`
+  或无记录拒绝(零写);活 pid 只发一次 SIGTERM,有界轮询等待子进程
+  在完成当前 wave 后退出(测试可注入超时),成功清 pid 并追加
+  `run_loop_host_stopped`(source=explicit),`mode=run_loop_host_stopped`;
+  超时**绝不升级 SIGKILL**——输出 `run_loop_host_stop_timed_out` 退非 0,
+  记录保留给人工;stale 记录(死 pid)清 pid 不发信号,
+  `mode=run_loop_host_stale_cleared`。三路输出都经 stop validator 守门。
+  CLAUDE.md 增 run-loop-host 规则 bullet(四道 gate、单例、policy
+  刹车、SIGTERM 完成当前 wave、闭合枚举单一来源、hosting 不是授权、
+  与 M2 Mission daemon 分离、非目标)与常用命令三条;README 增背景
+  宿主 feature bullet;contract 名字表测试(`test_agent_cli.py`)同步
+  新索引条目。
+- **Impact**: run-loop-host start/status/serve/stop 全链闭合,walk-away
+  自主段不再被客户端在线时长截断;所有既有 gate/引擎行为零变化。
+- **Verification**: TDD——stop 四测先 RED(无 stop 子命令)后 GREEN;
+  host 全部 21 passed;follow+autonomy+contracts+agent_cli 923 passed;
+  `python -m compileall src tests` 通过;`git diff --check` 干净;
+  `git diff -- src/agentdeck/daemon/` 零输出(Mission daemon 未触碰);
+  全量 suite 见本条目提交(4782 passed, 3 skipped)。
+
 ### Add run-loop-host serve loop with policy brake and graceful SIGTERM
 
 - **Type**: feat
