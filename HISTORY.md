@@ -4,6 +4,25 @@
 
 ## 2026-07-30
 
+### Confine every fd-prefixed and word-glued redirect in delegation normalization
+
+- **Type**: fix
+- **Motivation**: spec 审查(subagent 对抗探针 30 例)在新归一化模块里
+  找到两条 fail-open:①`_REDIRECT_TOKEN` 只认 `>`/`>>`/`2>`/`2>>`,
+  其它 fd 前缀(`1>>` `3>` `10>`)落到普通参数分支,完全绕过 `/tmp`
+  约束——叠加 `echo` 无限参数胶水即可 `node tests/x; echo "…" 1>>~/.zshrc`
+  写用户 shell rc;②shell 认 `word>target`(`echo foo>/etc/evil`)为
+  重定向,按空白切 token 后同样形如普通参数。
+- **What**: 重定向识别改 `^(?:\d*>{1,2})(.*)$` 覆盖任意 fd 前缀;
+  `_strip_redirects` 对**任何**残留含 `>` 的 token 硬拒(`>` 只应出现在
+  被识别并校验的重定向里),连带把 `&>`/`&>>`/`>|`/`2>&3`/`1>&2` 等
+  形态钉在 fail-closed 侧并逐一加断言。
+- **Impact**: 归一化不再可能把写任意路径的重定向当作胶水放过;合法
+  `1> /tmp/x.log` 仍匹配。仅影响尚无消费方的新模块,零现有行为变化。
+- **Verification**: TDD——四条 fd/词粘连断言先 RED 后 GREEN;
+  `tests/test_delegation_match.py` 17 passed;`test_delegation_cli.py`
+  33 passed 不变;contracts+agent 910 passed;compileall/diff-check 干净。
+
 ### Add conservative shell normalization module for delegation matching
 
 - **Type**: feat

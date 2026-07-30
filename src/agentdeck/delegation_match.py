@@ -29,7 +29,7 @@ _ENV_ASSIGNMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=\S+$")
 _GLUE_ASSIGNMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=\S*$")
 _SIMPLE_WORD = re.compile(r"^(?:[A-Za-z0-9._\-]+|\$\{[A-Za-z_][A-Za-z0-9_]*\})$")
 _NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
-_REDIRECT_TOKEN = re.compile(r"^(?:2?>{1,2})(.*)$")
+_REDIRECT_TOKEN = re.compile(r"^(?:\d*>{1,2})(.*)$")
 _TMP_TARGET = re.compile(r"^/tmp/\S+$")
 
 
@@ -99,7 +99,12 @@ def _strip_control_prefix(segment: str) -> str:
 
 
 def _strip_redirects(tokens: list[str]) -> list[str] | None:
-    """剥离并校验重定向:仅允许 2>&1 与目标为 /tmp/ 下(无 ..)的 >/>>。"""
+    """剥离并校验重定向:仅允许 2>&1 与目标为 /tmp/ 下(无 ..)的
+    `[fd]>`/`[fd]>>`。任何其它带 `>` 的 token 一律硬拒——spec 审查发现
+    两条 fail-open:①非 2 号 fd 前缀(`1>>` `3>` `10>`)曾漏过 /tmp 约束;
+    ②shell 认 `word>target`(如 `echo foo>/etc/evil`)为重定向,而按空白
+    切 token 后它形如普通参数。`>` 只应出现在被本函数识别并校验的重定向
+    里,出现在别处就是我们没理解的形态。"""
     out: list[str] = []
     i = 0
     while i < len(tokens):
@@ -120,6 +125,8 @@ def _strip_redirects(tokens: list[str]) -> list[str] | None:
             if _TMP_TARGET.match(target) is None or ".." in target:
                 return None
             continue
+        if ">" in tok:
+            return None
         out.append(tok)
         i += 1
     return out

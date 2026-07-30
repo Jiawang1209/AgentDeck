@@ -85,6 +85,35 @@ def test_redirect_targets_must_be_tmp_confined() -> None:
     assert normalize_match("node tests/x.mjs >> /tmp/ok.log 2>&1", PREFIXES) is not None
 
 
+def test_fd_prefixed_redirects_are_tmp_confined() -> None:
+    # spec 审查发现的 fail-open:非 2 号 fd 前缀(1>/3>>/10>)曾逃过
+    # /tmp 约束,叠加 echo 无限参数胶水即可写任意文件。
+    assert normalize_match('node tests/x.mjs; echo "x" 1>>~/.zshrc', PREFIXES) is None
+    assert normalize_match("node tests/x.mjs 1> /etc/evil", PREFIXES) is None
+    assert normalize_match("node tests/x.mjs 3>> /etc/evil", PREFIXES) is None
+    assert normalize_match("node tests/x.mjs 10> /etc/evil", PREFIXES) is None
+    assert normalize_match("node tests/x.mjs 1> /tmp/ok.log", PREFIXES) is not None
+    assert normalize_match("node tests/x.mjs 1>/tmp/ok.log", PREFIXES) is not None
+
+
+def test_word_glued_redirects_rejected() -> None:
+    # shell 认 word>target 为重定向,空白切 token 后形如普通参数 → 硬拒
+    assert normalize_match("node tests/x.mjs; echo foo>/etc/evil", PREFIXES) is None
+    assert normalize_match("node tests/x.mjs; echo x out>>~/.zshrc", PREFIXES) is None
+
+
+def test_other_redirect_shapes_stay_fail_closed() -> None:
+    # &> / &>> :裸 & 在拆段层即拒;>| :| 拆段后残留裸 > 缺目标 → 拒;
+    # fd 复制到非 2>&1 :目标 &N 不在 /tmp → 拒
+    assert normalize_match("node tests/x.mjs &> /etc/evil", PREFIXES) is None
+    assert normalize_match("node tests/x.mjs &> /tmp/ok.log", PREFIXES) is None
+    assert normalize_match("node tests/x.mjs &>> /tmp/ok.log", PREFIXES) is None
+    assert normalize_match("node tests/x.mjs >| /etc/evil", PREFIXES) is None
+    assert normalize_match("node tests/x.mjs >| /tmp/ok.log", PREFIXES) is None
+    assert normalize_match("node tests/x.mjs 2>&3", PREFIXES) is None
+    assert normalize_match("node tests/x.mjs 1>&2", PREFIXES) is None
+
+
 def test_tail_glue_is_tmp_confined() -> None:
     assert normalize_match("node tests/x.mjs; tail -5 /tmp/x.log", PREFIXES) is not None
     assert normalize_match("node tests/x.mjs; tail -5 /tmp/../etc/passwd", PREFIXES) is None
