@@ -4,6 +4,33 @@
 
 ## 2026-07-30
 
+### Add run-loop-host serve loop with policy brake and graceful SIGTERM
+
+- **Type**: feat
+- **Motivation**: 背景宿主第四刀——detached 子进程的真实循环体:start
+  spawn 出的 `serve` 现在能复用**未改动**的 `_run_loop_single_wave`
+  连续推 wave,让确认后的自主段在客户端断开后继续。
+- **What**: `cli.py` 新增 `run-loop-host serve`(内部子命令):每 wave
+  前重读 `.agentdeck/config.toml`,`approval_mode` 离开 autonomous 即停
+  (`policy_revoked` 远程刹车);wave 引擎逐字节复用,payload 追加进
+  host.log 并更新 host.json(wave_count/last_gate/last_wave_at);gate
+  不再是 `waiting_for_reply` → `gate_reached` 停;SIGTERM/SIGINT 只置
+  旗标,当前 wave 完整跑完后以 `signalled` 停(worker 绝不被半途切断);
+  budget 用尽 → `budget_exhausted`;引擎异常/契约失败 → `engine_error`,
+  日志只记异常类型绝不记 provider 输出,退非 0。可选 `--release-boxes`
+  在段首(wave 0)和 wave 间隙复用 `_scan_release_delegated_boxes`
+  (source=run_loop_host,逐次审计);可选 `--merge-on-complete` 仅在
+  最终 gate 为 complete 时先过 `_verdict_merge_blocker` 再复用
+  `_merge_plan_worktrees`,结果入 host.log。收尾统一
+  `_run_loop_host_finish`:清 pid、写 stopped_reason、host_stopped 日志
+  行 + `run_loop_host_stopped` 审计事件(source=host)。
+- **Impact**: start→serve 链路闭合,宿主可真实后台续跑;单 wave 引擎与
+  run-loop/--follow 行为零变化(follow 测试同跑证明)。
+- **Verification**: TDD——serve 五测先 RED(argparse 无 serve)后
+  GREEN:多 wave 到 gate、budget 停、policy 刹车、engine_error 不崩且
+  日志无异常消息、SIGTERM 完成当前 wave;`test_run_loop_host_cli.py` +
+  `test_run_loop_follow.py` 15 passed。
+
 ### Add run-loop-host start and status commands
 
 - **Type**: feat

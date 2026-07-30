@@ -177,3 +177,157 @@ def test_status_is_read_only_across_three_record_states(tmp_path, monkeypatch, c
     payload = json.loads(capsys.readouterr().out)
     assert payload["running"] is False and payload["stale"] is False
     assert payload["stopped_reason"] == "gate_reached"
+
+
+def _serve_argv(root: Path, plan_id: str, max_waves: int, interval: str = "0") -> list[str]:
+    return [
+        "run-loop-host", "serve", "--project", str(root),
+        "--plan-id", plan_id, "--max-waves", str(max_waves), "--interval", interval,
+    ]
+
+
+def _log_lines(root: Path) -> list[dict]:
+    from agentdeck.run_loop_host import host_log_path
+
+    text = host_log_path(root).read_text(encoding="utf-8")
+    return [json.loads(line) for line in text.splitlines() if line.strip()]
+
+
+def test_serve_runs_waves_until_gate_and_records(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    plan_id = seed_plan(root)
+    enable_autonomous(capsys)
+    write_host_record(root, {
+        "pid": 1, "plan_id": plan_id, "max_waves": 5, "interval": 0.0,
+        "release_boxes": False, "merge_on_complete": False,
+        "log_path": ".agentdeck/run-loop-host/host.log",
+        "wave_count": 0, "last_gate": None, "last_wave_at": None, "stopped_reason": None,
+    })
+    gates = ["waiting_for_reply", "waiting_for_reply", "complete"]
+    calls = {"n": 0}
+
+    def fake_wave(_config, _store, wave_plan_id):
+        assert wave_plan_id == plan_id
+        gate = gates[calls["n"]]
+        calls["n"] += 1
+        return {"ok": True, "mode": "run_loop", "plan_id": wave_plan_id,
+                "stopped_reason": gate, "next_command": "agentdeck leader summary"}
+
+    monkeypatch.setattr(cli, "_run_loop_single_wave", fake_wave)
+    assert cli.main(_serve_argv(root, plan_id, 5)) == 0
+
+    record = read_host_record(root)
+    assert record["wave_count"] == 3
+    assert record["last_gate"] == "complete"
+    assert record["stopped_reason"] == "gate_reached"
+    assert record["pid"] is None  # 干净停止清 pid
+    lines = _log_lines(root)
+    assert [line["wave"] for line in lines if line.get("event") != "host_stopped"] == [1, 2, 3]
+    assert all(line["plan_id"] == plan_id for line in lines)
+    events = (root / ".agentdeck" / "state" / "events.jsonl").read_text(encoding="utf-8")
+    assert '"event_type": "run_loop_host_stopped"' in events
+    assert '"stopped_reason": "gate_reached"' in events
+
+
+def test_serve_stops_at_budget(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    plan_id = seed_plan(root)
+    enable_autonomous(capsys)
+    write_host_record(root, {
+        "pid": 1, "plan_id": plan_id, "max_waves": 2, "interval": 0.0,
+        "release_boxes": False, "merge_on_complete": False,
+        "log_path": ".agentdeck/run-loop-host/host.log",
+        "wave_count": 0, "last_gate": None, "last_wave_at": None, "stopped_reason": None,
+    })
+    monkeypatch.setattr(cli, "_run_loop_single_wave", lambda *_a: {
+        "ok": True, "mode": "run_loop", "plan_id": plan_id,
+        "stopped_reason": "waiting_for_reply", "next_command": "agentdeck capture-reply",
+    })
+    assert cli.main(_serve_argv(root, plan_id, 2)) == 0
+    record = read_host_record(root)
+    assert record["wave_count"] == 2
+    assert record["stopped_reason"] == "budget_exhausted"
+
+
+def test_serve_policy_brake_stops_when_mode_leaves_autonomous(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    plan_id = seed_plan(root)
+    enable_autonomous(capsys)
+    write_host_record(root, {
+        "pid": 1, "plan_id": plan_id, "max_waves": 5, "interval": 0.0,
+        "release_boxes": False, "merge_on_complete": False,
+        "log_path": ".agentdeck/run-loop-host/host.log",
+        "wave_count": 0, "last_gate": None, "last_wave_at": None, "stopped_reason": None,
+    })
+    waves = {"n": 0}
+
+    def fake_wave(_config, _store, _plan_id):
+        waves["n"] += 1
+        if waves["n"] == 1:
+            # 第一 wave 后人类把模式改回 ask(远程刹车)
+            cli.main(["policy", "set-mode", "--mode", "ask"])
+            capsys.readouterr()
+        return {"ok": True, "mode": "run_loop", "plan_id": plan_id,
+                "stopped_reason": "waiting_for_reply", "next_command": "agentdeck capture-reply"}
+
+    monkeypatch.setattr(cli, "_run_loop_single_wave", fake_wave)
+    assert cli.main(_serve_argv(root, plan_id, 5)) == 0
+    record = read_host_record(root)
+    assert record["stopped_reason"] == "policy_revoked"
+    assert record["wave_count"] == 1
+
+
+def test_serve_engine_error_is_recorded_not_crashed(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    plan_id = seed_plan(root)
+    enable_autonomous(capsys)
+    write_host_record(root, {
+        "pid": 1, "plan_id": plan_id, "max_waves": 3, "interval": 0.0,
+        "release_boxes": False, "merge_on_complete": False,
+        "log_path": ".agentdeck/run-loop-host/host.log",
+        "wave_count": 0, "last_gate": None, "last_wave_at": None, "stopped_reason": None,
+    })
+
+    def boom(*_args):
+        raise RuntimeError("provider exploded")
+
+    monkeypatch.setattr(cli, "_run_loop_single_wave", boom)
+    assert cli.main(_serve_argv(root, plan_id, 3)) == 1
+    record = read_host_record(root)
+    assert record["stopped_reason"] == "engine_error"
+    # 只记异常类型,不记消息(避免 provider 输出/密钥入日志)
+    line = [entry for entry in _log_lines(root) if entry.get("event") == "engine_error"][-1]
+    assert line["error_type"] == "RuntimeError"
+    assert "exploded" not in json.dumps(_log_lines(root))
+
+
+def test_serve_signal_finishes_current_wave_then_exits(tmp_path, monkeypatch, capsys) -> None:
+    import signal as signal_module
+
+    root = prepare_project(tmp_path, monkeypatch)
+    plan_id = seed_plan(root)
+    enable_autonomous(capsys)
+    write_host_record(root, {
+        "pid": 1, "plan_id": plan_id, "max_waves": 9, "interval": 0.0,
+        "release_boxes": False, "merge_on_complete": False,
+        "log_path": ".agentdeck/run-loop-host/host.log",
+        "wave_count": 0, "last_gate": None, "last_wave_at": None, "stopped_reason": None,
+    })
+    handlers: dict[int, object] = {}
+    monkeypatch.setattr(
+        cli.signal, "signal", lambda number, handler: handlers.setdefault(number, handler)
+    )
+
+    def fake_wave(*_args):
+        # wave 执行中收到 SIGTERM:必须完成本 wave 再退出
+        handler = handlers.get(signal_module.SIGTERM)
+        if handler is not None:
+            handler(signal_module.SIGTERM, None)
+        return {"ok": True, "mode": "run_loop", "plan_id": plan_id,
+                "stopped_reason": "waiting_for_reply", "next_command": "agentdeck capture-reply"}
+
+    monkeypatch.setattr(cli, "_run_loop_single_wave", fake_wave)
+    assert cli.main(_serve_argv(root, plan_id, 9)) == 0
+    record = read_host_record(root)
+    assert record["wave_count"] == 1  # 当前 wave 完整跑完
+    assert record["stopped_reason"] == "signalled"

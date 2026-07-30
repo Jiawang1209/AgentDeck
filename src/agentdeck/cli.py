@@ -20431,6 +20431,164 @@ def run_loop_host_status_command(_args: argparse.Namespace) -> int:
     return 0
 
 
+def _run_loop_host_finish(
+    root: Path,
+    store: StateStore,
+    *,
+    plan_id: str,
+    wave_count: int,
+    last_gate: str | None,
+    stopped_reason: str,
+) -> None:
+    record = read_host_record(root) or {}
+    record.update({
+        "pid": None,
+        "plan_id": plan_id,
+        "wave_count": wave_count,
+        "last_gate": last_gate,
+        "stopped_reason": stopped_reason,
+        "stopped_at": utc_now(),
+    })
+    write_host_record(root, record)
+    append_host_log(root, {
+        "plan_id": plan_id,
+        "event": "host_stopped",
+        "wave": wave_count,
+        "stopped_reason": stopped_reason,
+        "at": utc_now(),
+    })
+    store.append_event(EventRecord.create("run_loop_host_stopped", {
+        "plan_id": plan_id,
+        "wave_count": wave_count,
+        "stopped_reason": stopped_reason,
+        "source": "host",
+    }))
+
+
+def run_loop_host_serve_command(args: argparse.Namespace) -> int:
+    """The detached child. stdout is DEVNULL in production; all output is the
+    JSONL log plus audit events. The wave engine is reused unchanged."""
+    root = Path(args.project).expanduser().resolve()
+    try:
+        config = load_config(root)
+        store = StateStore(root)
+    except Exception as exc:
+        print(f"run-loop-host serve failed: {type(exc).__name__}", file=sys.stderr)
+        return 1
+    plan_id = str(args.plan_id)
+    stop_requested = {"value": False}
+
+    def _handle_terminate(_number, _frame) -> None:
+        # 只置旗标:当前 wave 必须跑完,worker 绝不被半途切断。
+        stop_requested["value"] = True
+
+    signal.signal(signal.SIGTERM, _handle_terminate)
+    signal.signal(signal.SIGINT, _handle_terminate)
+
+    backend = TmuxBackend() if args.release_boxes else None
+    agent_ids = [agent.agent_id for agent in config.agents]
+    if backend is not None:
+        released, _skipped = _scan_release_delegated_boxes(
+            config, store, backend, agent_ids, 0, source="run_loop_host"
+        )
+        for item in released:
+            append_host_log(root, {
+                "plan_id": plan_id, "event": "box_released", "wave": 0,
+                "agent_id": item.get("agent_id"), "match_kind": item.get("match_kind"),
+                "at": utc_now(),
+            })
+
+    wave_count = 0
+    last_gate: str | None = None
+    stopped_reason = "budget_exhausted"
+    for wave_number in range(1, int(args.max_waves) + 1):
+        # 每 wave 重读配置:approval_mode 被改回 ask 即自停(远程刹车)。
+        try:
+            config = load_config(root)
+        except Exception:
+            stopped_reason = "policy_revoked"
+            break
+        if config.leader.approval_mode != "autonomous":
+            stopped_reason = "policy_revoked"
+            break
+        try:
+            payload = _run_loop_single_wave(config, store, plan_id)
+        except Exception as exc:  # 引擎异常:记类型,绝不记 provider 输出
+            append_host_log(root, {
+                "plan_id": plan_id, "event": "engine_error", "wave": wave_number,
+                "error_type": type(exc).__name__, "at": utc_now(),
+            })
+            _run_loop_host_finish(
+                root, store, plan_id=plan_id, wave_count=wave_count,
+                last_gate=last_gate, stopped_reason="engine_error",
+            )
+            return 1
+        if payload is None:
+            append_host_log(root, {
+                "plan_id": plan_id, "event": "engine_error", "wave": wave_number,
+                "error_type": "ContractValidationFailed", "at": utc_now(),
+            })
+            _run_loop_host_finish(
+                root, store, plan_id=plan_id, wave_count=wave_count,
+                last_gate=last_gate, stopped_reason="engine_error",
+            )
+            return 1
+        wave_count = wave_number
+        last_gate = payload.get("stopped_reason")
+        append_host_log(root, {**payload, "wave": wave_number, "plan_id": plan_id, "at": utc_now()})
+        record = read_host_record(root) or {}
+        record.update({
+            "wave_count": wave_count,
+            "last_gate": last_gate,
+            "last_wave_at": utc_now(),
+        })
+        write_host_record(root, record)
+        if last_gate != "waiting_for_reply":
+            stopped_reason = "gate_reached"
+            break
+        if stop_requested["value"]:
+            stopped_reason = "signalled"
+            break
+        if wave_number >= int(args.max_waves):
+            stopped_reason = "budget_exhausted"
+            break
+        if backend is not None:
+            released, _skipped = _scan_release_delegated_boxes(
+                config, store, backend, agent_ids, wave_number, source="run_loop_host"
+            )
+            for item in released:
+                append_host_log(root, {
+                    "plan_id": plan_id, "event": "box_released", "wave": wave_number,
+                    "agent_id": item.get("agent_id"), "match_kind": item.get("match_kind"),
+                    "at": utc_now(),
+                })
+        if args.interval > 0:
+            time.sleep(float(args.interval))
+
+    if (
+        getattr(args, "merge_on_complete", False)
+        and stopped_reason == "gate_reached"
+        and last_gate == "complete"
+    ):
+        blocker = _verdict_merge_blocker(store, plan_id)
+        if blocker:
+            append_host_log(root, {
+                "plan_id": plan_id, "event": "plan_merge", "mode": "verdict_blocked",
+                "blocker": blocker, "wave": wave_count, "at": utc_now(),
+            })
+        else:
+            append_host_log(root, {
+                "plan_id": plan_id, "event": "plan_merge", "wave": wave_count,
+                "result": _merge_plan_worktrees(config, store, plan_id), "at": utc_now(),
+            })
+
+    _run_loop_host_finish(
+        root, store, plan_id=plan_id, wave_count=wave_count,
+        last_gate=last_gate, stopped_reason=stopped_reason,
+    )
+    return 0
+
+
 def run_loop_command(args: argparse.Namespace) -> int:
     config, store, exit_code = _load_project_or_error()
     if config is None or store is None:
@@ -20846,6 +21004,20 @@ def build_parser() -> argparse.ArgumentParser:
         "status", help="Show background host status (read-only)"
     )
     host_status.set_defaults(func=run_loop_host_status_command)
+
+    host_serve = run_loop_host_subparsers.add_parser(
+        "serve", help="Internal: run the host loop in the foreground of a detached child"
+    )
+    host_serve.add_argument("--project", required=True, help="Project root")
+    host_serve.add_argument("--plan-id", required=True, help="Plan to drive forward")
+    host_serve.add_argument("--max-waves", type=int, required=True, help="Bounded wave budget")
+    host_serve.add_argument("--interval", type=float, default=10.0, help="Seconds between waves")
+    host_serve.add_argument("--release-boxes", action="store_true", help="Release delegated boxes")
+    host_serve.add_argument(
+        "--merge-on-complete", dest="merge_on_complete", action="store_true",
+        help="Merge task branches when the final gate is complete",
+    )
+    host_serve.set_defaults(func=run_loop_host_serve_command)
 
     workflow = subparsers.add_parser(
         "workflow",
