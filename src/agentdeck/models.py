@@ -78,6 +78,7 @@ class LeaderConfig:
 class AutonomousPolicy:
     allowed_agents: tuple[str, ...] = ()
     max_approvals: int = 0
+    max_review_rounds: int = 2
 
 
 @dataclass(frozen=True)

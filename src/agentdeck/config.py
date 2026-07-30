@@ -322,9 +322,18 @@ def load_config(root: Path | None = None) -> ProjectConfig:
     agents = tuple(_agent_spec(item) for item in agents_raw)
     autonomous_raw = raw.get("autonomous", {})
     allowed = autonomous_raw.get("allowed_agents", []) if isinstance(autonomous_raw, dict) else []
+    if isinstance(autonomous_raw, dict):
+        rounds_raw = autonomous_raw.get("max_review_rounds", 2)
+    else:
+        rounds_raw = 2
+    if isinstance(rounds_raw, bool) or not isinstance(rounds_raw, int):
+        raise ValueError("autonomous max_review_rounds must be an integer >= 0")
+    if rounds_raw < 0:
+        raise ValueError("autonomous max_review_rounds must be an integer >= 0")
     autonomous = AutonomousPolicy(
         allowed_agents=tuple(str(a) for a in allowed),
         max_approvals=int(autonomous_raw.get("max_approvals", 0)) if isinstance(autonomous_raw, dict) else 0,
+        max_review_rounds=rounds_raw,
     )
     skills_raw = raw.get("skills", {})
     allowed_sources = (
@@ -416,10 +425,19 @@ def update_autonomous_policy(root: Path, allowed_agents: tuple[str, ...], max_ap
     if not path.exists():
         raise FileNotFoundError(f"missing config: {path}")
     raw = tomllib.loads(path.read_text(encoding="utf-8"))
-    raw["autonomous"] = {
+    existing_autonomous = raw.get("autonomous", {})
+    existing_rounds = (
+        existing_autonomous.get("max_review_rounds")
+        if isinstance(existing_autonomous, dict)
+        else None
+    )
+    updated_autonomous: dict[str, object] = {
         "allowed_agents": list(allowed_agents),
         "max_approvals": int(max_approvals),
     }
+    if existing_rounds is not None:
+        updated_autonomous["max_review_rounds"] = existing_rounds
+    raw["autonomous"] = updated_autonomous
     path.write_text(_dump_config(raw), encoding="utf-8")
     return load_config(root).autonomous
 
@@ -512,7 +530,11 @@ def _dump_config(raw: dict[str, object]) -> str:
             ]
         )
     autonomous = raw.get("autonomous", {})
-    if isinstance(autonomous, dict) and (autonomous.get("allowed_agents") or autonomous.get("max_approvals")):
+    if isinstance(autonomous, dict) and (
+        autonomous.get("allowed_agents")
+        or autonomous.get("max_approvals")
+        or autonomous.get("max_review_rounds") is not None
+    ):
         allowed = autonomous.get("allowed_agents", []) or []
         allowed_toml = "[" + ", ".join(_quote_toml(str(a)) for a in allowed) + "]"
         lines.extend([
@@ -521,6 +543,8 @@ def _dump_config(raw: dict[str, object]) -> str:
             f"allowed_agents = {allowed_toml}",
             f"max_approvals = {int(autonomous.get('max_approvals', 0))}",
         ])
+        if autonomous.get("max_review_rounds") is not None:
+            lines.append(f"max_review_rounds = {int(autonomous['max_review_rounds'])}")
     skills = raw.get("skills", {})
     if isinstance(skills, dict) and skills.get("allowed_sources"):
         sources = skills.get("allowed_sources", []) or []

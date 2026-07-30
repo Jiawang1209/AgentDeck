@@ -4,6 +4,36 @@
 
 ## 2026-07-30
 
+### Add [autonomous] max_review_rounds config (review iteration budget)
+
+- **Type**: feat
+- **Motivation**: 为 `docs/superpowers/specs/2026-07-30-review-iteration-loop-design.md`
+  冻结的 review-driven iteration loop（review verdict fail → 自动追加
+  rework step，预算有界）打地基——第一刀只落地预算旋钮本身：
+  `[autonomous] max_review_rounds`，冻结默认值 2，不实现任何派生
+  或写入逻辑（YAGNI，后续 task 分别交付纯派生模块、state writer、
+  CLI 和 run-loop hook）。
+- **What**: `models.py::AutonomousPolicy` 新增 `max_review_rounds: int = 2`；
+  `config.py::load_config` 从 `[autonomous].max_review_rounds` fail-closed
+  解析（缺省 2；bool/非 int/负数一律 `ValueError`，TOML 整数天然是
+  int，比 `int(...)` 强转更严）。顺带发现并修复一个既有 round-trip
+  漏洞：`update_autonomous_policy` 此前整块重写 `raw["autonomous"]`，
+  会静默丢弃任何已存在的 `max_review_rounds`；现在读-改-写时显式
+  保留该键，并同步修好 `_dump_config`（此前即便 `raw["autonomous"]`
+  里带了 `max_review_rounds` 也不会序列化进 TOML，任何经过
+  `_dump_config` 的写路径——`update_agent_role`/
+  `update_leader_approval_mode`/`update_leader_provider`/
+  `update_autonomous_policy`——都会把它写丢）。
+- **Impact**: 纯新增配置字段 + 一个此前从未被使用因此从未暴露的
+  round-trip bug 修复；不改变任何既有行为、CLI 表面或 contract。
+  为后续 review-iteration-loop task 提供可靠的预算配置基座。
+- **Verification**: TDD——`tests/test_review_iteration.py` 四个测试先
+  RED（`AutonomousPolicy` 无该属性 / 非法值未拒绝），实现后 GREEN；
+  `pytest tests/test_review_iteration.py tests/test_autonomy.py -q`
+  11 passed；`pytest tests/test_autonomy.py
+  tests/test_leader_subrole_config.py tests/test_review_iteration.py -q`
+  24 passed；`python -m compileall src` 通过。
+
 ### Add run-loop-host stop with bounded SIGTERM and no SIGKILL escalation
 
 - **Type**: feat
