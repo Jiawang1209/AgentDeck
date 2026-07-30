@@ -4,6 +4,27 @@
 
 ## 2026-07-30
 
+### Add run-loop host record module (pidfile, JSONL log, liveness)
+
+- **Type**: feat
+- **Motivation**: round 12 live 中操作者被迫手动重启 `run-loop --follow`
+  段八次——follow 段随客户端断开而死,walk-away 自主段实际上被客户端
+  在线时长上限截断。user 拍板落地背景宿主(设计
+  `docs/superpowers/specs/2026-07-30-run-loop-host-design.md`,方案:
+  detached 子进程 + pidfile 单例 + JSONL 日志,不引入 socket/lease,
+  不触碰 M2 Mission daemon)。本条是第一刀:进程记录层纯模块。
+- **What**: 新纯模块 `src/agentdeck/run_loop_host.py`——
+  `.agentdeck/run-loop-host/host.json` 单例记录(原子替换写、损坏读作
+  None)、`host.log` append-only JSONL、`pid_alive` 探活(0/负/不存在
+  False,PermissionError 视为存在)、`host_liveness` 三态
+  (running/stale/干净停止)与闭合 `RUN_LOOP_HOST_STOPPED_REASONS` 枚举
+  (gate_reached/budget_exhausted/policy_revoked/signalled/engine_error)。
+  不含调度逻辑、不 import cli。
+- **Impact**: 尚无消费方;后续切片(contract、start/status/serve/stop)
+  在其上搭建。对既有行为零变化。
+- **Verification**: TDD——先 RED(ModuleNotFoundError)后 GREEN,
+  `tests/test_run_loop_host.py` 7 passed。
+
 ### Route redirect-bearing single commands through normalization (review finding)
 
 - **Type**: fix

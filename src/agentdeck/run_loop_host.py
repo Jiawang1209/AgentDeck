@@ -1,0 +1,106 @@
+"""Single-instance record, JSONL log and pid probe for the run-loop host.
+
+背景宿主让已验证的单 wave 引擎在脱离客户端的进程里继续跑(round 12
+八次手动重启 follow 段的痛点)。本模块只管进程记录/日志/存活探测这一层
+(user 拍板:只复用 pidfile+日志+单例互斥,不引入 socket/lease),不含调度
+逻辑、不 import cli,也绝不触碰 M2 Mission daemon。
+"""
+from __future__ import annotations
+
+import json
+import os
+from collections.abc import Callable
+from pathlib import Path
+from typing import Any
+
+HOST_DIR_NAME = "run-loop-host"
+HOST_RECORD_NAME = "host.json"
+HOST_LOG_NAME = "host.log"
+
+# 闭合枚举:每个值在 status 里都对应一条显式后续命令。
+RUN_LOOP_HOST_STOPPED_REASONS = (
+    "gate_reached",  # wave gate 不再是 waiting_for_reply
+    "budget_exhausted",  # 达 --max-waves 上限而仍在等回复
+    "policy_revoked",  # approval_mode 不再是 autonomous(远程刹车)
+    "signalled",  # run-loop-host stop 的 SIGTERM 在本 wave 结束后被接受
+    "engine_error",  # wave 引擎抛异常(只记异常类型)
+)
+
+
+def host_dir(root: Path) -> Path:
+    return Path(root) / ".agentdeck" / HOST_DIR_NAME
+
+
+def host_record_path(root: Path) -> Path:
+    return host_dir(root) / HOST_RECORD_NAME
+
+
+def host_log_path(root: Path) -> Path:
+    return host_dir(root) / HOST_LOG_NAME
+
+
+def read_host_record(root: Path) -> dict[str, Any] | None:
+    """读单例记录;缺失、不可读或损坏一律 None(调用方按"无宿主"处理)。"""
+    try:
+        text = host_record_path(root).read_text(encoding="utf-8")
+    except OSError:
+        return None
+    try:
+        record = json.loads(text)
+    except json.JSONDecodeError:
+        return None
+    return record if isinstance(record, dict) else None
+
+
+def write_host_record(root: Path, record: dict[str, Any]) -> None:
+    """原子替换写入(读者永不看到半个 JSON)。"""
+    directory = host_dir(root)
+    directory.mkdir(parents=True, exist_ok=True)
+    path = host_record_path(root)
+    temporary = path.with_name(path.name + ".tmp")
+    temporary.write_text(
+        json.dumps(record, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    temporary.replace(path)
+
+
+def pid_alive(pid: int) -> bool:
+    if not isinstance(pid, int) or pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True  # 存在但不属于本用户
+    except OSError:
+        return False
+    return True
+
+
+def host_liveness(
+    root: Path, probe: Callable[[int], bool] = pid_alive
+) -> tuple[dict[str, Any] | None, bool, bool]:
+    """返回 (record, running, stale)。
+
+    running=pid 存活;stale=记录声称有 pid 但进程已死(需 stop 清理)。
+    pid 已被清空的干净停止记录既不 running 也不 stale。
+    `probe` 可注入,使 CLI 层与测试共用同一份判定逻辑(单一来源)。
+    """
+    record = read_host_record(root)
+    if record is None:
+        return None, False, False
+    pid = record.get("pid")
+    if not isinstance(pid, int) or pid <= 0:
+        return record, False, False
+    alive = probe(pid)
+    return record, alive, not alive
+
+
+def append_host_log(root: Path, entry: dict[str, Any]) -> None:
+    """追加一行 JSONL;跨宿主共享同一文件,历史永不被截断或重写。"""
+    directory = host_dir(root)
+    directory.mkdir(parents=True, exist_ok=True)
+    with host_log_path(root).open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(entry, ensure_ascii=False, sort_keys=True) + "\n")
