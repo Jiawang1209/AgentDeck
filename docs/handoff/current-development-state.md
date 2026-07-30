@@ -1,6 +1,28 @@
 # AgentDeck Current Development State
 
-Updated: 2026-07-28
+Updated: 2026-07-30
+
+**Run-loop 背景宿主已落地(2026-07-30,user 拍板 detached 子进程 +
+pidfile 单例方案,5 commits be30b457→,全量绿)**:spec
+`docs/superpowers/specs/2026-07-30-run-loop-host-design.md`,plan
+`docs/superpowers/plans/2026-07-30-run-loop-host.md`。
+`agentdeck run-loop-host start|status|stop` 把**未改动**的
+`_run_loop_single_wave` 放进 detached 子进程(`start_new_session`,
+stdio DEVNULL),解决 round 12 操作者手动重启 `--follow` 段八次的
+walk-away 截断痛点。start 四道 gate(--confirm + autonomous + 显式
+`--max-waves >= 1` + 已知 plan)+ 活 pid 单例;serve 每 wave 重读
+config(approval_mode 离开 autonomous → `policy_revoked` 远程刹车),
+SIGTERM 完成当前 wave 再停,`engine_error` 只记异常类型;stop 有界
+SIGTERM 绝不 SIGKILL;`.agentdeck/run-loop-host/host.json`(原子替换)
++ host.log(append-only JSONL)+ `run_loop_host_started/stopped` 审计;
+闭合 `stopped_reason` 枚举(gate_reached/budget_exhausted/
+policy_revoked/signalled/engine_error)单一来源在
+`src/agentdeck/run_loop_host.py`;契约
+`docs/contracts/run-loop-host-schema.md` + `agentdeck contract
+run-loop-host`(index 41 项)。M2 Mission daemon 零触碰(diff 审计
+零输出)。**live 验证待下轮 Line 1 round**:start 宿主→断开客户端→
+确认 wave 继续、status/stop 行为、host.log 可读性。剩余拍板项:
+SQLite 5d 停同步导出、round_reviewer 独立角色、G1 frontdesk 增强。
 
 ## Active slice — G2 planner/orchestrator split (自主 loop 推进中)
 
