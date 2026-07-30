@@ -176,6 +176,25 @@ def _is_glue(tokens: list[str]) -> bool:
     return False
 
 
+def is_composite_command(command: str) -> bool:
+    """True 当命令不是"单一简单命令":含顶层分隔符,或含本模块无法解析的
+    shell 形态(命令替换/heredoc/输入重定向/后台 &/不配对引号)。
+
+    调用方据此判断"平前缀 startswith 的结论是否可信"。对复合命令而言
+    首段命中委托并不意味着整条安全——`node tests/x.mjs; rm -rf /` 的
+    startswith 会命中 `node tests/` 委托,而尾段是任意命令(spec
+    "Danger boundary (hard requirement)")。这类命令只能走逐段覆盖匹配,
+    解析不了即整体不匹配(fail-closed,回落人工路径)。
+    """
+    for marker in _HARD_REJECT_SUBSTRINGS:
+        if marker in command:
+            return True
+    segments = _split_top_level(command)
+    if segments is None:
+        return True
+    return len(segments) > 1
+
+
 def normalize_match(
     command: str, prefixes: Sequence[str]
 ) -> CompositeMatch | None:

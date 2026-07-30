@@ -4,6 +4,55 @@
 
 ## 2026-07-30
 
+### Match shell-wrapped delegated commands via split-and-cover normalization (round 12 发现 #3)
+
+- **Type**: feat
+- **Motivation**: round 12 live 发现 #3——三种 shell 包装形态逃出
+  `command_prefix` 委托匹配,实质已被人类 sanction 的只读验证框退化为
+  人工回车:①env 前缀赋值
+  `REPRODUCE_UNCONTROLLED_BOOTSTRAP=1 node tests/focus-carousel-tab-order.mjs`;
+  ②for 循环包装(重定向落 /tmp、条件 tail、exit);③多命令链
+  (`node tests/a.mjs > /tmp/a.log 2>&1; focus_code=$?; echo …; node --check …;
+  git diff --check`)。证据
+  `docs/validation/2026-07-30-copilot-line1-round12-mcp-delegation-live.md`,
+  spec `docs/superpowers/specs/2026-07-30-delegation-match-normalization-design.md`。
+- **What**: 给三个框面(`agent boxes`/`agent release-box`/
+  `_scan_release_delegated_boxes`,后者同时服务 `boxes watch` 与
+  `run-loop --release-boxes`)接上 Task 1 的纯归一化内核:新增
+  `cli.py::_match_delegation_with_provenance` 三臂匹配包装
+  (`_match_active_delegation` 保持逐字节不变,既有测试直接调用它),
+  单一简单命令走平前缀/折叠比较与 MCP 等值(`match_kind=prefix|mcp_tool`),
+  未命中再走复合归一化第三臂(env 前缀由此命中)。**同时补上 spec 的
+  danger boundary 硬要求**:复合命令(顶层 `;`/`&&`/`||`/`|`/换行,或
+  本模块解析不了的形态)绝不复用平前缀 startswith 的结论——
+  `node tests/x.mjs; rm -rf /` 的首段会命中 `node tests/` 委托,而尾段
+  是任意命令;这类命令必须整条通过逐段覆盖,否则整体不匹配。为此
+  `delegation_match` 新增只读判定 `is_composite_command()`。三面响应与
+  `auth_box_released` 事件新增 `match_kind`(`prefix`/`composite`/
+  `mcp_tool`/null)与仅复合匹配非空的 `matched_segments[]`
+  (`{segment, via}`,`via` 为前缀原文或 `"glue"`);
+  `DELEGATION_BOXES_RESPONSE_FIELDS` + example、
+  `docs/contracts/delegation-schema.md`(新增 "Composite matching" 条,
+  逐字记录拆段+逐段覆盖语义、硬拒绝集、固定胶水白名单 v1、/tmp 限定
+  重定向与 tail/head、至少一段命中规则、provenance 字段与人工回落)、
+  CLAUDE.md 委托条同步。
+- **Impact**: 走开环里 env 包装框与 for 循环包装框现在可被委托自动放行
+  (round 12 的两个人工回车点消失);同时**关闭一条既有 fail-open**——
+  此前 `node tests/x.mjs; rm -rf /` 这类链因首段命中前缀而被自动按回车,
+  现在一律拒绝、零输入、零事件、回落人工。附带的走开体验代价:少数
+  本模块解析不了但无害的单命令形态(如含管道 `| tee`、输入重定向)也
+  改为人工——一律 fail-closed 方向。`matched_segments` 是审计 provenance,
+  不是权限授权;放行原语不变(预选项上一次裸回车),拒绝/esc 永不自动化。
+- **Verification**: TDD——4 条新框面测试先 RED(loop 框 `delegated is False`
+  / 缺 `match_kind` 键 / release-box 退出 1 / watch `released_count==0`),
+  contract 测试先 RED(`match_kind not in boxes_response_fields`),实现后
+  GREEN;另补 danger boundary 回归(模块级 `is_composite_command` +
+  `normalize_match` 对 4 条危险尾段,CLI 级 release-box 对 3 条危险尾段
+  断言零输入零事件)。`tests/test_delegation_match.py` +
+  `tests/test_delegation_cli.py` 58 passed;
+  contracts+agent+leader 1145 passed;`python -m compileall src tests` 干净;
+  `git diff --check` 干净;全量 `pytest tests/ -q` 4760 passed, 3 skipped。
+
 ### Confine every fd-prefixed and word-glued redirect in delegation normalization
 
 - **Type**: fix

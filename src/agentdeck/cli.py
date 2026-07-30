@@ -144,6 +144,7 @@ from .contracts import (
     validate_mission_scheduler_contract,
 )
 from .autonomy import run_loop_gate, select_auto_approvals
+from .delegation_match import is_composite_command, normalize_match
 from .models import PROJECT_VIEW_SCHEMA_VERSION, AgentRuntimeBinding, AgentSpec, EventRecord, ProjectConfig, new_id, utc_now
 from .mission import daemon_mission_authority_state, mission_intent, workbench_mission_card
 from .mission_orchestration import (
@@ -9974,6 +9975,65 @@ def _match_active_delegation(
     return None
 
 
+def _match_delegation_with_provenance(
+    state: dict[str, object],
+    agent_id: str,
+    command: str | None,
+    mcp_box: _McpToolTarget | None = None,
+) -> tuple[dict[str, object] | None, str | None, list[dict[str, str]] | None]:
+    """三臂匹配 + GUI/审计 provenance：单一简单命令走平前缀/折叠比较与 MCP
+    等值（现行为，`match_kind=prefix|mcp_tool`）；复合命令只走逐段覆盖归一化
+    （round 12 发现 #3，`match_kind=composite`）。返回 (delegation,
+    match_kind, matched_segments)；未命中为 (None, None, None)。
+
+    复合命令绝不复用平前缀 startswith 的结论：`node tests/x.mjs; rm -rf /`
+    的首段会命中 `node tests/` 委托，而尾段是任意命令（spec 的 danger
+    boundary 硬要求）。这类命令必须整条通过逐段覆盖，解析不了即整体不匹配，
+    回落到现行人工路径。
+    """
+    prefix_items = [
+        item
+        for item in state.get("delegations", [])
+        if isinstance(item, dict)
+        and not item.get("revoked_at")
+        and item.get("agent_id") == agent_id
+        and (item.get("kind") or "command_prefix") == "command_prefix"
+        and item.get("prefix")
+    ]
+    def composite_arm() -> tuple[dict[str, object] | None, str | None, list[dict[str, str]] | None]:
+        composite = normalize_match(
+            str(command), [str(item["prefix"]) for item in prefix_items]
+        )
+        if composite is None:
+            return None, None, None
+        first_prefix = next(
+            segment.via for segment in composite.segments if segment.via != "glue"
+        )
+        item = next(
+            item for item in prefix_items if item.get("prefix") == first_prefix
+        )
+        segments = [
+            {"segment": segment.segment, "via": segment.via}
+            for segment in composite.segments
+        ]
+        return item, "composite", segments
+
+    if command and is_composite_command(command):
+        return composite_arm()
+    match = _match_active_delegation(state, agent_id, command, mcp_box)
+    if match is not None:
+        kind = (
+            "mcp_tool"
+            if (match.get("kind") or "command_prefix") == "mcp_tool"
+            else "prefix"
+        )
+        return match, kind, None
+    if not command:
+        return None, None, None
+    # 第三臂:单一简单命令但平前缀/折叠比较未命中(如 env 前缀赋值包装)。
+    return composite_arm()
+
+
 def agent_boxes_command(args: argparse.Namespace) -> int:
     config, store, exit_code = _load_project_or_error()
     if config is None or store is None:
@@ -9990,7 +10050,9 @@ def agent_boxes_command(args: argparse.Namespace) -> int:
         if waiting_hint is not None and command is None
         else None
     )
-    match = _match_active_delegation(store.load(), args.agent, command, mcp_box)
+    match, match_kind, matched_segments = _match_delegation_with_provenance(
+        store.load(), args.agent, command, mcp_box
+    )
     _print_json(
         {
             "ok": True,
@@ -10003,6 +10065,8 @@ def agent_boxes_command(args: argparse.Namespace) -> int:
             **_box_fields(command, mcp_box),
             "delegated": match is not None,
             "delegation_id": (match or {}).get("delegation_id"),
+            "match_kind": match_kind,
+            "matched_segments": matched_segments,
             "release_command": f"agentdeck agent release-box --agent {args.agent} --confirm",
         }
     )
@@ -10028,7 +10092,9 @@ def agent_release_box_command(args: argparse.Namespace) -> int:
         return 1
     command = _extract_auth_box_command(output)
     mcp_box = _extract_mcp_tool_target(output) if command is None else None
-    match = _match_active_delegation(store.load(), args.agent, command, mcp_box)
+    match, match_kind, matched_segments = _match_delegation_with_provenance(
+        store.load(), args.agent, command, mcp_box
+    )
     if match is None:
         described = command or (f"mcp:{mcp_box.server}/{mcp_box.tool}" if mcp_box else None)
         print(
@@ -10047,6 +10113,8 @@ def agent_release_box_command(args: argparse.Namespace) -> int:
                 "prefix": match.get("prefix"),
                 "command": command,
                 **_box_fields(command, mcp_box),
+                "match_kind": match_kind,
+                "matched_segments": matched_segments,
                 "waiting_hint": waiting_hint,
             },
         )
@@ -10061,6 +10129,8 @@ def agent_release_box_command(args: argparse.Namespace) -> int:
             "prefix": match.get("prefix"),
             "command": command,
             **_box_fields(command, mcp_box),
+            "match_kind": match_kind,
+            "matched_segments": matched_segments,
         }
     )
     return 0
@@ -10104,7 +10174,9 @@ def _scan_release_delegated_boxes(
             continue
         command = _extract_auth_box_command(output)
         mcp_box = _extract_mcp_tool_target(output) if command is None else None
-        match = _match_active_delegation(store.load(), agent_id, command, mcp_box)
+        match, match_kind, matched_segments = _match_delegation_with_provenance(
+            store.load(), agent_id, command, mcp_box
+        )
         if match is None:
             skipped.append(
                 {
@@ -10127,6 +10199,8 @@ def _scan_release_delegated_boxes(
                     "prefix": match.get("prefix"),
                     "command": command,
                     **_box_fields(command, mcp_box),
+                    "match_kind": match_kind,
+                    "matched_segments": matched_segments,
                     "waiting_hint": waiting_hint,
                     "source": source,
                 },
@@ -10140,6 +10214,8 @@ def _scan_release_delegated_boxes(
                 "prefix": match.get("prefix"),
                 "command": command,
                 **_box_fields(command, mcp_box),
+                "match_kind": match_kind,
+                "matched_segments": matched_segments,
                 "iteration": iteration,
             }
         )

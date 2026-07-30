@@ -78,9 +78,9 @@ Commands:
   fallback takes the **last** occurrence of the option-2 marker text in the
   region (same reverse-scan rationale). It reports
   `box_present`, `waiting_hint`, `command`, `box_kind`
-  (`command` | `mcp_tool` | null), `mcp_server`, `mcp_tool`, `delegated`,
-  `delegation_id`, and the explicit `release_command`. It never writes state
-  and never sends input.
+  (`command` | `mcp_tool` | null), `mcp_server`, `mcp_tool`, `match_kind`,
+  `matched_segments`, `delegated`, `delegation_id`, and the explicit
+  `release_command`. It never writes state and never sends input.
 - MCP tool boxes (the fifth box class, round 11 live finding #3; wording
   verified verbatim against a live capture in round 12): codex MCP tool
   authorization boxes carry the body sentence
@@ -129,10 +129,70 @@ Commands:
   normalization would be fail-open widening), matching only
   `kind="mcp_tool"` records for the same agent; success appends an
   `auth_box_released` event carrying the delegation id, full command (null
-  for MCP boxes), `box_kind`, `mcp_server`, `mcp_tool`, and `waiting_hint`
+  for MCP boxes), `box_kind`, `mcp_server`, `mcp_tool`, `match_kind`,
+  `matched_segments` (see Composite matching below), and `waiting_hint`
   (on-screen evidence of the box that was released). No box, no extractable
   command or MCP pair, no covering delegation, or missing `--confirm` refuse
   with zero input sent.
+- **Composite matching** (round 12 live finding #3; spec
+  `docs/superpowers/specs/2026-07-30-delegation-match-normalization-design.md`):
+  shell-wrapped commands whose substance is already delegated — env-assignment
+  prefixes (`REPRODUCE_UNCONTROLLED_BOOTSTRAP=1 node tests/x.mjs`), `for`-loop
+  wrappers, and multi-command chains — cannot match a bare
+  `command_prefix.startswith`. The pure module `agentdeck.delegation_match`
+  adds a **split-and-cover** third matching arm, and the box surfaces route
+  through it via `_match_delegation_with_provenance`:
+  - Semantic: the command is split at top level and matches only when **every**
+    segment is either covered (starts with an active `command_prefix`
+    delegation of that agent, after control-word and env-assignment stripping)
+    or is on the fixed built-in glue allowlist, **and at least one segment is
+    covered by a real delegation** (all-glue commands never release).
+  - Danger boundary (hard requirement): a **composite** command never reuses
+    the plain-prefix verdict, because the leading segment alone would carry it
+    — `node tests/x.mjs; rm -rf /` starts with a delegated `node tests/`
+    prefix. Any command that is more than one simple command (top-level `;`,
+    `&&`, `||`, `|`, newline) or that the module cannot parse must pass
+    split-and-cover as a whole; otherwise it does not match at all. Plain
+    prefix / whitespace-collapsed / MCP matching is unchanged for single simple
+    commands.
+  - Hard-reject set (scanned before splitting, whole command refused):
+    command substitution `$(`, backquote, process substitution `<(` / `>(`,
+    heredoc `<<`; plus, during splitting, an input redirect `<`, a background
+    `&` (the `>&` of `2>&1` excepted), and unbalanced single/double quotes;
+    plus, per segment, a leading `eval` or `source`. `${var}` references are
+    permitted — they are not command substitution.
+  - Redirects: only `2>&1` and `>` / `>>` (with or without an fd prefix) whose
+    target is a single `/tmp/…` token containing no `..`. Every other token
+    containing `>` is hard-rejected, which closes two fail-opens: non-`2` fd
+    prefixes (`1>>`, `3>`, `10>`) once escaped the `/tmp` confinement, and the
+    shell reads word-glued forms (`echo foo>/etc/evil`) as redirects while
+    whitespace tokenization makes them look like ordinary arguments.
+  - Glue allowlist v1 (fixed, built-in, **not** configurable; extending it is
+    an explicit code change with tests): assignments `name=value` (including
+    `name=$?` and `${…}` values); `echo …`; `exit` / `exit <token>`; `true`;
+    `test …` and `[ … ]`; loop/conditional scaffolding — `for <name> in
+    <simple-word list>` (words matching `[A-Za-z0-9._\-]+` or `${…}`), leading
+    `do` / `then` / `else` stripped, standalone `done` / `fi`, `if [ … ]`; and
+    `tail …` / `head …` **only** when every path-like argument starts with
+    `/tmp/` and contains no `..` (flags such as `-80` allowed). Nothing else.
+  - Provenance: `match_kind` is `prefix` (plain or whitespace-collapsed
+    match), `composite` (split-and-cover match), `mcp_tool` (MCP-pair match),
+    or null when the box is undelegated or absent — so every delegated box
+    carries a uniform match provenance. `matched_segments` is populated for
+    `composite` matches only (a list of `{segment, via}`, where `via` is the
+    covering prefix verbatim or the literal `"glue"`) and null otherwise.
+    `delegation_id` is the delegation whose prefix covered the first covered
+    segment. Both fields appear in `agent boxes`, `release-box`, the
+    `released[]` items of `boxes watch` / `run-loop --release-boxes`, and the
+    `auth_box_released` event payload. They are audit provenance, not
+    authorization.
+  - Normalization never widens what a prefix means: round 12's sample 3 stays
+    partially manual by design because its `node --check tests/…` segment
+    matches no `node tests/` delegation — the human may explicitly grant a
+    `node --check tests/` prefix to automate that chain. Fold-artifact
+    extractions from the collapsed-box fallback generally fail tokenization
+    and stay manual, also by design. Any unparseable input yields no match and
+    falls back to today's manual path.
 - `agentdeck boxes watch --confirm --iterations <n> --interval <seconds>
   [--agent <id>]` is the bounded delegated-automation loop: it requires
   `--confirm` **and** `config.leader.approval_mode == "autonomous"` (the same
@@ -142,7 +202,8 @@ Commands:
   `skipped[]` with `reason=no active delegation`, and always stops at the
   iteration bound. `released[]` and `skipped[]` items (and the shared
   `_scan_release_delegated_boxes` used by `run-loop --release-boxes`) carry
-  the same `box_kind`/`mcp_server`/`mcp_tool` fields as `release-box`.
+  the same `box_kind`/`mcp_server`/`mcp_tool` fields as `release-box`;
+  `released[]` items additionally carry `match_kind`/`matched_segments`.
 
 ## Boundaries
 
