@@ -4,6 +4,37 @@
 
 ## 2026-07-30
 
+### Harden max_review_rounds round-trip and bool coverage
+
+- **Type**: fix
+- **Motivation**: code review of `d50df5ee`（`max_review_rounds` config
+  landing）returned request-changes：preservation fix in
+  `update_autonomous_policy` shipped with zero test coverage,
+  the bool-guard edge (`isinstance(x, bool)` special case) wasn't
+  exercised by the invalid-value parametrization, and the validation
+  rule was duplicated inline instead of having one source.
+- **What**: `src/agentdeck/config.py` 提取 module-level
+  `_validated_max_review_rounds(value) -> int`（non-bool int >= 0，否则
+  `ValueError("autonomous max_review_rounds must be an integer >= 0")`），
+  `load_config` 和 `update_autonomous_policy` 都改为调用同一个 helper，
+  规则只有一处来源；`update_autonomous_policy` 现在在写文件前先校验
+  从旧配置读出的 `max_review_rounds`，非法值直接抛错、不触碰文件（不
+  改动 `update_leader_approval_mode` / `update_leader_provider`——二者
+  整体 dump raw dict 是既有通用行为，不在本次范围内）。测试新增：
+  `tests/test_autonomy.py::test_update_autonomous_policy_preserves_existing_max_review_rounds`
+  覆盖之前零覆盖的 preservation round-trip（写 `max_review_rounds = 5`
+  → `update_autonomous_policy(root, ("coder",), 3)` → reload 仍是 5）；
+  `tests/test_review_iteration.py` 的失败值参数化新增
+  `'max_review_rounds = true\n'`，显式覆盖 bool 特判分支。
+- **Impact**: 纯加固——不改变任何已发布行为或字段语义,只补齐此前
+  未覆盖的 preservation 路径和 bool edge,并把校验规则收敛到单一
+  helper 防止未来两处 drift。
+- **Verification**: `pytest tests/test_review_iteration.py
+  tests/test_autonomy.py -q` 13 passed（较修复前的 11 passed 新增 2
+  个测试用例）；`pytest tests/test_autonomy.py
+  tests/test_leader_subrole_config.py tests/test_review_iteration.py -q`
+  26 passed；`python -m compileall src` 通过。
+
 ### Add [autonomous] max_review_rounds config (review iteration budget)
 
 - **Type**: feat

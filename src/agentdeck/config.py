@@ -239,6 +239,14 @@ def resolved_orchestrator_backend(leader: LeaderConfig) -> tuple[str, str]:
     return _resolved_subrole_backend(leader, leader.orchestrator)
 
 
+def _validated_max_review_rounds(value: object) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError("autonomous max_review_rounds must be an integer >= 0")
+    if value < 0:
+        raise ValueError("autonomous max_review_rounds must be an integer >= 0")
+    return value
+
+
 def load_config(root: Path | None = None) -> ProjectConfig:
     base = root or project_root()
     path = config_path(base)
@@ -326,10 +334,7 @@ def load_config(root: Path | None = None) -> ProjectConfig:
         rounds_raw = autonomous_raw.get("max_review_rounds", 2)
     else:
         rounds_raw = 2
-    if isinstance(rounds_raw, bool) or not isinstance(rounds_raw, int):
-        raise ValueError("autonomous max_review_rounds must be an integer >= 0")
-    if rounds_raw < 0:
-        raise ValueError("autonomous max_review_rounds must be an integer >= 0")
+    rounds_raw = _validated_max_review_rounds(rounds_raw)
     autonomous = AutonomousPolicy(
         allowed_agents=tuple(str(a) for a in allowed),
         max_approvals=int(autonomous_raw.get("max_approvals", 0)) if isinstance(autonomous_raw, dict) else 0,
@@ -431,6 +436,8 @@ def update_autonomous_policy(root: Path, allowed_agents: tuple[str, ...], max_ap
         if isinstance(existing_autonomous, dict)
         else None
     )
+    if existing_rounds is not None:
+        existing_rounds = _validated_max_review_rounds(existing_rounds)
     updated_autonomous: dict[str, object] = {
         "allowed_agents": list(allowed_agents),
         "max_approvals": int(max_approvals),

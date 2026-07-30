@@ -39,7 +39,14 @@ def test_max_review_rounds_zero_is_valid(tmp_path: Path) -> None:
     assert load_config(root).autonomous.max_review_rounds == 0
 
 
-@pytest.mark.parametrize("bad", ['max_review_rounds = -1\n', 'max_review_rounds = "two"\n'])
+@pytest.mark.parametrize(
+    "bad",
+    [
+        'max_review_rounds = -1\n',
+        'max_review_rounds = "two"\n',
+        'max_review_rounds = true\n',
+    ],
+)
 def test_max_review_rounds_invalid_fails_closed(tmp_path: Path, bad: str) -> None:
     root = tmp_path / "repo"
     root.mkdir()

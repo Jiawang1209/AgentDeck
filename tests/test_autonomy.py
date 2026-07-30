@@ -39,6 +39,22 @@ def test_update_autonomous_policy_writes_and_reloads(tmp_path):
     assert config.autonomous.max_approvals == 5
 
 
+def test_update_autonomous_policy_preserves_existing_max_review_rounds(tmp_path):
+    from agentdeck.config import update_autonomous_policy
+
+    root = _init(tmp_path)
+    cfg = root / ".agentdeck" / "config.toml"
+    cfg.write_text(
+        cfg.read_text(encoding="utf-8") + "\n[autonomous]\nmax_review_rounds = 5\n",
+        encoding="utf-8",
+    )
+    update_autonomous_policy(root, ("coder",), 3)
+    config = load_config(root)
+    assert config.autonomous.allowed_agents == ("coder",)
+    assert config.autonomous.max_approvals == 3
+    assert config.autonomous.max_review_rounds == 5
+
+
 def test_select_auto_approvals_filters_by_allowlist_and_budget():
     from agentdeck.autonomy import select_auto_approvals
 
