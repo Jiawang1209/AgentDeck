@@ -4,6 +4,30 @@
 
 ## 2026-07-30
 
+### Add conservative shell normalization module for delegation matching
+
+- **Type**: feat
+- **Motivation**: round 12 live 发现 #3——env 前缀赋值、for 循环包装、
+  多命令链三种 shell 包装形态逃出 `command_prefix` 委托的 startswith
+  匹配,实质已被人类 sanction 的只读验证框退化为人工回车
+  (`docs/validation/2026-07-30-copilot-line1-round12-mcp-delegation-live.md`)。
+- **What**: 新增纯函数模块 `src/agentdeck/delegation_match.py`
+  (spec: `docs/superpowers/specs/2026-07-30-delegation-match-normalization-design.md`):
+  硬拒绝扫描(`$(`/反引号/`<(`/`>(`/`<<`/eval/source/输入重定向/后台
+  `&`/不配对引号)→ 引号感知顶层拆段(`;`/`&&`/`||`/`|`/换行)→
+  逐段剥离控制词/重定向(仅 2>&1 与 /tmp 限定 >/>>)/env 赋值 →
+  固定胶水白名单 v1(赋值/echo/exit/true/test/[ ]/for-if 脚手架/
+  /tmp 限定 tail/head)→ 每段命中委托前缀或胶水、且至少一段命中
+  真实委托才返回 `CompositeMatch`(带 segment/via provenance),
+  任何解析失败一律 None(fail-closed)。本 commit 无消费者接线;
+  `cli.py::_match_active_delegation` 保持逐字节不变。
+- **Impact**: 纯新增模块,零行为变化;为下一 commit 的三臂匹配
+  (`_match_delegation_with_provenance`)提供可审计归一化内核。
+- **Verification**: TDD——`tests/test_delegation_match.py` 先 RED
+  (ModuleNotFoundError)后 GREEN,14 passed(含 round 12 三条逐字
+  样本与对抗用例);`tests/test_delegation_cli.py` 33 passed 不变;
+  `python -m compileall src tests` 干净。
+
 ### Record round 12 live acceptance: MCP tool delegation live PASS + F2 walk-away loop
 
 - **Type**: data
