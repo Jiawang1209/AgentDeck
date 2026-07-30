@@ -105,7 +105,29 @@ live 发现:shell 包装(env 前缀/for 循环)逃逸前缀委托=委托匹配
 归一化新拍板项候选;codex spawn 后立即 dispatch 有启动竞态;
 `--virtual-time-budget` 无头 Chrome 会挂住。剩余拍板项:SQLite 5d
 停同步导出(建议先攒导出零漂移证据)、round_reviewer 独立角色、
-G1 frontdesk 增强、daemon 背景续跑收拢、委托匹配归一化(新)。
+G1 frontdesk 增强、daemon 背景续跑收拢。
+
+**委托匹配归一化已落地(2026-07-30,user 拍板"全套:env+循环+多段链"+
+方案 A 独立纯模块,4 commits 46e91a36→31740761,全量 4761 绿)**:spec
+`docs/superpowers/specs/2026-07-30-delegation-match-normalization-design.md`,
+plan `docs/superpowers/plans/2026-07-30-delegation-match-normalization.md`。
+新纯模块 `src/agentdeck/delegation_match.py`(硬拒绝扫描→引号感知顶层
+拆段→控制词/重定向/env 剥离→固定胶水白名单 v1→逐段覆盖匹配),
+`cli.py` 新 wrapper `_match_delegation_with_provenance` 按形态路由
+(`is_composite_command`:多段/含重定向/解析不了 → 只走归一化;干净单一
+命令仍走原平前缀臂,`_match_active_delegation` 逐字节不变),三面 + 两处
+`auth_box_released` 审计增 `match_kind`(prefix|composite|mcp_tool|null)
+和 composite 专属 `matched_segments[]`。语义:每段必须命中该 agent 活跃
+前缀或属胶水,且至少一段命中真实委托;`node tests/x; rm -rf /` 因 rm 段
+不沾而拒。**两轮 subagent 审查共修掉 4 个 fail-open**:①计划原定"平前缀
+先行"本身不安全(裸 startswith 会让危险尾段搭首段的车放行,实现者按 spec
+危险边界条款自主纠正为按形态路由);②非 2 号 fd 前缀重定向(`1>>` `3>`
+`10>`)漏过 /tmp 约束;③shell 认的词粘连重定向(`echo foo>/etc/evil`)
+形如普通参数;④单一命令含重定向不受约束(先于本功能存在)。现所有形态
+一致受 `/tmp` 约束,`>` 只允许出现在被识别并校验的重定向里。round 12
+三样本:env 前缀/for 循环命中,多段链因 `node --check` 段无委托仍人工
+(归一化绝不放宽前缀含义,人类可显式补 grant)。**live 验证待下轮 round**
+(观察 for 循环/env 前缀框是否自动放行、审计 provenance 是否可读)。
 
 背景:Line 1 走开链路 round 8–10 三连 PASS;SQLite 5a/5b 落地
 (events 双写 + events-diff),影子零 diff 证据 2/2,5c 等拍板;GUI
