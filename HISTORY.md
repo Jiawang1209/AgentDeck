@@ -4,6 +4,22 @@
 
 ## 2026-07-30
 
+### Record round 12 live acceptance: MCP tool delegation live PASS + F2 walk-away loop
+
+- **Type**: data
+- **Motivation**: MCP tool 委托 scope 落地后需要真实 codex MCP 框上的
+  live 证据;载体任务=缺陷池 F2 测试引导竞态窗口。
+- **What**: 新增
+  `docs/validation/2026-07-30-copilot-line1-round12-mcp-delegation-live.md`
+  ——F2 走开环第五连 PASS(G2 双 backend、G5 verdict pass/92 4/4、
+  verdict gate 放行自动 merge、文件通道 3/3),MCP 委托全链 live 首验
+  PASS(fail-closed 36 轮零误按→真实框措辞修复→watch 放行 4 框、
+  审计五字段),7 条 live 发现(shell 包装逃逸委托=归一化拍板项候选
+  等);handoff 顶部同步。
+- **Impact**: 纯文档/证据;剩余拍板项清单更新。
+- **Verification**: shadow-diff/events-diff in_sync;主仓库全量
+  4735 passed, 3 skipped;F2 修复合并后独立复验 2 测试 exit 0。
+
 ### Match the real codex MCP box wording and widen extraction to the full pending-box region (round 12 live)
 
 - **Type**: fix

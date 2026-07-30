@@ -89,10 +89,23 @@ subagent 审查共修掉 6 个复现级 fail-open 盘面,最终不变量比原�
 `›1.`(仅当预选项=选项 1——裸回车真正会按的那一项——才可能放行)。
 放行不变量不变:裸回车、绝不选 2/3、未命中绝不代按、逐次审计;
 指引=只对只读性 MCP 工具 grant(hover/press_key/screenshot 类),
-绝不对 navigate/fill/evaluate_script 类。**live 验证待下轮 Line 1
-round**(预授 planner chrome-devtools hover/press_key 两条观察自动
-放行)。剩余拍板项:SQLite 5d 停同步导出(建议先攒导出零漂移证据)、
-round_reviewer 独立角色、G1 frontdesk 增强、daemon 背景续跑收拢。
+绝不对 navigate/fill/evaluate_script 类。
+
+**Round 12 live PASS(2026-07-30,user 在场逐框授权,证据
+`docs/validation/2026-07-30-copilot-line1-round12-mcp-delegation-live.md`)**:
+MCP 委托全链 live 首验通过——真实框逐字捕获暴露转写措辞两处不符
+(tool 名带引号、句子与选择器间隔参数行),发布版提取器 36 轮
+fail-closed 零误按(最强安全证据),TDD 修复(b14f56ed:真实框式
+正则 + gap 桥接排除 + 提取窗改全捕获 pending-box region + watch
+pane 丢失容错)后 `boxes watch` 累计放行 4 框(hover×3+press_key×1,
+两条委托均命中),审计五字段齐全。载体任务 F2 走开环第五连 PASS
+(G2 双 backend、G5 verdict pass/92 4/4、verdict gate 放行自动
+merge 4da4f73、文件通道 3/3、影子/导出双 in_sync、全量 4735 绿)。
+live 发现:shell 包装(env 前缀/for 循环)逃逸前缀委托=委托匹配
+归一化新拍板项候选;codex spawn 后立即 dispatch 有启动竞态;
+`--virtual-time-budget` 无头 Chrome 会挂住。剩余拍板项:SQLite 5d
+停同步导出(建议先攒导出零漂移证据)、round_reviewer 独立角色、
+G1 frontdesk 增强、daemon 背景续跑收拢、委托匹配归一化(新)。
 
 背景:Line 1 走开链路 round 8–10 三连 PASS;SQLite 5a/5b 落地
 (events 双写 + events-diff),影子零 diff 证据 2/2,5c 等拍板;GUI
