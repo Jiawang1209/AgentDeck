@@ -149,6 +149,14 @@ from .contracts import (
 )
 from .autonomy import run_loop_gate, select_auto_approvals
 from .delegation_match import is_composite_command, normalize_match
+from .run_loop_host import (
+    append_host_log,
+    host_log_path,
+    pid_alive,
+    read_host_record,
+    write_host_record,
+)
+from .run_loop_host import host_liveness as _host_liveness
 from .models import PROJECT_VIEW_SCHEMA_VERSION, AgentRuntimeBinding, AgentSpec, EventRecord, ProjectConfig, new_id, utc_now
 from .mission import daemon_mission_authority_state, mission_intent, workbench_mission_card
 from .mission_orchestration import (
@@ -20264,6 +20272,165 @@ def _run_loop_all(config: ProjectConfig, store: StateStore) -> int:
     return 0
 
 
+def _spawn_host_process(argv: list[str], cwd: Path) -> int:
+    """Detached child; survives client disconnect. Tests inject a fake."""
+    process = subprocess.Popen(  # noqa: S603 - fixed argv, no shell
+        argv,
+        cwd=str(cwd),
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+    return int(process.pid)
+
+
+def _host_pid_alive(pid: int) -> bool:
+    """Indirection so tests can control liveness without real processes."""
+    return pid_alive(pid)
+
+
+def _host_liveness_or_none(root: Path) -> tuple[dict[str, object] | None, bool, bool]:
+    """模块逻辑单一来源:只注入可测试的存活探测器,不重复判定规则。"""
+    return _host_liveness(root, probe=lambda pid: _host_pid_alive(pid))
+
+
+def _run_loop_host_status_payload(root: Path) -> dict[str, object]:
+    record, running, stale = _host_liveness_or_none(root)
+    record = record or {}
+    return {
+        "ok": True,
+        "mode": "run_loop_host_status",
+        "running": running,
+        "stale": stale,
+        "pid": record.get("pid"),
+        "plan_id": record.get("plan_id"),
+        "wave_count": record.get("wave_count"),
+        "max_waves": record.get("max_waves"),
+        "interval": record.get("interval"),
+        "last_gate": record.get("last_gate"),
+        "last_wave_at": record.get("last_wave_at"),
+        "stopped_reason": record.get("stopped_reason"),
+        "log_path": record.get("log_path") or str(
+            host_log_path(root).relative_to(root)
+        ),
+        "start_command_template": (
+            "agentdeck run-loop-host start --plan-id <plan_id> --confirm --max-waves <n>"
+        ),
+        "stop_command": "agentdeck run-loop-host stop --confirm",
+    }
+
+
+def run_loop_host_start_command(args: argparse.Namespace) -> int:
+    config, store, exit_code = _load_project_or_error()
+    if config is None or store is None:
+        return exit_code
+    if not args.confirm:
+        print("run-loop-host start requires --confirm", file=sys.stderr)
+        return 1
+    if config.leader.approval_mode != "autonomous":
+        print(
+            "run-loop-host start requires autonomous mode "
+            "(agentdeck policy set-mode --mode autonomous ...)",
+            file=sys.stderr,
+        )
+        return 1
+    if args.max_waves is None:
+        print("run-loop-host start requires --max-waves (bounded budget)", file=sys.stderr)
+        return 1
+    if args.max_waves < 1:
+        print("run-loop-host start requires --max-waves >= 1", file=sys.stderr)
+        return 1
+    root = Path(config.root)
+    known = any(
+        isinstance(plan, dict) and plan.get("plan_id") == args.plan_id
+        for plan in store.load().get("plans", [])
+    )
+    if not known:
+        print(f"unknown plan: {args.plan_id}", file=sys.stderr)
+        return 1
+    _record, running, _stale = _host_liveness_or_none(root)
+    if running:
+        print(
+            "run-loop host already running; see agentdeck run-loop-host status",
+            file=sys.stderr,
+        )
+        return 1
+    argv = [
+        "agentdeck", "run-loop-host", "serve",
+        "--project", str(root),
+        "--plan-id", str(args.plan_id),
+        "--max-waves", str(args.max_waves),
+        "--interval", str(args.interval),
+    ]
+    if args.release_boxes:
+        argv.append("--release-boxes")
+    if getattr(args, "merge_on_complete", False):
+        argv.append("--merge-on-complete")
+    pid = _spawn_host_process(argv, root)
+    log_relative = str(host_log_path(root).relative_to(root))
+    write_host_record(root, {
+        "pid": pid,
+        "plan_id": str(args.plan_id),
+        "started_at": utc_now(),
+        "max_waves": int(args.max_waves),
+        "interval": float(args.interval),
+        "release_boxes": bool(args.release_boxes),
+        "merge_on_complete": bool(getattr(args, "merge_on_complete", False)),
+        "log_path": log_relative,
+        "wave_count": 0,
+        "last_gate": None,
+        "last_wave_at": None,
+        "stopped_reason": None,
+    })
+    store.append_event(EventRecord.create("run_loop_host_started", {
+        "plan_id": str(args.plan_id),
+        "pid": pid,
+        "max_waves": int(args.max_waves),
+        "interval": float(args.interval),
+        "release_boxes": bool(args.release_boxes),
+        "merge_on_complete": bool(getattr(args, "merge_on_complete", False)),
+    }))
+    payload = {
+        "ok": True,
+        "mode": "run_loop_host_started",
+        "plan_id": str(args.plan_id),
+        "pid": pid,
+        "max_waves": int(args.max_waves),
+        "interval": float(args.interval),
+        "release_boxes": bool(args.release_boxes),
+        "merge_on_complete": bool(getattr(args, "merge_on_complete", False)),
+        "log_path": log_relative,
+        "status_command": "agentdeck run-loop-host status",
+        "stop_command": "agentdeck run-loop-host stop --confirm",
+        "requires_explicit_user": True,
+        "safety": "delegated",
+    }
+    validation = validate_run_loop_host_start_contract(payload)
+    if not validation["ok"]:
+        print("run-loop-host start contract validation failed", file=sys.stderr)
+        for error in validation["errors"]:
+            print(f"- {error}", file=sys.stderr)
+        return 1
+    _print_json(payload)
+    return 0
+
+
+def run_loop_host_status_command(_args: argparse.Namespace) -> int:
+    config, store, exit_code = _load_project_or_error()
+    if config is None or store is None:
+        return exit_code
+    payload = _run_loop_host_status_payload(Path(config.root))
+    validation = validate_run_loop_host_status_contract(payload)
+    if not validation["ok"]:
+        print("run-loop-host status contract validation failed", file=sys.stderr)
+        for error in validation["errors"]:
+            print(f"- {error}", file=sys.stderr)
+        return 1
+    _print_json(payload)
+    return 0
+
+
 def run_loop_command(args: argparse.Namespace) -> int:
     config, store, exit_code = _load_project_or_error()
     if config is None or store is None:
@@ -20646,6 +20813,39 @@ def build_parser() -> argparse.ArgumentParser:
         help="When --follow reaches the complete gate, merge the plan's task branches in step order",
     )
     run_loop.set_defaults(func=run_loop_command)
+
+    run_loop_host = subparsers.add_parser(
+        "run-loop-host",
+        help="Run the bounded run-loop wave engine in a detached background host",
+    )
+    run_loop_host_subparsers = run_loop_host.add_subparsers(
+        dest="run_loop_host_command", required=True
+    )
+
+    host_start = run_loop_host_subparsers.add_parser("start", help="Start the background host")
+    host_start.add_argument("--plan-id", required=True, help="Plan to drive forward")
+    host_start.add_argument("--confirm", action="store_true", help="Explicitly confirm the host")
+    host_start.add_argument(
+        "--max-waves", type=int, default=None, help="Required bounded number of waves"
+    )
+    host_start.add_argument("--interval", type=float, default=10.0, help="Seconds between waves")
+    host_start.add_argument(
+        "--release-boxes",
+        action="store_true",
+        help="Release delegation-covered authorization boxes between waves (audited)",
+    )
+    host_start.add_argument(
+        "--merge-on-complete",
+        dest="merge_on_complete",
+        action="store_true",
+        help="Merge the plan's task branches when the final gate is complete",
+    )
+    host_start.set_defaults(func=run_loop_host_start_command)
+
+    host_status = run_loop_host_subparsers.add_parser(
+        "status", help="Show background host status (read-only)"
+    )
+    host_status.set_defaults(func=run_loop_host_status_command)
 
     workflow = subparsers.add_parser(
         "workflow",

@@ -4,6 +4,29 @@
 
 ## 2026-07-30
 
+### Add run-loop-host start and status commands
+
+- **Type**: feat
+- **Motivation**: 背景宿主第三刀——给已冻结的 contract 接上真实 CLI:
+  `start` 在四道 gate 后把 serve 子进程 detached 拉起并落单例记录,
+  `status` 成为纯只读观察面。
+- **What**: `cli.py` 新增 `run-loop-host start|status`:start 依次强制
+  `--confirm`、`approval_mode=autonomous`(与 run-loop 同门)、显式
+  `--max-waves >= 1`、已知 plan,任一不满足零写零 spawn 退非 0;单例
+  互斥(活 pid 拒绝二次 start,stale 不挡);通过可注入
+  `_spawn_host_process`(`start_new_session=True`、stdio DEVNULL)拉起
+  `agentdeck run-loop-host serve --project … --plan-id … --max-waves …`,
+  写 host.json 初始记录 + `run_loop_host_started` 审计事件,输出经
+  start validator 守门。status 复用 `host_liveness`(经可注入
+  `_host_pid_alive` 探针)呈现无记录/running/stale/干净停止四态,
+  绝不写 state、不碰 tmux,输出经 status validator 守门。
+- **Impact**: serve 子命令下一刀落地前,spawn 出的子进程会以 argparse
+  未知命令退出——start 只在本切片测试中以注入 spawn 验证;既有
+  run-loop 行为零变化。
+- **Verification**: TDD——CLI 测试先 RED(argparse 未知命令)后 GREEN,
+  `test_run_loop_host_cli.py` + `test_run_loop_host.py` 12 passed
+  (gate 矩阵零写零 spawn、spawn argv/记录/事件/单例、status 三态只读)。
+
 ### Add run-loop-host contract (three shapes, closed stopped-reason enum)
 
 - **Type**: feat
