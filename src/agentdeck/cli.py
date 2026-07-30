@@ -10009,9 +10009,14 @@ def _match_delegation_with_provenance(
         first_prefix = next(
             segment.via for segment in composite.segments if segment.via != "glue"
         )
+        # str() 与传给 normalize_match 的值同源:手改 state 里的非 str
+        # prefix 不应变成未捕获 StopIteration(评审 nit);找不到即不匹配。
         item = next(
-            item for item in prefix_items if item.get("prefix") == first_prefix
+            (item for item in prefix_items if str(item.get("prefix")) == first_prefix),
+            None,
         )
+        if item is None:
+            return None, None, None
         segments = [
             {"segment": segment.segment, "via": segment.via}
             for segment in composite.segments

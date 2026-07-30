@@ -56,11 +56,23 @@ no state access, fully unit-testable:
   top-level splitter, env-prefix stripper, redirect stripper/validator, glue
   classifier.
 
-`cli.py::_match_active_delegation` grows a third arm only: after the plain
-`startswith` and the whitespace-collapsed comparison both miss, collect the
-agent's active `command_prefix` prefixes and call `normalize_match`. On a
-hit, the returned provenance is attached to the match result. The MCP arm,
-both extractors, and all release invariants are untouched.
+A new wrapper `_match_delegation_with_provenance` in `cli.py` routes by
+command shape; `_match_active_delegation` itself stays byte-identical.
+
+**Amended during implementation (a fail-open in this spec's original
+ordering).** The original text said "plain `startswith` first, composite only
+on a miss". That is unsafe: the plain arm is a bare `startswith`, so
+`node tests/x.mjs; rm -rf /` matches the leading segment and releases —
+violating this spec's own danger boundary. Verified against the pre-fix
+commit. The implemented rule instead routes by shape, via
+`is_composite_command(command)`: anything that is more than one simple
+command, that contains a redirect, or that the tokenizer cannot parse goes
+**exclusively** through `normalize_match`; only clean single commands use the
+plain/whitespace-collapsed arms. Redirect-bearing single commands are
+included on the same review finding (`node tests/x.mjs > /etc/evil` starts
+with a delegated prefix but writes an arbitrary path), so `/tmp` confinement
+applies uniformly. The MCP arm, both extractors, and all release invariants
+are untouched.
 
 ## Tokenizer (fail-closed, allowlist style)
 
@@ -81,10 +93,13 @@ Per-segment normalization, in order:
    `[A-Za-z_][A-Za-z0-9_]*` and `value` is a single unquoted
    whitespace-free token (a quoted or space-containing value → whole
    command returns None).
-3. Strip trailing redirects: `> /tmp/<path>`, `>> /tmp/<path>` (path must
-   start with `/tmp/`, contain no `..`, and be a single token — `${var}`
-   inside the token is allowed), and `2>&1`. Any other redirect target →
-   whole command returns None.
+3. Strip redirects anywhere in the segment (not only trailing):
+   `[fd]> /tmp/<path>`, `[fd]>> /tmp/<path>` — fused or space-separated
+   target; the path must start with `/tmp/`, contain no `..`, and be a single
+   token (`${var}` inside the token is allowed) — plus `2>&1`. Any other
+   redirect target, and **any other token containing `>`** (word-glued forms
+   like `echo foo>/etc/evil`, `&>`, `>|`, `2>&3`), → whole command returns
+   None.
 
 ## Glue allowlist v1 (fixed, built-in, not configurable)
 
@@ -96,8 +111,10 @@ Per-segment normalization, in order:
 - loop/conditional scaffolding: `for <name> in <simple-word list>` (words
   matching `[A-Za-z0-9._\-]+` or `${…}`), standalone `do` / `done` / `if
   [ … ]` / `then` / `else` / `fi`
-- `tail …` / `head …` **only** when every path-like argument starts with
-  `/tmp/` and contains no `..` (flags like `-80`/`-n` allowed)
+- `tail …` / `head …` **only** when every non-flag argument starts with
+  `/tmp/` and contains no `..` (attached flags like `-80` allowed; a
+  separated `-n 80` is rejected because `80` is not a `/tmp/` path — the
+  conservative direction)
 
 Nothing else. Extending the list is a future explicit code change with
 tests, not configuration.

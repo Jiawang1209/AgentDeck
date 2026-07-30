@@ -152,9 +152,13 @@ Commands:
     — `node tests/x.mjs; rm -rf /` starts with a delegated `node tests/`
     prefix. Any command that is more than one simple command (top-level `;`,
     `&&`, `||`, `|`, newline) or that the module cannot parse must pass
-    split-and-cover as a whole; otherwise it does not match at all. Plain
-    prefix / whitespace-collapsed / MCP matching is unchanged for single simple
-    commands.
+    split-and-cover as a whole; otherwise it does not match at all. A single
+    command **containing any redirect** is treated the same way (a review
+    finding: `node tests/x.mjs > /etc/evil` starts with a delegated prefix but
+    writes an arbitrary path), so redirect confinement applies uniformly —
+    `> /tmp/x.log` still matches, as a `composite` match. Plain prefix /
+    whitespace-collapsed / MCP matching is unchanged for single simple
+    commands without redirects.
   - Hard-reject set (scanned before splitting, whole command refused):
     command substitution `$(`, backquote, process substitution `<(` / `>(`,
     heredoc `<<`; plus, during splitting, an input redirect `<`, a background
@@ -189,10 +193,12 @@ Commands:
   - Normalization never widens what a prefix means: round 12's sample 3 stays
     partially manual by design because its `node --check tests/…` segment
     matches no `node tests/` delegation — the human may explicitly grant a
-    `node --check tests/` prefix to automate that chain. Fold-artifact
-    extractions from the collapsed-box fallback generally fail tokenization
-    and stay manual, also by design. Any unparseable input yields no match and
-    falls back to today's manual path.
+    `node --check tests/` prefix to automate that chain. Inside the composite
+    arm, fold-artifact extractions generally fail tokenization and stay
+    manual by design; the collapsed-box fallback's own extraction (the
+    option-2 prefix text, e.g. `node tests/`) is a clean single command and
+    still matches via the prefix arm as before. Any unparseable input yields
+    no match and falls back to today's manual path.
 - `agentdeck boxes watch --confirm --iterations <n> --interval <seconds>
   [--agent <id>]` is the bounded delegated-automation loop: it requires
   `--confirm` **and** `config.leader.approval_mode == "autonomous"` (the same

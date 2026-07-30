@@ -4,6 +4,29 @@
 
 ## 2026-07-30
 
+### Route redirect-bearing single commands through normalization (review finding)
+
+- **Type**: fix
+- **Motivation**: 归一化接线的 spec 审查(端到端对抗探针)指出一条**先于
+  本功能存在**的 fail-open:单一简单命令的裸 `startswith` 结论不受重定向
+  约束,`node tests/x.mjs > /etc/evil`、`1>>/etc/cron.d/evil`、词粘连
+  `node tests/x.mjs>/etc/evil` 都能以 `match_kind=prefix` 放行(父 commit
+  实测同样放行)。语义上很反直觉:`FOO=1 node tests/x.mjs > /etc/evil` 拒,
+  去掉 `FOO=1` 反而放。
+- **What**: `is_composite_command` 现在把含 `>` 的命令一并判为"平前缀结论
+  不可信",强制走 `normalize_match`,于是 `/tmp` 约束对所有形态一致生效
+  (`> /tmp/x.log` 仍放行,以 composite 形态);实现者原测试里锁旧行为的
+  那条断言按审查结论翻转。顺带按审查修 nit:composite `delegation_id`
+  反查改 `str()` 同源比较 + 找不到即不匹配(手改 state 的非 str prefix
+  不再触发未捕获 StopIteration)。docs 同步:delegation-schema 补"单一
+  命令含重定向同样受约束"与 collapsed-fallback 措辞更正;spec 记录实现
+  期修正的 ordering fail-open、重定向剥离位置与 tail 旗标细节。
+- **Impact**: 委托放行对任意路径写不再有旁路;干净单一命令的平前缀行为
+  不变。
+- **Verification**: TDD——`is_composite_command` 重定向路由测试先 RED 后
+  GREEN;`test_delegation_match.py` + `test_delegation_cli.py` 59 passed;
+  contracts+agent 910 passed;全量见下一条目基线 4760 passed。
+
 ### Match shell-wrapped delegated commands via split-and-cover normalization (round 12 发现 #3)
 
 - **Type**: feat

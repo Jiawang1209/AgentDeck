@@ -185,10 +185,17 @@ def is_composite_command(command: str) -> bool:
     startswith 会命中 `node tests/` 委托,而尾段是任意命令(spec
     "Danger boundary (hard requirement)")。这类命令只能走逐段覆盖匹配,
     解析不了即整体不匹配(fail-closed,回落人工路径)。
+
+    含重定向的单一命令同样不可信(评审发现,先于本功能存在的 fail-open):
+    `node tests/x.mjs > /etc/evil` 的 startswith 命中 `node tests/`,但写
+    目标是任意路径。交给归一化后重定向受 `/tmp` 约束——合法的
+    `> /tmp/x.log` 仍匹配(以 composite 形态),越界的整体拒。
     """
     for marker in _HARD_REJECT_SUBSTRINGS:
         if marker in command:
             return True
+    if ">" in command:
+        return True
     segments = _split_top_level(command)
     if segments is None:
         return True

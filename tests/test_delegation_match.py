@@ -151,16 +151,36 @@ def test_empty_and_no_prefixes_rejected() -> None:
     assert normalize_match("node tests/x.mjs", []) is None
 
 
+def test_redirect_bearing_single_commands_are_not_plain_prefix_trusted() -> None:
+    # 评审发现(先于本功能存在的 fail-open):单一简单命令的裸 startswith
+    # 结论不受重定向约束——`node tests/x.mjs > /etc/evil` 曾以 prefix 臂
+    # 放行。含重定向即不可信,必须交归一化按 /tmp 约束判定。
+    from agentdeck.delegation_match import is_composite_command
+
+    assert is_composite_command("node tests/x.mjs > /etc/evil") is True
+    assert is_composite_command("node tests/x.mjs 1>>/etc/cron.d/evil") is True
+    assert is_composite_command("node tests/x.mjs>/etc/evil") is True
+    assert is_composite_command("node tests/x.mjs > /tmp/ok.log") is True
+    # 干净的单一命令仍走平前缀臂(现行为逐字节不变)
+    assert is_composite_command("node tests/focus-carousel-tab-order.mjs") is False
+    assert is_composite_command("node tests/") is False
+    # 归一化对这些命令给出正确判定
+    assert normalize_match("node tests/x.mjs > /etc/evil", PREFIXES) is None
+    assert normalize_match("node tests/x.mjs>/etc/evil", PREFIXES) is None
+    assert normalize_match("node tests/x.mjs > /tmp/ok.log", PREFIXES) is not None
+
+
 def test_matched_segment_shape() -> None:
     result = normalize_match("node tests/x.mjs", PREFIXES)
     assert result == CompositeMatch((MatchedSegment("node tests/x.mjs", "node tests/"),))
 
 
 def test_is_composite_command_flags_anything_beyond_one_simple_command() -> None:
-    # 单一简单命令(含 env 前缀/重定向):平前缀结论可信
+    # 单一简单命令(含 env 前缀):平前缀结论可信
     assert is_composite_command("node tests/x.mjs") is False
     assert is_composite_command("FOO=1 node tests/x.mjs") is False
-    assert is_composite_command("node tests/x.mjs > /tmp/ok.log 2>&1") is False
+    # 含重定向:不可信(评审发现的 fail-open),必须交归一化受 /tmp 约束
+    assert is_composite_command("node tests/x.mjs > /tmp/ok.log 2>&1") is True
     # 顶层分隔符:首段命中不代表整条安全
     assert is_composite_command("node tests/x.mjs; rm -rf /") is True
     assert is_composite_command("node tests/x.mjs && rm -rf /") is True
