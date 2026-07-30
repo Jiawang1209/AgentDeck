@@ -69,6 +69,26 @@ CODEX_MCP_TOOL_BOX_FOLDED = (
     "  Press enter to confirm or esc to cancel\n"
 )
 
+# round 12 live 首次逐字捕获的真实 codex MCP 框(此前 fixture 按 round 11
+# 转写措辞构造):tool 名带引号、句子与选择器之间隔参数行、选项文案为
+# Allow/Cancel、footer 是 "enter to submit"。
+CODEX_MCP_TOOL_BOX_REAL = (
+    '• Calling chrome-devtools.hover({"uid":"1_20","includeSnapshot":false})\n'
+    "\n"
+    "\n"
+    "  Field 1/1\n"
+    '  Allow the chrome-devtools MCP server to run tool "hover"?\n'
+    "\n"
+    "  includeSnapshot: false\n"
+    "  uid: 1_20\n"
+    "\n"
+    "  › 1. Allow                   Run the tool and continue.\n"
+    "    2. Allow for this session  Run the tool and remember this choice for this session.\n"
+    "    3. Always allow            Run the tool and remember this choice for future tool calls.\n"
+    "    4. Cancel                  Cancel this tool call\n"
+    "  enter to submit | esc to cancel\n"
+)
+
 
 def _events_text(root: Path) -> str:
     return (root / ".agentdeck" / "state" / "events.jsonl").read_text(encoding="utf-8")
@@ -314,6 +334,35 @@ def test_boxes_watch_skips_non_delegated_box(tmp_path, monkeypatch, capsys) -> N
     assert payload["skipped_count"] == 1
     assert payload["skipped"][0]["reason"] == "no active delegation"
     assert payload["skipped"][0]["command"] == "rm -rf /tmp/x"
+    assert fake.sent == []
+    assert '"event_type": "auth_box_released"' not in _events_text(root)
+
+
+def test_boxes_watch_survives_pane_loss_mid_scan(tmp_path, monkeypatch, capsys) -> None:
+    # round 12 live 发现:pane 在扫描间隙消失时 capture-pane 非零退出,
+    # boxes watch 曾裸 traceback 崩 CLI(违反"不让异常崩溃 CLI"规则)。
+    # 扫描必须把 capture 失败当作可审计 skip,继续有界循环。
+    import subprocess as _subprocess
+
+    root = prepare_project(tmp_path, monkeypatch)
+    bind_coder(root)
+
+    class VanishingTmuxBackend(FakeTmuxBackend):
+        def capture_output(self, _config, pane_id: str, lines: int = 200) -> str:
+            raise _subprocess.CalledProcessError(
+                1, ["tmux", "capture-pane", "-t", pane_id]
+            )
+
+    fake = VanishingTmuxBackend()
+    monkeypatch.setattr(cli, "TmuxBackend", lambda: fake)
+    _enable_autonomous(capsys)
+    fake.sent.clear()
+
+    assert cli.main(["boxes", "watch", "--agent", "coder", "--confirm", "--iterations", "2", "--interval", "0"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["released_count"] == 0
+    assert payload["skipped_count"] == 2
+    assert payload["skipped"][0]["reason"] == "pane capture failed"
     assert fake.sent == []
     assert '"event_type": "auth_box_released"' not in _events_text(root)
 
@@ -589,6 +638,47 @@ def test_extract_mcp_tool_target_fail_closed() -> None:
         "  Press enter to submit\n"
     )
     assert cli._extract_mcp_tool_target(collapsed_history_only) is None
+
+
+def test_extract_mcp_tool_target_real_codex_box_format() -> None:
+    # round 12 live 真实框:tool 名带引号,句子与 ›1. 之间隔参数行
+    assert cli._extract_mcp_tool_target(CODEX_MCP_TOOL_BOX_REAL) == (
+        "chrome-devtools",
+        "hover",
+    )
+    # 预选项不是 1(裸回车不会按 Allow)→ fail-closed
+    not_first = CODEX_MCP_TOOL_BOX_REAL.replace(
+        "  › 1. Allow  ", "    1. Allow  "
+    ).replace("    2. Allow for this session", "  › 2. Allow for this session")
+    assert cli._extract_mcp_tool_target(not_first) is None
+    # 参数 gap 内出现另一框痕迹($ 命令行)→ 不得跨框桥接到下方选择器
+    bridged = CODEX_MCP_TOOL_BOX_REAL.replace(
+        "  uid: 1_20", "  uid: 1_20\n  $ rm -rf /tmp/x"
+    )
+    assert cli._extract_mcp_tool_target(bridged) is None
+
+
+def test_extract_auth_box_command_survives_long_option_two_block() -> None:
+    # round 12 段 7 盲区:选项 2 逐字引用超长命令,把 $ 行和回退 marker
+    # 都推出 10 行尾窗;提取窗必须是全捕获上的 pending-box region
+    long_cmd = ("node tests/a.mjs > /tmp/a.log 2>&1; " * 12).strip()
+    option_two_lines = "\n".join(
+        "     " + long_cmd[i : i + 60] for i in range(0, len(long_cmd), 60)
+    )
+    box = (
+        "  Would you like to run the following command?\n"
+        "  Environment: local\n"
+        f"  $ {long_cmd}\n"
+        "› 1. Yes, proceed (y)\n"
+        "  2. Yes, and don't ask again for commands that start with `\n"
+        f"{option_two_lines}\n"
+        "     ` (p)\n"
+        "  3. No, and tell Codex what to do differently (esc)\n"
+        "  Press enter to confirm or esc to cancel\n"
+    )
+    extracted = cli._extract_auth_box_command(box)
+    assert extracted is not None
+    assert extracted.startswith("node tests/a.mjs")
 
 
 def test_match_active_delegation_mcp_arm() -> None:

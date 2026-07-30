@@ -4,6 +4,43 @@
 
 ## 2026-07-30
 
+### Match the real codex MCP box wording and widen extraction to the full pending-box region (round 12 live)
+
+- **Type**: fix
+- **Motivation**: round 12 live 首次逐字捕获真实 codex MCP 授权框,
+  发现与 round 11 转写措辞两处不符——tool 名带引号
+  (`run tool "hover"?`)、句子与选择器之间隔参数行——旧正则与
+  `\?(?=›1\.)` 紧邻约束双双不匹配,哨兵 36 轮 fail-closed 跳过
+  (方向正确但委托放行无法发生);同轮另发现选项 2 逐字引用超长
+  命令时,框自身内容溢出 10 行尾窗,`$ ` 行与 round-9 回退 marker
+  双路失明(段 7 实测)。
+- **What**: `_MCP_TOOL_BOX_PATTERN` 适配真实框式:tool 名可带引号,
+  `?` 与 `›1.` 之间允许参数行但禁止 `›`/`?`/`$`/反引号(防跨框
+  桥接,residual-A 不变量保持);两个提取器的 pending-box region
+  改在全捕获上计算而非 10 行尾窗(staleness 防护由区域锚定承担)。
+  真实捕获盘面逐字入 fixture(`CODEX_MCP_TOOL_BOX_REAL`),新增
+  预选项非 1、gap 桥接、长选项 2 框三类回归;delegation contract
+  文档同步真实框式与全捕获 region 语义。
+- **Impact**: 真实 MCP 框可被委托放行;未知措辞仍 fail-closed;
+  命令框长选项 2 盲区闭合。
+- **Verification**: TDD——真实框/长框两测先 RED 后 GREEN;
+  `tests/test_delegation_cli.py` 33 passed;核心回归 1145 passed;
+  compileall/diff-check 干净;live 复验见 round 12 验收文档。
+
+### Survive pane loss during a boxes-watch scan (round 12 live)
+
+- **Type**: fix
+- **Motivation**: round 12 live 中 planner pane 在派发后数秒消失,
+  `boxes watch` 首次 capture-pane 非零退出即裸 traceback 崩 CLI,
+  违反"不让异常崩溃 CLI"项目规则。
+- **What**: `_scan_release_delegated_boxes` 对 capture 失败改为记入
+  `skipped[]`(reason=`pane capture failed`)并继续有界扫描,绑定
+  收敛仍走显式 `agentdeck agent refresh`;contract 文档补充该行为。
+- **Impact**: watch/run-loop --release-boxes 扫描对 pane 消失健壮;
+  无任何放行语义变化。
+- **Verification**: TDD——VanishingTmuxBackend 测试先 RED
+  (CalledProcessError 直穿)后 GREEN;delegation 测试文件 33 passed。
+
 ### Sync delegation schema wording and handoff state after MCP delegation review closure
 
 - **Type**: docs

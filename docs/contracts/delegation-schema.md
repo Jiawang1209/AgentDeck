@@ -81,30 +81,43 @@ Commands:
   (`command` | `mcp_tool` | null), `mcp_server`, `mcp_tool`, `delegated`,
   `delegation_id`, and the explicit `release_command`. It never writes state
   and never sends input.
-- MCP tool boxes (the fifth box class, round 11 live finding #3): codex MCP
-  tool authorization boxes carry the body sentence
-  `Allow the <server> MCP server to run tool <tool>?`. Command extraction is
-  tried first (now region-anchored to the pending box, see above); only when
-  it yields nothing is the MCP extractor tried. The hard guarantee is a **structural tie to the live
-  box**: after whitespace collapse, the sentence's trailing `?` must be
-  immediately followed by the live selected-option glyph sequence `›1.` — a
-  pending codex MCP box renders "› 1. Yes, proceed (y)" directly under its
-  sentence (collapse restores the adjacency across folds), while an
-  already-answered sentence collapsed into a one-line history entry is
-  followed by other text (e.g. `-> Yes`) and never matches. This also means
-  extraction only succeeds when option 1 ("Yes, proceed") is the pre-selected
-  option — exactly what the bare Enter will press. Two heuristic layers sit
-  on top as defense in depth: region anchoring (within the tail window, only
-  lines after the second-to-last waiting-marker line are searched — an
-  answered box that still retains its own marker footer keeps its sentence
-  out of the region; the pending box's sentence carries no marker and is
-  never excluded) and last-match bias (the last match in the region wins,
-  same reverse-scan rationale as waiting-hint detection). The extractor also
-  collapses all whitespace in the region before matching (TUI folds can land
-  mid-token; fold-point spaces are lost) with the trailing `?` as a hard
-  boundary. Any parse failure returns null — fail-closed: an unparsable or
-  unknown wording degrades to the sentinel's existing skip behavior, never to
-  a wrong release.
+- MCP tool boxes (the fifth box class, round 11 live finding #3; wording
+  verified verbatim against a live capture in round 12): codex MCP tool
+  authorization boxes carry the body sentence
+  `Allow the <server> MCP server to run tool "<tool>"?` — the tool name may
+  be quoted, and parameter lines (`includeSnapshot: false`, `uid: 1_20`, …)
+  may sit between the sentence and the option list. Command extraction is
+  tried first (region-anchored to the pending box, see above); only when it
+  yields nothing is the MCP extractor tried. The hard guarantee is a
+  **structural tie to the live box**: after whitespace collapse, the
+  sentence's trailing `?` must be followed by the live selected-option glyph
+  sequence `›1.`, and the gap in between may contain only parameter-line
+  material — a gap containing another `›` (a selector), another `?` (a
+  different box's question), a `$` (a command line), or a backtick (command-
+  box option text) is treated as cross-box bridging and never matches. An
+  already-answered sentence collapsed into a one-line history entry (e.g.
+  `? -> Yes`) has no live selector after it and never matches. This also
+  means extraction only succeeds when option 1 ("Allow" / "Yes, proceed") is
+  the pre-selected option — exactly what the bare Enter will press. Two
+  heuristic layers sit on top as defense in depth: region anchoring (the
+  pending-box region is computed over the **full captured pane**, not a
+  10-line tail — round 12 found a box whose option 2 quotes a very long
+  command can overflow any small tail window; only lines after the
+  second-to-last waiting-marker line are searched, so an answered box that
+  still retains its own marker footer keeps its sentence out of the region,
+  while the pending box's sentence carries no marker and is never excluded)
+  and last-match bias (the last match in the region wins, same reverse-scan
+  rationale as waiting-hint detection). The extractor also collapses all
+  whitespace in the region before matching (TUI folds can land mid-token;
+  fold-point spaces are lost) with the trailing `?` as a hard boundary. Any
+  parse failure returns null — fail-closed: an unparsable or unknown wording
+  degrades to the sentinel's existing skip behavior, never to a wrong
+  release.
+- Pane loss during a watch scan (round 12 live finding): if `capture-pane`
+  fails for a scanned agent (the pane vanished mid-scan), the scan records a
+  `skipped[]` item with reason `pane capture failed` and continues the
+  bounded loop instead of crashing; binding reconciliation stays with the
+  explicit `agentdeck agent refresh`.
 - `agentdeck agent release-box --agent <id> --confirm` re-detects the box and
   sends a bare Enter **only** when an active delegation for that agent covers
   the box: for command boxes the extracted command

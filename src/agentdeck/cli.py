@@ -9836,8 +9836,11 @@ def _extract_auth_box_command(output: str) -> str | None:
     # codex 确认框把待批命令放在 `$ ` 行；长命令可能折行到后续缩进行，
     # 直到选项列表（`› 1.` / `1.` / `Press enter`）为止。
     # 区域锚定（评审 residual B）：旧框残留的 `$ ` 行绝不能作为待批框
-    # 的命令被提取——只在挂起框区域内倒扫。
-    lines = _pending_box_region(output.splitlines()[-_WAITING_FOR_INPUT_TAIL_LINES:])
+    # 的命令被提取——只在挂起框区域内倒扫。区域在**全捕获**上计算而非
+    # 10 行尾窗：round 12 live 发现选项 2 逐字引用超长命令时，框自身
+    # 内容就能溢出尾窗，把 `$ ` 行和回退 marker 都推到窗外（双路失明，
+    # fail-closed 跳过但走开体验退化）；staleness 防护由区域锚定承担。
+    lines = _pending_box_region(output.splitlines())
     command_index = None
     for index in range(len(lines) - 1, -1, -1):
         if lines[index].strip().startswith("$ "):
@@ -9876,13 +9879,17 @@ def _extract_auth_box_command(output: str) -> str | None:
     return prefix.strip() or None
 
 
-# 句尾 `?` 后必须紧跟活动选择器字形 `›1.`（折叠后）：待批 codex MCP 框在
-# 句子正下方渲染 "› 1. Yes, proceed (y)"，折叠邻接必然成立（含跨折行）；
-# 折叠成单行历史的已答复句子（"? -> Yes" 等）后面不是选择器 → 不匹配。
-# 该结构性约束同时保证：只有当预选项正是选项 1（裸回车将按下的那一项）
-# 时提取才会成功。
+# 真实框式（round 12 live 逐字捕获）：`Allow the <server> MCP server to run
+# tool "<tool>"?`——tool 名可带引号，句子与选项列表之间还可以隔参数行
+# （`includeSnapshot: false` / `uid: 1_20` 等）。结构性硬约束：句尾 `?` 之后
+# （折叠后）在遇到活动选择器 `›1.` 之前，只允许参数行内容——gap 中出现
+# 另一个 `›`（选择器）、`?`（另一框的问句）、`$`（命令行）或反引号（命令
+# 框选项文本）都视为跨框桥接，一律不匹配；折叠成单行历史的已答复句子
+# （"? -> Yes" 等）后面没有选择器 → 不匹配。该约束同时保证：只有当预选项
+# 正是选项 1（裸回车将按下的那一项）时提取才会成功。
 _MCP_TOOL_BOX_PATTERN = re.compile(
-    r"Allowthe(?P<server>[A-Za-z0-9_\-]+)MCPservertoruntool(?P<tool>[A-Za-z0-9_\-]+)\?(?=›1\.)"
+    r'Allowthe(?P<server>[A-Za-z0-9_\-]+)MCPservertoruntool"?(?P<tool>[A-Za-z0-9_\-]+)"?\?'
+    r"(?=[^›?$`]*›1\.)"
 )
 
 
@@ -9907,7 +9914,7 @@ def _extract_mcp_tool_target(output: str) -> _McpToolTarget | None:
     # 2) 末次匹配——区域内取最后一个匹配，与 _detect_waiting_for_input 的
     #    倒序扫描理由一致（离真实输入点最近的才是挂起框）。
     # 任何解析失败返回 None（fail-closed：未命中绝不代按）。
-    region = _pending_box_region(output.splitlines()[-_WAITING_FOR_INPUT_TAIL_LINES:])
+    region = _pending_box_region(output.splitlines())
     collapsed = "".join("\n".join(region).split())
     match = None
     for match in _MCP_TOOL_BOX_PATTERN.finditer(collapsed):
@@ -10077,7 +10084,21 @@ def _scan_release_delegated_boxes(
         if binding.get("status") != "running" or not binding.get("pane_id"):
             continue
         pane_id = str(binding["pane_id"])
-        output = backend.capture_output(config.runtime, pane_id, 200)
+        try:
+            output = backend.capture_output(config.runtime, pane_id, 200)
+        except Exception:
+            # round 12 live 发现:pane 在扫描间隙消失时 capture 非零退出,
+            # 曾裸 traceback 崩掉整个 watch。当作可审计 skip 继续扫描;
+            # 绑定收敛交给显式 `agentdeck agent refresh`。
+            skipped.append(
+                {
+                    "agent_id": agent_id,
+                    "command": None,
+                    "reason": "pane capture failed",
+                    "iteration": iteration,
+                }
+            )
+            continue
         waiting_hint = _detect_waiting_for_input(output)
         if waiting_hint is None:
             continue
