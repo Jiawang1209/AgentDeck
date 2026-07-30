@@ -46,7 +46,10 @@ reviewer 终评"。今天前两段已闭环,但 review verdict `overall=fail` �
 全部条件同时成立才触发,任何一条不满足都不追加、不写 state:
 
 - 该 plan 存在 review step(既有信号:step 的 dispatch 带非 None
-  `base_branch`)的 reply,携带**有效** verdict 且 `overall == "fail"`。
+  `base_branch`)的 reply,携带**有效** verdict 且
+  `overall ∈ {"fail", "needs_changes"}`(实现期修正 2026-07-30:
+  `review-verdict/v1` 的 overall 合法值是 `pass/fail/needs_changes`,无
+  unknown;`needs_changes` 语义就是回炉,与 fail 同触发)。criterion 级
   `unknown`、无 `verdict:` 行、解析失败(`review_verdict_invalid`)一律不
   自动迭代——歧义不烧钱,停在今天的人类 gate。
 - 该条 reply 尚未触发过迭代(幂等):追加的 step 记录
@@ -148,6 +151,11 @@ verdict 输出格式(G5 现行为);文件通道回复、step 顺序守卫、merg
   run-loop-host 无契约变化(serve 复用 wave payload,host.log 自然携带)。
 - `agentdeck contract run-loop` 等发现入口、docs/contracts/*、README、
   CLAUDE.md、HISTORY、handoff 按项目纪律同步。
+- 实现期补充(2026-07-30,遵守"GUI-consumable 输出必须有 contract"
+  项目纪律):`plan rework` 响应获得自己的 fields/validator/example 与
+  `agentdeck contract plan-rework` 发现入口,注册进 contract index;
+  run-loop-host 契约仍零变化(`--max-review-rounds` 只透传 serve,不进
+  start/status 响应或 host record 契约字段)。
 
 ## 安全边界(全部继承,零新授权面)
 
