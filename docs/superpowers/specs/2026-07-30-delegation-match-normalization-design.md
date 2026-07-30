@@ -119,9 +119,11 @@ Surfaces and audit:
 
 - `agent boxes` / `release-box` / `_scan_release_delegated_boxes` payloads
   and the `auth_box_released` event gain `match_kind`
-  (`"prefix" | "composite"`, null when undelegated/no box) and, for
-  composite matches only, `matched_segments[]` (list of
-  `{segment, via}`; `via` = prefix text or `"glue"`).
+  (`"prefix" | "composite" | "mcp_tool"`, null when undelegated/no box —
+  MCP-kind matches report `"mcp_tool"` so every delegated box carries a
+  uniform match provenance) and, for composite matches only,
+  `matched_segments[]` (list of `{segment, via}`; `via` = prefix text or
+  `"glue"`; null for prefix/mcp_tool matches).
 - `delegation_id` (existing field) is the delegation whose prefix covered
   the first covered segment.
 - Contract sync: `DELEGATION_BOXES_RESPONSE_FIELDS` gains `match_kind` and
