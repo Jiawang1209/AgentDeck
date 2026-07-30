@@ -87,6 +87,10 @@ from .contracts import (
     runtime_agent_controls,
     run_loop_contract_response,
     run_loop_all_contract_response,
+    run_loop_host_contract_response,
+    validate_run_loop_host_start_contract,
+    validate_run_loop_host_status_contract,
+    validate_run_loop_host_stop_contract,
     validate_run_loop_all_contract,
     run_start_contract_response,
     skills_contract_response,
@@ -8090,6 +8094,14 @@ def contract_run_loop_command(args: argparse.Namespace) -> int:
 def contract_run_loop_all_command(args: argparse.Namespace) -> int:
     contract_path = Path(__file__).resolve().parents[2] / "docs" / "contracts" / "run-loop-all-schema.md"
     _print_json(run_loop_all_contract_response(contract_path, include_example=args.example))
+    return 0
+
+
+def contract_run_loop_host_command(args: argparse.Namespace) -> int:
+    contract_path = (
+        Path(__file__).resolve().parents[2] / "docs" / "contracts" / "run-loop-host-schema.md"
+    )
+    _print_json(run_loop_host_contract_response(contract_path, include_example=args.example))
     return 0
 
 
@@ -21030,6 +21042,9 @@ def build_parser() -> argparse.ArgumentParser:
     contract_run_loop_all = contract_subparsers.add_parser("run-loop-all", help="Show run-loop --all parallel-scheduler contract metadata")
     contract_run_loop_all.add_argument("--example", action="store_true", help="Include a GUI-ready run-loop-all example")
     contract_run_loop_all.set_defaults(func=contract_run_loop_all_command)
+    contract_run_loop_host = contract_subparsers.add_parser("run-loop-host", help="Show run-loop background host contract metadata")
+    contract_run_loop_host.add_argument("--example", action="store_true", help="Include GUI-ready run-loop-host examples")
+    contract_run_loop_host.set_defaults(func=contract_run_loop_host_command)
     contract_workflow = contract_subparsers.add_parser(
         "workflow", help="Show sequential workflow contract discovery metadata"
     )

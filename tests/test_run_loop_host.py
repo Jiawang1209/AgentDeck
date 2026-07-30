@@ -81,3 +81,52 @@ def test_append_host_log_is_jsonl_and_appends(tmp_path: Path) -> None:
     lines = host_log_path(tmp_path).read_text(encoding="utf-8").splitlines()
     assert len(lines) == 2
     assert [json.loads(line)["wave"] for line in lines] == [1, 2]
+
+
+def test_contract_field_tuples_and_examples() -> None:
+    from agentdeck.contracts import (
+        RUN_LOOP_HOST_START_RESPONSE_FIELDS,
+        RUN_LOOP_HOST_STATUS_RESPONSE_FIELDS,
+        RUN_LOOP_HOST_STOP_RESPONSE_FIELDS,
+        run_loop_host_start_example,
+        run_loop_host_status_example,
+        run_loop_host_stop_example,
+        validate_run_loop_host_start_contract,
+        validate_run_loop_host_status_contract,
+        validate_run_loop_host_stop_contract,
+    )
+
+    for field in ("ok", "mode", "plan_id", "pid", "max_waves", "log_path", "status_command", "stop_command"):
+        assert field in RUN_LOOP_HOST_START_RESPONSE_FIELDS
+    for field in ("running", "stale", "wave_count", "last_gate", "stopped_reason", "start_command_template"):
+        assert field in RUN_LOOP_HOST_STATUS_RESPONSE_FIELDS
+    for field in ("ok", "mode", "plan_id", "wave_count", "stopped_reason", "next_command"):
+        assert field in RUN_LOOP_HOST_STOP_RESPONSE_FIELDS
+
+    assert validate_run_loop_host_start_contract(run_loop_host_start_example())["ok"] is True
+    assert validate_run_loop_host_status_contract(run_loop_host_status_example())["ok"] is True
+    assert validate_run_loop_host_stop_contract(run_loop_host_stop_example())["ok"] is True
+
+    # 缺字段 / 错 mode / 非法 stopped_reason 必须被拒
+    broken = dict(run_loop_host_status_example())
+    broken.pop("running")
+    assert validate_run_loop_host_status_contract(broken)["ok"] is False
+    wrong_mode = {**run_loop_host_status_example(), "mode": "nope"}
+    assert validate_run_loop_host_status_contract(wrong_mode)["ok"] is False
+    bad_reason = {**run_loop_host_status_example(), "stopped_reason": "made_up"}
+    assert validate_run_loop_host_status_contract(bad_reason)["ok"] is False
+
+
+def test_contract_is_discoverable(capsys) -> None:
+    from agentdeck import cli
+
+    assert cli.main(["contract", "run-loop-host", "--example"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["start_response_fields"]
+    assert payload["status_response_fields"]
+    assert payload["stop_response_fields"]
+    assert payload["stopped_reasons"] == list(RUN_LOOP_HOST_STOPPED_REASONS)
+    assert payload["contract_exists"] is True
+    assert cli.main(["contract", "list"]) == 0
+    index = json.loads(capsys.readouterr().out)
+    assert any(item.get("name") == "run-loop-host" for item in index["contracts"])

@@ -4,6 +4,29 @@
 
 ## 2026-07-30
 
+### Add run-loop-host contract (three shapes, closed stopped-reason enum)
+
+- **Type**: feat
+- **Motivation**: 背景宿主第二刀——按项目纪律,GUI-consumable 面先冻结
+  contract 再接 CLI 行为,让 start/status/stop 三响应形状、闭合
+  stopped_reason 枚举与安全边界成为可发现契约。
+- **What**: `contracts.py` 新增
+  `RUN_LOOP_HOST_{START,STATUS,STOP}_RESPONSE_FIELDS`、
+  `RUN_LOOP_HOST_STOP_MODES`、三个 fail-closed validator(错 mode/缺
+  字段/非法 stopped_reason/running+stale 互斥违反都拒)、三个 example
+  与 `run_loop_host_contract_response`;枚举单一来源自
+  `run_loop_host.RUN_LOOP_HOST_STOPPED_REASONS`(不重打字)。注册进
+  `CONTRACT_INDEX_SPECS`(`run-loop-all` 之后,索引 41 项),新 CLI 发现
+  入口 `agentdeck contract run-loop-host [--example]`。契约文档
+  `docs/contracts/run-loop-host-schema.md` 记录三形状、四道 start gate、
+  单例拒绝、每 wave policy 刹车、SIGTERM-完成当前-wave 停止(绝不
+  SIGKILL)、三种记录态、append-only 日志与"hosting 不是授权 / 与 M2
+  Mission daemon 分离"边界。
+- **Impact**: 纯发现面新增;既有 contract 输出不变(index count 40→41)。
+- **Verification**: TDD——契约测试先 RED(ImportError)后 GREEN;
+  `test_run_loop_host.py` + `test_contracts.py` 539 passed(索引 count
+  与名字表按新条目同步)。
+
 ### Add run-loop host record module (pidfile, JSONL log, liveness)
 
 - **Type**: feat

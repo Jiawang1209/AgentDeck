@@ -27,6 +27,7 @@ from .models import (
     PROJECT_VIEW_SEMANTIC_AUTHORITY_FIELDS,
 )
 from .providers.plan_schema import LEADER_PLAN_SCHEMA_VERSION
+from .run_loop_host import RUN_LOOP_HOST_STOPPED_REASONS
 from .providers.semantic_plan_schema import SEMANTIC_LEADER_PLAN_SCHEMA_VERSION
 from .semantic_authority import SEMANTIC_AUTHORITY_SCHEMA_VERSION
 from .daemon.scheduler import DECISION_KINDS
@@ -118,6 +119,12 @@ CONTRACT_INDEX_SPECS = (
         "agentdeck contract run-loop-all",
         "agentdeck contract run-loop-all --example",
         "run-loop-all-schema.md",
+    ),
+    (
+        "run-loop-host",
+        "agentdeck contract run-loop-host",
+        "agentdeck contract run-loop-host --example",
+        "run-loop-host-schema.md",
     ),
     (
         "workflow",
@@ -7247,6 +7254,196 @@ def validate_run_loop_all_contract(payload: dict[str, object]) -> dict[str, obje
             if not isinstance(item.get(list_field), list):
                 errors.append(f"run_loop_all.plans[{index}].{list_field} must be a list")
     return {"ok": not errors, "errors": errors}
+
+
+RUN_LOOP_HOST_START_RESPONSE_FIELDS = (
+    "ok",
+    "mode",
+    "plan_id",
+    "pid",
+    "max_waves",
+    "interval",
+    "release_boxes",
+    "merge_on_complete",
+    "log_path",
+    "status_command",
+    "stop_command",
+    "requires_explicit_user",
+    "safety",
+)
+
+RUN_LOOP_HOST_STATUS_RESPONSE_FIELDS = (
+    "ok",
+    "mode",
+    "running",
+    "stale",
+    "pid",
+    "plan_id",
+    "wave_count",
+    "max_waves",
+    "interval",
+    "last_gate",
+    "last_wave_at",
+    "stopped_reason",
+    "log_path",
+    "start_command_template",
+    "stop_command",
+)
+
+RUN_LOOP_HOST_STOP_RESPONSE_FIELDS = (
+    "ok",
+    "mode",
+    "plan_id",
+    "pid",
+    "wave_count",
+    "stopped_reason",
+    "next_command",
+)
+
+RUN_LOOP_HOST_STOP_MODES = (
+    "run_loop_host_stopped",
+    "run_loop_host_stop_timed_out",
+    "run_loop_host_stale_cleared",
+)
+
+
+def _validate_fields(
+    payload: dict[str, object], fields: tuple[str, ...], label: str
+) -> list[str]:
+    return [f"missing {label} field: {field}" for field in fields if field not in payload]
+
+
+def validate_run_loop_host_start_contract(payload: dict[str, object]) -> dict[str, object]:
+    errors = _validate_fields(payload, RUN_LOOP_HOST_START_RESPONSE_FIELDS, "run_loop_host_start")
+    if payload.get("mode") != "run_loop_host_started":
+        errors.append(
+            f"run_loop_host_start.mode must be run_loop_host_started, got {payload.get('mode')}"
+        )
+    max_waves = payload.get("max_waves")
+    if not isinstance(max_waves, int) or max_waves < 1:
+        errors.append("run_loop_host_start.max_waves must be an int >= 1")
+    if payload.get("safety") != "delegated":
+        errors.append("run_loop_host_start.safety must be delegated")
+    if payload.get("requires_explicit_user") is not True:
+        errors.append("run_loop_host_start.requires_explicit_user must be true")
+    return {"ok": not errors, "errors": errors}
+
+
+def validate_run_loop_host_status_contract(payload: dict[str, object]) -> dict[str, object]:
+    errors = _validate_fields(payload, RUN_LOOP_HOST_STATUS_RESPONSE_FIELDS, "run_loop_host_status")
+    if payload.get("mode") != "run_loop_host_status":
+        errors.append(
+            f"run_loop_host_status.mode must be run_loop_host_status, got {payload.get('mode')}"
+        )
+    for flag in ("running", "stale"):
+        if not isinstance(payload.get(flag), bool):
+            errors.append(f"run_loop_host_status.{flag} must be a bool")
+    reason = payload.get("stopped_reason")
+    if reason is not None and reason not in RUN_LOOP_HOST_STOPPED_REASONS:
+        errors.append(
+            f"run_loop_host_status.stopped_reason must be null or one of {list(RUN_LOOP_HOST_STOPPED_REASONS)}"
+        )
+    if payload.get("running") is True and payload.get("stale") is True:
+        errors.append("run_loop_host_status cannot be both running and stale")
+    return {"ok": not errors, "errors": errors}
+
+
+def validate_run_loop_host_stop_contract(payload: dict[str, object]) -> dict[str, object]:
+    errors = _validate_fields(payload, RUN_LOOP_HOST_STOP_RESPONSE_FIELDS, "run_loop_host_stop")
+    if payload.get("mode") not in RUN_LOOP_HOST_STOP_MODES:
+        errors.append(f"run_loop_host_stop.mode must be one of {list(RUN_LOOP_HOST_STOP_MODES)}")
+    reason = payload.get("stopped_reason")
+    if reason is not None and reason not in RUN_LOOP_HOST_STOPPED_REASONS:
+        errors.append(
+            f"run_loop_host_stop.stopped_reason must be null or one of {list(RUN_LOOP_HOST_STOPPED_REASONS)}"
+        )
+    return {"ok": not errors, "errors": errors}
+
+
+def run_loop_host_start_example() -> dict[str, object]:
+    return {
+        "ok": True,
+        "mode": "run_loop_host_started",
+        "plan_id": "pln_example",
+        "pid": 43121,
+        "max_waves": 40,
+        "interval": 10.0,
+        "release_boxes": True,
+        "merge_on_complete": True,
+        "log_path": ".agentdeck/run-loop-host/host.log",
+        "status_command": "agentdeck run-loop-host status",
+        "stop_command": "agentdeck run-loop-host stop --confirm",
+        "requires_explicit_user": True,
+        "safety": "delegated",
+    }
+
+
+def run_loop_host_status_example() -> dict[str, object]:
+    return {
+        "ok": True,
+        "mode": "run_loop_host_status",
+        "running": True,
+        "stale": False,
+        "pid": 43121,
+        "plan_id": "pln_example",
+        "wave_count": 7,
+        "max_waves": 40,
+        "interval": 10.0,
+        "last_gate": "waiting_for_reply",
+        "last_wave_at": "2026-07-30T02:00:00+00:00",
+        "stopped_reason": None,
+        "log_path": ".agentdeck/run-loop-host/host.log",
+        "start_command_template": (
+            "agentdeck run-loop-host start --plan-id <plan_id> --confirm --max-waves <n>"
+        ),
+        "stop_command": "agentdeck run-loop-host stop --confirm",
+    }
+
+
+def run_loop_host_stop_example() -> dict[str, object]:
+    return {
+        "ok": True,
+        "mode": "run_loop_host_stopped",
+        "plan_id": "pln_example",
+        "pid": 43121,
+        "wave_count": 7,
+        "stopped_reason": "signalled",
+        "next_command": "agentdeck run-loop-host status",
+    }
+
+
+def run_loop_host_contract_payload(contract_path: Path) -> dict[str, object]:
+    return {
+        "schema_version": PROJECT_VIEW_SCHEMA_VERSION,
+        "start_command_template": (
+            "agentdeck run-loop-host start --plan-id <plan_id> --confirm --max-waves <n>"
+            " [--interval <seconds>] [--release-boxes] [--merge-on-complete]"
+        ),
+        "status_command": "agentdeck run-loop-host status",
+        "stop_command_template": "agentdeck run-loop-host stop --confirm",
+        "contract_path": str(contract_path),
+        "contract_exists": contract_path.exists(),
+        "start_response_fields": list(RUN_LOOP_HOST_START_RESPONSE_FIELDS),
+        "status_response_fields": list(RUN_LOOP_HOST_STATUS_RESPONSE_FIELDS),
+        "stop_response_fields": list(RUN_LOOP_HOST_STOP_RESPONSE_FIELDS),
+        "stop_modes": list(RUN_LOOP_HOST_STOP_MODES),
+        "stopped_reasons": list(RUN_LOOP_HOST_STOPPED_REASONS),
+        "run_loop_contract": "agentdeck contract run-loop",
+        "project_view_schema_version": PROJECT_VIEW_SCHEMA_VERSION,
+    }
+
+
+def run_loop_host_contract_response(
+    contract_path: Path, include_example: bool = False
+) -> dict[str, object]:
+    payload = run_loop_host_contract_payload(contract_path)
+    if include_example:
+        payload["example"] = {
+            "start": run_loop_host_start_example(),
+            "status": run_loop_host_status_example(),
+            "stop": run_loop_host_stop_example(),
+        }
+    return payload
 
 
 def plan_board_example() -> dict[str, object]:
