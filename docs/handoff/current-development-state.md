@@ -1,6 +1,31 @@
 # AgentDeck Current Development State
 
-Updated: 2026-07-30
+Updated: 2026-07-31
+
+**Review 迭代闭环已落地(2026-07-30 拍板 / 07-31 完成,subagent-driven
+开发,11 commits d50df5ee→,全量绿)**:spec
+`docs/superpowers/specs/2026-07-30-review-iteration-loop-design.md`,plan
+`docs/superpowers/plans/2026-07-30-review-iteration-loop.md`。核心工作流
+"Leader 拆解 → coder 写 → reviewer 审 → **fail/needs_changes 自动回炉 →
+coder 修 → reviewer 复审** → pass → 自动 merge" 的动态迭代段闭合:纯模块
+`review_iteration.py`(触发矩阵 fail-closed + 确定性回炉模板,零 LLM)、
+locked writer `append_review_iteration`(唯一写点,已注册
+AUTHORITATIVE_STATE_MUTATION_METHODS)、`[autonomous] max_review_rounds`
+预算(默认 2,`--max-review-rounds` 覆盖,0=逐字节关闭)、追加 step 走
+普通 pending 审批(零新授权面)、run-loop 引擎钩子 + 显式
+`plan rework --confirm` 双面、第 42 契约 plan-rework、ProjectView
+`review_rounds` + step provenance。四轮 subagent 审查修掉 3 个关键盘面:
+①writer 未注册锁定注册表(并发丢写 + 守卫测试红);②**walk-away 链路
+断裂**(追加后 gate=needs_human_approval 会终止 follow/host——修复:
+"本 wave 追加迭代轮"时继续,有界,gate 诚实性不变);③`--all` pre-gate
+skip 吞掉已入账 fail verdict(修复:complete plan 先跑钩子)。G5"gate
+complete + 只扣 merge"语义 = 本闭环 `--max-review-rounds 0` 切片(旧测试
+已隔离 + 新测试钉住组合默认)。**live 验证待下轮 Line 1 round**:真实
+reviewer 打 fail → 自动追加(`plan_rework_appended` source=run_loop)→
+下轮自动批准派发 rework → 文件通道回复 → re-review pass → 自动 merge;
+与 run-loop-host 断线续跑同场验证。剩余拍板项:SQLite 5d 停同步导出、
+round_reviewer 独立角色、多 reviewer 聚合、Leader 精修回炉任务(二期)、
+G1 frontdesk 增强。
 
 **Run-loop 背景宿主已落地(2026-07-30,user 拍板 detached 子进程 +
 pidfile 单例方案,5 commits be30b457→,全量绿)**:spec

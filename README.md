@@ -85,7 +85,21 @@ AgentDeck › Mission started. Use /status or open the workbench to inspect it.
   sends SIGTERM, the child finishes its current wave, and there is no SIGKILL
   escalation — flipping `approval_mode` away from `autonomous` also stops the
   host at the next wave (`stopped_reason=policy_revoked`); discovery:
-  `agentdeck contract run-loop-host`.
+  `agentdeck contract run-loop-host`;
+- review iteration loop: a review reply whose verdict `overall` is `fail` or
+  `needs_changes` appends a deterministic rework + re-review step pair to the
+  same plan (rework task = failed criteria + the reviewer's reply verbatim,
+  truncated with a trace pointer — zero LLM calls), as ordinary PENDING
+  approvals handled by the existing autonomous allowlist/budget and
+  step-order guard; bounded by `[autonomous] max_review_rounds` (default 2,
+  `--max-review-rounds` overrides, `0` disables byte-identically); idempotent
+  per triggering reply and fail-closed on ambiguity; `run-loop --follow` /
+  `run-loop-host` continue past the append wave so the whole
+  fail → rework → re-review → pass → merge chain runs inside one bounded
+  invocation, while exhausted budgets fall back to the human gate with the
+  merge withheld (`verdict_blocked`); explicit manual trigger:
+  `agentdeck plan rework --plan-id <id> --confirm`; discovery:
+  `agentdeck contract plan-rework`.
 
 Useful observation commands:
 

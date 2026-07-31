@@ -2,6 +2,32 @@
 
 本文件记录 AgentDeck 每一次开发内容。约束：每次新增功能、文档规则、项目骨架、运行环境或用户可见行为变化，都必须同步更新本文件，并在同一次 commit 中提交。
 
+## 2026-08-01
+
+### Land review-driven iteration loop docs and full-suite baseline
+
+- **Type**: docs
+- **Motivation**: review 迭代闭环(spec
+  `docs/superpowers/specs/2026-07-30-review-iteration-loop-design.md`)
+  代码切片已全部落地并通过四轮独立审查;按项目纪律把规则、README、
+  handoff 与最终验证基线一并冻结。
+- **What**: CLAUDE.md 新增 review 迭代闭环规则 bullet(纯模块/唯一
+  writer/闭合触发条件与六值拒绝枚举/确定性模板/预算与 0=逐字节关闭/
+  普通 pending 审批零新授权面/walk-away 链路例外/--all pre-gate 例外/
+  plan-rework 契约/G5 语义=预算 0 切片/非目标),常用命令块加
+  `agentdeck plan rework`,run-loop bullet 的 follow 退出条件同步例外
+  说明;README 加 review iteration feature bullet;
+  `docs/handoff/current-development-state.md` 顶部更新落地摘要、三个
+  审查修复盘面与 live 验证清单。
+- **Impact**: 文档与代码一致;live 验证(真实 reviewer fail → 自动
+  回炉 → re-review pass → 自动 merge,与 run-loop-host 断线续跑同场)
+  留待下轮 Line 1 round。
+- **Verification**: 阶梯全过——review_iteration+plan_rework 32 passed;
+  follow/host/autonomy/contracts/agent_cli/verdict_ingestion 952 passed;
+  `python -m compileall src tests` OK;`git diff --check` 干净;
+  `git diff -- src/agentdeck/daemon/` 零输出;全量 `pytest tests/ -q`
+  4817 passed, 3 skipped(267.02s)。
+
 ## 2026-07-31
 
 ### Continue follow/host waves after review iteration append
