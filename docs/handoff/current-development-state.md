@@ -13,10 +13,16 @@ Plan 1 对照验证非触发路径。宿主 detached/预算硬界/三态/重启/
 核心工作流"拆解→写→审→回炉→修→终评→合并"自此 live 已验证。发现四项
 非阻塞:预算尺度(空轮询烧 wave,动态间隔候选)、只读验证前缀 starter
 pack 候选、orchestrator 措辞给 reviewer 台阶会让严格 gate 失效(goal
-措辞注意)、审查 worktree 变异残留。**下一步 = 拍板项(user "先 1 再 2"
-的 2)**:SQLite 5d 停同步导出、round_reviewer 独立角色、多 reviewer
-聚合、Leader 精修回炉任务(二期)、G1 frontdesk 增强、只读前缀
-starter pack(新增候选)。
+措辞注意)、审查 worktree 变异残留。**拍板批次(2026-08-01,user 四项全授权)**:①只读前缀 starter pack
+已落地(c45aaaed,纯文档,delegation-schema.md 新节);②SQLite 5d 已
+落地(b34a9f54,审查 Approve,全量 4830 绿):`events_export_mode`
+meta(fail-safe sync)、`storage events-export --confirm`、
+`events-export-mode --mode sync|on_demand --confirm`、on_demand 下
+append 跳过同锁导出(O(n²) 写消失)、events-diff 前缀比对+export_lag、
+rollback 强制先导出、shadow-status 警示 rm state.db 在 on_demand 下
+不再无损;scratch 尚未切 on_demand(等下轮 live 观察期)。③
+round_reviewer 独立角色+多 reviewer 聚合(brainstorm 中)与④ Leader
+精修回炉任务(排队)进行中。G1 frontdesk 增强仍待拍板。
 
 **Review 迭代闭环已落地(2026-07-30 拍板 / 07-31 完成,subagent-driven
 开发,11 commits d50df5ee→,全量绿)**:spec
