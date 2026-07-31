@@ -71,8 +71,17 @@ with `verdict_pass`.
   boundaries); exceeding the budget is a hard refusal (`rounds_exhausted`),
   never a silent skip or override — only a human editing config can raise it.
 - Provenance fields recorded on the appended steps (`origin`, `round`,
-  `triggered_by_reply`) and surfaced via ProjectView `plans.items[].review_rounds`
-  are audit data only, never an authorization signal.
+  `triggered_by_reply`, `iteration_kind`) and surfaced via ProjectView
+  `plans.items[].review_rounds` are audit data only, never an authorization
+  signal.
+- Rework self-verdict exclusion (2026-08-01): appended steps carry
+  `iteration_kind` (`rework` | `review`). A rework step's dispatch prompt never
+  receives the acceptance-criteria / verdict-format injection, and a `verdict:`
+  line in a rework step's reply is excluded — via the same
+  `rework_step_numbers` source — from BOTH the iteration trigger and
+  `plan_verdict_summary`. The implementing agent's self-assessment can neither
+  spawn a phantom iteration round nor become the plan's review verdict; only
+  review-side replies judge the plan.
 
 ## Related contracts
 

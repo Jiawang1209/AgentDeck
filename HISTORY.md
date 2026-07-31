@@ -4,6 +4,32 @@
 
 ## 2026-08-01
 
+### Exclude rework self-verdicts and pay down final-review test debt
+
+- **Type**: fix
+- **Motivation**: 整体终审(整合范围 2fa96ce8..3297b1b6)发现一个真实
+  接缝:rework step 派发同样带 base_branch,会被注入"输出 verdict:"
+  指令,而迭代触发器与 `plan_verdict_summary` 都不检查 verdict 来自谁
+  ——coder 诚实自评 fail 会开出"coder 复审自己"的幻影迭代轮烧掉预算,
+  自评 pass 可能越过 reviewer 影响 merge 判定,且恰好发生在 walk-away
+  无人值守路径。终审同时点名两项 spec 测试欠账。
+- **What**: 追加 step 增 `iteration_kind`(rework|review)provenance;
+  新纯 helper `rework_step_numbers` 作为单一来源判定,三面接线:
+  ①派发注入守卫——rework step 的 prompt 不再注入验收标准/verdict
+  输出格式(`_approval_is_rework_step`);②迭代触发器
+  `_latest_verdict_reply` 排除 rework step 回复;③
+  `plan_verdict_summary` 同源排除(自评绝不成为 plan verdict)。
+  测试欠账补齐:`--all` 双 plan 隔离(plan A fail 只追加到 A,B 零
+  追加零字段)与 run-loop/run-loop-all validator 对非 list
+  `review_iterations` 的拒绝;组合链路测试增断言 rework 派发 prompt
+  无注入段。plan-rework-schema、CLAUDE.md 规则与 spec 落地期修正节
+  同步(spec 并补记 07-31 两个已落地例外)。
+- **Impact**: 迭代闭环只认 review 面判定;normal plan 与 re-review
+  注入行为不变。
+- **Verification**: TDD——守卫三测先 RED(3 failed)后 GREEN;
+  review_iteration + plan_rework + verdict_ingestion 52 passed;广域
+  回归与全量见提交时数字。
+
 ### Land review-driven iteration loop docs and full-suite baseline
 
 - **Type**: docs

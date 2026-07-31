@@ -52,7 +52,7 @@ from .mission import (
     mission_commands,
     mission_status_transition_allowed,
 )
-from .review_iteration import derive_review_iteration, plan_review_rounds
+from .review_iteration import derive_review_iteration, plan_review_rounds, rework_step_numbers
 from .review_verdict import align_verdict_with_criteria, parse_verdict_line
 from .mission_authority import (
     SEMANTIC_MISSION_COMPACT_FIELDS,
@@ -9568,10 +9568,23 @@ class StateStore:
 
     def plan_verdict_summary(self, plan_id: str) -> dict[str, Any] | None:
         state = self.load()
+        plan = next(
+            (item for item in state.get("plans", []) if item.get("plan_id") == plan_id),
+            None,
+        )
+        plan_body = (plan or {}).get("plan")
+        plan_steps = plan_body.get("steps", []) if isinstance(plan_body, dict) else []
+        # rework 自评排除:与迭代触发器同源(rework_step_numbers),coder 的
+        # 自评 verdict 绝不能成为 plan 的 review verdict。
+        excluded_steps = rework_step_numbers(
+            plan_steps if isinstance(plan_steps, list) else []
+        )
         message_ids = {
             approval.get("message_id")
             for approval in state.get("approvals", [])
-            if approval.get("plan_id") == plan_id and approval.get("message_id")
+            if approval.get("plan_id") == plan_id
+            and approval.get("message_id")
+            and approval.get("step") not in excluded_steps
         }
         latest_verdict: dict[str, Any] | None = None
         for reply in state.get("replies", []):

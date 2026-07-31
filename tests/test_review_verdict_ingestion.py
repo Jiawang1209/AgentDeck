@@ -387,6 +387,17 @@ def test_review_iteration_prefers_rework_over_completion_by_default(
     # bounded by --max-waves as ever; final gate is honestly reported (now
     # waiting on the rework reply, not stuck at needs_human_approval).
     assert payload["stopped_reason"] == "waiting_for_reply"
+    # rework 派发的 prompt 绝不注入验收标准/verdict 输出指令——coder 的
+    # 自评 verdict 会触发幻影迭代轮(2026-08-01 终审接缝修复)。
+    from agentdeck.state import StateStore as _Store
+
+    rework_message_id = waves[1]["dispatched"][0]["message_id"]
+    rework_message = next(
+        m for m in _Store(root).load()["messages"]
+        if m.get("message_id") == rework_message_id
+    )
+    # 注入段的专属标题(模板任务文本自身含"未通过的验收标准:",不算)
+    assert "验收标准（review 步骤）" not in str(rework_message.get("prompt"))
 
 
 def test_merge_on_complete_proceeds_when_verdict_pass(

@@ -151,6 +151,7 @@ from .contracts import (
 )
 from .autonomy import run_loop_gate, select_auto_approvals
 from .delegation_match import is_composite_command, normalize_match
+from .review_iteration import rework_step_numbers
 from .run_loop_host import (
     append_host_log,
     host_log_path,
@@ -10566,6 +10567,25 @@ def _reply_file_path(root: str | Path, message_id: str) -> Path:
     return Path(root) / ".agentdeck" / "replies" / f"{message_id}.reply.txt"
 
 
+def _approval_is_rework_step(store: StateStore, approval: dict[str, object]) -> bool:
+    """该审批指向的 plan step 是否为迭代对的 rework 成员(单一来源判定
+    `rework_step_numbers`;非迭代 step 与 re-review step 一律 False)。"""
+    plan_id = approval.get("plan_id")
+    if not plan_id:
+        return False
+    plan = next(
+        (
+            item
+            for item in store.load().get("plans", [])
+            if isinstance(item, dict) and item.get("plan_id") == plan_id
+        ),
+        None,
+    )
+    body = (plan or {}).get("plan")
+    steps = body.get("steps", []) if isinstance(body, dict) else []
+    return approval.get("step") in rework_step_numbers(steps)
+
+
 def _plan_base_worktree_branch(store: StateStore, plan_id: object, step: object) -> str | None:
     """Latest earlier-step worktree branch of the same plan (decision D).
 
@@ -19459,11 +19479,12 @@ def _dispatch_approved_approval(
     worktree_info, worktree_skip = _create_task_worktree(config, agent, message_id, base_branch=base_branch)
     reply_file = _reply_file_path(config.root, message_id)
     reply_file.parent.mkdir(parents=True, exist_ok=True)
-    review_criteria = (
-        store._plan_acceptance_criteria(str(approval.get("plan_id") or ""))
-        if base_branch
-        else None
-    )
+    # review-criteria + verdict-format 注入只给 review 面:rework(回炉)step
+    # 同样带 base_branch,但绝不能诱导 coder 输出自评 verdict(自评 fail 会
+    # 触发幻影迭代轮,自评 pass 会污染 plan verdict——两侧均已同源排除)。
+    review_criteria = None
+    if base_branch and not _approval_is_rework_step(store, approval):
+        review_criteria = store._plan_acceptance_criteria(str(approval.get("plan_id") or ""))
     prompt = build_dispatch_prompt(
         agent,
         task,

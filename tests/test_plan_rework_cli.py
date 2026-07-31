@@ -180,3 +180,39 @@ def test_run_loop_all_triggers_review_iteration_for_already_complete_plan(
     item = next((p for p in payload["plans"] if p["plan_id"] == "pln_1"), None)
     assert item is not None  # not silently pre-gate-skipped
     assert item["review_iterations"][0]["round"] == 1
+
+
+def test_run_loop_all_iteration_is_isolated_per_plan(tmp_path, monkeypatch, capsys) -> None:
+    """spec 测试要点:--all 每计划界隔离——plan A 的 fail verdict 只追加
+    到 plan A,plan B 的 steps 与 payload 不受影响。"""
+    root = prepare_seeded_project(tmp_path, monkeypatch, "fail")
+    store = StateStore(root)
+    state = store.load()
+    state["plans"].append({
+        "plan_id": "pln_2", "task": "other work", "status": "planned",
+        "plan": {"goal": "g2", "summary": "s2", "steps": [
+            {"step": 1, "agent_id": "coder", "role": "implementation",
+             "task": "other task", "risk": "low", "requires_approval": True},
+        ]},
+    })
+    state["approvals"].append({
+        "approval_id": "apv_b1", "plan_id": "pln_2", "step": 1, "agent_id": "coder",
+        "role": "implementation", "task": "other task", "risk": "low",
+        "status": "dispatched", "message_id": "msg_b1",
+    })
+    state["messages"].append({"message_id": "msg_b1", "worktree_branch": None})
+    store.save(state)
+    _enable_autonomous(capsys)
+
+    assert cli.main(["run-loop", "--all", "--confirm"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    item_a = next(p for p in payload["plans"] if p["plan_id"] == "pln_1")
+    assert item_a["review_iterations"][0]["round"] == 1
+    item_b = next(p for p in payload["plans"] if p["plan_id"] == "pln_2")
+    assert "review_iterations" not in item_b
+
+    after = StateStore(root).load()
+    plan_b = next(p for p in after["plans"] if p["plan_id"] == "pln_2")
+    assert len(plan_b["plan"]["steps"]) == 1  # plan B 零追加
+    plan_a = next(p for p in after["plans"] if p["plan_id"] == "pln_1")
+    assert len(plan_a["plan"]["steps"]) == 4

@@ -40,6 +40,25 @@ def plan_review_rounds(steps: list[dict[str, Any]]) -> int:
     return rounds
 
 
+def rework_step_numbers(steps: list[dict[str, Any]]) -> set[int]:
+    """已追加迭代对中 rework(回炉)成员的 step 编号。
+
+    这些 step 由实现 agent 执行,其回复里的自评 `verdict:` 绝不能被当成
+    plan 的 review verdict——否则自评 fail 会触发"coder 复审自己"的幻影
+    迭代轮,自评 pass 会越过 reviewer 放行 merge。触发器与
+    plan_verdict_summary 共用本判定(单一来源)。"""
+    numbers: set[int] = set()
+    for step in steps:
+        if not isinstance(step, dict) or step.get("origin") != REVIEW_ITERATION_ORIGIN:
+            continue
+        if step.get("iteration_kind") != "rework":
+            continue
+        value = step.get("step")
+        if isinstance(value, int) and not isinstance(value, bool):
+            numbers.add(value)
+    return numbers
+
+
 def _consumed_reply_ids(steps: list[dict[str, Any]]) -> set[str]:
     return {
         str(step["triggered_by_reply"])
@@ -51,16 +70,19 @@ def _consumed_reply_ids(steps: list[dict[str, Any]]) -> set[str]:
 
 
 def _latest_verdict_reply(
-    state: dict[str, Any], plan_id: str
+    state: dict[str, Any], plan_id: str, steps: list[dict[str, Any]]
 ) -> tuple[dict[str, Any], dict[str, Any]] | None:
     """(reply, 该 reply 所属 review step 的 approval);与 plan_verdict_summary
-    同源的最新有效 verdict 选取(replies 按入账顺序,取最后一条)。"""
+    同源的最新有效 verdict 选取(replies 按入账顺序,取最后一条),并同源
+    排除 rework step 的自评 verdict。"""
+    excluded_steps = rework_step_numbers(steps)
     approvals_by_message = {
         str(approval.get("message_id")): approval
         for approval in state.get("approvals", [])
         if isinstance(approval, dict)
         and approval.get("plan_id") == plan_id
         and approval.get("message_id")
+        and approval.get("step") not in excluded_steps
     }
     latest: tuple[dict[str, Any], dict[str, Any]] | None = None
     for reply in state.get("replies", []):
@@ -159,7 +181,7 @@ def derive_review_iteration(
         return _refuse("no_plan")
     body = plan.get("plan")
     steps = body.get("steps", []) if isinstance(body, dict) else []
-    latest = _latest_verdict_reply(state, plan_id)
+    latest = _latest_verdict_reply(state, plan_id, steps)
     if latest is None:
         return _refuse("no_verdict")
     reply, review_approval = latest
@@ -187,6 +209,7 @@ def derive_review_iteration(
         "triggered_by_reply": reply_id,
     }
     rework_step = {
+        "iteration_kind": "rework",
         "step": next_number,
         "agent_id": implementation.get("agent_id"),
         "role": implementation.get("role"),
@@ -202,6 +225,7 @@ def derive_review_iteration(
         **provenance,
     }
     review_step = {
+        "iteration_kind": "review",
         "step": next_number + 1,
         "agent_id": review_approval.get("agent_id"),
         "role": review_approval.get("role"),

@@ -104,10 +104,12 @@ def _state(overall: str = "fail", *, consumed: bool = False, rounds: int = 0) ->
         steps.append({"step": next_step, "agent_id": "coder", "role": "implementation",
                       "task": "rework", "risk": "low", "requires_approval": True,
                       "origin": REVIEW_ITERATION_ORIGIN, "round": round_number,
+                      "iteration_kind": "rework",
                       "triggered_by_reply": f"rep_old_{round_number}"})
         steps.append({"step": next_step + 1, "agent_id": "reviewer", "role": "review",
                       "task": "review the widget", "risk": "low", "requires_approval": True,
                       "origin": REVIEW_ITERATION_ORIGIN, "round": round_number,
+                      "iteration_kind": "review",
                       "triggered_by_reply": f"rep_old_{round_number}"})
         next_step += 2
     reply_id = "rep_old_1" if consumed else "rep_new"
@@ -188,6 +190,34 @@ def test_derive_uses_latest_verdict_not_stale_fail() -> None:
          "text": "verdict pass", "verdict": _verdict("pass")}
     )
     assert derive_review_iteration(state, "pln_1", 2)["reason"] == "verdict_pass"
+
+
+def test_derived_steps_carry_iteration_kind() -> None:
+    result = derive_review_iteration(_state("fail"), "pln_1", 2)
+    assert result["rework_step"]["iteration_kind"] == "rework"
+    assert result["review_step"]["iteration_kind"] == "review"
+
+
+def test_rework_self_verdict_never_triggers_phantom_round() -> None:
+    """coder 在 rework 回复里的自评 verdict 绝不能触发新一轮迭代——
+    否则 walk-away 模式会派出"coder 复审自己"的畸形对烧掉预算。"""
+    state = _state("fail", consumed=True, rounds=1)
+    state["approvals"].append(
+        {"approval_id": "apv_3", "plan_id": "pln_1", "step": 3, "agent_id": "coder",
+         "role": "implementation", "task": "rework", "risk": "low",
+         "status": "dispatched", "message_id": "msg_rework1"},
+    )
+    state["messages"].append(
+        {"message_id": "msg_rework1", "worktree_branch": "agentdeck/msg_rework1"},
+    )
+    # coder 自评 fail(诚实的部分返工)——最新 verdict 但来自 rework step
+    state["replies"].append(
+        {"reply_id": "rep_self", "message_id": "msg_rework1", "from_agent": "coder",
+         "text": "partial rework", "verdict": _verdict("fail")},
+    )
+    result = derive_review_iteration(state, "pln_1", 2)
+    assert result["ok"] is False
+    assert result["reason"] == "already_triggered"  # 只剩已消费的原 review verdict
 
 
 def test_second_round_targets_first_round_rework_step() -> None:
@@ -366,3 +396,45 @@ def test_plan_rework_contract_shapes() -> None:
     broken.pop("round")
     assert validate_plan_rework_contract(broken)["ok"] is False
     assert validate_plan_rework_contract({**plan_rework_example(), "mode": "nope"})["ok"] is False
+
+
+def test_run_loop_validators_reject_non_list_review_iterations() -> None:
+    from agentdeck.contracts import (
+        validate_run_loop_all_contract,
+        validate_run_loop_contract,
+    )
+
+    result = validate_run_loop_contract({"review_iterations": "nope"})
+    assert any("review_iterations must be a list" in e for e in result["errors"])
+    result_all = validate_run_loop_all_contract(
+        {"plans": [{"review_iterations": "nope"}]}
+    )
+    assert any(
+        "plans[0].review_iterations must be a list" in e for e in result_all["errors"]
+    )
+
+
+def test_plan_verdict_summary_ignores_rework_self_verdict(tmp_path) -> None:
+    """plan 的 review verdict 只认非 rework 面的回复:coder 自评绝不能
+    覆盖 reviewer 的判定(否则自评 fail 会扣住 merge、自评 pass 会放行)。"""
+    _root, store = _seed_store(tmp_path, "pass")  # reviewer 判 pass
+    state = store.load()
+    steps = state["plans"][0]["plan"]["steps"]
+    steps.append({"step": 3, "agent_id": "coder", "role": "implementation",
+                  "task": "rework", "risk": "low", "requires_approval": True,
+                  "origin": REVIEW_ITERATION_ORIGIN, "round": 1,
+                  "iteration_kind": "rework", "triggered_by_reply": "rep_old"})
+    state["approvals"].append(
+        {"approval_id": "apv_3", "plan_id": "pln_1", "step": 3, "agent_id": "coder",
+         "role": "implementation", "task": "rework", "risk": "low",
+         "status": "dispatched", "message_id": "msg_rework1"},
+    )
+    state["messages"].append({"message_id": "msg_rework1", "worktree_branch": None})
+    state["replies"].append(
+        {"reply_id": "rep_self", "message_id": "msg_rework1", "from_agent": "coder",
+         "text": "self assessment", "verdict": _verdict("fail")},
+    )
+    store.save(state)
+    summary = store.plan_verdict_summary("pln_1")
+    assert summary is not None
+    assert summary["overall"] == "pass"  # 更晚的 coder 自评 fail 被排除
