@@ -189,6 +189,43 @@ def test_derive_uses_latest_verdict_not_stale_fail() -> None:
     assert derive_review_iteration(state, "pln_1", 2)["reason"] == "verdict_pass"
 
 
+def test_second_round_targets_first_round_rework_step() -> None:
+    """round-2 回炉必须瞄准 round-1 的 rework step(最新任务分支),
+    而不是最初的 step 1——这是迭代闭环能真正收敛的核心语义。"""
+    state = _state("fail", rounds=1)
+    state["approvals"] += [
+        {"approval_id": "apv_3", "plan_id": "pln_1", "step": 3, "agent_id": "coder",
+         "role": "implementation", "task": "rework", "risk": "low",
+         "status": "dispatched", "message_id": "msg_rework1"},
+        {"approval_id": "apv_4", "plan_id": "pln_1", "step": 4, "agent_id": "reviewer",
+         "role": "review", "task": "review the widget", "risk": "low",
+         "status": "dispatched", "message_id": "msg_rev2"},
+    ]
+    state["messages"] += [
+        {"message_id": "msg_rework1", "worktree_branch": "agentdeck/msg_rework1"},
+        {"message_id": "msg_rev2", "worktree_branch": None},
+    ]
+    state["replies"] = [
+        {"reply_id": "rep_round2", "message_id": "msg_rev2", "from_agent": "reviewer",
+         "text": "still broken", "verdict": _verdict("fail")},
+    ]
+    result = derive_review_iteration(state, "pln_1", 2)
+    assert result["ok"] is True
+    assert result["round"] == 2
+    assert (result["rework_step"]["step"], result["review_step"]["step"]) == (5, 6)
+    # 原任务取自 round-1 rework approval(step 3),不是 step 1
+    assert "原任务: rework" in result["rework_step"]["task"]
+
+
+def test_derive_falls_back_to_dispatched_step_without_worktrees() -> None:
+    state = _state("fail")
+    state["messages"][0]["worktree_branch"] = None  # 无任何 worktree 分支
+    result = derive_review_iteration(state, "pln_1", 2)
+    assert result["ok"] is True
+    assert result["rework_step"]["agent_id"] == "coder"
+    assert "原任务: build the widget" in result["rework_step"]["task"]
+
+
 def test_rework_task_template_truncates_with_trace_pointer() -> None:
     text = build_rework_task(
         round_number=1,

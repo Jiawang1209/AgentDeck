@@ -4,6 +4,21 @@
 
 ## 2026-07-31
 
+### Pin multi-round targeting and dispatched fallback in review iteration tests
+
+- **Type**: fix
+- **Motivation**: Task 2 独立审查(Approve)点名两处测试缺口:round-2
+  回炉必须瞄准 round-1 rework step(迭代收敛的核心语义)与无 worktree
+  运行时的已派发回退路径都无测试钉住。
+- **What**: `tests/test_review_iteration.py` 增两测:
+  `test_second_round_targets_first_round_rework_step`(round-1 对追加
+  approvals/messages/新 fail reply 后,round-2 的原任务取自 step 3
+  rework approval 而非 step 1,编号 5/6)与
+  `test_derive_falls_back_to_dispatched_step_without_worktrees`。纯测试
+  提交,零实现变更。
+- **Impact**: 迭代闭环最关键的两条推导路径获得回归保护。
+- **Verification**: `tests/test_review_iteration.py` 15 passed。
+
 ### Add review-iteration pure derivation module (trigger matrix + deterministic rework template)
 
 - **Type**: feat
