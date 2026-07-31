@@ -22,8 +22,10 @@ import weakref
 from .config import CONFIG_DIR, ensure_project_layout, load_config, project_root
 from .storage.shadow import (
     EVENTS_AUTHORITY_SQLITE as _EVENTS_AUTHORITY_SQLITE,
+    EVENTS_EXPORT_ON_DEMAND as _EVENTS_EXPORT_ON_DEMAND,
     append_events_authoritative as _shadow_append_events_authoritative,
     events_authority as _shadow_events_authority,
+    events_export_mode as _shadow_events_export_mode,
     journal_bytes_from_table as _shadow_journal_bytes_from_table,
     log_shadow_error as _shadow_log_error,
     append_events_if_enabled as _shadow_append_events_if_enabled,
@@ -550,6 +552,71 @@ def _append_event_journal_at(state_fd: int, payload: bytes) -> None:
             written = os.write(descriptor, view)
             if written <= 0:
                 raise OSError("event journal append made no progress")
+            view = view[written:]
+        os.fsync(descriptor)
+        _verify_regular_file_at(
+            state_fd,
+            temporary,
+            descriptor,
+            error="event journal changed during append",
+        )
+        _verify_event_journal_identity_at(state_fd, expected_identity)
+        _guard_mutation_effect_before_replace(state_fd, "events.jsonl")
+        os.replace(
+            temporary,
+            "events.jsonl",
+            src_dir_fd=state_fd,
+            dst_dir_fd=state_fd,
+        )
+        _mark_mutation_effect_installed("events.jsonl")
+        _verify_regular_file_at(
+            state_fd,
+            "events.jsonl",
+            descriptor,
+            error="event journal changed during append",
+        )
+        os.fsync(state_fd)
+    finally:
+        try:
+            os.close(descriptor)
+        finally:
+            try:
+                os.unlink(temporary, dir_fd=state_fd)
+            except FileNotFoundError:
+                pass
+
+
+def _rewrite_event_journal_at(state_fd: int, content: bytes) -> None:
+    # SQLite 阶段 5d：按需导出的整文件重建。与 _append_event_journal_at
+    # 走同一套 temp-file + guarded replace 纪律，唯一区别是安装的内容是
+    # 完整的表字节流而非 source+payload；append 路径保持零改动。
+    _source, expected_identity = _read_event_journal_snapshot_at(state_fd)
+    if len(content) > _EVENT_JOURNAL_MAX_BYTES:
+        raise ValueError("event journal exceeds size limit")
+    temporary = f".events.jsonl.{os.getpid()}.{new_id('tmp')}.tmp"
+    flags = (
+        os.O_WRONLY
+        | os.O_CREAT
+        | os.O_EXCL
+        | getattr(os, "O_NOFOLLOW", 0)
+    )
+    descriptor: int | None = None
+    try:
+        descriptor = os.open(temporary, flags, 0o600, dir_fd=state_fd)
+    except OSError as exc:
+        raise ValueError("event journal is unsafe") from exc
+    try:
+        _verify_regular_file_at(
+            state_fd,
+            temporary,
+            descriptor,
+            error="event journal is unsafe",
+        )
+        view = memoryview(content)
+        while view:
+            written = os.write(descriptor, view)
+            if written <= 0:
+                raise OSError("event journal rewrite made no progress")
             view = view[written:]
         os.fsync(descriptor)
         _verify_regular_file_at(
@@ -3016,6 +3083,11 @@ class StateStore:
         if _shadow_events_authority(self.root) == _EVENTS_AUTHORITY_SQLITE:
             self._verify_current_mutation_anchor()
             _shadow_append_events_authoritative(self.root, encoded)
+            # SQLite 阶段 5d：显式 on_demand 模式跳过同步导出（表写仍是
+            # 权威且已完成、失败仍冒泡）；模式读取任何异常 fail-safe 按
+            # sync 处理——宁可多导出，绝不静默停导出。
+            if _shadow_events_export_mode(self.root) == _EVENTS_EXPORT_ON_DEMAND:
+                return
             try:
                 self._append_event_bytes_journal(encoded)
             except Exception as error:  # noqa: BLE001 - export mirror only
@@ -3068,6 +3140,81 @@ class StateStore:
             try:
                 self._verify_current_mutation_anchor()
                 _append_event_journal_at(state_fd, encoded)
+                self._verify_current_mutation_anchor()
+            except BaseException:
+                current = _named_regular_snapshot_at(
+                    state_fd,
+                    "events.jsonl",
+                    max_bytes=_EVENT_JOURNAL_MAX_BYTES,
+                    limit_error="event journal exceeds size limit",
+                )
+                if (
+                    entry["effect_guard"].get("effect_installed") is True
+                    and current is not None
+                    and current[0] == installed
+                    and current[1] != displaced_identity
+                ):
+                    _restore_displaced_file_if_exact(
+                        state_fd,
+                        "events.jsonl",
+                        installed=installed,
+                        displaced_fd=displaced_fd,
+                        held_lock_identity=held_lock_identity,
+                        max_bytes=_EVENT_JOURNAL_MAX_BYTES,
+                        limit_error="event journal exceeds size limit",
+                    )
+                raise
+        finally:
+            try:
+                _release_effect_guard(entry)
+            finally:
+                if displaced_fd is not None:
+                    os.close(displaced_fd)
+
+    def _rewrite_event_bytes_journal(self, content: bytes) -> None:
+        # SQLite 阶段 5d：把 events.jsonl 整文件重建为给定字节流。与
+        # _append_event_bytes_journal 相同的 effect-guard 纪律，只是安装的
+        # 最终内容是 content 本身；仅由显式导出路径调用（caller 已持锁）。
+        _deck_fd, state_fd = self._verify_current_mutation_anchor()
+        entry = _state_lock_entries()[str(self.root.resolve())]
+        lock_fd = entry["lock_fd"]
+        assert isinstance(lock_fd, int)
+        held_lock = os.fstat(lock_fd)
+        held_lock_identity = (held_lock.st_dev, held_lock.st_ino)
+        displaced_fd = _open_retained_regular_at(
+            state_fd,
+            "events.jsonl",
+            error="event journal is unsafe",
+        )
+        displaced_identity = (
+            None
+            if displaced_fd is None
+            else (os.fstat(displaced_fd).st_dev, os.fstat(displaced_fd).st_ino)
+        )
+        source = (
+            b""
+            if displaced_fd is None
+            else _read_retained_bytes(
+                displaced_fd,
+                max_bytes=_EVENT_JOURNAL_MAX_BYTES,
+                limit_error="event journal exceeds size limit",
+            )
+        )
+        installed = content
+        if "effect_guard" in entry:
+            raise RuntimeError("state mutation effect guard is already active")
+        entry["effect_guard"] = {
+            "target": "events.jsonl",
+            "source": None if displaced_fd is None else source,
+            "identity": displaced_identity,
+            "effect_installed": False,
+            "max_bytes": _EVENT_JOURNAL_MAX_BYTES,
+            "limit_error": "event journal exceeds size limit",
+        }
+        try:
+            try:
+                self._verify_current_mutation_anchor()
+                _rewrite_event_journal_at(state_fd, content)
                 self._verify_current_mutation_anchor()
             except BaseException:
                 current = _named_regular_snapshot_at(
@@ -3173,7 +3320,12 @@ class StateStore:
         return {"backfilled": backfilled, "total_events": total}
 
     def events_rollback(self) -> dict[str, Any]:
-        """SQLite 阶段 5c 回滚：验证导出无漂移后把权威切回 journal。"""
+        """SQLite 阶段 5c 回滚：验证导出无漂移后把权威切回 journal。
+
+        5d：mode=on_demand 时先全量导出并校验（否则文件必然滞后），再走
+        既有零漂移验证与权威回切，并把 mode 重置为 sync——journal 权威下
+        不存在按需导出。
+        """
         from .storage import shadow as storage_shadow
 
         database = storage_shadow.shadow_database_path(self.root)
@@ -3185,6 +3337,9 @@ class StateStore:
                 != storage_shadow.EVENTS_AUTHORITY_SQLITE
             ):
                 raise ValueError("events authority is not sqlite")
+            export_mode = storage_shadow.events_export_mode(self.root)
+            if export_mode == storage_shadow.EVENTS_EXPORT_ON_DEMAND:
+                self._events_export_locked()
             journal = self._event_journal_file_bytes_locked()
             rebuilt = storage_shadow.journal_bytes_from_table(self.root)
             if journal != rebuilt:
@@ -3199,6 +3354,10 @@ class StateStore:
                     storage_shadow.set_events_authority(
                         connection, storage_shadow.EVENTS_AUTHORITY_JOURNAL
                     )
+                    if export_mode == storage_shadow.EVENTS_EXPORT_ON_DEMAND:
+                        storage_shadow.set_events_export_mode(
+                            connection, storage_shadow.EVENTS_EXPORT_SYNC
+                        )
                     connection.execute("COMMIT")
                 except BaseException:
                     connection.execute("ROLLBACK")
@@ -3212,6 +3371,92 @@ class StateStore:
             EventRecord.create("storage_events_rollback", {"total_events": total})
         )
         return {"total_events": total}
+
+    def _events_export_locked(self) -> dict[str, Any]:
+        """SQLite 阶段 5d 导出核心：caller 已持 mutation lock 且已验证
+        authority=sqlite。把 events.jsonl 整文件重建为权威表字节流并逐
+        字节校验；文件已新鲜时零写。"""
+        rebuilt = _shadow_journal_bytes_from_table(self.root)
+        current = self._event_journal_file_bytes_locked()
+        rewritten = current != rebuilt
+        if rewritten:
+            self._rewrite_event_bytes_journal(rebuilt)
+            after = self._event_journal_file_bytes_locked()
+            if after != rebuilt:
+                raise ValueError(
+                    "events.jsonl export is not byte-identical to the events table"
+                )
+        return {
+            "total_events": len(rebuilt.splitlines()),
+            "rewritten": rewritten,
+        }
+
+    def events_export(self) -> dict[str, Any]:
+        """SQLite 阶段 5d：显式把 events.jsonl 重建为权威表字节流。"""
+        from .storage import shadow as storage_shadow
+
+        database = storage_shadow.shadow_database_path(self.root)
+        if not database.is_file():
+            raise ValueError("shadow database is not enabled")
+        with self._protocol_mutation_lock():
+            if (
+                storage_shadow.events_authority(self.root)
+                != storage_shadow.EVENTS_AUTHORITY_SQLITE
+            ):
+                raise ValueError(
+                    "events authority is not sqlite; export is meaningless "
+                    "under journal authority"
+                )
+            result = self._events_export_locked()
+        self.append_event(EventRecord.create("storage_events_exported", result))
+        return result
+
+    def events_export_mode_update(self, value: str) -> dict[str, Any]:
+        """SQLite 阶段 5d：显式切换导出模式（sync <-> on_demand）。
+
+        要求 authority=sqlite；切到 sync 前先强制全量导出（从此文件保持
+        新鲜）；切到 on_demand 只翻 meta；同值重复切换拒绝零写。
+        """
+        from .storage import shadow as storage_shadow
+
+        if value not in {
+            storage_shadow.EVENTS_EXPORT_SYNC,
+            storage_shadow.EVENTS_EXPORT_ON_DEMAND,
+        }:
+            raise ValueError("unknown events export mode")
+        database = storage_shadow.shadow_database_path(self.root)
+        if not database.is_file():
+            raise ValueError("shadow database is not enabled")
+        with self._protocol_mutation_lock():
+            if (
+                storage_shadow.events_authority(self.root)
+                != storage_shadow.EVENTS_AUTHORITY_SQLITE
+            ):
+                raise ValueError("events authority is not sqlite")
+            previous = storage_shadow.events_export_mode(self.root)
+            if previous == value:
+                raise ValueError(f"events export mode is already {value}")
+            if value == storage_shadow.EVENTS_EXPORT_SYNC:
+                # 回到 sync 前先补齐文件，从此同步导出保持新鲜。
+                self._events_export_locked()
+            connection = storage_shadow.open_shadow_connection(database)
+            try:
+                connection.execute("BEGIN IMMEDIATE")
+                try:
+                    storage_shadow.set_events_export_mode(connection, value)
+                    connection.execute("COMMIT")
+                except BaseException:
+                    connection.execute("ROLLBACK")
+                    raise
+            finally:
+                connection.close()
+        self.append_event(
+            EventRecord.create(
+                "storage_events_export_mode_updated",
+                {"mode": value, "previous": previous},
+            )
+        )
+        return {"mode": value, "previous": previous}
 
     def record_governance_preview(
         self,

@@ -10838,14 +10838,25 @@ def storage_shadow_status_command(_args: argparse.Namespace) -> int:
     from agentdeck.storage import shadow as storage_shadow
 
     database = storage_shadow.shadow_database_path(config.root)
+    events_export_mode = storage_shadow.events_export_mode(config.root)
     payload: dict[str, object] = {
         "ok": True,
         "mode": "storage_shadow_status",
         "database": str(database),
         "enabled": False,
         "events_authority": storage_shadow.events_authority(config.root),
+        "events_export_mode": events_export_mode,
         "enable_command": "agentdeck storage shadow-enable --confirm",
     }
+    if events_export_mode == storage_shadow.EVENTS_EXPORT_ON_DEMAND:
+        # 5d 硬边界：按需导出下 events.jsonl 滞后于权威表，`rm state.db`
+        # 不再无损——必须显著标注。
+        payload["events_export_warning"] = (
+            "events export mode is on_demand: events.jsonl lags the "
+            "authoritative table, so `rm state.db` is not lossless; run "
+            "`agentdeck storage events-export --confirm` or "
+            "`agentdeck storage events-rollback --confirm` first"
+        )
     if database.is_file():
         connection = storage_shadow.open_shadow_connection(database)
         try:
@@ -10993,6 +11004,61 @@ def storage_events_rollback_command(args: argparse.Namespace) -> int:
     return 0
 
 
+def storage_events_export_command(args: argparse.Namespace) -> int:
+    config, store, exit_code = _load_project_or_error()
+    if config is None or store is None:
+        return exit_code
+    if not args.confirm:
+        print("storage events-export requires --confirm", file=sys.stderr)
+        return 1
+    from agentdeck.storage import shadow as storage_shadow
+
+    try:
+        result = store.events_export()
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    _print_json(
+        {
+            "ok": True,
+            "mode": "storage_events_exported",
+            "database": str(storage_shadow.shadow_database_path(config.root)),
+            "total_events": result["total_events"],
+            "rewritten": result["rewritten"],
+            "diff_command": "agentdeck storage events-diff",
+        }
+    )
+    return 0
+
+
+def storage_events_export_mode_command(args: argparse.Namespace) -> int:
+    config, store, exit_code = _load_project_or_error()
+    if config is None or store is None:
+        return exit_code
+    if not args.confirm:
+        print("storage events-export-mode requires --confirm", file=sys.stderr)
+        return 1
+    from agentdeck.storage import shadow as storage_shadow
+
+    try:
+        result = store.events_export_mode_update(args.mode)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    _print_json(
+        {
+            "ok": True,
+            "mode": "storage_events_export_mode_updated",
+            "database": str(storage_shadow.shadow_database_path(config.root)),
+            "events_export_mode": result["mode"],
+            "previous_mode": result["previous"],
+            "export_command": "agentdeck storage events-export --confirm",
+            "diff_command": "agentdeck storage events-diff",
+        }
+    )
+    return 0
+
+
 def storage_events_diff_command(_args: argparse.Namespace) -> int:
     config, store, exit_code = _load_project_or_error()
     if config is None or store is None:
@@ -11038,6 +11104,48 @@ def storage_events_diff_command(_args: argparse.Namespace) -> int:
             except ValueError:
                 journal_events.append({"event_id": "<unparseable>", "raw": stripped})
     mismatches: list[dict[str, object]] = []
+    if (
+        storage_shadow.events_authority(config.root)
+        == storage_shadow.EVENTS_AUTHORITY_SQLITE
+        and storage_shadow.events_export_mode(config.root)
+        == storage_shadow.EVENTS_EXPORT_ON_DEMAND
+    ):
+        # 5d on_demand：cutover 后表含全量历史，文件允许滞后——文件是表
+        # 字节流的前缀即 ok；export_lag（表条数-文件条数）只是信息字段。
+        # 重叠区内容不符仍是漂移；sync 模式走下方原有后缀对齐路径不变。
+        payload["events_export_mode"] = storage_shadow.EVENTS_EXPORT_ON_DEMAND
+        payload["export_lag"] = len(table_rows) - len(journal_events)
+        if len(journal_events) > len(table_rows):
+            mismatches.append(
+                {
+                    "reason": "journal longer than table",
+                    "journal_events": len(journal_events),
+                    "table_rows": len(table_rows),
+                }
+            )
+        overlap = min(len(journal_events), len(table_rows))
+        for journal_event, row in zip(journal_events[:overlap], table_rows[:overlap]):
+            row_payload = json.loads(row[2])
+            if (
+                str(journal_event.get("event_id")) != str(row[0])
+                or str(journal_event.get("event_type")) != str(row[1])
+                or journal_event.get("payload") != row_payload
+                or str(journal_event.get("created_at")) != str(row[3])
+            ):
+                mismatches.append(
+                    {
+                        "reason": "content mismatch",
+                        "journal_event_id": journal_event.get("event_id"),
+                        "table_event_id": row[0],
+                    }
+                )
+                if len(mismatches) >= 10:
+                    break
+        payload["compared_count"] = overlap
+        payload["mismatches"] = mismatches
+        payload["in_sync"] = not mismatches
+        _print_json(payload)
+        return 0 if not mismatches else 1
     if not table_rows:
         # 表为空（刚启用/尚无双写）：平凡同步，baseline=全部历史
         payload.update({"in_sync": True, "baseline_offset": len(journal_events)})
@@ -22151,6 +22259,21 @@ def build_parser() -> argparse.ArgumentParser:
     )
     storage_events_rollback.add_argument("--confirm", action="store_true")
     storage_events_rollback.set_defaults(func=storage_events_rollback_command)
+    storage_events_export = storage_subparsers.add_parser(
+        "events-export",
+        help="Explicitly rebuild events.jsonl from the authoritative events table (sqlite authority only)",
+    )
+    storage_events_export.add_argument("--confirm", action="store_true")
+    storage_events_export.set_defaults(func=storage_events_export_command)
+    storage_events_export_mode = storage_subparsers.add_parser(
+        "events-export-mode",
+        help="Explicitly switch the post-cutover events.jsonl export mode (sync|on_demand)",
+    )
+    storage_events_export_mode.add_argument(
+        "--mode", choices=["sync", "on_demand"], required=True
+    )
+    storage_events_export_mode.add_argument("--confirm", action="store_true")
+    storage_events_export_mode.set_defaults(func=storage_events_export_mode_command)
 
     ui_parser = subparsers.add_parser("ui", help="Local read-only web shell over the contract surface")
     ui_subparsers = ui_parser.add_subparsers(dest="ui_command")

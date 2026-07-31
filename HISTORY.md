@@ -4,6 +4,42 @@
 
 ## 2026-08-01
 
+### SQLite 5d: on-demand events export mode（O(n²) 写消失点）
+
+- **Type**: feat
+- **Motivation**: 阶段 5c 后 events 表已是权威,但每次 append 仍同步把
+  journal 全文读+重写导出到 events.jsonl(O(n²));route spec 冻结的 5d
+  设计(2026-08-01 user 拍板开工)要求把导出改为显式按需,同时保证
+  journal 权威路径逐字节不变、绝不静默停导出。
+- **What**: `storage/shadow.py` 新增 meta 键 `events_export_mode`
+  (`sync` 缺省/`on_demand`)的读写对(`events_export_mode` 读取异常一律
+  fail-safe 回 `sync`);`state.py` `_append_event_bytes_locked` sqlite
+  分支在权威表写完成后按 mode 跳过同步导出(表写失败仍冒泡,`sync`
+  逐字节不变,journal 权威路径零改动);新增 `_rewrite_event_journal_at`
+  / `_rewrite_event_bytes_journal`(append 原语的整文件重建姊妹,同一套
+  temp-file + effect-guard 纪律,append 路径未动)与导出核心
+  `_events_export_locked`(重建为表字节流+逐字节校验,新鲜时零写);
+  新命令 `storage events-export --confirm`(authority=journal 拒绝,审计
+  `storage_events_exported`)与 `storage events-export-mode --mode
+  sync|on_demand --confirm`(要求 authority=sqlite,切 `sync` 前强制全量
+  导出,同值重复拒绝零写,审计 `storage_events_export_mode_updated`);
+  `events-rollback` 在 `on_demand` 下先全量导出并校验再走既有零漂移
+  验证与回切,并把 mode 重置为 `sync`;`events-diff` 在 `on_demand` 下
+  改前缀比对+只读 `export_lag`(`sync` 路径不变);`shadow-status` 暴露
+  `events_export_mode` 并在 `on_demand` 下显著标注 `rm state.db` 不再
+  无损。CLAUDE.md storage bullet 同步 5d 语义。
+- **Impact**: authority=sqlite + `on_demand` 下事件 append 从 O(n²) 文件
+  重写降为单次表 INSERT;events.jsonl 变为按需镜像(events-diff 以
+  export_lag 显示滞后)。停导出绝不自动发生(仅显式 `--confirm` 切换);
+  未 cutover 项目零行为变化;`rm state.db` 在 `on_demand` 下不再是无损
+  回滚(先 events-export 或 events-rollback,status 有警告)。
+- **Verification**: TDD——`tests/test_events_export_mode.py` 7 个新测试
+  先 RED(ImportError)后全绿;`pytest tests/test_events_export_mode.py
+  tests/test_events_cutover.py tests/test_storage_shadow.py -q` 23
+  passed(cutover/shadow 回归含 sync 逐字节 pin);`pytest
+  tests/test_agent_cli.py -k "storage or shadow or events"` 9 passed;
+  `python -m compileall src tests` 干净;全量 `pytest tests/ -q` 绿。
+
 ### Document read-only delegation starter pack
 
 - **Type**: docs

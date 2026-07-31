@@ -238,6 +238,43 @@ def set_events_authority(connection: sqlite3.Connection, value: str) -> None:
     )
 
 
+EVENTS_EXPORT_SYNC = "sync"
+EVENTS_EXPORT_ON_DEMAND = "on_demand"
+
+
+def events_export_mode(root: Path | str) -> str:
+    """SQLite 阶段 5d：events.jsonl 导出模式（仅 authority=sqlite 时有意义）。
+
+    Fail-safe: any read problem degrades to 'sync' — keep exporting rather
+    than ever silently stopping the journal mirror.
+    """
+    database = shadow_database_path(root)
+    try:
+        if not database.is_file():
+            return EVENTS_EXPORT_SYNC
+        connection = open_shadow_connection(database)
+        try:
+            if not _shadow_enabled(connection):
+                return EVENTS_EXPORT_SYNC
+            meta = dict(connection.execute("SELECT key, value FROM meta"))
+            if meta.get("events_export_mode") == EVENTS_EXPORT_ON_DEMAND:
+                return EVENTS_EXPORT_ON_DEMAND
+            return EVENTS_EXPORT_SYNC
+        finally:
+            connection.close()
+    except Exception:  # noqa: BLE001 - degrade to sync, never crash the write path
+        return EVENTS_EXPORT_SYNC
+
+
+def set_events_export_mode(connection: sqlite3.Connection, value: str) -> None:
+    if value not in {EVENTS_EXPORT_SYNC, EVENTS_EXPORT_ON_DEMAND}:
+        raise ValueError("unknown events export mode")
+    connection.execute(
+        "INSERT OR REPLACE INTO meta(key, value) VALUES ('events_export_mode', ?)",
+        (value,),
+    )
+
+
 def insert_event_lines(connection: sqlite3.Connection, encoded: bytes) -> int:
     """Parse encoded journal lines and INSERT OR IGNORE them. Returns inserted count."""
     inserted = 0
