@@ -325,8 +325,11 @@ def test_merge_on_complete_withheld_when_verdict_not_pass(
         root, monkeypatch, capsys, json.dumps(verdict, ensure_ascii=False)
     )
 
+    # review-iteration (2026-07-31) 默认会在 needs_changes 时先追加回炉步;
+    # 本测试用 --max-review-rounds 0 隔离测 merge gate 本身。
     exit_code = cli.main(
-        ["run-loop", "--plan-id", plan_id, "--confirm", "--follow", "--max-waves", "2", "--interval", "1", "--merge-on-complete"]
+        ["run-loop", "--plan-id", plan_id, "--confirm", "--follow", "--max-waves", "2", "--interval", "1",
+         "--merge-on-complete", "--max-review-rounds", "0"]
     )
 
     assert exit_code == 0
@@ -337,6 +340,33 @@ def test_merge_on_complete_withheld_when_verdict_not_pass(
     assert merge["ok"] is False
     assert "needs_changes" in merge["blocker"]
     assert merge["next_command"] == f"agentdeck worktree merge-plan --plan-id {plan_id} --confirm"
+
+
+def test_review_iteration_prefers_rework_over_completion_by_default(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    """Companion to test_merge_on_complete_withheld_when_verdict_not_pass: pins
+    the composed default (no --max-review-rounds override) where a
+    needs_changes verdict now triggers the review-iteration hook instead of
+    letting the wave reach the complete gate."""
+    root = prepare_project(tmp_path, monkeypatch)
+    _enable_split(root)
+    _enable_autonomous(root)
+    verdict = _summary_verdict("量化验收目标")  # overall=needs_changes
+    plan_id, _ = _run_plan_to_replies(
+        root, monkeypatch, capsys, json.dumps(verdict, ensure_ascii=False)
+    )
+
+    exit_code = cli.main(
+        ["run-loop", "--plan-id", plan_id, "--confirm", "--follow", "--max-waves", "2", "--interval", "1"]
+    )
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    review_iterations = payload["waves"][0]["review_iterations"]
+    assert review_iterations[0]["round"] == 1
+    assert payload["stopped_reason"] != "complete"
+    assert payload["stopped_reason"] == "needs_human_approval"
 
 
 def test_merge_on_complete_proceeds_when_verdict_pass(

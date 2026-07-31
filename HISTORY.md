@@ -4,6 +4,41 @@
 
 ## 2026-07-31
 
+### Isolate G5 merge-gate test from review iteration hook
+
+- **Type**: fix
+- **Motivation**: 上一刀(接线 review-iteration 到 run-loop wave)让全量套件
+  跑出一个之前没跑到的真实交互:`test_merge_on_complete_withheld_when_
+  verdict_not_pass`(G5 verdict-gated merge,pre-Task-6)假定
+  `needs_changes` 判定仍会让 wave 走到 `complete` 门(只是自动 merge 被
+  verdict 挡下)。但 Task 6 接线后,`needs_changes` 恰好是回炉钩子的触发
+  条件——默认预算(`config.autonomous.max_review_rounds`,未覆盖时为 2)
+  下,钩子会先追加回炉+复审 step 对,wave 停在 `needs_human_approval`,
+  永远到不了 `complete`。这不是接线 bug,是两个已冻结特性的组合行为;
+  按 spec `docs/superpowers/specs/2026-07-30-review-iteration-loop-design.md`
+  的“预算”章节,budget 0 = 迭代关闭 = 退回纯 G5 行为,因此把预算显式压
+  到 0 就是隔离测 merge gate 本身的正确写法,人类已按此拍板。
+- **What**: `tests/test_review_verdict_ingestion.py::
+  test_merge_on_complete_withheld_when_verdict_not_pass` 的 run-loop 调用
+  追加 `--max-review-rounds 0`(附一行中文注释说明原因),继续逐字节钉住
+  纯 G5 merge-gating(`stopped_reason=complete`,
+  `plan_merge.mode=verdict_blocked`)。同文件新增
+  `test_review_iteration_prefers_rework_over_completion_by_default` 作为
+  伴随测试:复用同一套 seeding helper(`_enable_split`/`_enable_autonomous`/
+  `_summary_verdict`/`_run_plan_to_replies`),不带 `--max-review-rounds`
+  跑 `run-loop --follow`(config 默认预算),钉住组合后的默认行为——第一
+  个 wave 的 `review_iterations[0]["round"] == 1`,且最终 `stopped_reason`
+  是 `needs_human_approval` 而不是 `complete`(needs_changes 默认优先回
+  炉而不是直接完成)。
+- **Impact**: 两条边界现在都有显式回归覆盖:`--max-review-rounds 0` 时
+  行为与接入前逐字节一致(纯 G5 merge-gating 不受影响);默认预算时
+  `needs_changes` 判定会先触发回炉再进入完成态,是产品拍板后的新默认
+  行为,不再是未测试的隐性交互。无生产代码改动,只改测试。
+- **Verification**: `conda run -n agentdeck pytest
+  tests/test_review_verdict_ingestion.py tests/test_plan_rework_cli.py -q`
+  → 23 passed。`conda run -n agentdeck pytest tests/ -q` 全量套件 → 4815
+  passed, 3 skipped, 0 failed(265.34s)。
+
 ### Wire review iteration into run-loop waves with --max-review-rounds
 
 - **Type**: feat
