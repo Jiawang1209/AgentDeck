@@ -179,6 +179,27 @@ verdict 输出格式(G5 现行为);文件通道回复、step 顺序守卫、merg
 - `plan rework` 的只读 preview 卡与 leader-chat 自然语言意图(后续切片,
   按 leader-chat 契约纪律另做)。
 
+## 落地期修正(2026-07-31 / 08-01,实现与审查中发现,均已 landed)
+
+1. **Walk-away 链路例外(2026-07-31,Critical 修复)**:本 spec 引擎钩子节
+   原文"`--follow` / run-loop-host 的 waiting_for_reply 循环因此天然继续"
+   在原设计下不成立——追加后 gate 变 `needs_human_approval`,follow/host
+   会在此终止。落地行为:`--follow` 与 host serve 的退出条件在"本 wave
+   追加了迭代轮(`review_iterations` 含 `round` 项)"时继续下一 wave,仍受
+   `--max-waves` 硬界,gate 诚实性不变(wave 自身仍如实报告非等待 gate)。
+2. **`--all` pre-gate 例外(2026-07-31,Important 修复)**:gate0 =
+   `complete` 的 plan 先跑钩子再决定跳过;追加成功则该 plan 参与本 wave
+   (此分支追加的审批可在同 wave 经同一 allowlist/预算选取与派发路径处理,
+   安全不变量不弱化);任何拒绝(含 `rounds_exhausted`)保持原跳过行为、
+   不产出 plan item——与预算节"wave payload 记录 skipped"表述在此分支
+   存在偏差,以 run-loop-all contract 文档为准。
+3. **Rework 自评排除(2026-08-01,终审接缝修复)**:追加 step 增
+   `iteration_kind`(rework|review);rework step 的派发 prompt 不注入
+   验收标准/verdict 输出格式,rework 回复中的自评 `verdict:` 经同源
+   `rework_step_numbers` 从迭代触发器与 `plan_verdict_summary` 双面排除
+   ——实现 agent 的自评既不能触发"coder 复审自己"的幻影轮,也不能成为
+   plan 的 review verdict。
+
 ## 测试要点
 
 - 纯模块:触发条件矩阵(fail/unknown/无 verdict/无效 verdict/旧 verdict/
