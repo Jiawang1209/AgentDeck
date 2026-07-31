@@ -211,14 +211,42 @@ Commands:
   the same `box_kind`/`mcp_server`/`mcp_tool` fields as `release-box`;
   `released[]` items additionally carry `match_kind`/`matched_segments`.
 
+## Recommended read-only starter pack (2026-08-01)
+
+Accumulated live evidence (rounds 8–13) shows worker authorization boxes are
+dominated by a small, stable set of local read-only verification commands.
+Composite chains refuse when ANY segment lacks a delegation (fail-closed by
+design), so a missing read-only prefix stalls the whole walk-away segment
+until a human grants it — round 13 stalled twice this way (`node --check`,
+then `rg`/`git log`).
+
+Recommended per-agent grants for coding workers (each one still an explicit,
+individually audited human command — there is no bulk-grant, and this list
+is documentation, not an auto-applied preset):
+
+```bash
+agentdeck delegation grant --agent <id> --prefix "node tests/" --confirm
+agentdeck delegation grant --agent <id> --prefix "node --check tests/" --confirm
+agentdeck delegation grant --agent <id> --prefix "git status" --confirm
+agentdeck delegation grant --agent <id> --prefix "git log" --confirm
+agentdeck delegation grant --agent <id> --prefix "git diff" --confirm
+agentdeck delegation grant --agent <id> --prefix "rg -n" --confirm
+```
+
+Plus, for agents expected to commit to task worktrees: `git add`,
+`git commit` (worktree-scoped by task design; never `git push`). Do not add
+open-ended interpreters (`node -e`, `python -c`, `bash`), installers, or
+network-touching prefixes to any pack — arbitrary-content commands must stay
+on the human-eyes path (round 10 conclusion).
+
 ## Boundaries
 
 - A delegation is not a permission grant: it only automates the Enter a human
   would press on the pre-selected option of a matching box. Reject/esc paths
   are never automated; non-matching boxes always wait for the human.
 - Guidance: grant prefixes only for local read-only verification commands
-  (e.g. `node tests/`) and task-worktree-scoped git writes; never for push,
-  install, or network mutation prefixes.
+  (e.g. the starter pack above) and task-worktree-scoped git writes; never
+  for push, install, or network mutation prefixes.
 - Guidance (MCP): grant MCP delegations only for read-only-natured tools
   (the hover/press_key/screenshot class), never for page-mutating tools
   (the navigate/fill/evaluate_script class). AgentDeck cannot verify a

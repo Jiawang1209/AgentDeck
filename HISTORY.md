@@ -4,6 +4,22 @@
 
 ## 2026-08-01
 
+### Document read-only delegation starter pack
+
+- **Type**: docs
+- **Motivation**: rounds 8–13 的授权框数据显示 worker 框高度集中在少数
+  只读验证命令;复合链任一段缺委托即整段卡住(fail-closed 设计),
+  round 13 两次 walk-away 停摆都源于此(node --check、rg/git log)。
+  user 拍板把推荐清单文档化。
+- **What**: `docs/contracts/delegation-schema.md` 新增 "Recommended
+  read-only starter pack" 节:六条只读前缀的逐条显式 grant 命令
+  (node tests/、node --check tests/、git status/log/diff、rg -n)+
+  worktree 提交类(git add/commit)+ 明确排除项(node -e/python -c/
+  安装/网络类永远人工);CLAUDE.md delegation bullet 加指引。**纯文档,
+  零行为变化**:没有批量授予命令,grant 仍逐条显式 --confirm 并审计。
+- **Impact**: 下轮 live 预授即可消除同类卡框;授权面与语义不变。
+- **Verification**: 文档改动;`git diff --check` 干净。
+
 ### Round 13 live PASS: review iteration loop + run-loop host (双目标全链验证)
 
 - **Type**: docs
