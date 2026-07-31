@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import asdict
 from pathlib import Path
 
 import pytest
@@ -313,3 +314,38 @@ def test_writer_refuses_malformed_plan_body_zero_write(tmp_path) -> None:
     assert result == {"ok": False, "reason": "no_plan"}
     assert store.load() == before
     assert (root / ".agentdeck" / "state" / "events.jsonl").read_text(encoding="utf-8") == events_before
+
+
+def test_project_view_plan_item_exposes_review_rounds(tmp_path) -> None:
+    root, store = _seed_store(tmp_path, "fail")
+    config = load_config(root)
+    # project_view() requires provider/model on the plan record; _state()'s
+    # minimal seed omits them, so extend it here without touching the shared
+    # helper other tests depend on.
+    state = store.load()
+    state["plans"][0]["provider"] = "fake"
+    state["plans"][0]["model"] = "fake-plan"
+    store.save(state)
+    item = asdict(store.project_view(config))["plans"]["items"][0]
+    assert item["review_rounds"] == 0
+    store.append_review_iteration("pln_1", 2, source="explicit")
+    item = asdict(store.project_view(config))["plans"]["items"][0]
+    assert item["review_rounds"] == 1
+    assert item["step_count"] == 4
+
+
+def test_plan_status_steps_carry_iteration_provenance(tmp_path) -> None:
+    _root, store = _seed_store(tmp_path, "fail")
+    store.append_review_iteration("pln_1", 2, source="explicit")
+    steps = store.plan_status("pln_1")["steps"]
+    assert steps[0]["origin"] is None and steps[0]["round"] is None
+    appended = steps[2]
+    assert appended["origin"] == REVIEW_ITERATION_ORIGIN
+    assert appended["round"] == 1
+    assert appended["triggered_by_reply"] == "rep_new"
+
+
+def test_project_view_contract_accepts_review_rounds() -> None:
+    from agentdeck.contracts import PROJECT_VIEW_PLAN_ITEM_FIELDS
+
+    assert "review_rounds" in PROJECT_VIEW_PLAN_ITEM_FIELDS

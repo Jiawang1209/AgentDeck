@@ -52,7 +52,7 @@ from .mission import (
     mission_commands,
     mission_status_transition_allowed,
 )
-from .review_iteration import derive_review_iteration
+from .review_iteration import derive_review_iteration, plan_review_rounds
 from .review_verdict import align_verdict_with_criteria, parse_verdict_line
 from .mission_authority import (
     SEMANTIC_MISSION_COMPACT_FIELDS,
@@ -9521,6 +9521,9 @@ class StateStore:
                     "message_id": approval.get("message_id") if approval else None,
                     "attempt_id": approval.get("attempt_id") if approval else None,
                     "job_id": approval.get("job_id") if approval else None,
+                    "origin": step.get("origin"),
+                    "round": step.get("round"),
+                    "triggered_by_reply": step.get("triggered_by_reply"),
                 }
                 if approval and approval.get("reason"):
                     status_item["reason"] = approval.get("reason")
@@ -10341,6 +10344,7 @@ class StateStore:
             "model": plan.get("model"),
             "dispatch_ready": plan.get("dispatch_ready"),
             "skill_context": StateStore._plan_skill_context(plan.get("skill_context")),
+            "review_rounds": plan_review_rounds(steps if isinstance(steps, list) else []),
             "step_count": len(steps) if isinstance(steps, list) else 0,
             "created_at": plan.get("created_at"),
         }
@@ -10657,6 +10661,7 @@ class StateStore:
                     "model": plan.get("model"),
                     "dispatch_ready": plan.get("dispatch_ready"),
                     "skill_context": StateStore._plan_skill_context(plan.get("skill_context")),
+                    "review_rounds": plan_review_rounds(steps if isinstance(steps, list) else []),
                     "step_count": len(steps) if isinstance(steps, list) else 0,
                     "created_at": plan.get("created_at"),
                 }

@@ -4,6 +4,46 @@
 
 ## 2026-07-31
 
+### Expose review_rounds and iteration step provenance in ProjectView/plan status
+
+- **Type**: feat
+- **Motivation**: 动态迭代闭环第四刀(spec
+  `docs/superpowers/specs/2026-07-30-review-iteration-loop-design.md`
+  审计与投影 section):Task 1-3 已落地 config `max_review_rounds`、纯推导
+  模块 `review_iteration.py` 和唯一权威写点
+  `StateStore.append_review_iteration`,但已追加的迭代轮数和被追加 step
+  的 origin/round/triggered_by_reply provenance 还没有进入任何只读 GUI/
+  审计投影,人类和 GUI 无法在 ProjectView 或 `plan status` 里看到"这个
+  plan 已经回炉几轮""这个 step 是不是 review-iteration 自动追加的"。
+- **What**: `state.py` 的 `.review_iteration` import 扩展出
+  `plan_review_rounds`;ProjectView plan item 投影 `_plan_summaries` 与
+  trace plan 投影 `_trace_plan_for_message` 都在 `skill_context` 之后、
+  `step_count` 之前新增只读 `review_rounds`(=
+  `plan_review_rounds(steps)`,普通 plan 恒为 0);`plan_status` 的
+  `steps[]` 每项从对应 plan body step 记录透传 `origin`/`round`/
+  `triggered_by_reply`(普通 step 全部为 `None`,只有 review-iteration
+  写点追加的 step 才非空)。`contracts.py`:`PROJECT_VIEW_PLAN_ITEM_FIELDS`
+  在 `skill_context` 后新增 `"review_rounds"`(`TRACE_PLAN_FIELDS` 自动
+  同步,未改动其推导逻辑);两处 plan item example fixture(ProjectView
+  聚合示例、trace `plan` 示例)补 `"review_rounds": 0`。
+  `docs/contracts/project-view-schema.md` 补充字段说明段落。
+- **Impact**: `agentdeck status`/workbench/leader-chat 复用的 ProjectView
+  `plans.items[]`、`agentdeck trace --id <id>` 的 `plan` 投影和
+  `agentdeck plan status --plan-id <id>` 的 `steps[]` 现在都携带迭代轮数
+  和逐 step provenance,供后续 CLI/GUI 显示"第几轮回炉""哪些 step 是
+  自动追加"而不需要解析原始 plan body;纯只读投影,不改变任何写路径、
+  审批语义或 run-loop 行为。`tests/test_agent_cli.py` 一处历史 exact-match
+  fixture(`test_status_includes_project_state_summaries`)同步补
+  `"review_rounds": 0`。
+- **Verification**:
+  `pytest tests/test_review_iteration.py tests/test_contracts.py
+  tests/test_agent_cli.py` 932 passed(新增 3 项皆 GREEN:
+  `test_project_view_plan_item_exposes_review_rounds`、
+  `test_plan_status_steps_carry_iteration_provenance`、
+  `test_project_view_contract_accepts_review_rounds`);RED 阶段确认过
+  3 项新测试因 `KeyError: review_rounds`/`KeyError: origin`/
+  `AssertionError` 失败、其余 19 项既有测试 GREEN。
+
 ### Register append_review_iteration as locked authoritative writer
 
 - **Type**: fix

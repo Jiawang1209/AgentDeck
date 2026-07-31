@@ -575,6 +575,7 @@ PROJECT_VIEW_PLAN_ITEM_FIELDS = (
     "status",
     "dispatch_ready",
     "skill_context",
+    "review_rounds",
     "step_count",
     "created_at",
 )
@@ -14109,6 +14110,7 @@ def project_view_example() -> dict[str, object]:
                             }
                         ],
                     },
+                    "review_rounds": 0,
                     "step_count": 2,
                     "created_at": "2026-07-04T00:00:00+00:00",
                 }
@@ -18435,6 +18437,7 @@ def trace_example() -> dict[str, object]:
                     }
                 ],
             },
+            "review_rounds": 0,
             "step_count": 2,
             "created_at": "2026-07-04T00:00:00+00:00",
         },
