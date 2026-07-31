@@ -5900,6 +5900,9 @@ def validate_run_loop_contract(payload: dict[str, object]) -> dict[str, object]:
     for list_field in ("dispatched", "blocked", "skipped"):
         if not isinstance(payload.get(list_field), list):
             errors.append(f"run_loop.{list_field} must be a list")
+    review_iterations = payload.get("review_iterations")
+    if review_iterations is not None and not isinstance(review_iterations, list):
+        errors.append("run_loop.review_iterations must be a list when present")
     return {"ok": not errors, "errors": errors}
 
 
@@ -7261,6 +7264,11 @@ def validate_run_loop_all_contract(payload: dict[str, object]) -> dict[str, obje
         for list_field in ("dispatched", "blocked", "skipped", "skipped_contention"):
             if not isinstance(item.get(list_field), list):
                 errors.append(f"run_loop_all.plans[{index}].{list_field} must be a list")
+        item_review_iterations = item.get("review_iterations")
+        if item_review_iterations is not None and not isinstance(item_review_iterations, list):
+            errors.append(
+                f"run_loop_all.plans[{index}].review_iterations must be a list when present"
+            )
     return {"ok": not errors, "errors": errors}
 
 

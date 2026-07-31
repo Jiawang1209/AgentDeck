@@ -8,7 +8,7 @@ from agentdeck.config import write_default_config
 from agentdeck.state import StateStore
 
 # pytest 默认 importmode=prepend 会把 tests/ 加进 sys.path,同目录直接导入
-from test_review_iteration import _state
+from test_review_iteration import _state, _verdict
 
 
 def prepare_seeded_project(tmp_path: Path, monkeypatch, overall: str = "fail") -> Path:
@@ -73,3 +73,75 @@ def test_rework_respects_budget(tmp_path, monkeypatch, capsys) -> None:
     )
     assert cli.main(["plan", "rework", "--plan-id", "pln_1", "--confirm"]) == 1
     assert "rounds_exhausted" in capsys.readouterr().err
+
+
+def _enable_autonomous(capsys) -> None:
+    cli.main([
+        "policy", "set-mode", "--mode", "autonomous", "--confirm",
+        "--allow-agent", "coder", "--allow-agent", "reviewer", "--max-approvals", "8",
+    ])
+    capsys.readouterr()
+
+
+def test_run_loop_wave_appends_iteration_on_fail_verdict(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_seeded_project(tmp_path, monkeypatch, "fail")
+    _enable_autonomous(capsys)
+    assert cli.main(["run-loop", "--plan-id", "pln_1", "--confirm"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    iterations = payload["review_iterations"]
+    assert iterations[0]["round"] == 1
+    assert iterations[0]["steps"] == [3, 4]
+    state = StateStore(root).load()
+    assert len(state["plans"][0]["plan"]["steps"]) == 4
+    # 追加的审批当 wave 未被 auto-approve(选取先于追加),下一 wave 接手
+    new_pending = [a for a in state["approvals"] if a["status"] == "pending"]
+    assert len(new_pending) == 2
+
+
+def test_run_loop_wave_reports_rounds_exhausted(tmp_path, monkeypatch, capsys) -> None:
+    prepare_seeded_project(tmp_path, monkeypatch, "fail")
+    _enable_autonomous(capsys)
+    assert cli.main([
+        "run-loop", "--plan-id", "pln_1", "--confirm", "--max-review-rounds", "0",
+    ]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert "review_iterations" not in payload  # 0 = 关闭,逐字节同现状
+    assert cli.main(["run-loop", "--plan-id", "pln_1", "--confirm"]) == 0
+    capsys.readouterr()
+    # 第一次已消费 reply;造第二个 fail reply 并把预算压到 1 → exhausted
+    store = StateStore(Path.cwd())
+    state = store.load()
+    state["approvals"].append({
+        "approval_id": "apv_4", "plan_id": "pln_1", "step": 4, "agent_id": "reviewer",
+        "role": "review", "task": "review the widget", "risk": "low",
+        "status": "dispatched", "message_id": "msg_rev2",
+    })
+    state["messages"].append({"message_id": "msg_rev2", "worktree_branch": None})
+    state["replies"].append({
+        "reply_id": "rep_round2", "message_id": "msg_rev2", "from_agent": "reviewer",
+        "text": "still failing", "verdict": _verdict("fail"),
+    })
+    store.save(state)
+    assert cli.main([
+        "run-loop", "--plan-id", "pln_1", "--confirm", "--max-review-rounds", "1",
+    ]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["review_iterations"] == [{"skipped": "rounds_exhausted"}]
+
+
+def test_run_loop_wave_without_verdict_is_byte_stable(tmp_path, monkeypatch, capsys) -> None:
+    prepare_seeded_project(tmp_path, monkeypatch, "pass")
+    _enable_autonomous(capsys)
+    assert cli.main(["run-loop", "--plan-id", "pln_1", "--confirm"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert "review_iterations" not in payload
+
+
+def test_run_loop_all_plan_item_carries_review_iterations(tmp_path, monkeypatch, capsys) -> None:
+    prepare_seeded_project(tmp_path, monkeypatch, "fail")
+    _enable_autonomous(capsys)
+    assert cli.main(["run-loop", "--all", "--confirm"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["mode"] == "run_loop_all"
+    item = next(p for p in payload["plans"] if p["plan_id"] == "pln_1")
+    assert item["review_iterations"][0]["round"] == 1

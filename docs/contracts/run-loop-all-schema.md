@@ -24,6 +24,10 @@ Source of truth: `src/agentdeck/contracts.py` (`RUN_LOOP_ALL_RESPONSE_FIELDS`, `
 
 `plan_id`, `task`, `auto_approved` (count), `dispatched[]` (approval_id/agent_id/message_id/trace_command), `blocked[]` (approval_id/agent_id/blocker), `skipped[]` (approval_id/agent_id/reason — non-allowlisted / over-budget), `skipped_contention[]` (approval_id/agent_id/blocker=`agent busy this wave`), `gate` (one of the run-loop gates: error/blocked/needs_human_approval/waiting_for_reply/complete/idle), `next_command` (explicit per-plan next step).
 
+### Optional per-plan `review_iterations[]`
+
+Mirrors the single-plan `run-loop --plan-id` review-iteration hook (see `docs/contracts/run-loop-schema.md`): after that plan's file-channel reply ingestion and before its dispatch step, the scheduler calls the same single writer `StateStore.append_review_iteration(plan_id, effective_rounds, source="run_loop")` for **each** active plan in the wave. `effective_rounds` defaults to `config.autonomous.max_review_rounds`, overridable for the whole invocation with `--max-review-rounds <n>` (`0` disables it for every plan this run; negative values are rejected before any state effect). The field is present on a plan item only when that plan's hook appended a round (`{"round", "steps", "approval_ids", "triggered_by_reply"}`) or was refused with `rounds_exhausted` (`{"skipped": "rounds_exhausted"}`); any other refusal leaves the field absent for that plan, matching current behavior byte-for-byte. As with the single-plan hook, appended approvals stay **pending** this wave — auto-approve/dispatch semantics for this scheduler are otherwise unchanged.
+
 ## Safety boundary (identical to `run-loop`)
 
 - Requires `--confirm` **and** `config.leader.approval_mode == "autonomous"`; else rejects, writes nothing. Requires exactly one of `--plan-id` / `--all`.

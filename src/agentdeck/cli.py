@@ -20197,7 +20197,9 @@ def _ingest_plan_reply_files(
     return captured_replies
 
 
-def _run_loop_all(config: ProjectConfig, store: StateStore) -> int:
+def _run_loop_all(
+    config: ProjectConfig, store: StateStore, max_review_rounds: int | None = None
+) -> int:
     """Round-robin one wave over all active plans (shared budget, skip-on-contention)."""
     policy = config.autonomous
     backend = TmuxBackend()
@@ -20226,6 +20228,29 @@ def _run_loop_all(config: ProjectConfig, store: StateStore) -> int:
         # single-plan wave (bounded by this plan's awaiting set, never reads
         # the pane); a completed step can unlock the next step this wave.
         plan_captured_replies = _ingest_plan_reply_files(config, store, plan_id)
+        # review-iteration hook, mirrored from the single-plan wave: bounded
+        # by max_review_rounds, idempotent per reply, appends pending
+        # approvals only -- the next wave's auto-approve + step-order guard
+        # take over.
+        plan_effective_rounds = (
+            config.autonomous.max_review_rounds
+            if max_review_rounds is None
+            else max_review_rounds
+        )
+        plan_review_iterations: list[dict[str, object]] = []
+        if plan_effective_rounds > 0:
+            plan_appended = store.append_review_iteration(
+                plan_id, plan_effective_rounds, source="run_loop"
+            )
+            if plan_appended.get("ok"):
+                plan_review_iterations.append({
+                    "round": plan_appended["round"],
+                    "steps": plan_appended["steps"],
+                    "approval_ids": plan_appended["approval_ids"],
+                    "triggered_by_reply": plan_appended["triggered_by_reply"],
+                })
+            elif plan_appended.get("reason") == "rounds_exhausted":
+                plan_review_iterations.append({"skipped": "rounds_exhausted"})
         dispatched: list[dict[str, object]] = []
         blocked: list[dict[str, object]] = []
         skipped_contention: list[dict[str, object]] = []
@@ -20291,6 +20316,8 @@ def _run_loop_all(config: ProjectConfig, store: StateStore) -> int:
         }
         if plan_captured_replies:
             plan_result["captured_replies"] = plan_captured_replies
+        if plan_review_iterations:
+            plan_result["review_iterations"] = plan_review_iterations
         plan_results.append(plan_result)
     used = policy.max_approvals - budget_remaining
     totals = {
@@ -20386,6 +20413,10 @@ def run_loop_host_start_command(args: argparse.Namespace) -> int:
     if args.max_waves < 1:
         print("run-loop-host start requires --max-waves >= 1", file=sys.stderr)
         return 1
+    max_review_rounds = getattr(args, "max_review_rounds", None)
+    if max_review_rounds is not None and max_review_rounds < 0:
+        print("run-loop-host start requires --max-review-rounds >= 0", file=sys.stderr)
+        return 1
     root = Path(config.root)
     known = any(
         isinstance(plan, dict) and plan.get("plan_id") == args.plan_id
@@ -20412,6 +20443,8 @@ def run_loop_host_start_command(args: argparse.Namespace) -> int:
         argv.append("--release-boxes")
     if getattr(args, "merge_on_complete", False):
         argv.append("--merge-on-complete")
+    if max_review_rounds is not None:
+        argv += ["--max-review-rounds", str(max_review_rounds)]
     pid = _spawn_host_process(argv, root)
     log_relative = str(host_log_path(root).relative_to(root))
     write_host_record(root, {
@@ -20642,8 +20675,14 @@ def run_loop_host_serve_command(args: argparse.Namespace) -> int:
         if config.leader.approval_mode != "autonomous":
             stopped_reason = "policy_revoked"
             break
+        # 只在显式传入时才带上关键字参数——保持旧调用形状(config, store,
+        # plan_id)逐字节不变,不破坏既有测试对 _run_loop_single_wave 的
+        # 定长/无 kwargs mock。
+        wave_kwargs: dict[str, object] = {}
+        if getattr(args, "max_review_rounds", None) is not None:
+            wave_kwargs["max_review_rounds"] = args.max_review_rounds
         try:
-            payload = _run_loop_single_wave(config, store, plan_id)
+            payload = _run_loop_single_wave(config, store, plan_id, **wave_kwargs)
         except Exception as exc:  # 引擎异常:记类型,绝不记 provider 输出
             append_host_log(root, {
                 "plan_id": plan_id, "event": "engine_error", "wave": wave_number,
@@ -20734,6 +20773,10 @@ def run_loop_command(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
         return 1
+    max_review_rounds = getattr(args, "max_review_rounds", None)
+    if max_review_rounds is not None and max_review_rounds < 0:
+        print("run-loop requires --max-review-rounds >= 0", file=sys.stderr)
+        return 1
     if getattr(args, "all", False) and args.plan_id:
         print("run-loop takes either --plan-id or --all, not both", file=sys.stderr)
         return 1
@@ -20741,7 +20784,7 @@ def run_loop_command(args: argparse.Namespace) -> int:
         print("run-loop --follow supports --plan-id only", file=sys.stderr)
         return 1
     if getattr(args, "all", False):
-        return _run_loop_all(config, store)
+        return _run_loop_all(config, store, max_review_rounds=max_review_rounds)
     if not args.plan_id:
         print("run-loop requires --plan-id or --all", file=sys.stderr)
         return 1
@@ -20753,7 +20796,7 @@ def run_loop_command(args: argparse.Namespace) -> int:
         return 1
     if getattr(args, "follow", False):
         return _run_loop_follow(config, store, args, plan_id)
-    payload = _run_loop_single_wave(config, store, plan_id)
+    payload = _run_loop_single_wave(config, store, plan_id, max_review_rounds=max_review_rounds)
     if payload is None:
         return 1
     _print_json(payload)
@@ -20761,7 +20804,8 @@ def run_loop_command(args: argparse.Namespace) -> int:
 
 
 def _run_loop_single_wave(
-    config: ProjectConfig, store: StateStore, plan_id: str
+    config: ProjectConfig, store: StateStore, plan_id: str,
+    max_review_rounds: int | None = None,
 ) -> dict[str, object] | None:
     """One auto-approve + file-ingest + dispatch wave; returns the validated
     run_loop payload, or None after printing contract errors."""
@@ -20787,6 +20831,30 @@ def _run_loop_single_wave(
     # ingested (bounded by the awaiting set, never reading the pane). Ingesting
     # first lets a completed step unlock the next step in the same wave.
     captured_replies = _ingest_plan_reply_files(config, store, plan_id)
+
+    # 2b) review-iteration hook: a latest fail/needs_changes verdict appends a
+    # deterministic rework + re-review step pair (bounded by max_review_rounds,
+    # idempotent per reply). Appended approvals stay pending this wave -- the
+    # next wave's existing auto-approve + step-order guard take over.
+    effective_rounds = (
+        config.autonomous.max_review_rounds
+        if max_review_rounds is None
+        else max_review_rounds
+    )
+    review_iterations: list[dict[str, object]] = []
+    if effective_rounds > 0:
+        appended = store.append_review_iteration(
+            plan_id, effective_rounds, source="run_loop"
+        )
+        if appended.get("ok"):
+            review_iterations.append({
+                "round": appended["round"],
+                "steps": appended["steps"],
+                "approval_ids": appended["approval_ids"],
+                "triggered_by_reply": appended["triggered_by_reply"],
+            })
+        elif appended.get("reason") == "rounds_exhausted":
+            review_iterations.append({"skipped": "rounds_exhausted"})
 
     # 3) dispatch approved approvals for the earliest incomplete step only
     # (sequential plan semantics): later approved steps stay approved and are
@@ -20915,6 +20983,8 @@ def _run_loop_single_wave(
     }
     if captured_replies:
         payload["captured_replies"] = captured_replies
+    if review_iterations:
+        payload["review_iterations"] = review_iterations
     if stopped_reason == "waiting_for_reply":
         payload["reply_file_ready"] = bool(waiting_message_id) and _reply_file_path(
             config.root, waiting_message_id
@@ -20953,7 +21023,9 @@ def _run_loop_follow(
         )
         released_boxes.extend(released)
     for wave_number in range(1, args.max_waves + 1):
-        payload = _run_loop_single_wave(config, store, plan_id)
+        payload = _run_loop_single_wave(
+            config, store, plan_id, max_review_rounds=args.max_review_rounds
+        )
         if payload is None:
             return 1
         waves.append({**payload, "wave": wave_number})
@@ -21101,6 +21173,12 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="When --follow reaches the complete gate, merge the plan's task branches in step order",
     )
+    run_loop.add_argument(
+        "--max-review-rounds",
+        type=int,
+        default=None,
+        help="Override [autonomous] max_review_rounds for this run (0 disables iteration)",
+    )
     run_loop.set_defaults(func=run_loop_command)
 
     run_loop_host = subparsers.add_parser(
@@ -21129,6 +21207,12 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Merge the plan's task branches when the final gate is complete",
     )
+    host_start.add_argument(
+        "--max-review-rounds",
+        type=int,
+        default=None,
+        help="Override [autonomous] max_review_rounds for this host run (0 disables iteration)",
+    )
     host_start.set_defaults(func=run_loop_host_start_command)
 
     host_status = run_loop_host_subparsers.add_parser(
@@ -21147,6 +21231,12 @@ def build_parser() -> argparse.ArgumentParser:
     host_serve.add_argument(
         "--merge-on-complete", dest="merge_on_complete", action="store_true",
         help="Merge task branches when the final gate is complete",
+    )
+    host_serve.add_argument(
+        "--max-review-rounds",
+        type=int,
+        default=None,
+        help="Override [autonomous] max_review_rounds for this host run (0 disables iteration)",
     )
     host_serve.set_defaults(func=run_loop_host_serve_command)
 

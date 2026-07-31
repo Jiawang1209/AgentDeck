@@ -4,6 +4,65 @@
 
 ## 2026-07-31
 
+### Wire review iteration into run-loop waves with --max-review-rounds
+
+- **Type**: feat
+- **Motivation**: 动态迭代闭环第六刀(spec
+  `docs/superpowers/specs/2026-07-30-review-iteration-loop-design.md`
+  Task 6):Task 5 交付了显式 `agentdeck plan rework`,但人类仍必须在每次
+  review 判 fail 后手动敲这条命令——自主 run-loop wave 自己不会追加回炉
+  step。本刀把同一个唯一权威写点 `StateStore.append_review_iteration`
+  钩进 run-loop 引擎本身,让自动化 wave 在遇到 fail/needs_changes 判定时
+  自己追加回炉+复审 step 对(仍是 pending 审批,不自动批准/派发)。
+- **What**: `_run_loop_single_wave`(`src/agentdeck/cli.py`)新增可选
+  `max_review_rounds: int | None = None` 参数;在既有 `# 2) 文件通道回收`
+  (`_ingest_plan_reply_files`)之后、`# 3) dispatch` 之前插入 review-
+  iteration 钩子:`effective_rounds` 默认取
+  `config.autonomous.max_review_rounds`,可被参数覆盖;`effective_rounds
+  > 0` 时调用 `store.append_review_iteration(plan_id, effective_rounds,
+  source="run_loop")`,成功时把 `round`/`steps`/`approval_ids`/
+  `triggered_by_reply` 记入可选 payload 字段 `review_iterations[]`,拒绝
+  原因为 `rounds_exhausted` 时记入 `{"skipped": "rounds_exhausted"}`,其它
+  拒绝原因(`no_plan`/`no_verdict`/`verdict_pass`/`already_triggered`/
+  `no_implementation_step`,以及 `effective_rounds=0` 关闭钩子)静默、字段
+  完全不出现——与钩子接入前逐字节一致。新增审批当轮仍是 pending(选取早
+  于追加),交下一 wave 的既有 auto-approve + step 顺序守卫接手。同一钩子
+  以 `plan_effective_rounds`/`plan_review_iterations`/`plan_appended` 镜像
+  进 `_run_loop_all` 的逐计划循环(紧跟该计划的 `_ingest_plan_reply_files`
+  调用),非空时挂到该计划 `plan_result["review_iterations"]`。CLI 层:
+  `run-loop` 和 `run-loop-host start`/`serve` 三个 argparse 都新增
+  `--max-review-rounds`(`type=int, default=None`,`0` 关闭该次运行的钩
+  子);`run_loop_command` 在任何写操作前校验 `>= 0`(负数非 0 拒绝、零
+  写),并把值透传进单 wave/`--follow`/`--all` 三条路径;
+  `run_loop_host_start_command` 同样前置校验,只把 `--max-review-rounds`
+  拼进转发给 `run-loop-host serve` 子进程的 argv(**host 契约冻结**:
+  start/status payload 与 `host.json` record 都不新增字段);
+  `run_loop_host_serve_command` 只在显式传参时才把关键字参数带给
+  `_run_loop_single_wave`,不传参时调用形状与接入前逐字节相同(保证既
+  有对 `_run_loop_single_wave` 做定长/无 `**kwargs` mock 的
+  `test_run_loop_host_cli.py` 测试不受影响)。`contracts.py` 的
+  `validate_run_loop_contract()` / `validate_run_loop_all_contract()` 新
+  增可选 `review_iterations` 字段的“存在则必须是 list”校验,不改动必
+  填字段集。同步 `docs/contracts/run-loop-schema.md` 和
+  `docs/contracts/run-loop-all-schema.md` 记录字段语义、
+  `--max-review-rounds` 覆盖规则和 `plan-rework` 契约指针。
+- **Impact**: 自主 run-loop(单计划、`--follow`、`--all`、后台 host)现在
+  能在 fail/needs_changes 判定后自己追加回炉审批,不必人类每轮手动跑
+  `plan rework`;新字段全程可选且默认行为(`effective_rounds=0` 或无
+  verdict)与接入前逐字节相同,`run-loop-host` 的三份冻结契约(start
+  response、status response、`host.json`)未新增任何字段,只把标志沿
+  argv 转发给子进程。追加的审批仍停在 pending,自动批准/派发/预算/
+  agent-busy/顺序守卫等既有安全边界全部不变。
+- **Verification**: TDD——先在 `tests/test_plan_rework_cli.py` 追加 4 个
+  失败测试(RED,含一条覆盖 `test_run_loop_wave_without_verdict_is_byte_stable`
+  的字节稳定断言),接线后 4 个全绿;
+  `conda run -n agentdeck pytest tests/test_plan_rework_cli.py
+  tests/test_run_loop_follow.py tests/test_run_loop_host_cli.py
+  tests/test_autonomy.py tests/test_contracts.py -q` → 564 passed;
+  `python -m compileall src` 通过;`tests/test_agent_cli.py -k
+  "run_loop or run_loop_host or run_loop_all"` 19 passed 确认
+  host/follow/all 既有回归未受影响。
+
 ### Add explicit plan rework command with plan-rework contract
 
 - **Type**: feat

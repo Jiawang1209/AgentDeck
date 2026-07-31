@@ -54,6 +54,18 @@ The pure gate-diagnosis function `run_loop_gate(review, has_error, plan_id)` liv
 
 `mode` must be `run_loop`. `safety` must be `delegated`, and `requires_explicit_user` must be `true`. `auto_approved` is the count of pending approvals auto-approved this wave. `dispatched[]`, `blocked[]`, and `skipped[]` reuse the `agentdeck approval auto` result shapes (`dispatched` items carry `approval_id`/`agent_id`/`message_id`/`trace_command`; `blocked` items carry `approval_id`/`agent_id`/`blocker`; `skipped` items carry `approval_id`/`agent_id`/`reason`). `policy` echoes the stored `allowed_agents` and `max_approvals`.
 
+## Review-iteration hook (optional `review_iterations[]`)
+
+Each wave, right after file-channel reply ingestion and before dispatch, the engine calls the single writer `StateStore.append_review_iteration(plan_id, effective_rounds, source="run_loop")` (see `docs/contracts/plan-rework-schema.md` / `agentdeck contract plan-rework`). `effective_rounds` defaults to `config.autonomous.max_review_rounds` and can be overridden per invocation with `--max-review-rounds <n>` (an integer `>= 0`; `0` disables the hook entirely for that run — negative values are rejected before any state effect). When the plan's latest review reply carries a `fail`/`needs_changes` verdict that has not already triggered an iteration and the round budget is not exhausted, the hook appends a deterministic rework + re-review step pair and their **pending** approvals, then returns. The appended approvals are not auto-approved this same wave (selection already happened earlier in the wave) — the next wave's existing auto-approve + step-order guard picks them up like any other pending approval.
+
+The optional `review_iterations[]` field is present only when the hook actually appended a round or was refused specifically for `rounds_exhausted`:
+
+- On append: one item `{"round": <int>, "steps": [<int>, <int>], "approval_ids": [<str>, <str>], "triggered_by_reply": <reply_id>}`.
+- On budget exhaustion: one item `{"skipped": "rounds_exhausted"}`.
+- Any other refusal (`no_plan`, `no_verdict`, `verdict_pass`, `already_triggered`, `no_implementation_step`, or the hook being disabled via `--max-review-rounds 0`) is silent — `review_iterations` is absent from the payload, and the wave is byte-identical to a run with no review-iteration hook at all.
+
+`RUN_LOOP_RESPONSE_FIELDS`, the required set, is unchanged; `review_iterations` is an optional derived field validated only when present (`validate_run_loop_contract()` requires it to be a list). `run-loop --all` carries the same optional field per plan item — see `docs/contracts/run-loop-all-schema.md`.
+
 ## Stop reasons
 
 `stop_reasons` enumerates the `stopped_reason` values, each mapped to an explicit `next_command` for the human. Priority: `error` first, then the single `leader review` `next_action` determines the reason.
