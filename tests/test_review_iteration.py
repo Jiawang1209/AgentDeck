@@ -298,3 +298,18 @@ def test_writer_is_idempotent_per_reply(tmp_path) -> None:
     assert store.append_review_iteration("pln_1", 2, source="run_loop")["ok"] is True
     second = store.append_review_iteration("pln_1", 2, source="run_loop")
     assert second == {"ok": False, "reason": "already_triggered"}
+
+
+def test_writer_refuses_malformed_plan_body_zero_write(tmp_path) -> None:
+    root, store = _seed_store(tmp_path, "fail")
+    state = store.load()
+    del state["plans"][0]["plan"]["steps"]
+    store.save(state)
+    before = store.load()
+    events_before = (root / ".agentdeck" / "state" / "events.jsonl").read_text(encoding="utf-8")
+
+    result = store.append_review_iteration("pln_1", 2, source="run_loop")
+
+    assert result == {"ok": False, "reason": "no_plan"}
+    assert store.load() == before
+    assert (root / ".agentdeck" / "state" / "events.jsonl").read_text(encoding="utf-8") == events_before

@@ -9899,8 +9899,13 @@ class StateStore:
         plan_record = next(
             plan for plan in state["plans"] if plan.get("plan_id") == plan_id
         )
+        plan_body = plan_record.get("plan")
+        if not isinstance(plan_body, dict) or not isinstance(
+            plan_body.get("steps"), list
+        ):
+            return {"ok": False, "reason": "no_plan"}
         new_steps = [derived["rework_step"], derived["review_step"]]
-        plan_record["plan"]["steps"].extend(new_steps)
+        plan_body["steps"].extend(new_steps)
         approvals = []
         for step in new_steps:
             approvals.append(
@@ -12008,6 +12013,7 @@ AUTHORITATIVE_STATE_MUTATION_METHODS = (
     "admit_mission_execution",
     "advance_mission_after_handoff",
     "append_message",
+    "append_review_iteration",
     "apply_leader_action",
     "authorize_mission_acp_effect",
     "bind_agent",

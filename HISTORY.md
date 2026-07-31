@@ -4,6 +4,41 @@
 
 ## 2026-07-31
 
+### Register append_review_iteration as locked authoritative writer
+
+- **Type**: fix
+- **Motivation**: 独立审查点名一处 CRITICAL 缺口:新写点
+  `StateStore.append_review_iteration` 落地时漏注册进
+  `AUTHORITATIVE_STATE_MUTATION_METHODS`,导致它的
+  load→derive→mutate→save 序列没有跑在 `_protocol_mutation_lock` 内,
+  与 `decide_approval`/`record_reply` 等同级 writer 的并发安全保证不一致;
+  仓库自带守门测试
+  `test_authoritative_state_writer_registry_covers_all_transitive_public_writes`
+  在 HEAD 已经因此失败。同时补一处次要加固:plan body 畸形(有 plan 记录
+  但 `plan.steps` 缺失或非 list)时该方法会在 `.extend()` 上抛异常而非
+  fail-closed 拒绝。
+- **What**: `AUTHORITATIVE_STATE_MUTATION_METHODS` 按字母序在
+  `append_message` 之后插入 `append_review_iteration`,使装饰器循环把它
+  纳入 `_locked_state_mutation`(锁内执行,标记
+  `_agentdeck_authoritative_mutation`);`append_review_iteration` 在
+  `plan_record["plan"]["steps"].extend(...)` 前新增守卫,plan body 不是
+  dict 或 `steps` 不是 list 时直接返回 `{"ok": False, "reason":
+  "no_plan"}`(零写),不再依赖 `derive_review_iteration` 的宽松
+  `body.get("steps", [])` 默认值掩盖畸形输入。`tests/test_review_iteration.py`
+  新增 `test_writer_refuses_malformed_plan_body_zero_write` 钉住:approvals/
+  messages/replies 齐全且 fail verdict 触发条件成立,但 plan body 缺
+  `steps` 时必须拒绝且 state/events.jsonl 逐字节不变。
+- **Impact**: 新写点现在和所有既有 authoritative writer 共享同一把
+  mutation lock,消除并发窗口下的数据竞争风险;畸形 plan body 不再能让
+  该写点抛出未处理异常。装饰器只是 `functools.wraps` 包一层锁,不改变
+  方法签名或调用方式,既有 3 个 writer 测试无需改动即通过。
+- **Verification**:
+  `pytest "tests/test_daemon_migration.py::test_authoritative_state_writer_registry_covers_all_transitive_public_writes"`
+  1 passed(HEAD 之前 1 failed);
+  `pytest tests/test_review_iteration.py tests/test_autonomy.py tests/test_daemon_migration.py`
+  91 passed(19 + 7 + 65);`python -m compileall src/agentdeck/state.py`
+  OK。
+
 ### Add append_review_iteration single-point writer (steps + approvals + audit)
 
 - **Type**: feat
