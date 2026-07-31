@@ -2,6 +2,31 @@
 
 本文件记录 AgentDeck 每一次开发内容。约束：每次新增功能、文档规则、项目骨架、运行环境或用户可见行为变化，都必须同步更新本文件，并在同一次 commit 中提交。
 
+## 2026-07-31
+
+### Add review-iteration pure derivation module (trigger matrix + deterministic rework template)
+
+- **Type**: feat
+- **Motivation**: 动态迭代闭环第二刀(spec
+  `docs/superpowers/specs/2026-07-30-review-iteration-loop-design.md`):
+  review verdict fail/needs_changes 后的回炉推导必须是纯函数——零 IO、
+  零 LLM、不 import cli/state,才能被引擎钩子与显式命令双面共享且可独立
+  TDD。
+- **What**: 新纯模块 `src/agentdeck/review_iteration.py`:闭合
+  `REVIEW_ITERATION_SKIP_REASONS` 六值拒绝枚举;`derive_review_iteration`
+  触发判定(最新有效 verdict 且 overall ∈ {fail, needs_changes}、同
+  reply 幂等 `triggered_by_reply`、`plan_review_rounds` 预算边界、实现
+  step 归属推导 worktree-branch 优先/已派发回退、任一不满足 fail-closed
+  拒绝)并产出带 origin/round/triggered_by_reply provenance 的 rework +
+  re-review step 对(编号顺延);`build_rework_task` 确定性模板(fail
+  标准原文 + 证据 + reviewer 回复原文,4000 字符截断附
+  `agentdeck trace` 指引,结尾固定 commit 指令)。
+- **Impact**: 尚无消费方;Task 3 起 writer/CLI/引擎钩子在其上搭建。
+  对既有行为零变化。
+- **Verification**: TDD——先 RED(ModuleNotFoundError)后 GREEN,
+  `tests/test_review_iteration.py` 13 passed(触发矩阵/幂等/预算/最新
+  verdict/模板截断/needs_changes)。
+
 ## 2026-07-30
 
 ### Harden max_review_rounds round-trip and bool coverage

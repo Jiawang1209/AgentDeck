@@ -53,3 +53,159 @@ def test_max_review_rounds_invalid_fails_closed(tmp_path: Path, bad: str) -> Non
     _write_config(root, bad)
     with pytest.raises(ValueError):
         load_config(root)
+
+
+from agentdeck.review_iteration import (  # noqa: E402
+    MAX_REWORK_TASK_CHARS,
+    REVIEW_ITERATION_ORIGIN,
+    REWORK_TRIGGER_OVERALLS,
+    build_rework_task,
+    derive_review_iteration,
+    plan_review_rounds,
+)
+
+
+def _verdict(overall: str = "fail", criteria=None, score=None) -> dict:
+    payload = {
+        "schema_version": "review-verdict/v1",
+        "criteria": criteria
+        or [
+            {"criterion": "tests pass", "verdict": "fail", "evidence": "2 failing"},
+            {"criterion": "a11y kept", "verdict": "pass"},
+        ],
+        "overall": overall,
+    }
+    if score is not None:
+        payload["score"] = score
+    return payload
+
+
+def _state(overall: str = "fail", *, consumed: bool = False, rounds: int = 0) -> dict:
+    """Plan pln_1: step1 coder(implementation, dispatched msg_impl with
+    worktree branch) → step2 reviewer(review, dispatched msg_rev, reply with
+    verdict). Optional prior iteration steps bump the round counter."""
+    steps = [
+        {"step": 1, "agent_id": "coder", "role": "implementation",
+         "task": "build the widget", "risk": "low", "requires_approval": True},
+        {"step": 2, "agent_id": "reviewer", "role": "review",
+         "task": "review the widget", "risk": "low", "requires_approval": True},
+    ]
+    approvals = [
+        {"approval_id": "apv_1", "plan_id": "pln_1", "step": 1, "agent_id": "coder",
+         "role": "implementation", "task": "build the widget", "risk": "low",
+         "status": "dispatched", "message_id": "msg_impl"},
+        {"approval_id": "apv_2", "plan_id": "pln_1", "step": 2, "agent_id": "reviewer",
+         "role": "review", "task": "review the widget", "risk": "low",
+         "status": "dispatched", "message_id": "msg_rev"},
+    ]
+    next_step = 3
+    for round_number in range(1, rounds + 1):
+        steps.append({"step": next_step, "agent_id": "coder", "role": "implementation",
+                      "task": "rework", "risk": "low", "requires_approval": True,
+                      "origin": REVIEW_ITERATION_ORIGIN, "round": round_number,
+                      "triggered_by_reply": f"rep_old_{round_number}"})
+        steps.append({"step": next_step + 1, "agent_id": "reviewer", "role": "review",
+                      "task": "review the widget", "risk": "low", "requires_approval": True,
+                      "origin": REVIEW_ITERATION_ORIGIN, "round": round_number,
+                      "triggered_by_reply": f"rep_old_{round_number}"})
+        next_step += 2
+    reply_id = "rep_old_1" if consumed else "rep_new"
+    return {
+        "plans": [{"plan_id": "pln_1", "task": "build the widget", "status": "planned",
+                   "plan": {"goal": "g", "summary": "s", "steps": steps}}],
+        "approvals": approvals,
+        "messages": [
+            {"message_id": "msg_impl", "worktree_branch": "agentdeck/msg_impl"},
+            {"message_id": "msg_rev", "worktree_branch": None},
+        ],
+        "replies": [
+            {"reply_id": reply_id, "message_id": "msg_rev", "from_agent": "reviewer",
+             "text": "status: completed\nfindings...\nverdict: {...}",
+             "verdict": _verdict(overall)},
+        ],
+    }
+
+
+def test_trigger_overalls_are_fail_and_needs_changes() -> None:
+    assert REWORK_TRIGGER_OVERALLS == frozenset({"fail", "needs_changes"})
+
+
+def test_plan_review_rounds_counts_iteration_markers() -> None:
+    assert plan_review_rounds(_state(rounds=0)["plans"][0]["plan"]["steps"]) == 0
+    assert plan_review_rounds(_state(rounds=2)["plans"][0]["plan"]["steps"]) == 2
+
+
+def test_derive_appends_rework_and_review_pair_on_fail() -> None:
+    result = derive_review_iteration(_state("fail"), "pln_1", 2)
+    assert result["ok"] is True
+    assert result["round"] == 1
+    assert result["triggered_by_reply"] == "rep_new"
+    rework, review = result["rework_step"], result["review_step"]
+    assert (rework["step"], review["step"]) == (3, 4)
+    assert rework["agent_id"] == "coder" and rework["requires_approval"] is True
+    assert review["agent_id"] == "reviewer"
+    assert review["task"] == "review the widget"  # re-review 任务逐字节复用
+    for step in (rework, review):
+        assert step["origin"] == REVIEW_ITERATION_ORIGIN
+        assert step["round"] == 1
+        assert step["triggered_by_reply"] == "rep_new"
+    # 模板包含 fail 标准原文与 reviewer 回复原文
+    assert "tests pass" in rework["task"]
+    assert "findings..." in rework["task"]
+    assert "build the widget" in rework["task"]
+
+
+def test_derive_triggers_on_needs_changes() -> None:
+    assert derive_review_iteration(_state("needs_changes"), "pln_1", 2)["ok"] is True
+
+
+def test_derive_refusal_matrix() -> None:
+    assert derive_review_iteration({}, "pln_1", 2)["reason"] == "no_plan"
+    state = _state("fail")
+    state["replies"] = []
+    assert derive_review_iteration(state, "pln_1", 2)["reason"] == "no_verdict"
+    assert derive_review_iteration(_state("pass"), "pln_1", 2)["reason"] == "verdict_pass"
+    assert (
+        derive_review_iteration(_state("fail", consumed=True, rounds=1), "pln_1", 2)["reason"]
+        == "already_triggered"
+    )
+    assert (
+        derive_review_iteration(_state("fail", rounds=2), "pln_1", 2)["reason"]
+        == "rounds_exhausted"
+    )
+    assert derive_review_iteration(_state("fail"), "pln_1", 0)["reason"] == "rounds_exhausted"
+    no_impl = _state("fail")
+    no_impl["messages"][0]["worktree_branch"] = None
+    no_impl["approvals"][0].pop("message_id")
+    assert derive_review_iteration(no_impl, "pln_1", 2)["reason"] == "no_implementation_step"
+
+
+def test_derive_uses_latest_verdict_not_stale_fail() -> None:
+    state = _state("fail")
+    state["replies"].append(
+        {"reply_id": "rep_newer", "message_id": "msg_rev", "from_agent": "reviewer",
+         "text": "verdict pass", "verdict": _verdict("pass")}
+    )
+    assert derive_review_iteration(state, "pln_1", 2)["reason"] == "verdict_pass"
+
+
+def test_rework_task_template_truncates_with_trace_pointer() -> None:
+    text = build_rework_task(
+        round_number=1,
+        original_task="build the widget",
+        verdict=_verdict("fail", score=41),
+        reply_id="rep_new",
+        reply_text="x" * (MAX_REWORK_TASK_CHARS * 2),
+    )
+    assert len(text) <= MAX_REWORK_TASK_CHARS
+    assert "agentdeck trace --id rep_new" in text
+    assert text.rstrip().endswith("修复后 commit 到任务分支。")
+    short = build_rework_task(
+        round_number=2,
+        original_task="build the widget",
+        verdict=_verdict("needs_changes"),
+        reply_id="rep_new",
+        reply_text="short findings",
+    )
+    assert "short findings" in short and "score" not in short
+    assert "(score 41)" in text
