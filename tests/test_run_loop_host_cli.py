@@ -229,6 +229,49 @@ def test_serve_runs_waves_until_gate_and_records(tmp_path, monkeypatch, capsys) 
     assert '"stopped_reason": "gate_reached"' in events
 
 
+def test_serve_continues_past_review_iteration_append(tmp_path, monkeypatch, capsys) -> None:
+    """Walk-away-chain fix (2026-07-31): a wave that appended a review round
+    reports a non-waiting_for_reply gate (needs_human_approval) in its own
+    payload -- gate honesty is unchanged -- but must NOT make serve break
+    early; the sanctioned next wave gets a chance to auto-approve + dispatch
+    the appended rework itself, bounded by --max-waves exactly as ever."""
+    root = prepare_project(tmp_path, monkeypatch)
+    plan_id = seed_plan(root)
+    enable_autonomous(capsys)
+    write_host_record(root, {
+        "pid": 1, "plan_id": plan_id, "max_waves": 2, "interval": 0.0,
+        "release_boxes": False, "merge_on_complete": False,
+        "log_path": ".agentdeck/run-loop-host/host.log",
+        "wave_count": 0, "last_gate": None, "last_wave_at": None, "stopped_reason": None,
+    })
+    gates = ["needs_human_approval", "waiting_for_reply"]
+    review_iterations = [[{"round": 1, "steps": [2, 3], "approval_ids": ["apv_2", "apv_3"],
+                            "triggered_by_reply": "rep_1"}], None]
+    calls = {"n": 0}
+
+    def fake_wave(_config, _store, wave_plan_id):
+        n = calls["n"]
+        calls["n"] += 1
+        payload = {"ok": True, "mode": "run_loop", "plan_id": wave_plan_id,
+                   "stopped_reason": gates[n], "next_command": "agentdeck approval list"}
+        if review_iterations[n] is not None:
+            payload["review_iterations"] = review_iterations[n]
+        return payload
+
+    monkeypatch.setattr(cli, "_run_loop_single_wave", fake_wave)
+    assert cli.main(_serve_argv(root, plan_id, 2)) == 0
+
+    record = read_host_record(root)
+    # both waves ran -- wave 1's needs_human_approval gate (from the appended
+    # round) did NOT stop serve early.
+    assert record["wave_count"] == 2
+    assert record["last_gate"] == "waiting_for_reply"
+    # bounded by --max-waves, not an early gate_reached break after wave 1.
+    assert record["stopped_reason"] == "budget_exhausted"
+    lines = _log_lines(root)
+    assert [line["wave"] for line in lines if line.get("event") != "host_stopped"] == [1, 2]
+
+
 def test_serve_stops_at_budget(tmp_path, monkeypatch, capsys) -> None:
     root = prepare_project(tmp_path, monkeypatch)
     plan_id = seed_plan(root)

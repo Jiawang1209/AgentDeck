@@ -4,6 +4,74 @@
 
 ## 2026-07-31
 
+### Continue follow/host waves after review iteration append
+
+- **Type**: fix
+- **Motivation**: 独立 review 对 9e7d1fd7+64f6c229 判 REQUEST CHANGES,一
+  Critical 一 Important。Critical:钩子追加回炉审批后 gate 变成
+  `needs_human_approval`,而 `_run_loop_follow`(`stopped_reason !=
+  waiting_for_reply` 即 break)和 host serve loop(`last_gate !=
+  waiting_for_reply` 即 `gate_reached` break)都会在此处停手,导致同一次
+  `--follow`/host 运行内,追加的回炉 step 永远等不到下一 wave 的既有
+  auto-approve+dispatch——违反 spec 冻结的 walk-away 链(fail → 追加 →
+  下轮批准派发 rework → … → complete → merge)。Important:
+  `_run_loop_all` 的 `gate0 == "complete"` 预检查在钩子跑之前就
+  `continue` 跳过该计划,导致一个已经全部 replied(gate0 就是
+  complete)、verdict 已经是 fail 的计划永远不会通过 `--all` 触发回炉——
+  和单计划引擎(从不预检跳过)行为分叉。
+- **What**: 新增纯 helper `_wave_appended_review_round(payload)`
+  (`src/agentdeck/cli.py`):只在 `review_iterations[]` 里存在带 `round`
+  键的条目(而非仅 `{"skipped": "rounds_exhausted"}`)时返回 True。
+  `_run_loop_follow` 的 break 条件改为
+  `stopped_reason != waiting_for_reply and not
+  _wave_appended_review_round(payload)`——追加了回炉轮的 wave 即使 gate
+  不是 waiting_for_reply 也继续走下一 wave(仍受 `--max-waves` 硬约束,
+  wave payload 本身逐字节不变,gate 诚实性不受影响);host serve loop 的
+  `gate_reached` break 条件同样改为
+  `last_gate != waiting_for_reply and not
+  _wave_appended_review_round(payload)`。`_run_loop_all` 重构:
+  `plan_effective_rounds` 提前到 `gate0` 判定之前计算;当 `gate0 ==
+  "complete"` 时,先调用 `store.append_review_iteration`(pre-gate 分
+  支)——`ok` 时不再 `continue`,而是携带该轮 `review_iterations` 记录
+  照常走该计划正常 wave(auto-approve 选取时已能看到刚追加的 pending 审
+  批,因为该分支的钩子跑在 selection 之前,与 mid-wave 分支顺序刻意不
+  同);任何拒绝(含 `rounds_exhausted`)或 `effective_rounds <= 0` 时仍
+  `continue`,逐字节维持原行为。原有 mid-wave 钩子加 `hook_already_run`
+  旗标,同一 wave 内绝不对同一计划跑两次钩子。
+- **测试**: 重写 `tests/test_review_verdict_ingestion.py::
+  test_review_iteration_prefers_rework_over_completion_by_default`
+  (64f6c229 引入,断言曾钉住旧的断链行为)钉住修复后的链路——wave 1
+  仍诚实报告 `needs_human_approval` 并携带 `review_iterations[0].round
+  == 1`,`wave_count == 2` 证明没有提前停,wave 2 `auto_approved == 2`
+  且 `dispatched` 命中 coder 的回炉 approval,最终 `stopped_reason ==
+  waiting_for_reply`(受 `--max-waves 2` 约束,非提前 gate 中断)。
+  `tests/test_plan_rework_cli.py` 新增
+  `test_run_loop_all_triggers_review_iteration_for_already_complete_plan`:
+  seed 一个每个 step 都已回复(`gate0 == complete`)且最后一条为 fail
+  verdict 的计划,`run-loop --all --confirm` 后该计划仍出现在
+  `payload["plans"]` 里且 `review_iterations[0]["round"] == 1`(未被静默
+  跳过)。`tests/test_run_loop_host_cli.py` 新增
+  `test_serve_continues_past_review_iteration_append`:fake wave 1 返回
+  `review_iterations=[{"round": 1, ...}]` + `needs_human_approval`,fake
+  wave 2 返回纯 `waiting_for_reply`,`--max-waves 2` 下断言两个 wave 都跑
+  了(`wave_count == 2`)且最终 `stopped_reason == "budget_exhausted"`
+  (不是提前的 `gate_reached`)。
+- **Impact**: `--follow` 和 `run-loop-host` 现在能在一次有界运行内独立
+  走完 fail→回炉→批准→派发→…→complete 的完整链路,不再需要人类在每次
+  追加回炉后手动重跑;`--all` 现在能对已经全部 replied 的计划触发回炉,
+  与单计划引擎行为一致。所有改动仍严格 gate-honest(payload 里的
+  `stopped_reason`/`gate` 字段从不被篡改,只是 follow/host 的继续-或-停
+  决策变了)、仍受 `--max-waves`/预算/agent-busy/顺序守卫等既有安全边界
+  约束,钩子仍绝不在同一 wave 内对同一计划跑两次。文档同步
+  `docs/contracts/run-loop-schema.md`(follow 段 + review-iteration 段)、
+  `docs/contracts/run-loop-all-schema.md`(pre-gate exception)、
+  `docs/contracts/run-loop-host-schema.md`(`gate_reached` 行为例外)。
+- **Verification**: `conda run -n agentdeck pytest
+  tests/test_review_verdict_ingestion.py tests/test_plan_rework_cli.py
+  tests/test_run_loop_follow.py tests/test_run_loop_host_cli.py -q` → 44
+  passed。`conda run -n agentdeck pytest tests/ -q` 全量套件 → 4817
+  passed, 3 skipped, 0 failed(260.66s)。
+
 ### Isolate G5 merge-gate test from review iteration hook
 
 - **Type**: fix

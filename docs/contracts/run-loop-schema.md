@@ -64,7 +64,7 @@ The optional `review_iterations[]` field is present only when the hook actually 
 - On budget exhaustion: one item `{"skipped": "rounds_exhausted"}`.
 - Any other refusal (`no_plan`, `no_verdict`, `verdict_pass`, `already_triggered`, `no_implementation_step`, or the hook being disabled via `--max-review-rounds 0`) is silent — `review_iterations` is absent from the payload, and the wave is byte-identical to a run with no review-iteration hook at all.
 
-`RUN_LOOP_RESPONSE_FIELDS`, the required set, is unchanged; `review_iterations` is an optional derived field validated only when present (`validate_run_loop_contract()` requires it to be a list). `run-loop --all` carries the same optional field per plan item — see `docs/contracts/run-loop-all-schema.md`.
+`RUN_LOOP_RESPONSE_FIELDS`, the required set, is unchanged; `review_iterations` is an optional derived field validated only when present (`validate_run_loop_contract()` requires it to be a list). `run-loop --all` carries the same optional field per plan item, including for a plan whose gate was already `complete` before the hook ran (2026-07-31 fix — see `docs/contracts/run-loop-all-schema.md`).
 
 ## Stop reasons
 
@@ -84,11 +84,27 @@ The optional `review_iterations[]` field is present only when the hook actually 
 `agentdeck run-loop --plan-id <id> --confirm --follow --max-waves <n>
 --interval <seconds> [--release-boxes]` repeats single waves in the foreground
 until the gate is anything other than `waiting_for_reply` (a human gate,
-`complete`, `error`, or `idle`) or the `--max-waves` bound is reached.
-`--follow` supports `--plan-id` only (`--all --follow` is refused), inherits
-the same `--confirm` + `approval_mode=autonomous` double gate, and refuses
-`--max-waves < 1`. Each wave is the unchanged single-wave engine (same
-auto-approve/ingest/dispatch semantics, same audit events); between waves,
+`complete`, `error`, or `idle`) or the `--max-waves` bound is reached — **with
+one walk-away-chain exception (2026-07-31)**: if the wave that just finished
+appended a review-iteration round (its `review_iterations[]` carries an item
+with `round`, not merely a `{"skipped": "rounds_exhausted"}` entry), follow
+keeps walking for one more wave even though that wave's own gate is honestly
+reported as something other than `waiting_for_reply` (typically
+`needs_human_approval`, since the newly appended rework/re-review approvals
+start `pending`). This lets the sanctioned next wave's existing auto-approve +
+dispatch pick up the appended rework approval itself, matching the frozen
+spec chain (fail → append → next wave approves+dispatches rework → … →
+`complete` → merge) instead of stranding the run at a gate a human would just
+re-run past. Gate honesty is never altered by this: each wave's own
+`stopped_reason` in `waves[]` is exactly what that wave produced; only
+follow's continue-vs-stop decision differs, and it remains strictly bounded
+by `--max-waves` as always (a round-appending wave still counts against the
+budget like any other). `--follow` supports `--plan-id` only (`--all
+--follow` is refused), inherits the same `--confirm` +
+`approval_mode=autonomous` double gate, and refuses `--max-waves < 1`. Each
+wave is the unchanged single-wave engine (same
+auto-approve/ingest/dispatch/review-iteration semantics, same audit events);
+between waves,
 with `--release-boxes`, it runs one delegation scan at segment start (wave 0 — boxes that appeared between follow segments are otherwise missed; round 11 finding, 2026-07-29) and one delegation scan
 (`_scan_release_delegated_boxes`) that releases only delegation-covered
 authorization boxes — every release audited as `auth_box_released` with

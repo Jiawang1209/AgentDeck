@@ -145,3 +145,38 @@ def test_run_loop_all_plan_item_carries_review_iterations(tmp_path, monkeypatch,
     assert payload["mode"] == "run_loop_all"
     item = next(p for p in payload["plans"] if p["plan_id"] == "pln_1")
     assert item["review_iterations"][0]["round"] == 1
+
+
+def test_run_loop_all_triggers_review_iteration_for_already_complete_plan(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    """Important-fix (2026-07-31): --all's pre-gate gate0==complete skip
+    must not swallow an already-ingested fail verdict -- the single-plan
+    engine never pre-gate-skips, so with every step already replied (gate0
+    == complete) --all must still trigger the hook instead of silently
+    treating the plan as done."""
+    root = tmp_path / "repo"
+    root.mkdir()
+    (root / ".git").mkdir()
+    write_default_config(root)
+    store = StateStore(root)
+    state = store.load()
+    seed = _state("fail")
+    # every step -- not just the review step -- needs a reply so gate0 ==
+    # "complete" before the hook runs, exercising the pre-gate branch.
+    seed["replies"].append({
+        "reply_id": "rep_impl", "message_id": "msg_impl", "from_agent": "coder",
+        "text": "status: completed\nsummary: done",
+    })
+    for key in ("plans", "approvals", "messages", "replies"):
+        state[key] = seed[key]
+    store.save(state)
+    monkeypatch.chdir(root)
+    _enable_autonomous(capsys)
+
+    assert cli.main(["run-loop", "--all", "--confirm"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["mode"] == "run_loop_all"
+    item = next((p for p in payload["plans"] if p["plan_id"] == "pln_1"), None)
+    assert item is not None  # not silently pre-gate-skipped
+    assert item["review_iterations"][0]["round"] == 1

@@ -348,7 +348,16 @@ def test_review_iteration_prefers_rework_over_completion_by_default(
     """Companion to test_merge_on_complete_withheld_when_verdict_not_pass: pins
     the composed default (no --max-review-rounds override) where a
     needs_changes verdict now triggers the review-iteration hook instead of
-    letting the wave reach the complete gate."""
+    letting the wave reach the complete gate.
+
+    Walk-away-chain fix (2026-07-31): appending a review round must not
+    strand the plan at needs_human_approval for the rest of this bounded
+    follow run -- --follow keeps walking (bounded by --max-waves as ever)
+    so the sanctioned next wave gets to auto-approve + dispatch the rework
+    step itself, exactly like any other pending approval. Gate honesty is
+    unchanged: wave 1's own payload still reports needs_human_approval
+    (nothing here alters gate diagnosis), it just no longer ends the run.
+    """
     root = prepare_project(tmp_path, monkeypatch)
     _enable_split(root)
     _enable_autonomous(root)
@@ -363,10 +372,21 @@ def test_review_iteration_prefers_rework_over_completion_by_default(
 
     assert exit_code == 0
     payload = json.loads(capsys.readouterr().out)
-    review_iterations = payload["waves"][0]["review_iterations"]
-    assert review_iterations[0]["round"] == 1
-    assert payload["stopped_reason"] != "complete"
-    assert payload["stopped_reason"] == "needs_human_approval"
+    waves = payload["waves"]
+    # wave 1: hook appends round 1 (rework + re-review steps), gate itself
+    # is honestly reported as needs_human_approval for that wave.
+    assert waves[0]["stopped_reason"] == "needs_human_approval"
+    assert waves[0]["review_iterations"][0]["round"] == 1
+    # the run did NOT stop after wave 1 -- it kept walking (fixed chain).
+    assert payload["wave_count"] == 2
+    # wave 2: the sanctioned next-wave auto-approve + dispatch picked up the
+    # appended rework approval on its own, with no extra human action.
+    assert waves[1]["auto_approved"] == 2
+    assert len(waves[1]["dispatched"]) == 1
+    assert waves[1]["dispatched"][0]["agent_id"] == "coder"
+    # bounded by --max-waves as ever; final gate is honestly reported (now
+    # waiting on the rework reply, not stuck at needs_human_approval).
+    assert payload["stopped_reason"] == "waiting_for_reply"
 
 
 def test_merge_on_complete_proceeds_when_verdict_pass(

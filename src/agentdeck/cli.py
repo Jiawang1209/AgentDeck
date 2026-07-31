@@ -20210,9 +20210,37 @@ def _run_loop_all(
         if not isinstance(plan, dict):
             continue
         plan_id = str(plan.get("plan_id", ""))
+        plan_effective_rounds = (
+            config.autonomous.max_review_rounds
+            if max_review_rounds is None
+            else max_review_rounds
+        )
         gate0, _ = run_loop_gate(store.leader_review(plan_id), False, plan_id)
+        plan_review_iterations: list[dict[str, object]] = []
+        hook_already_run = False
         if gate0 == "complete":
-            continue
+            # Important-fix (2026-07-31): the single-plan engine never
+            # pre-gate-skips, so an already-ingested fail/needs_changes
+            # verdict must still reach the review-iteration hook here too.
+            # Run the hook FIRST, before this plan's own pre-gate skip, so a
+            # successful append keeps the plan in the wave; any refusal
+            # (no_verdict/verdict_pass/rounds_exhausted/already_triggered/...)
+            # or a disabled budget skips exactly as before -- zero behavior
+            # change for genuinely complete plans.
+            if plan_effective_rounds <= 0:
+                continue
+            pre_gate_appended = store.append_review_iteration(
+                plan_id, plan_effective_rounds, source="run_loop"
+            )
+            if not pre_gate_appended.get("ok"):
+                continue
+            plan_review_iterations.append({
+                "round": pre_gate_appended["round"],
+                "steps": pre_gate_appended["steps"],
+                "approval_ids": pre_gate_appended["approval_ids"],
+                "triggered_by_reply": pre_gate_appended["triggered_by_reply"],
+            })
+            hook_already_run = True
         pending = [
             a for a in store.load().get("approvals", [])
             if isinstance(a, dict) and a.get("plan_id") == plan_id and a.get("status") == "pending"
@@ -20231,14 +20259,9 @@ def _run_loop_all(
         # review-iteration hook, mirrored from the single-plan wave: bounded
         # by max_review_rounds, idempotent per reply, appends pending
         # approvals only -- the next wave's auto-approve + step-order guard
-        # take over.
-        plan_effective_rounds = (
-            config.autonomous.max_review_rounds
-            if max_review_rounds is None
-            else max_review_rounds
-        )
-        plan_review_iterations: list[dict[str, object]] = []
-        if plan_effective_rounds > 0:
+        # take over. Skipped here when the pre-gate branch above already ran
+        # it for this plan in this same wave (never run twice per wave).
+        if not hook_already_run and plan_effective_rounds > 0:
             plan_appended = store.append_review_iteration(
                 plan_id, plan_effective_rounds, source="run_loop"
             )
@@ -20713,7 +20736,7 @@ def run_loop_host_serve_command(args: argparse.Namespace) -> int:
             "last_wave_at": utc_now(),
         })
         write_host_record(root, record)
-        if last_gate != "waiting_for_reply":
+        if last_gate != "waiting_for_reply" and not _wave_appended_review_round(payload):
             stopped_reason = "gate_reached"
             break
         if stop_requested["value"]:
@@ -20999,6 +21022,22 @@ def _run_loop_single_wave(
     return payload
 
 
+def _wave_appended_review_round(payload: dict[str, object]) -> bool:
+    """True only when this wave's review_iterations[] recorded an actual
+    round-append (an item carrying "round"), never for a rounds_exhausted
+    skip. This is the sanctioned signal that follow/host must keep walking
+    for one more wave even though the gate itself isn't waiting_for_reply --
+    otherwise the appended rework/re-review approvals would never reach the
+    next wave's auto-approve + dispatch within the same bounded run, breaking
+    the frozen walk-away chain (fail -> append -> approve+dispatch rework ->
+    ... -> complete -> merge). Gate honesty is preserved: the wave payload
+    itself is unchanged, only the follow/host continuation decision differs."""
+    return any(
+        isinstance(item, dict) and "round" in item
+        for item in payload.get("review_iterations", [])
+    )
+
+
 def _run_loop_follow(
     config: ProjectConfig, store: StateStore, args: argparse.Namespace, plan_id: str
 ) -> int:
@@ -21030,7 +21069,10 @@ def _run_loop_follow(
             return 1
         waves.append({**payload, "wave": wave_number})
         final = payload
-        if payload.get("stopped_reason") != "waiting_for_reply":
+        if (
+            payload.get("stopped_reason") != "waiting_for_reply"
+            and not _wave_appended_review_round(payload)
+        ):
             break
         if wave_number >= args.max_waves:
             break

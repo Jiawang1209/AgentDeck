@@ -104,6 +104,8 @@ Stop `mode` enum:
 | `signalled` | `stop --confirm` SIGTERM accepted after the current wave | `agentdeck run-loop-host status` |
 | `engine_error` | wave engine raised; only the exception type is logged, never provider output | inspect `host.log`, `agentdeck events` |
 
+**Walk-away-chain exception (2026-07-31).** `gate_reached` is only recorded when the just-finished wave's gate is not `waiting_for_reply` **and** that wave did not itself append a review-iteration round. If the wave's `review_iterations[]` carries an item with `round` (see `docs/contracts/run-loop-schema.md`), the serve loop keeps going for one more wave — bounded by `--max-waves` as always, same as `budget_exhausted` — instead of stopping at that wave's honestly-reported non-waiting gate (typically `needs_human_approval`, since the newly appended rework/re-review approvals start `pending`). This lets the next wave's normal auto-approve + dispatch pick up the appended rework itself, matching the frozen spec chain (fail → append → next wave approves+dispatches rework → … → `complete` → merge). Gate honesty is unchanged: each wave's own logged `stopped_reason` in `host.log` is exactly what that wave produced; only the serve loop's continue-vs-stop decision differs, and a round-appending wave still counts against the `--max-waves` budget like any other.
+
 ## Host record and log
 
 - Single-instance record `.agentdeck/run-loop-host/host.json` (atomic replace;
