@@ -46,10 +46,14 @@ override 路径同样经过该 helper,故行为一致。
 
 - Leader/provider 照常生成含单 review step 的 plan(provider prompt
   不变,不要求 LLM 理解 reviewer 组)。
-- 若 `[review].reviewers` 非空,把每个 review step(识别谓词:该 step
-  的 `agent_id` 在配置中的 role 与某个配置 reviewer 的 role 相同——
-  即"该步派给的是 review 类 agent";实现时写测试钉住该谓词)确定性
-  展开为 N 个连续 step:
+- 若 `[review].reviewers` 非空,把每个 review step 确定性展开为 N 个
+  连续 step。**识别谓词收紧(2026-08-01 写计划时修正)**:该 step 的
+  `agent_id` 的配置 role **等于 `reviewers[0]` 的配置 role**——首位
+  reviewer 是"主 reviewer",它的角色签名定义什么算 review 环节。
+  早先措辞"与**某个** reviewer 的 role 相同"有真实漏洞:若
+  `reviewers = ["reviewer", "planner"]`(跨角色组),planning step 会
+  被误判为 review step 而被整组展开。实现时写测试钉住该谓词(含跨
+  角色组不误伤 planning step 的用例)。
   - 编号顺延重排(全 plan 步骤号保持 `1..n` 连续);
   - 每步 agent 取 `reviewers[i]`,role 取该 agent 配置 role,任务文本
     与原 review step 逐字节相同;
