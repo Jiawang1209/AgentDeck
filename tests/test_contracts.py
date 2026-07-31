@@ -700,6 +700,7 @@ def test_contract_index_response_is_reusable_without_cli(tmp_path: Path) -> None
         "run-loop-schema.md",
         "run-loop-all-schema.md",
         "run-loop-host-schema.md",
+        "plan-rework-schema.md",
         "workflow-schema.md",
             "mission-schema.md",
             "migration-schema.md",
@@ -743,7 +744,7 @@ def test_contract_index_response_is_reusable_without_cli(tmp_path: Path) -> None
     assert payload["contract_docs_dir"] == str(tmp_path)
     assert payload["response_fields"] == list(CONTRACT_INDEX_RESPONSE_FIELDS)
     assert payload["contract_item_fields"] == list(CONTRACT_INDEX_ITEM_FIELDS)
-    assert payload["count"] == 41
+    assert payload["count"] == 42
     assert len(payload["contracts"]) == payload["count"]
     assert [item["name"] for item in payload["contracts"]] == [
         "daemon-runtime",
@@ -758,6 +759,7 @@ def test_contract_index_response_is_reusable_without_cli(tmp_path: Path) -> None
         "run-loop",
         "run-loop-all",
         "run-loop-host",
+        "plan-rework",
         "workflow",
         "mission",
         "migration",

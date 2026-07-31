@@ -349,3 +349,20 @@ def test_project_view_contract_accepts_review_rounds() -> None:
     from agentdeck.contracts import PROJECT_VIEW_PLAN_ITEM_FIELDS
 
     assert "review_rounds" in PROJECT_VIEW_PLAN_ITEM_FIELDS
+
+
+def test_plan_rework_contract_shapes() -> None:
+    from agentdeck.contracts import (
+        PLAN_REWORK_RESPONSE_FIELDS,
+        plan_rework_example,
+        validate_plan_rework_contract,
+    )
+
+    for field in ("ok", "mode", "plan_id", "round", "steps", "approval_ids",
+                  "triggered_by_reply", "next_command", "requires_explicit_user", "safety"):
+        assert field in PLAN_REWORK_RESPONSE_FIELDS
+    assert validate_plan_rework_contract(plan_rework_example())["ok"] is True
+    broken = dict(plan_rework_example())
+    broken.pop("round")
+    assert validate_plan_rework_contract(broken)["ok"] is False
+    assert validate_plan_rework_contract({**plan_rework_example(), "mode": "nope"})["ok"] is False

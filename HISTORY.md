@@ -4,6 +4,52 @@
 
 ## 2026-07-31
 
+### Add explicit plan rework command with plan-rework contract
+
+- **Type**: feat
+- **Motivation**: 动态迭代闭环第五刀(spec
+  `docs/superpowers/specs/2026-07-30-review-iteration-loop-design.md`
+  Task 5):Task 1-4 已落地 config `max_review_rounds`、纯推导模块
+  `review_iteration.py`、唯一权威写点 `StateStore.append_review_iteration`
+  和只读 ProjectView/plan status 投影,但整个迭代循环还没有任何显式 CLI
+  入口——人类无法在 review 判定为 `fail`/`needs_changes` 后主动触发一轮
+  回炉。run-loop 引擎接线是下一刀(YAGNI),本刀只把已有写点接到一条显式、
+  GUI 可消费的命令上。
+- **What**: 新增 `agentdeck plan rework --plan-id <id> --confirm`
+  (`src/agentdeck/cli.py` 的 `plan_rework_command`,注册进
+  `plan_subparsers`),纯调用既有 `store.append_review_iteration(plan_id,
+  config.autonomous.max_review_rounds, source="explicit")`,不新增任何
+  判定或写逻辑;成功时输出 `mode=plan_rework` payload(`ok`/`plan_id`/
+  `round`/`steps`/`approval_ids`/`triggered_by_reply`/
+  `next_command=agentdeck approval list`/`requires_explicit_user=true`/
+  `safety=explicit_user`),缺 `--confirm`、未知 plan 或写点拒绝(
+  `no_plan`/`no_verdict`/`verdict_pass`/`already_triggered`/
+  `rounds_exhausted`/`no_implementation_step`)时非 0 且零写。新增契约
+  `agentdeck contract plan-rework [--example]`
+  (`contract_plan_rework_command`),对应 `contracts.py` 的
+  `PLAN_REWORK_RESPONSE_FIELDS`/`plan_rework_example()`/
+  `validate_plan_rework_contract()`/`plan_rework_contract_response()`,
+  复用既有 `_validate_fields` helper 和 `REVIEW_ITERATION_SKIP_REASONS`/
+  `REWORK_TRIGGER_OVERALLS`(新增 `contracts.py` 对 `.review_iteration`
+  的 import);`CONTRACT_INDEX_SPECS` 在 `run-loop-host` 后插入
+  `plan-rework` 条目(index 41→42)。新增
+  `docs/contracts/plan-rework-schema.md` 记录 response 字段、六个
+  `skip_reasons`、`trigger_overalls` 和安全边界。
+- **Impact**: 人类现在可以在 review 失败后显式追加一轮 rework +
+  re-review 审批对,不必手写 state;命令本身只创建 pending approval,
+  绝不自动批准/派发/调用 provider/读取 tmux,预算超限(
+  `[autonomous] max_review_rounds`)必须由人类改配置才能突破,不会被静默
+  绕过。Contract index 从 41 增至 42,`tests/test_contracts.py` 和
+  `tests/test_agent_cli.py::test_contract_list_discovers_all_gui_contracts`
+  的固定名单/计数同步更新。
+- **Verification**: RED 阶段确认 `tests/test_plan_rework_cli.py` 4 项因
+  argparse 未知 `rework` 子命令 `SystemExit(2)` 失败、
+  `tests/test_review_iteration.py::test_plan_rework_contract_shapes`
+  因 `ImportError` 失败;实现后 `pytest tests/test_plan_rework_cli.py
+  tests/test_review_iteration.py tests/test_contracts.py
+  tests/test_agent_cli.py -q` 937 passed;`pytest -q`(全量)通过;
+  `python -m compileall src` 通过。
+
 ### Expose review_rounds and iteration step provenance in ProjectView/plan status
 
 - **Type**: feat

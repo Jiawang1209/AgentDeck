@@ -81,6 +81,7 @@ from .contracts import (
     migration_contract_response,
     mission_contract_response,
     plan_board_contract_response,
+    plan_rework_contract_response,
     project_view_contract_response,
     protocol_runtime_contract_response,
     protocol_runtime_example,
@@ -126,6 +127,7 @@ from .contracts import (
     validate_mission_run_contract,
     validate_mission_status_contract,
     validate_plan_board_contract,
+    validate_plan_rework_contract,
     validate_release_contract,
     validate_project_view_contract,
     validate_protocol_runtime_contract,
@@ -8110,6 +8112,14 @@ def contract_run_loop_host_command(args: argparse.Namespace) -> int:
         Path(__file__).resolve().parents[2] / "docs" / "contracts" / "run-loop-host-schema.md"
     )
     _print_json(run_loop_host_contract_response(contract_path, include_example=args.example))
+    return 0
+
+
+def contract_plan_rework_command(args: argparse.Namespace) -> int:
+    contract_path = (
+        Path(__file__).resolve().parents[2] / "docs" / "contracts" / "plan-rework-schema.md"
+    )
+    _print_json(plan_rework_contract_response(contract_path, include_example=args.example))
     return 0
 
 
@@ -19124,6 +19134,41 @@ def plan_board_command(args: argparse.Namespace) -> int:
     return 0
 
 
+def plan_rework_command(args: argparse.Namespace) -> int:
+    config, store, exit_code = _load_project_or_error()
+    if config is None or store is None:
+        return exit_code
+    if not args.confirm:
+        print("plan rework requires --confirm", file=sys.stderr)
+        return 1
+    result = store.append_review_iteration(
+        str(args.plan_id), config.autonomous.max_review_rounds, source="explicit"
+    )
+    if not result.get("ok"):
+        print(f"plan rework refused: {result.get('reason')}", file=sys.stderr)
+        return 1
+    payload = {
+        "ok": True,
+        "mode": "plan_rework",
+        "plan_id": str(args.plan_id),
+        "round": result["round"],
+        "steps": result["steps"],
+        "approval_ids": result["approval_ids"],
+        "triggered_by_reply": result["triggered_by_reply"],
+        "next_command": "agentdeck approval list",
+        "requires_explicit_user": True,
+        "safety": "explicit_user",
+    }
+    validation = validate_plan_rework_contract(payload)
+    if not validation["ok"]:
+        print("plan rework contract validation failed", file=sys.stderr)
+        for error in validation["errors"]:
+            print(f"- {error}", file=sys.stderr)
+        return 1
+    _print_json(payload)
+    return 0
+
+
 def plan_show_command(args: argparse.Namespace) -> int:
     _config, store, exit_code = _load_project_or_error()
     if store is None:
@@ -21507,6 +21552,9 @@ def build_parser() -> argparse.ArgumentParser:
     contract_run_loop_host = contract_subparsers.add_parser("run-loop-host", help="Show run-loop background host contract metadata")
     contract_run_loop_host.add_argument("--example", action="store_true", help="Include GUI-ready run-loop-host examples")
     contract_run_loop_host.set_defaults(func=contract_run_loop_host_command)
+    contract_plan_rework = contract_subparsers.add_parser("plan-rework", help="Show plan rework contract metadata")
+    contract_plan_rework.add_argument("--example", action="store_true", help="Include a GUI-ready plan rework example")
+    contract_plan_rework.set_defaults(func=contract_plan_rework_command)
     contract_workflow = contract_subparsers.add_parser(
         "workflow", help="Show sequential workflow contract discovery metadata"
     )
@@ -21815,6 +21863,12 @@ def build_parser() -> argparse.ArgumentParser:
     plan_status.set_defaults(func=plan_status_command)
     plan_board = plan_subparsers.add_parser("board", help="Read-only overview of every plan with its gate and next command")
     plan_board.set_defaults(func=plan_board_command)
+    plan_rework = plan_subparsers.add_parser(
+        "rework", help="Append a review-driven rework + re-review step pair (explicit)"
+    )
+    plan_rework.add_argument("--plan-id", required=True, help="Plan with a failing review verdict")
+    plan_rework.add_argument("--confirm", action="store_true", help="Explicitly confirm the append")
+    plan_rework.set_defaults(func=plan_rework_command)
 
     approval = subparsers.add_parser("approval", help="Approval gate commands")
     approval_subparsers = approval.add_subparsers(dest="approval_command")

@@ -27,6 +27,7 @@ from .models import (
     PROJECT_VIEW_SEMANTIC_AUTHORITY_FIELDS,
 )
 from .providers.plan_schema import LEADER_PLAN_SCHEMA_VERSION
+from .review_iteration import REVIEW_ITERATION_SKIP_REASONS, REWORK_TRIGGER_OVERALLS
 from .run_loop_host import RUN_LOOP_HOST_STOPPED_REASONS
 from .providers.semantic_plan_schema import SEMANTIC_LEADER_PLAN_SCHEMA_VERSION
 from .semantic_authority import SEMANTIC_AUTHORITY_SCHEMA_VERSION
@@ -125,6 +126,12 @@ CONTRACT_INDEX_SPECS = (
         "agentdeck contract run-loop-host",
         "agentdeck contract run-loop-host --example",
         "run-loop-host-schema.md",
+    ),
+    (
+        "plan-rework",
+        "agentdeck contract plan-rework",
+        "agentdeck contract plan-rework --example",
+        "plan-rework-schema.md",
     ),
     (
         "workflow",
@@ -7444,6 +7451,75 @@ def run_loop_host_contract_response(
             "status": run_loop_host_status_example(),
             "stop": run_loop_host_stop_example(),
         }
+    return payload
+
+
+PLAN_REWORK_RESPONSE_FIELDS = (
+    "ok",
+    "mode",
+    "plan_id",
+    "round",
+    "steps",
+    "approval_ids",
+    "triggered_by_reply",
+    "next_command",
+    "requires_explicit_user",
+    "safety",
+)
+
+
+def validate_plan_rework_contract(payload: dict[str, object]) -> dict[str, object]:
+    errors = _validate_fields(payload, PLAN_REWORK_RESPONSE_FIELDS, "plan_rework")
+    if payload.get("mode") != "plan_rework":
+        errors.append(f"plan_rework.mode must be plan_rework, got {payload.get('mode')}")
+    round_value = payload.get("round")
+    if not isinstance(round_value, int) or isinstance(round_value, bool) or round_value < 1:
+        errors.append("plan_rework.round must be an int >= 1")
+    for list_field in ("steps", "approval_ids"):
+        value = payload.get(list_field)
+        if not isinstance(value, list) or len(value) != 2:
+            errors.append(f"plan_rework.{list_field} must be a list of exactly 2 items")
+    if payload.get("safety") != "explicit_user":
+        errors.append("plan_rework.safety must be explicit_user")
+    if payload.get("requires_explicit_user") is not True:
+        errors.append("plan_rework.requires_explicit_user must be true")
+    return {"ok": not errors, "errors": errors}
+
+
+def plan_rework_example() -> dict[str, object]:
+    return {
+        "ok": True,
+        "mode": "plan_rework",
+        "plan_id": "pln_example",
+        "round": 1,
+        "steps": [3, 4],
+        "approval_ids": ["apv_rework", "apv_rereview"],
+        "triggered_by_reply": "rep_example",
+        "next_command": "agentdeck approval list",
+        "requires_explicit_user": True,
+        "safety": "explicit_user",
+    }
+
+
+def plan_rework_contract_payload(contract_path: Path) -> dict[str, object]:
+    return {
+        "schema_version": PROJECT_VIEW_SCHEMA_VERSION,
+        "rework_command_template": "agentdeck plan rework --plan-id <plan_id> --confirm",
+        "contract_path": str(contract_path),
+        "contract_exists": contract_path.exists(),
+        "response_fields": list(PLAN_REWORK_RESPONSE_FIELDS),
+        "skip_reasons": list(REVIEW_ITERATION_SKIP_REASONS),
+        "trigger_overalls": sorted(REWORK_TRIGGER_OVERALLS),
+        "run_loop_contract": "agentdeck contract run-loop",
+    }
+
+
+def plan_rework_contract_response(
+    contract_path: Path, include_example: bool = False
+) -> dict[str, object]:
+    payload = plan_rework_contract_payload(contract_path)
+    if include_example:
+        payload["example"] = plan_rework_example()
     return payload
 
 
