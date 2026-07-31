@@ -113,8 +113,36 @@
      `storage events-rollback --confirm` 验证导出零漂移后切回 journal;
      `shadow-status` 暴露 `events_authority`。authority 读取任何异常
      fail-safe 降级 journal（同步导出保证无数据丢失）。
-   - **5d 停同步导出**（观察期后另行拍板）：JSONL 改为按需导出，
-     O(n²) 写彻底消失。
+   - **5d 停同步导出**（2026-08-01 user 拍板开工;设计冻结如下）：
+     JSONL 改为按需导出，O(n²) 写彻底消失（`_append_event_bytes_journal`
+     每次 append 全文读+重写,authority=sqlite 后它只是导出镜像）。
+     - Meta 新键 `events_export_mode` ∈ {`sync`(缺省), `on_demand`}，
+       仅在 `events_authority=sqlite` 时有意义;读取异常一律 fail-safe
+       按 `sync` 处理（宁可多导出绝不静默停导出）。
+     - `_append_event_bytes_locked` 的 sqlite 分支：mode=`on_demand` 时
+       跳过 journal 同步导出（表写仍为权威、失败仍冒泡）;`sync` 行为
+       逐字节不变。journal 权威路径（未 cutover）完全不受 5d 影响。
+     - 新显式命令 `storage events-export --confirm`：mutation lock 内把
+       events.jsonl 整文件重建为表字节流（与 `_event_journal_source`
+       同源），写后逐字节校验;authority=journal 时拒绝（无意义）;
+       审计 `storage_events_exported`。
+     - 新显式命令 `storage events-export-mode --mode sync|on_demand
+       --confirm`：要求 authority=sqlite;切到 `sync` 前先强制一次全量
+       导出（从此文件保持新鲜）;切到 `on_demand` 只翻 meta（文件开始
+       滞后,由 events-diff 显示 lag）;审计
+       `storage_events_export_mode_updated`;同值重复切换拒绝零写。
+     - `storage events-rollback --confirm`：mode=`on_demand` 时必须先
+       全量导出并校验,再走既有零漂移验证与权威回切,并把 mode 重置为
+       `sync`（journal 权威下不存在按需导出）。
+     - `storage events-diff`：`on_demand` 下改为前缀比对——文件是表
+       字节流的前缀即 ok，新增只读 `export_lag`（表条数-文件条数）
+       信息字段;`sync` 下行为不变（滞后即漂移）。
+     - `storage shadow-status` 暴露 `events_export_mode`。
+     - 安全边界：所有写路径仍在 `_protocol_mutation_lock` 内;停导出
+       绝不自动发生（只有显式 `--confirm` 模式切换）;任何 meta 读取
+       异常回落 `sync`;`rm state.db` 在 `on_demand` 下**不再无损**
+       （先 `events-export` 或 `events-rollback`）——shadow-status 与
+       文档必须显著标注。
    approvals.jsonl 与 3 个 event_outbox 的迁移复用同一形态，在 5c 稳定
    后跟进。
 6. 分集合切 78 writer 权威（叶子→中间→核心），每批递增
