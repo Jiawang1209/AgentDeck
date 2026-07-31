@@ -1,6 +1,22 @@
 # AgentDeck Current Development State
 
-Updated: 2026-07-31
+Updated: 2026-08-01
+
+**Round 13 live PASS(2026-08-01,user 拍板"先 1 再 2")**:review 迭代
+闭环与 run-loop 背景宿主双目标全链验证,证据
+`docs/validation/2026-08-01-copilot-line1-round13-iteration-host-live.md`。
+Plan 2 零人工全链:needs_changes verdict → 自动追加 round 1(source=
+run_loop)→ walk-away 越 gate 续跑 → 自动批准派发回炉 → coder 补
+aria-live → 复审 pass → 自动 merge → 干净收官;board review_rounds=1。
+Plan 1 对照验证非触发路径。宿主 detached/预算硬界/三态/重启/段首补扫
+全过;委托归一化 composite 匹配 live 首验(fail-closed 两次拒未授权段)。
+核心工作流"拆解→写→审→回炉→修→终评→合并"自此 live 已验证。发现四项
+非阻塞:预算尺度(空轮询烧 wave,动态间隔候选)、只读验证前缀 starter
+pack 候选、orchestrator 措辞给 reviewer 台阶会让严格 gate 失效(goal
+措辞注意)、审查 worktree 变异残留。**下一步 = 拍板项(user "先 1 再 2"
+的 2)**:SQLite 5d 停同步导出、round_reviewer 独立角色、多 reviewer
+聚合、Leader 精修回炉任务(二期)、G1 frontdesk 增强、只读前缀
+starter pack(新增候选)。
 
 **Review 迭代闭环已落地(2026-07-30 拍板 / 07-31 完成,subagent-driven
 开发,11 commits d50df5ee→,全量绿)**:spec

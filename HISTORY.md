@@ -4,6 +4,31 @@
 
 ## 2026-08-01
 
+### Round 13 live PASS: review iteration loop + run-loop host (双目标全链验证)
+
+- **Type**: docs
+- **Motivation**: review 迭代闭环与背景宿主落地后均标注"live 验证待下轮
+  round";user 拍板"先 1 再 2"后执行 Round 13 双目标同场验证。
+- **What**: 证据文档
+  `docs/validation/2026-08-01-copilot-line1-round13-iteration-host-live.md`。
+  Plan 2 全链零人工:reviewer **needs_changes** verdict →
+  `plan_rework_appended`(round 1, source=run_loop)→ walk-away 例外
+  越 gate 续跑 → 自动批准派发回炉(确定性模板)→ coder 补 aria-live →
+  复审(注入正常,回炉 prompt 无注入——自评守卫双面生效)→ **pass**
+  verdict → 自动 merge(5388267)→ 干净收官;plan board
+  review_rounds=1。Plan 1 对照组验证非触发路径(pass + 推迟话术台阶,
+  `verdict_pass` 静默)。宿主:detached 推进、预算硬界两次如实停、
+  三态记录、显式重启 ×3、段首补扫。叠加 live 首验:委托归一化
+  composite 匹配(检测+放行,fail-closed 两次拒未授权段直至人工补
+  grant)。收尾:release 3/3(inbox 守卫先拦、ack 后放行)、dirty
+  worktree 守卫保留、shadow-diff/events-diff 双 ok。
+- **Impact**: 核心工作流"拆解→写→审→自动回炉→修→终评→自动合并"成为
+  live 已验证能力。发现四项非阻塞(预算尺度、只读前缀 starter pack
+  候选、orchestrator 措辞影响 verdict、审查 worktree 残留)。
+- **Verification**: 全链审计事件与 host.log 逐波记录;三连检
+  shadow-diff ok / events-diff ok / 回归=round 前 4823 绿基线(round
+  期间零代码变更)。
+
 ### Expose review_rounds on plan board and plan list compact surfaces
 
 - **Type**: feat
