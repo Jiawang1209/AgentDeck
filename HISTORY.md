@@ -4,6 +4,32 @@
 
 ## 2026-07-31
 
+### Add append_review_iteration single-point writer (steps + approvals + audit)
+
+- **Type**: feat
+- **Motivation**: 动态迭代闭环第三刀(spec
+  `docs/superpowers/specs/2026-07-30-review-iteration-loop-design.md`):
+  纯推导模块 `review_iteration.derive_review_iteration` 已就位,但状态
+  必须只有一条写入路径,才能被后续 CLI/run-loop 引擎钩子安全复用而不
+  重复实现落盘逻辑。
+- **What**: `StateStore.append_review_iteration(plan_id, max_review_rounds,
+  source)` — 调用 `derive_review_iteration` 得到推导结果,`ok=False` 时
+  原样返回(零写);`ok=True` 时把 rework+re-review step 对追加进
+  `plans[].plan.steps`、按 `_create_approvals_from_plan_state` 同款
+  record 形状为两个新 step 各建一条 `status=pending` approval、`save()`
+  落盘、追加一条携带 plan_id/round/source/triggered_by_reply/steps/
+  approval_count 的 `plan_rework_appended` 审计事件,返回
+  `{ok, round, triggered_by_reply, steps, approval_ids}`。刻意不复用
+  `_create_approvals_from_plan_state` 本身(它在 plan 已有 approvals 时
+  短路跳过,与"始终追加两条新 approval"的迭代语义冲突)。
+- **Impact**: 迭代闭环获得唯一权威写点;尚无 CLI/引擎消费方接入,对既有
+  行为零变化。
+- **Verification**: `tests/test_review_iteration.py` 18 passed(新增
+  `test_writer_appends_steps_approvals_and_event`、
+  `test_writer_refusal_is_zero_write`、
+  `test_writer_is_idempotent_per_reply`);
+  `tests/test_review_iteration.py tests/test_autonomy.py` 25 passed。
+
 ### Pin multi-round targeting and dispatched fallback in review iteration tests
 
 - **Type**: fix

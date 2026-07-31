@@ -52,6 +52,7 @@ from .mission import (
     mission_commands,
     mission_status_transition_allowed,
 )
+from .review_iteration import derive_review_iteration
 from .review_verdict import align_verdict_with_criteria, parse_verdict_line
 from .mission_authority import (
     SEMANTIC_MISSION_COMPACT_FIELDS,
@@ -9884,6 +9885,59 @@ class StateStore:
         approvals = self._create_approvals_from_plan_state(state, plan_id)
         self.save(state)
         return approvals
+
+    def append_review_iteration(
+        self, plan_id: str, max_review_rounds: int, source: str
+    ) -> dict[str, Any]:
+        """Sole write path of the review iteration loop: append the derived
+        rework/re-review step pair to the plan, create their pending
+        approvals, and audit. Refusals are zero-write and returned as-is."""
+        state = self.load()
+        derived = derive_review_iteration(state, plan_id, max_review_rounds)
+        if not derived.get("ok"):
+            return derived
+        plan_record = next(
+            plan for plan in state["plans"] if plan.get("plan_id") == plan_id
+        )
+        new_steps = [derived["rework_step"], derived["review_step"]]
+        plan_record["plan"]["steps"].extend(new_steps)
+        approvals = []
+        for step in new_steps:
+            approvals.append(
+                {
+                    "approval_id": new_id("apv"),
+                    "plan_id": plan_id,
+                    "step": step["step"],
+                    "agent_id": step["agent_id"],
+                    "role": step["role"],
+                    "task": step["task"],
+                    "risk": step["risk"],
+                    "status": "pending",
+                    "created_at": utc_now(),
+                }
+            )
+        state.setdefault("approvals", []).extend(approvals)
+        self.save(state)
+        self.append_event(
+            EventRecord.create(
+                "plan_rework_appended",
+                {
+                    "plan_id": plan_id,
+                    "round": derived["round"],
+                    "source": source,
+                    "triggered_by_reply": derived["triggered_by_reply"],
+                    "steps": [step["step"] for step in new_steps],
+                    "approval_count": len(approvals),
+                },
+            )
+        )
+        return {
+            "ok": True,
+            "round": derived["round"],
+            "triggered_by_reply": derived["triggered_by_reply"],
+            "steps": [step["step"] for step in new_steps],
+            "approval_ids": [approval["approval_id"] for approval in approvals],
+        }
 
     def create_chat_assignment_approval(self, agent_id: str, role: str, task: str) -> dict[str, Any]:
         state = self.load()

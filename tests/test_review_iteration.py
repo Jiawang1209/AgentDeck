@@ -246,3 +246,55 @@ def test_rework_task_template_truncates_with_trace_pointer() -> None:
     )
     assert "short findings" in short and "score" not in short
     assert "(score 41)" in text
+
+
+def _seed_store(tmp_path, overall: str = "fail"):
+    from agentdeck.state import StateStore
+
+    root = tmp_path / "repo"
+    root.mkdir(exist_ok=True)
+    write_default_config(root)
+    store = StateStore(root)
+    state = store.load()
+    seed = _state(overall)
+    for key in ("plans", "approvals", "messages", "replies"):
+        state[key] = seed[key]
+    store.save(state)
+    return root, store
+
+
+def test_writer_appends_steps_approvals_and_event(tmp_path) -> None:
+    root, store = _seed_store(tmp_path, "fail")
+    result = store.append_review_iteration("pln_1", 2, source="explicit")
+    assert result["ok"] is True
+    assert result["round"] == 1
+    assert result["steps"] == [3, 4]
+    assert len(result["approval_ids"]) == 2
+
+    state = store.load()
+    steps = state["plans"][0]["plan"]["steps"]
+    assert [s["step"] for s in steps] == [1, 2, 3, 4]
+    assert steps[2]["origin"] == REVIEW_ITERATION_ORIGIN
+    new_approvals = [a for a in state["approvals"] if a["approval_id"] in result["approval_ids"]]
+    assert [a["step"] for a in new_approvals] == [3, 4]
+    assert all(a["status"] == "pending" and a["plan_id"] == "pln_1" for a in new_approvals)
+    events = (root / ".agentdeck" / "state" / "events.jsonl").read_text(encoding="utf-8")
+    assert '"event_type": "plan_rework_appended"' in events
+    assert '"source": "explicit"' in events
+
+
+def test_writer_refusal_is_zero_write(tmp_path) -> None:
+    root, store = _seed_store(tmp_path, "pass")
+    before = store.load()
+    events_before = (root / ".agentdeck" / "state" / "events.jsonl").read_text(encoding="utf-8")
+    result = store.append_review_iteration("pln_1", 2, source="run_loop")
+    assert result == {"ok": False, "reason": "verdict_pass"}
+    assert store.load() == before
+    assert (root / ".agentdeck" / "state" / "events.jsonl").read_text(encoding="utf-8") == events_before
+
+
+def test_writer_is_idempotent_per_reply(tmp_path) -> None:
+    _root, store = _seed_store(tmp_path, "fail")
+    assert store.append_review_iteration("pln_1", 2, source="run_loop")["ok"] is True
+    second = store.append_review_iteration("pln_1", 2, source="run_loop")
+    assert second == {"ok": False, "reason": "already_triggered"}
