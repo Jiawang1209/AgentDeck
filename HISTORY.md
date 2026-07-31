@@ -4,6 +4,22 @@
 
 ## 2026-08-01
 
+### Expose review_rounds on plan board and plan list compact surfaces
+
+- **Type**: feat
+- **Motivation**: 终审 follow-up——"第几轮回炉"在多计划看板(plan
+  board)最该一眼可见,但迭代轮数此前只进了 ProjectView/trace/
+  plan_status,两个紧凑面(`plan board`/`plan list`)缺失。
+- **What**: `_plan_board_payload` item 与 `_plan_summary` 各增
+  `review_rounds`(同源 `plan_review_rounds` 推导,普通 plan 为 0);
+  `PLAN_BOARD_ITEM_FIELDS` + board example fixture + plans-schema.md
+  同步(自然语言 `plan_board_card` 复用同 shape 自动获得该字段)。
+- **Impact**: 看板/列表可直接读出每个 plan 的迭代轮数;字段是
+  provenance,不是授权。
+- **Verification**: TDD——board/list 测试先 RED 后 GREEN;
+  review_iteration + contracts + agent_cli + tui 962 passed 零级联;
+  全量见提交时数字。
+
 ### Exclude rework self-verdicts and pay down final-review test debt
 
 - **Type**: fix

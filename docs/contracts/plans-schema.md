@@ -42,6 +42,10 @@ The pure gate-diagnosis function `run_loop_gate(review, has_error, plan_id)` liv
 - `plan_id`, `task`, `provider_backend`, `created_at`, `status` (from the plan record)
 - `gate`, `next_command` (from `run_loop_gate`)
 - `active` (bool; `true` iff `gate != "complete"`)
+- `review_rounds` (read-only; number of review-iteration rounds already
+  appended to the plan, `0` for plans without rework — same derivation as
+  ProjectView `plans.items[].review_rounds`, see
+  `docs/contracts/plan-rework-schema.md`; provenance, never authorization)
 - `counts` (from `leader_review.counts`)
 
 ## Gates

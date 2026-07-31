@@ -398,6 +398,30 @@ def test_plan_rework_contract_shapes() -> None:
     assert validate_plan_rework_contract({**plan_rework_example(), "mode": "nope"})["ok"] is False
 
 
+def test_plan_board_and_list_expose_review_rounds(tmp_path, monkeypatch, capsys) -> None:
+    """看板/列表紧凑面同样暴露 review_rounds(第几轮回炉在 plan board 最
+    该一眼可见;终审 follow-up)。"""
+    import json as _json
+
+    from agentdeck import cli
+
+    root, store = _seed_store(tmp_path, "fail")
+    state = store.load()
+    state["plans"][0]["provider"] = "fake"
+    state["plans"][0]["model"] = "fake-plan"
+    store.save(state)
+    store.append_review_iteration("pln_1", 2, source="explicit")
+    monkeypatch.chdir(root)
+
+    assert cli.main(["plan", "board"]) == 0
+    payload = _json.loads(capsys.readouterr().out)
+    assert payload["plans"][0]["review_rounds"] == 1
+
+    assert cli.main(["plan", "list"]) == 0
+    listing = _json.loads(capsys.readouterr().out)
+    assert listing["plans"][0]["review_rounds"] == 1
+
+
 def test_run_loop_validators_reject_non_list_review_iterations() -> None:
     from agentdeck.contracts import (
         validate_run_loop_all_contract,

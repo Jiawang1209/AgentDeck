@@ -3169,7 +3169,7 @@ PLAN_BOARD_RESPONSE_FIELDS = (
 
 PLAN_BOARD_ITEM_FIELDS = (
     "plan_id", "task", "provider_backend", "created_at", "status",
-    "gate", "next_command", "active", "counts",
+    "gate", "next_command", "active", "review_rounds", "counts",
 )
 
 PLAN_BOARD_GATES = (
@@ -7543,13 +7543,15 @@ def plan_board_example() -> dict[str, object]:
                 "plan_id": "pln_a", "task": "demoA", "provider_backend": "local",
                 "created_at": "2026-07-04T00:00:00+00:00", "status": "planned",
                 "gate": "needs_human_approval", "next_command": "agentdeck approval list",
-                "active": True, "counts": {"steps": 1, "approvals": 1},
+                "active": True, "review_rounds": 0,
+                "counts": {"steps": 1, "approvals": 1},
             },
             {
                 "plan_id": "pln_b", "task": "demoB", "provider_backend": "local",
                 "created_at": "2026-07-04T00:00:00+00:00", "status": "completed",
                 "gate": "complete", "next_command": "agentdeck leader summary --plan-id pln_b",
-                "active": False, "counts": {"steps": 1, "approvals": 1},
+                "active": False, "review_rounds": 0,
+                "counts": {"steps": 1, "approvals": 1},
             },
         ],
     }

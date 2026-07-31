@@ -151,7 +151,7 @@ from .contracts import (
 )
 from .autonomy import run_loop_gate, select_auto_approvals
 from .delegation_match import is_composite_command, normalize_match
-from .review_iteration import rework_step_numbers
+from .review_iteration import plan_review_rounds, rework_step_numbers
 from .run_loop_host import (
     append_host_log,
     host_log_path,
@@ -19096,6 +19096,7 @@ def _plan_summary(plan: dict[str, object]) -> dict[str, object]:
         "model": plan.get("model"),
         "status": plan.get("status"),
         "dispatch_ready": plan.get("dispatch_ready"),
+        "review_rounds": plan_review_rounds(steps if isinstance(steps, list) else []),
         "step_count": len(steps) if isinstance(steps, list) else 0,
         "created_at": plan.get("created_at"),
     }
@@ -19118,6 +19119,8 @@ def _plan_board_payload(store) -> dict[str, object]:
         plan_id = str(plan.get("plan_id", ""))
         review = store.leader_review(plan_id)
         gate, next_command = run_loop_gate(review, False, plan_id)
+        board_body = plan.get("plan")
+        board_steps = board_body.get("steps", []) if isinstance(board_body, dict) else []
         items.append({
             "plan_id": plan_id,
             "task": plan.get("task"),
@@ -19127,6 +19130,9 @@ def _plan_board_payload(store) -> dict[str, object]:
             "gate": gate,
             "next_command": next_command,
             "active": gate != "complete",
+            "review_rounds": plan_review_rounds(
+                board_steps if isinstance(board_steps, list) else []
+            ),
             "counts": review.get("counts") or {},
         })
     return {
