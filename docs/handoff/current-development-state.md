@@ -19,8 +19,11 @@ Updated: 2026-08-01
 跨集漏掉,导致 coder 层能绑到 reviewer(真实现 agent 从图里消失)、或
 两层绑到同一 agent(而本仓库的迭代设计明令禁止 coder 复审自己)。修法=
 一次解析全部 worker 层,role 命中多层者是歧义证据,两层都 `ambiguous`;
-另修 validator 未强制的"必然 null"条款与六层覆盖。**剩余需 human**:
-本卡尚无 live 项目验收记录;Round 14 那道框仍在 pane 上等人按;
+另修 validator 未强制的"必然 null"条款与六层覆盖。**live 验收已 PASS**(`docs/validation/2026-08-01-g6-role-bindings-live.md`,
+真配置项目十条断言逐行核过);live 当场暴露一处低报——两人复审组只显示
+首位,已追加只读 `group_members` 修复(`9be5dfef`,与 `candidates` 严格分工:
+前者表成员、后者表歧义,首位必须等于 `agent_id` 是 validator 回归钉)。
+**剩余需 human**:Round 14 那道框仍在 pane 上等人按;
 下一候选是 user 提的 `/goal` 一句话走开 + 呈现层渐进披露。
 
 **G6 Role Topology 已落地(2026-08-01,北极星最后一相,spec

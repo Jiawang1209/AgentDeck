@@ -4,6 +4,22 @@
 
 ## 2026-08-01
 
+### Record the G6 role_bindings live verification
+
+- **Type**: docs
+- **Motivation**: G6 落地后唯一剩下的验收项。空项目验不出什么——六层要么
+  全默认要么全空;scratch 是**真配过的**项目(planner/orchestrator 分别绑
+  不同后端、两人复审组、round_reviewer 未配、两个 worker 真 running)。
+- **What**: 证据落 `docs/validation/2026-08-01-g6-role-bindings-live.md`,
+  逐行对着 config 核十条断言。
+- **Impact**: 纯文档;零代码改动。
+- **Verification**: 十条断言全部成立,含 orchestrator 绑到与 `[leader]`
+  **不同后端**(正是同期修掉的既有 bug 所在场景)、两处必然性 null 条款、
+  计数自洽、state+events 逐字节不变。**live 当场暴露一处低报**:两人复审
+  组只显示首位,第二审查员在拓扑图里隐形——只有配了多成员组的真项目才
+  看得见,单元测试与空项目都验不出;已追加 `group_members` 修复(`9be5dfef`)
+  并复验通过。
+
 ### Report the whole review group in the role bindings card, not just its head
 
 - **Type**: fix
