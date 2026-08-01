@@ -766,6 +766,59 @@ class CodexCliProvider(CliLeaderProvider):
     native_help_command = ("codex", "exec", "--help")
     native_required_flags = ("--output-schema", "--output-last-message")
 
+    def refine_rework_task(
+        self,
+        *,
+        task: str,
+        feedback: str,
+        model: str | None = None,
+    ) -> str:
+        """codex 的 stdout 是交互记录,不是答案。
+
+        与 planning 路径同源:用 `--output-last-message` 把最终答案写进私有
+        工作区文件再读取,stdout/stderr 仍在 **OS 边界**丢弃(codex 诊断
+        永不被消费的不变量)。因此失败只记退出码,不做输出分类。
+        """
+        prompt = build_refine_rework_prompt(task=task, feedback=feedback)
+        base_command = self._command_with_model(model) if model else list(self.command)
+        temp_dir = _create_private_workspace("agentdeck-refine-")
+        if temp_dir is None:
+            raise CliLeaderProviderError("json_parse", "invalid_output_envelope")
+        try:
+            result_path = os.path.join(temp_dir, "codex-refined.txt")
+            insert_at = len(base_command) - 1
+            command = [
+                *base_command[:insert_at],
+                "--output-last-message",
+                result_path,
+                *base_command[insert_at:],
+            ]
+            try:
+                completed = subprocess.run(
+                    command,
+                    input=prompt,
+                    text=True,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    cwd=None,
+                    timeout=self.timeout,
+                    check=False,
+                )
+            except subprocess.TimeoutExpired:
+                raise CliLeaderProviderError("timeout") from None
+            except OSError:
+                raise CliLeaderProviderError("nonzero") from None
+            if completed.returncode != 0:
+                raise CliLeaderProviderError(
+                    "nonzero", exit_code=completed.returncode
+                )
+            payload = self._read_secure_payload(result_path, normalize_mode=True)
+            if len(payload) > MAX_CLI_LEADER_OUTPUT_BYTES:
+                raise CliLeaderProviderError("oversize")
+            return payload.decode("utf-8", "replace")
+        finally:
+            _cleanup_private_workspace(temp_dir)
+
     def _prompt(self, request: LeaderPlanRequest) -> str:
         return super()._prompt(request).replace(
             "Required schema: goal, summary, steps, approval_required, dispatch_ready.",
@@ -1134,14 +1187,20 @@ class ClaudeCliProvider(CliLeaderProvider):
     )
 
     def _refined_text(self, stdout: str) -> str:
-        """`claude --print --output-format json` 的信封:取 result 纯文本。"""
+        """`claude --print --output-format json` 的信封:取 result 纯文本。
+
+        信封坏掉时**fail-closed 抛出**——绝不把原始 JSON 当作"精修成功"的
+        任务正文落地(那会被 `validate_refined_task` 照单全收并标记
+        `refined: true`)。调用方据此回落确定性模板。"""
         try:
             envelope = json.loads(stdout.strip())
         except JSONDecodeError:
-            return stdout
+            raise CliLeaderProviderError(
+                "json_parse", "invalid_output_envelope"
+            ) from None
         if isinstance(envelope, dict) and isinstance(envelope.get("result"), str):
             return envelope["result"]
-        return stdout
+        raise CliLeaderProviderError("json_parse", "invalid_output_envelope")
 
     def _brief_json(self, stdout: str) -> object:
         text = stdout.strip()

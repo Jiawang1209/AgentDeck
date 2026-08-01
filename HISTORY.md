@@ -4,6 +4,38 @@
 
 ## 2026-08-01
 
+### Close final-review findings on refined rework
+
+- **Type**: fix
+- **Motivation**: 精修回炉功能三个 task 各自绿灯,但**合成体**没被独立
+  审过。整体终审(73189336..c7c48430)判 READY-with-fixes:两条冻结不变量
+  (run-loop 永不精修、provider 永不在锁内调用)经独立复核成立,但发现
+  2 个 Important + 3 个 Minor。
+- **What**: ①**claude 信封 fail-open(Important)**:`_refined_text` 在
+  信封损坏/`result` 非字符串时返回**原始 JSON**,而 `validate_refined_task`
+  会照单全收——不合格产出被当成"精修成功"落地并标 `refined: true`。改为
+  fail-closed 抛 `json_parse`,由调用方回落模板。②**codex 精修取错内容
+  (Important)**:codex 的 stdout 是交互记录(planning 路径正因如此用
+  `--output-last-message` 取答案),精修却直接返回 stdout,会把会话横幅与
+  推理过程钉进回炉任务。新增 `CodexCliProvider.refine_rework_task` 覆写,
+  与 planning 同源用 `--output-last-message` 写私有工作区文件再安全读取,
+  **stdout/stderr 仍在 OS 边界丢弃**(codex 诊断永不被消费的不变量)。
+  ③prompt 中的 reviewer 意见按与模板同一 `MAX_REWORK_TASK_CHARS` 截断
+  (spec 未落实条款,此前 prompt 体积无界)。④收尾指令近似写法(缺句号/
+  ASCII 句点/缺空格)不再重复追加。⑤CLAUDE.md 自相矛盾的"不调 provider"
+  改为"无 `--refine` 时不调 provider"。两个原本用 codex 验基类行为的测试
+  改用仍走基类的 claude,并注明分工。
+- **Impact**: 精修产出的不合格路径一律回落模板;codex Leader 的
+  `--refine` 不再把交互记录当任务。模板路径与两条不变量不受影响。
+- **Verification**: TDD——6 项先 RED 后 GREEN;test_refined_rework 51
+  passed;refined_rework+plan_rework_cli+review_iteration+review_group
+  135 passed;contracts+agent_cli+cli_structured_output+
+  provider_openai_compatible+leader_cli 1375 passed(含 codex OS 边界
+  对抗性守卫);`compileall` 与 `git diff --check` 干净;全量见提交时数字。
+  **codex 精修的真实输出仍待一次 live 确认**(终审同样标注)。
+
+## 2026-08-01
+
 ### Add `plan rework --refine`
 
 - **Motivation**: Task 1 让 writer 能采用锁外传入的精修回炉任务,Task 2 让

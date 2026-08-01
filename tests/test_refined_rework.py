@@ -348,37 +348,40 @@ def _mock_refine_cli(monkeypatch, stdout: str, returncode: int = 0, stderr: str 
 
 
 def test_cli_provider_refine_returns_stdout_text(monkeypatch) -> None:
-    from agentdeck.providers.cli_subprocess import CodexCliProvider
+    """基类(capture_output)精修路径——用 claude 验证:codex 有自己的
+    `--output-last-message` 覆写(见
+    test_codex_refine_reads_last_message_and_keeps_os_boundary)。"""
+    from agentdeck.providers.cli_subprocess import ClaudeCliProvider
 
-    calls = _mock_refine_cli(monkeypatch, "先修复 2 个失败测试,再补 a11y 断言。\n")
+    calls = _mock_refine_cli(monkeypatch, '{"type": "result", "result": "先修复 2 个失败测试,再补 a11y 断言。"}')
 
-    text = CodexCliProvider().refine_rework_task(
+    text = ClaudeCliProvider().refine_rework_task(
         task="实现登录页", feedback=_refine_feedback(), model="refine-model"
     )
 
     assert text.strip() == "先修复 2 个失败测试,再补 a11y 断言。"
     assert len(calls) == 1, "精修只调用一次 provider,绝不重试"
-    assert calls[0]["command"][:2] == ["codex", "--model"]
+    assert calls[0]["command"][:2] == ["claude", "--model"]
     assert "refine-model" in calls[0]["command"]
     prompt = calls[0]["kwargs"]["input"]
     assert "实现登录页" in prompt
     assert "tests pass" in prompt
     assert calls[0]["kwargs"]["capture_output"] is True
     assert calls[0]["kwargs"]["check"] is False
-    assert calls[0]["kwargs"]["timeout"] == CodexCliProvider.timeout
+    assert calls[0]["kwargs"]["timeout"] == ClaudeCliProvider.timeout
 
 
 def test_cli_provider_refine_nonzero_exit_fails_closed(monkeypatch) -> None:
     from agentdeck.providers.cli_failure import CLI_FAILURE_REASONS
     from agentdeck.providers.cli_subprocess import (
+        ClaudeCliProvider,
         CliLeaderProviderError,
-        CodexCliProvider,
     )
 
     _mock_refine_cli(monkeypatch, "", returncode=7, stderr="boom")
 
     with pytest.raises(CliLeaderProviderError) as excinfo:
-        CodexCliProvider().refine_rework_task(task="实现登录页", feedback="反馈")
+        ClaudeCliProvider().refine_rework_task(task="实现登录页", feedback="反馈")
 
     assert excinfo.value.stage == "nonzero"
     assert excinfo.value.exit_code == 7
@@ -802,3 +805,93 @@ def test_plan_rework_contract_carries_refined() -> None:
     discovery = plan_rework_contract_payload(Path("docs/contracts/plan-rework-schema.md"))
     assert discovery["refine_skip_reasons"] == list(REFINE_SKIP_REASONS)
     assert "--refine" in discovery["refine_command_template"]
+
+
+# --- 2026-08-01 终审 follow-up ---------------------------------------------
+
+
+def test_claude_refined_text_fails_closed_on_bad_envelope() -> None:
+    """终审 Important:信封坏掉时不能把原始 JSON 当成"精修成功"的任务落地。"""
+    from agentdeck.providers.cli_subprocess import (
+        ClaudeCliProvider,
+        CliLeaderProviderError,
+    )
+
+    provider = ClaudeCliProvider()
+    for bad in (
+        '{"type": "result", "resul',                      # 非法 JSON
+        '{"type": "result", "result": {"x": 1}}',          # result 不是字符串
+        '["not", "a", "dict"]',                            # 顶层不是对象
+        '{"type": "result"}',                              # 缺 result
+    ):
+        with pytest.raises(CliLeaderProviderError):
+            provider._refined_text(bad)
+
+    assert provider._refined_text('{"type":"result","result":"干净正文"}') == "干净正文"
+
+
+def test_codex_refine_reads_last_message_and_keeps_os_boundary(monkeypatch, tmp_path) -> None:
+    """终审 Important:codex stdout 是交互记录,精修必须从
+    `--output-last-message` 私有文件取答案;stdout/stderr 仍在 OS 边界丢弃。"""
+    import subprocess
+    from pathlib import Path
+
+    from agentdeck.providers.cli_subprocess import CodexCliProvider
+
+    seen: dict = {}
+
+    def fake_run(command, **kwargs):
+        seen["command"] = list(command)
+        seen["kwargs"] = kwargs
+        path = Path(command[command.index("--output-last-message") + 1])
+        path.write_text("干净的返工任务正文", encoding="utf-8")
+        return subprocess.CompletedProcess(args=command, returncode=0, stdout=None, stderr=None)
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    text = CodexCliProvider().refine_rework_task(task="原任务", feedback="意见")
+
+    assert text.strip() == "干净的返工任务正文"
+    assert "--output-last-message" in seen["command"]
+    # OS 边界不变量:codex 诊断永不被消费
+    assert seen["kwargs"]["stdout"] is subprocess.DEVNULL
+    assert seen["kwargs"]["stderr"] is subprocess.DEVNULL
+
+
+def test_refine_prompt_bounds_reviewer_feedback() -> None:
+    """终审 Minor(spec 未落实条款):送进 provider 的意见必须与模板同一
+    截断上限,否则 prompt 体积与成本无界。"""
+    from agentdeck.review_iteration import (
+        MAX_REWORK_TASK_CHARS,
+        build_refine_prompt,
+    )
+
+    members = [
+        {"agent_id": "reviewer",
+         "verdict": {"overall": "fail",
+                     "criteria": [{"criterion": "c1", "verdict": "fail"}]},
+         "text": "x" * (MAX_REWORK_TASK_CHARS * 3)},
+    ]
+    prompt = build_refine_prompt(
+        original_task="原任务",
+        verdict={"overall": "fail", "criteria": [{"criterion": "c1", "verdict": "fail"}]},
+        members=members,
+    )
+    assert len(prompt) <= MAX_REWORK_TASK_CHARS * 2
+    assert "原任务" in prompt
+
+
+@pytest.mark.parametrize(
+    "tail",
+    [
+        "修复后 commit 到任务分支",     # 缺句号
+        "修复后 commit 到任务分支.",    # ASCII 句点
+        "修复后commit 到任务分支。",    # 缺空格
+    ],
+)
+def test_validate_refined_task_does_not_double_append_footer(tail: str) -> None:
+    """终审 Minor:近似写法不得导致收尾指令重复两遍。"""
+    from agentdeck.review_iteration import REWORK_TASK_FOOTER, validate_refined_task
+
+    normalized = validate_refined_task(f"修 A。{tail}")
+    assert normalized.count("到任务分支") == 1
+    assert REWORK_TASK_FOOTER in normalized or "到任务分支" in normalized

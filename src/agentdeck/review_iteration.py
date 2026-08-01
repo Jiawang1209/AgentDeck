@@ -329,6 +329,10 @@ def build_refine_prompt(
     `members` 为组路径的成员列表(与 `build_group_review_text` 同一形状);
     无组时调用方可传 None 或合成单成员列表。本函数只重排**已入账**的事实,
     不读文件、不读 pane、不调用任何 provider。
+
+    reviewer 意见按与模板**同一** `MAX_REWORK_TASK_CHARS` 上限截断:送进
+    provider 的 prompt 体积因此有界(成本与延迟可预期),超出部分以省略标记
+    收尾。
     """
     overall = str(verdict.get("overall"))
     score = verdict.get("score")
@@ -354,9 +358,24 @@ def build_refine_prompt(
                 entry += f" (证据: {item['evidence']})"
             lines.append(entry)
     review_text = build_group_review_text(members) if members else ""
+    if len(review_text) > MAX_REWORK_TASK_CHARS:
+        # 与模板同一上限:prompt 体积有界,成本/延迟可预期。
+        review_text = review_text[:MAX_REWORK_TASK_CHARS] + "\n[意见过长,已截断]"
     if review_text:
         lines += ["", "审查意见原文(按 reviewer 分段):", review_text]
     return "\n".join(lines)
+
+
+def _footer_key(text: str) -> str:
+    """收尾指令的比较键:去掉空白与中英文句点,吸收近似写法差异。"""
+    return "".join(ch for ch in text if not ch.isspace() and ch not in "。.")
+
+
+def _has_rework_footer(text: str) -> bool:
+    key = _footer_key(REWORK_TASK_FOOTER)
+    # 只看尾部有界窗口,避免正文中间偶然出现同一句话被误判。
+    tail = text[-(len(REWORK_TASK_FOOTER) * 3) :]
+    return key in _footer_key(tail)
 
 
 def validate_refined_task(text: Any) -> str:
@@ -372,7 +391,8 @@ def validate_refined_task(text: Any) -> str:
     stripped = text.strip()
     if not stripped:
         raise ValueError("refined task must not be empty")
-    if stripped.endswith(REWORK_TASK_FOOTER):
+    if _has_rework_footer(stripped):
+        # 近似写法(缺句号/ASCII 句点/缺空格)也算已有收尾,避免重复两遍。
         normalized = stripped
     else:
         normalized = f"{stripped}\n{REWORK_TASK_FOOTER}"
