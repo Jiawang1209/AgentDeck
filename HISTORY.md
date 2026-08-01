@@ -4,6 +4,18 @@
 
 ## 2026-08-01
 
+### Re-verify the human-gate live path after the tightening
+
+- **Type**: docs
+- **Motivation**: 加了"待批证明"和"身份非空"两条判据之后,必须确认真框
+  没有被一起挡掉——否则功能白做。
+- **What**: 同一现场(Round 14 的 planner Playwright 框)重跑一台
+  `--release-boxes` 宿主;结果追加进
+  `docs/validation/2026-08-01-host-human-gate-live.md`。
+- **Impact**: 纯文档;零代码改动。
+- **Verification**: `stopped_reason=human_gate`、`wave_count=1/20`、证据
+  三字段与收紧前逐字段一致 —— 真框照停,假框不再停。
+
 ### Require positive proof of a pending box before a human-gate stop
 
 - **Type**: fix

@@ -74,6 +74,21 @@ wave 1 的 payload(`stopped_reason=waiting_for_reply`,gate 自身仍如实
 - **debounce 生效**:段首(wave 0)扫描记下候选,wave 1 后扫描确认同
   一道框才停——所以是 `wave_count: 1` 而非 0。
 
+## 收紧后复验(同日,`d1aa64ec` 之后)
+
+终审对抗性复查端到端复现了两条**误停**路径(已答复的折叠框产出全 None
+身份 / 残留 `$ ` 行刮出假命令),修复给检测加了"待批证明"(活动选择器
+字形 `›1.`)与"身份非空"两条判据。收紧会不会把**真框**也挡掉,只能靠
+同一现场再验一次:
+
+```
+stopped_reason = human_gate
+wave_count     = 1 / 20
+human_gate     = ('planner', 'command', '/Users/liuyue/.codex/skills/playwright/…')
+```
+
+与收紧前逐字段一致。**真框照停,假框不再停。**
+
 ## 结论
 
 功能按设计工作,且是在**它要解决的那个真实缺陷的现场**验证的。

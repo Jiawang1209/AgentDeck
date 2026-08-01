@@ -2,6 +2,31 @@
 
 Updated: 2026-08-01
 
+**宿主人类门诚实停止已落地并 live 验证(2026-08-01,spec
+`docs/superpowers/specs/2026-08-01-host-human-gate-design.md`,plan 同名,
+11 commits `8774b599`→,全量 5029 绿)**:动机是 Round 14 宿主日志实测——
+846 个 wave 里 834 个完全空转(98%),run6/7 共 3h37m 100% 空转,全部烧在
+一道没人按的 Playwright 授权框上;根因是 `waiting_for_reply` 兼职了
+"worker 在思考"与"worker 卡在人类门"两种语义。做法的关键是**零新增能力
+面**:`--release-boxes` 的扫描本来就把框证据算好放在 `skipped[]` 里,宿主
+只是把它丢进了 `_`。新 `stopped_reason=human_gate`(闭合枚举第六值)带
+六字段证据进 host.json / host.log / 审计 / status。**live 首验即 PASS**
+(证据 `docs/validation/2026-08-01-host-human-gate-live.md`):同一现场
+旧行为烧满 300 wave / 2h29m,新行为 **wave 1 / ~7s** 并指名道姓;零
+`auth_box_released`(绝不代按,框仍原样等人)。**终审又抓到一条 fail-open**
+(`d1aa64ec`,本 session 第四轮终审第四次命中):检测只要求"未委托 + 在
+awaiting 集内",而 marker `Would you like to run` 在**已答复**的折叠框上
+同样命中——全 None 身份恒等于自身会让 debounce 必然确认(误停健康走开段),
+残留 `$ ` 行还能刮出假命令;修复加"待批证明"(活动选择器字形 `›1.`,与
+MCP 提取器那道硬约束同源)与"身份非空"两条判据,收紧后同一现场复验仍
+PASS。**教训**:此前每个 serve 级人类门测试都 mock 掉了扫描,所以 pane
+文本→解析→候选整段从未端到端执行过,F1 才能活过七个 commit 和一次 live
+PASS(live 那次恰好是真待批框,只走了 happy path);现已补三个喂真实 pane
+文本、跑未 mock 扫描的端到端回归。**剩余需 human**:Round 14 那道框仍在
+pane 上等人按(本功能有意不代按);`run-loop --follow` 的对称实现是
+follow-up;下一个拍板候选是 user 提的 `/goal` 一句话走开 + 呈现层渐进
+披露(本切片是它的前置:走开命令遇到人类门必须吭声)。
+
 **宿主人类门诚实停止已落地(2026-08-01)**:spec
 `docs/superpowers/specs/2026-08-01-host-human-gate-design.md`,plan
 `docs/superpowers/plans/2026-08-01-host-human-gate.md`,7 commits
