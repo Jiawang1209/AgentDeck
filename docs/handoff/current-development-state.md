@@ -36,7 +36,35 @@ plan 同名,6 commits 0f28d3db→9b8a9391,全量 4860 绿):user 拍板三决策
 严重既有 bug**(8273d70d):`_dump_config` 白名单式回写会静默吞掉
 `[leader.planner]`/`[leader.orchestrator]`(G2,已 live 验证的功能)、
 `[daemon]` 与新 `[review]`——`policy set-mode` 一次即丢;现改为保留式
-回写。④Leader 精修回炉任务(二期)待排期,G1 frontdesk 增强仍待拍板。
+回写。④**Leader 精修回炉已落地**(2026-08-01,spec
+`docs/superpowers/specs/2026-08-01-leader-refined-rework-design.md`,plan
+同名,3 commits 34a831e5→28bcf56d,全量 4943 绿):
+`agentdeck plan rework --plan-id <id> --confirm --refine` 让配置的 Leader
+provider 把审查意见提炼成回炉任务。user 拍板两点:**只给显式命令加
+`--refine`**(run-loop / --all / --follow / host 一律无 refine 入口,
+"run-loop 绝不调用 provider"这条已 live 验证的不变量完整保留)与
+**失败回落确定性模板并如实报告**(闭合枚举 `unsupported_provider` /
+`provider_error` / `invalid_output` / `state_changed`,命令仍退 0——
+迭代不被 provider 抖动阻断)。接线关键:provider 调用在**锁外**
+(锁内调 LLM 会阻塞全项目写入),CLI 先锁外纯推导拿 `triggered_by_reply`,
+调用+校验后把结果作为 `rework_task_override` 交给 locked writer,writer
+锁内**重新推导**且仅在 reply id 一致时采用,漂移则回落模板并记
+`state_changed`。三处 provider 实现(CLI 基类 / API 基类 / fake)覆盖全部
+provider,支持性用 `getattr` 探测(与 `plan_brief` 同模式)。落地 step 带
+`task_source=leader_refined` provenance(模板路径不带该键)。
+**G1 frontdesk 增强仍待拍板**(当前唯一未开工项)。
+
+**CLI provider 失败原因可观测已落地**(2026-08-01,b2ca1635 + 0e799272 +
+6b816c26):新纯模块 `providers/cli_failure.py` 按"解析→分类→丢弃原文"
+把失败分成闭合枚举 `credits_exhausted/auth_required/model_unavailable/
+rate_limited/unknown`,错误与审计带 `exit_code` + `failure_reason`。
+**能分类才分类**:`plan_brief` 与 claude planning(stdout 写私有文件,
+失败时做尽力而为的有界诊断读)可给出原因;**codex planning 只报退出码**
+——它的诊断在 **OS 边界**即丢弃,由对抗性测试
+`test_codex_discards_subprocess_diagnostics_at_the_os_boundary` 加固
+(我一度改成接管道被它当场拦下并已全部回退)。教训记入 HISTORY:
+定向回归务必包含 `test_cli_structured_output.py` 与
+`test_provider_openai_compatible.py`。
 整体终审 **APPROVE**(1aa256c6 + 3776857f,全量 4866+):终审复现一个
 **Critical fail-open**——组内一人 verdict 无效时整组塌缩成"无判定",
 另一人的有效 fail 被丢弃且自动合并放行(单 reviewer 下会扣住);根因是
