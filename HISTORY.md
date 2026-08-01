@@ -4,6 +4,32 @@
 
 ## 2026-08-01
 
+### Preserve unknown config sections through config writers (silent data loss fix)
+
+- **Type**: fix
+- **Motivation**: Task 1 实现者报告 `[review]` 活不过一次
+  `policy set-mode`;核查发现根因是 `_dump_config` 的**白名单式回写**,
+  且危害远超新功能——它同样静默吞掉 **`[leader.planner]` /
+  `[leader.orchestrator]`(G2 双 backend,已落地并 live 验证过的功能)**
+  与 `[daemon]`。实测:写入 planner 子段 + daemon idle=42 后跑一次
+  `update_leader_approval_mode`,planner 变 None、idle 回落 600。四个
+  写入口(approval_mode / autonomous policy / leader provider / agent
+  role)全部受影响,而启用 autonomous 模式必经 `policy set-mode`。
+- **What**: `config.py` 改为**保留式**回写:新增通用 `_toml_scalar`
+  (str/int/float/bool/数组;不可表示者跳过)、`_dump_preserved_table`
+  (含嵌套子表)与 `_dump_preserved_sections`,在既有显式段发射之后
+  追加一切未发射内容——`[leader.*]` 子表、`[daemon]`、`[review]` 及
+  任何未来/未知段。既有六个显式段的输出格式与默认值行为逐字节不变。
+- **Impact**: 配置写入不再是数据丢失面;G2 双 backend 配置在
+  `policy set-mode` 后得以存活(此前 scratch 上每次切模式都在悄悄
+  丢配置)。
+- **Verification**: TDD——三测先 RED(review 段丢失、G2 子段+daemon
+  丢失、未知段丢失)后 GREEN;`tests/test_review_group.py` 13 passed;
+  autonomy+leader_subrole+agent_cli+contracts 930 passed 零回归;
+  `compileall` 干净;全量见下一条目基线。
+
+
+
 ### Add `[review]` config section (round_reviewer, reviewers)
 
 - **Type**: feat

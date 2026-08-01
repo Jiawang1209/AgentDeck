@@ -499,6 +499,62 @@ def _quote_toml(value: str) -> str:
     return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
 
 
+def _toml_scalar(value: object) -> str | None:
+    """标量/数组的通用 TOML 表示;不可表示的返回 None(由调用方跳过)。"""
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, int) or isinstance(value, float):
+        return repr(value)
+    if isinstance(value, str):
+        return _quote_toml(value)
+    if isinstance(value, list):
+        rendered = [_toml_scalar(item) for item in value]
+        if any(item is None for item in rendered):
+            return None
+        return "[" + ", ".join(item for item in rendered if item is not None) + "]"
+    return None
+
+
+def _dump_preserved_table(name: str, table: dict[str, object]) -> list[str]:
+    """把一个未被显式发射的表(含嵌套子表)通用序列化为 TOML 行。"""
+    scalars: list[str] = []
+    nested: list[str] = []
+    for key, value in table.items():
+        if isinstance(value, dict):
+            nested.extend(_dump_preserved_table(f"{name}.{key}", value))
+            continue
+        rendered = _toml_scalar(value)
+        if rendered is not None:
+            scalars.append(f"{key} = {rendered}")
+    lines: list[str] = []
+    if scalars or not nested:
+        lines.extend(["", f"[{name}]", *scalars])
+    lines.extend(nested)
+    return lines
+
+
+def _dump_preserved_sections(
+    raw: dict[str, object], emitted_top_level: set[str]
+) -> list[str]:
+    """保留 `_dump_config` 未显式发射的一切:`[review]`、`[daemon]`、
+    未来新增段,以及 `[leader.*]` 子表(G2 planner/orchestrator)。
+
+    白名单式回写此前会静默吞掉这些段——`policy set-mode` 一次就抹掉
+    已配置的 G2 双 backend。保留式才是安全默认。
+    """
+    lines: list[str] = []
+    leader = raw.get("leader")
+    if isinstance(leader, dict):
+        for key, value in leader.items():
+            if isinstance(value, dict):
+                lines.extend(_dump_preserved_table(f"leader.{key}", value))
+    for key, value in raw.items():
+        if key in emitted_top_level or not isinstance(value, dict):
+            continue
+        lines.extend(_dump_preserved_table(key, value))
+    return lines
+
+
 def _dump_config(raw: dict[str, object]) -> str:
     project = raw.get("project", {})
     leader = raw.get("leader", {})
@@ -591,4 +647,9 @@ def _dump_config(raw: dict[str, object]) -> str:
             "[skills]",
             f"allowed_sources = {sources_toml}",
         ])
+    lines.extend(
+        _dump_preserved_sections(
+            raw, {"project", "leader", "agents", "runtime", "autonomous", "skills"}
+        )
+    )
     return "\n".join(lines) + "\n"

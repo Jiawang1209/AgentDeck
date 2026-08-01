@@ -60,23 +60,10 @@ def test_empty_reviewers_list_is_allowed_and_means_off(tmp_path: Path) -> None:
     assert load_config(root).review.reviewers == ()
 
 
-def test_KNOWN_GAP_review_section_is_dropped_by_config_writer_round_trip(
-    tmp_path: Path,
-) -> None:
-    """Documents a pre-existing gap: `_dump_config` in config.py only
-    re-emits a fixed whitelist of top-level tables (project/leader/agents/
-    runtime/autonomous/skills). It does not know about `[review]` (nor
-    `[daemon]`, which has the same gap already), so any writer that
-    round-trips through `_dump_config(raw)` — e.g. `update_leader_approval_mode`,
-    which backs `agentdeck policy set-mode` — silently drops a configured
-    `[review]` section instead of preserving it.
-
-    This test pins the *current* (unfortunate) behaviour so it cannot regress
-    further unnoticed. Fixing `_dump_config` to preserve `[review]` is a
-    deliberate design decision left to the human/plan owner — flagged here
-    per the Task 1 discipline of "report the finding, do not silently
-    redesign".
-    """
+def test_review_section_survives_config_writer_round_trip(tmp_path: Path) -> None:
+    """`_dump_config` 是白名单式序列化;任何经它回写的 writer(例如
+    `policy set-mode` 背后的 `update_leader_approval_mode`)都必须保留
+    它不认识的配置段,否则 `[review]` 活不过一次模式切换。"""
     root = _root(tmp_path)
     _config_with(
         root,
@@ -86,6 +73,43 @@ def test_KNOWN_GAP_review_section_is_dropped_by_config_writer_round_trip(
 
     update_leader_approval_mode(root, "approve")
 
-    # KNOWN GAP: the [review] section did not survive the round trip.
-    assert load_config(root).review.round_reviewer is None
-    assert load_config(root).review.reviewers == ()
+    review = load_config(root).review
+    assert review.round_reviewer == "planner"
+    assert review.reviewers == ("reviewer", "planner")
+
+
+def test_config_writers_preserve_leader_subroles_and_daemon(tmp_path: Path) -> None:
+    """同一个白名单缺口此前已在吞掉 G2 的 `[leader.planner]` /
+    `[leader.orchestrator]` 与 `[daemon]`——已落地功能的静默数据丢失。"""
+    from agentdeck.config import update_autonomous_policy, update_leader_provider
+
+    root = _root(tmp_path)
+    _config_with(
+        root,
+        '[leader.planner]\nprovider = "deepseek"\nmodel = "deepseek-v4-pro"\n\n'
+        '[leader.orchestrator]\nprovider = "claude-cli"\nmodel = "claude-fable-5"\n\n'
+        "[daemon]\nidle_grace_seconds = 42\n",
+    )
+    before = load_config(root)
+    assert before.leader.planner is not None
+    assert before.daemon.idle_grace_seconds == 42
+
+    update_leader_approval_mode(root, "approve")
+    update_autonomous_policy(root, ("coder",), 3)
+    update_leader_provider(root, "deepseek", "deepseek-v4-pro")
+
+    after = load_config(root)
+    assert after.leader.planner == before.leader.planner
+    assert after.leader.orchestrator == before.leader.orchestrator
+    assert after.daemon.idle_grace_seconds == 42
+
+
+def test_config_writers_preserve_unknown_sections(tmp_path: Path) -> None:
+    """未知/未来配置段也必须原样保留(白名单不该成为数据丢失面)。"""
+    import tomllib
+
+    root = _root(tmp_path)
+    _config_with(root, '[future_thing]\nflag = true\ncount = 7\nnames = ["a", "b"]\n')
+    update_leader_approval_mode(root, "approve")
+    raw = tomllib.loads((root / ".agentdeck" / "config.toml").read_text(encoding="utf-8"))
+    assert raw["future_thing"] == {"flag": True, "count": 7, "names": ["a", "b"]}
