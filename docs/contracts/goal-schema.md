@@ -196,9 +196,20 @@ confirmation (see the section above).
    screen the human saw.
 
 Order is fixed: create (if needed), approve, then start the host. **If the
-approve stage fails, the host is not spawned.** If the host fails to start, the already
-approved approvals stay approved — identical to running the two commands by
-hand — and the failure is reported honestly on stderr with a non-zero exit.
+approve stage fails, the host is not spawned.** If the host stage returns
+non-zero, the already approved approvals stay approved — identical to running
+the two commands by hand — and the failure is reported honestly on stderr with
+a non-zero exit.
+
+That last report may **not** claim the host did not start (corrected
+2026-08-01). `run-loop-host start` spawns the child, writes the host record and
+appends `run_loop_host_started` *before* running its own contract validation,
+so a validator failure returns 1 with the host genuinely running. `goal start`
+therefore says the host **may** have started and points at `agentdeck
+run-loop-host status` / `agentdeck run-loop-host stop --confirm`, alongside the
+note that the approvals remain approved. It does **not** try to un-spawn
+anything: killing a child whose state is unknown is far worse than one
+imprecise sentence.
 
 `goal start` appends one `goal_started` audit event (`plan_id`,
 `approved_count`, `max_waves`, `interval`, `release_boxes`,

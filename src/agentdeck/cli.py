@@ -22031,9 +22031,16 @@ def goal_start_command(args: argparse.Namespace) -> int:
         ),
     )
     if host_code != 0 or not host:
+        # 绝不断言宿主没起来——那句话可能是假的。`run-loop-host start` 先
+        # spawn 子进程、写 host 记录、追加 `run_loop_host_started`,**之后**
+        # 才跑自己的契约校验;校验失败时它退非 0,而宿主是真的在跑。此处
+        # 只能如实说"可能已经起来",并把查证入口交出去。**不去 un-spawn**:
+        # 在不知道子进程处于什么状态时代人杀进程,比说错一句话危险得多。
         print(
-            f"goal start: the host did not start; {approved_count} approval(s) for {plan_id} "
-            "remain approved (see agentdeck approval list)",
+            f"goal start: the host may have started — check with "
+            f"agentdeck run-loop-host status (stop it with agentdeck run-loop-host stop "
+            f"--confirm); {approved_count} approval(s) for {plan_id} remain approved "
+            "(see agentdeck approval list)",
             file=sys.stderr,
         )
         return host_code or 1

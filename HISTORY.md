@@ -4,6 +4,35 @@
 
 ## 2026-08-01
 
+### Stop goal start from asserting the host did not start when it may have
+
+- **Type**: fix
+- **Motivation**: `run_loop_host_start_command` 的顺序是 spawn 子进程 →
+  写 host 记录 → 追加 `run_loop_host_started` → **然后**才跑自己的契约校验。
+  校验失败时它退 1,而宿主**是真的在跑**。`goal start` 接住非 0 后打印
+  "goal start: the host did not start; N approval(s) … remain approved"——
+  一句假话。后果不只是措辞:`goal_started` 不会被追加,人类据此以为没起来,
+  于是一个走开式自主运行会在无人知晓的情况下继续跑,而它本该被 status /
+  stop 管起来。
+- **What**: 只改那一句 stderr(`goal_start_command` 的宿主失败分支)。新文案
+  不再断言宿主没起来,而是说 "the host may have started",给出
+  `agentdeck run-loop-host status` 与 `agentdeck run-loop-host stop --confirm`
+  两个查证/收拾入口,并保留原本就正确的那半句(已批准的审批保持已批准,
+  见 `agentdeck approval list`)。**不做**的两件事同样是决定:不去 un-spawn
+  任何东西(在不知道子进程处于什么状态时代人杀进程,比说错一句话危险得多),
+  也不动 `run-loop-host start` 自身的顺序或行为。同步
+  `docs/contracts/goal-schema.md` 与 `CLAUDE.md`。
+- **Impact**: 纯文案 + 文档,零行为变化。`run-loop-host start`、approve 阶段
+  失败分支(那条路径宿主确实没起,且早在此分支之前就返回)与所有既有
+  goal 测试均未受影响。
+- **Verification**: TDD 先红:新测试注入一个必败的
+  `validate_run_loop_host_start_contract`(正是终审点名的那条 spawn 之后
+  才校验的路径),断言 stderr 不含 "did not start" 而失败,同时以
+  `spawn.calls != []` 与 `read_host_record(root)["pid"] == 999401` 证明宿主
+  确实起来了——那句话当时确实是假的。实现后绿。
+  `pytest tests/test_goal_cli.py -q` 30 passed;全量 `pytest -q`
+  **5113 passed / 3 skipped**(+1 条新测试,零回归)。
+
 ### Enforce the goal plan binding that four documents asserted and no code checked
 
 - **Type**: fix

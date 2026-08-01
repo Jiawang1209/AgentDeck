@@ -740,6 +740,44 @@ def test_goal_start_proceeds_past_a_stale_host_record(tmp_path, monkeypatch, cap
     assert "goal_started" in event_types(root)
 
 
+# 2026-08-01 终审发现:`run_loop_host_start_command` 先 spawn 子进程、写 host
+# 记录、追加 `run_loop_host_started`,**之后**才跑自己的契约校验。校验失败时
+# 它退 1,而宿主是**真的在跑**。`goal start` 接住非 0 后却打印"the host did
+# not start"——一句假话,且 `goal_started` 不会被追加,人类据此以为没起来,
+# 于是这个走开式运行会在无人知晓的情况下继续跑。本切片只改这句话:不去
+# un-spawn 任何东西(那才是真危险),也不动 `run-loop-host start` 的行为。
+def test_goal_start_never_claims_the_host_did_not_start_when_it_may_have(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    from agentdeck.run_loop_host import read_host_record
+
+    root = prepare_project(tmp_path, monkeypatch)
+    enable_autonomous(capsys)
+    spawn = RecordingSpawn(pid=999_401)
+    monkeypatch.setattr(cli, "_spawn_host_process", spawn)
+    plan_id = preview_json(capsys)["plan_id"]
+    # 让宿主命令在 spawn 之后的契约校验上失败——正是终审点名的那条路径
+    monkeypatch.setattr(
+        cli,
+        "validate_run_loop_host_start_contract",
+        lambda _payload: {"ok": False, "errors": ["injected contract failure"]},
+    )
+
+    assert cli.main(["goal", "start", "--plan-id", plan_id, "--confirm"]) == 1
+    err = capsys.readouterr().err
+
+    # 宿主确实起来了:这句话当时是假的
+    assert spawn.calls != []
+    assert read_host_record(root)["pid"] == 999_401
+    assert "did not start" not in err
+    # 必须说"可能已经起来",并指向查证入口
+    assert "may have started" in err
+    assert "agentdeck run-loop-host status" in err
+    # 已批准的审批仍然是已批准,这一条本来就对,保留
+    assert "remain approved" in err
+    assert "3" in err
+
+
 def test_validate_goal_start_contract_guards_the_response() -> None:
     from agentdeck.contracts import goal_start_example, validate_goal_start_contract
 
