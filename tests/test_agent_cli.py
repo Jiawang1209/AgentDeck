@@ -4622,7 +4622,38 @@ def test_leader_chat_frontdesk_routes_request_without_planning_or_provider_calls
     assert payload["review"] is None
     assert payload["leader_action"] is None
     assert payload["next_command"] == expected_next
-    assert payload["frontdesk_card"] == {
+    card = payload["frontdesk_card"]
+    # the eight legacy fields keep byte-identical values; `candidates` and
+    # `route` are appended after them, and controls[] keeps its original two
+    # entries in place before the per-candidate route controls
+    # the CLI prints JSON with sort_keys=True, so only the key set is observable here;
+    # the declared field order is pinned on the card helper itself further down
+    assert sorted(card) == sorted(
+        [
+            "mode",
+            "title",
+            "summary",
+            "user_message",
+            "intake_summary",
+            "classification",
+            "next_command",
+            "controls",
+            "candidates",
+            "route",
+        ]
+    )
+    assert {
+        key: card[key]
+        for key in [
+            "mode",
+            "title",
+            "summary",
+            "user_message",
+            "intake_summary",
+            "classification",
+            "next_command",
+        ]
+    } == {
         "mode": "frontdesk",
         "title": "Frontdesk intake",
         "summary": "Frontdesk routed the request without calling a planning provider.",
@@ -4630,25 +4661,45 @@ def test_leader_chat_frontdesk_routes_request_without_planning_or_provider_calls
         "intake_summary": "帮我梳理多 Agent 分层开发",
         "classification": "planning_candidate",
         "next_command": expected_next,
-        "controls": [
-            {
-                "kind": "inspect",
-                "label": "Open Leader help",
-                "command": 'agentdeck leader chat --message "帮助"',
-                "safety": "inspect",
-                "enabled": True,
-                "blocker": None,
-            },
-            {
-                "kind": "plan",
-                "label": "Create Leader plan",
-                "command": expected_next,
-                "safety": "plan_only",
-                "enabled": True,
-                "blocker": None,
-            },
-        ],
     }
+    assert card["controls"][:2] == [
+        {
+            "kind": "inspect",
+            "label": "Open Leader help",
+            "command": 'agentdeck leader chat --message "帮助"',
+            "safety": "inspect",
+            "enabled": True,
+            "blocker": None,
+        },
+        {
+            "kind": "plan",
+            "label": "Create Leader plan",
+            "command": expected_next,
+            "safety": "plan_only",
+            "enabled": True,
+            "blocker": None,
+        },
+    ]
+    assert card["route"] == "plan"
+    assert card["candidates"] == [
+        {
+            "route": "plan",
+            "label": "Create Leader plan",
+            "command": expected_next,
+            "confidence": "medium",
+            "rationale": "goal text present without an explicit planning keyword",
+        }
+    ]
+    assert card["controls"][2:] == [
+        {
+            "kind": "route",
+            "label": "Create Leader plan",
+            "command": expected_next,
+            "safety": "plan_only",
+            "enabled": True,
+            "blocker": None,
+        }
+    ]
     assert payload["intent_card"]["embedded_card"] == "frontdesk_card"
     assert payload["intent_card"]["read_only"] is True
     assert payload["intent_card"]["controls"][0] == {
@@ -4681,6 +4732,190 @@ def test_leader_chat_frontdesk_routes_request_without_planning_or_provider_calls
     assert state_after["leader_errors"] == []
     assert len(state_after["chat_turns"]) == len(state_before["chat_turns"]) + 1
     assert StateStore(root).list_events(limit=1)[0]["event_type"] == "leader_chat_turn"
+
+
+def test_leader_chat_contract_example_frontdesk_card_matches_the_live_card() -> None:
+    from agentdeck.contracts import leader_chat_example
+
+    example = leader_chat_example()["frontdesk_card"]
+
+    assert example == cli._frontdesk_card(example["user_message"])
+
+
+def test_frontdesk_card_keeps_the_legacy_eight_fields_byte_identical() -> None:
+    """The pre-enhancement formula, recomputed here, must still hold field by field."""
+    import shlex as _shlex
+
+    from agentdeck.contracts import LEADER_CHAT_FRONTDESK_CARD_FIELDS
+
+    # the two new names are appended; the legacy eight keep their exact positions
+    assert LEADER_CHAT_FRONTDESK_CARD_FIELDS == (
+        "mode",
+        "title",
+        "summary",
+        "user_message",
+        "intake_summary",
+        "classification",
+        "next_command",
+        "controls",
+        "candidates",
+        "route",
+    )
+    assert tuple(cli._frontdesk_card("frontdesk anything")) == LEADER_CHAT_FRONTDESK_CARD_FIELDS
+
+    for message in [
+        "frontdesk 帮我梳理多 Agent 分层开发",
+        "frontdesk 帮我规划多 Agent 分层开发",
+        "frontdesk",
+        "梳理需求",
+        "前台接待 现在什么状态",
+        "澄清需求 我想加个 skill",
+        "开始运行 冒烟测试",
+    ]:
+        card = cli._frontdesk_card(message)
+        goal = cli._frontdesk_goal_from_message(message)
+        has_goal = bool(goal)
+        expected_next = (
+            f"agentdeck leader plan --task {_shlex.quote(goal)}"
+            if has_goal
+            else 'agentdeck leader chat --message "帮助"'
+        )
+        assert card["mode"] == "frontdesk", message
+        assert card["title"] == "Frontdesk intake", message
+        assert card["summary"] == "Frontdesk routed the request without calling a planning provider.", message
+        assert card["user_message"] == message, message
+        assert card["intake_summary"] == goal, message
+        assert card["classification"] == ("planning_candidate" if has_goal else "needs_goal"), message
+        assert card["next_command"] == expected_next, message
+        assert card["controls"][:2] == [
+            {
+                "kind": "inspect",
+                "label": "Open Leader help",
+                "command": 'agentdeck leader chat --message "帮助"',
+                "safety": "inspect",
+                "enabled": True,
+                "blocker": None,
+            },
+            {
+                "kind": "plan",
+                "label": "Create Leader plan",
+                "command": expected_next if has_goal else None,
+                "safety": "plan_only",
+                "enabled": has_goal,
+                "blocker": None if has_goal else "requires goal text",
+            },
+        ], message
+
+
+def test_frontdesk_card_appends_one_route_control_per_candidate() -> None:
+    card = cli._frontdesk_card("frontdesk 现在什么状态")
+
+    assert card["route"] == "status"
+    assert [item["route"] for item in card["candidates"]] == ["status", "plan"]
+    assert card["candidates"][0] == {
+        "route": "status",
+        "label": "Inspect project status",
+        "command": "agentdeck status",
+        "confidence": "high",
+        "rationale": 'matched "状态"',
+    }
+    # legacy classification and next_command are untouched by multi-route routing
+    assert card["classification"] == "planning_candidate"
+    assert card["next_command"] == "agentdeck leader plan --task '现在什么状态'"
+    assert card["controls"][2:] == [
+        {
+            "kind": "route",
+            "label": "Inspect project status",
+            "command": "agentdeck status",
+            "safety": "inspect",
+            "enabled": True,
+            "blocker": None,
+        },
+        {
+            "kind": "route",
+            "label": "Create Leader plan",
+            "command": "agentdeck leader plan --task '现在什么状态'",
+            "safety": "plan_only",
+            "enabled": True,
+            "blocker": None,
+        },
+    ]
+
+
+def test_frontdesk_card_route_controls_reuse_each_command_safety() -> None:
+    card = cli._frontdesk_card("开始运行 冒烟测试")
+
+    assert card["route"] == "run"
+    route_controls = [item for item in card["controls"] if item["kind"] == "route"]
+    assert [item["safety"] for item in route_controls] == ["approval_gated", "plan_only"]
+    assert route_controls[0]["command"] == "agentdeck run --task '开始运行 冒烟测试'"
+
+
+def test_frontdesk_card_without_goal_falls_back_to_the_help_route() -> None:
+    card = cli._frontdesk_card("梳理需求")
+
+    assert card["classification"] == "needs_goal"
+    assert card["next_command"] == 'agentdeck leader chat --message "帮助"'
+    assert card["route"] == "help"
+    assert card["candidates"] == [
+        {
+            "route": "help",
+            "label": "Open Leader help",
+            "command": 'agentdeck leader chat --message "帮助"',
+            "confidence": "low",
+            "rationale": "no route keyword matched",
+        }
+    ]
+    assert card["controls"][2:] == [
+        {
+            "kind": "route",
+            "label": "Open Leader help",
+            "command": 'agentdeck leader chat --message "帮助"',
+            "safety": "inspect",
+            "enabled": True,
+            "blocker": None,
+        }
+    ]
+
+
+def test_frontdesk_route_control_disables_placeholder_bearing_commands() -> None:
+    control = cli._frontdesk_candidate_control(
+        {
+            "route": "plan",
+            "label": "Create Leader plan",
+            "command": "agentdeck leader plan --task <goal>",
+            "confidence": "medium",
+            "rationale": "goal text present without an explicit planning keyword",
+        }
+    )
+
+    assert control == {
+        "kind": "route",
+        "label": "Create Leader plan",
+        "command": "agentdeck leader plan --task <goal>",
+        "safety": "plan_only",
+        "enabled": False,
+        "blocker": "requires goal text",
+    }
+
+
+def test_frontdesk_route_controls_never_ship_placeholder_commands_for_real_messages() -> None:
+    for message in [
+        "frontdesk 帮我梳理多 Agent 分层开发",
+        "frontdesk",
+        "梳理需求",
+        "现在什么状态",
+        "我想加个 skill",
+        "记住这个决定",
+        "开始运行 冒烟测试",
+        "帮助",
+    ]:
+        for control in cli._frontdesk_card(message)["controls"]:
+            if control["kind"] != "route":
+                continue
+            assert control["enabled"] is True, (message, control)
+            assert control["blocker"] is None, (message, control)
+            assert "<" not in str(control["command"]), (message, control)
 
 
 def test_workbench_surfaces_pending_skill_suggestions_for_gui_without_mutating_state(
@@ -7137,6 +7372,8 @@ def test_contract_leader_chat_discovers_schema_for_gui_clients(capsys) -> None:
         "classification",
         "next_command",
         "controls",
+        "candidates",
+        "route",
     ]
     assert payload["skill_import_preview_card_fields"] == expected["skill_import_preview_card_fields"]
     assert payload["skill_load_preview_card_fields"] == expected["skill_load_preview_card_fields"]

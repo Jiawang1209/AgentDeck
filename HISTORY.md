@@ -4,6 +4,34 @@
 
 ## 2026-08-01
 
+### Expose frontdesk route candidates on `frontdesk_card`
+
+- **Motivation**: A 节的分类器已就位但没有出口——`leader chat` 的前台卡面
+  仍只有两档 `classification`,GUI 看不到候选路径。冻结设计 B 节要求在
+  **向后兼容**前提下把候选接进卡面。
+- **Type**: feat
+- **What**: `_frontdesk_card` 新增 `candidates`(A 节 `classify_frontdesk`
+  的输出)与 `route`(top 候选 route),两者**追加在既有 8 个字段之后**;
+  `LEADER_CHAT_FRONTDESK_CARD_FIELDS` 相应增两项。既有 `controls[]` 的
+  `inspect` / `plan` 两条保持原位原值,其后为每个候选追加一条
+  `kind=route` control,safety 复用该命令自身等级(plan=plan_only、
+  run=approval_gated、其余 inspect);命令若仍带 `<placeholder>` 则
+  disabled 并给 `requires goal text` blocker。`_frontdesk_goal_from_message`
+  改为直接复用纯模块 `frontdesk_goal()`,使卡面与分类器不可能漂移。
+  同步 leader-chat contract example 与 `docs/contracts/leader-chat-schema.md`。
+- **Impact**: 用户可见变化只有"多出候选与 route 字段";既有 8 个字段
+  (含 `classification` 两档与 `next_command` 取值规则)逐字节不变,既有
+  leader chat 入口仍只记 chat turn 与审计事件,不调 provider、不读 tmux、
+  不创建 plan/action/approval/message/job/inbox。候选命令不是授权。
+- **Verification**: TDD——先 RED(5 failed:`frontdesk_card` 缺
+  `candidates`/`route`、`_frontdesk_candidate_control` 不存在),后 GREEN:
+  `test_agent_cli+test_contracts+test_frontdesk+test_leader_cli` 1183 passed。
+  新增回归钉:①用**改造前的公式**在测试里重算 7 个标量字段与
+  `controls[:2]`,覆盖 7 条消息逐条比对(向后兼容的直接证据);
+  ②`tuple(_frontdesk_card(...)) == LEADER_CHAT_FRONTDESK_CARD_FIELDS`
+  锁字段顺序;③contract example 必须等于 live `_frontdesk_card()` 输出,
+  防止契约示例说谎;④真实消息的 route control 永不带占位符。
+
 ### Add the frontdesk multi-route classifier
 
 - **Type**: feat

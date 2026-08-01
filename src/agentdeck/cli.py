@@ -151,6 +151,7 @@ from .contracts import (
 )
 from .autonomy import run_loop_gate, select_auto_approvals
 from .delegation_match import is_composite_command, normalize_match
+from .frontdesk import FRONTDESK_ROUTE_SAFETY, classify_frontdesk, frontdesk_goal
 from .review_group import expand_review_group
 from .review_iteration import (
     build_refine_prompt,
@@ -13202,20 +13203,28 @@ def _chat_wants_frontdesk(message: str) -> bool:
 
 
 def _frontdesk_goal_from_message(message: str) -> str:
-    text = message.strip()
-    text = re.sub(r"^/?frontdesk[:：\s-]*", "", text, flags=re.IGNORECASE).strip()
-    for token in [
-        "前台接待",
-        "前台处理",
-        "前台路由",
-        "帮我梳理需求",
-        "帮我澄清需求",
-        "梳理需求",
-        "澄清需求",
-    ]:
-        if text.startswith(token):
-            text = text[len(token) :].strip(" ：:-")
-    return text
+    # Same rule as before, now owned by the pure `agentdeck.frontdesk` module so
+    # the card and the classifier can never drift apart.
+    return frontdesk_goal(message)
+
+
+def _frontdesk_candidate_control(candidate: dict[str, object]) -> dict[str, object]:
+    """Render one classified route candidate as a GUI-ready control.
+
+    The control reuses the safety level of the command it points at. A command
+    that still carries a `<placeholder>` is never actionable, so it ships
+    disabled with a blocker; rendering it is surfacing, not authorization.
+    """
+    command = candidate.get("command")
+    has_placeholder = "<" in str(command)
+    return {
+        "kind": "route",
+        "label": candidate.get("label"),
+        "command": command,
+        "safety": FRONTDESK_ROUTE_SAFETY.get(str(candidate.get("route")), "inspect"),
+        "enabled": not has_placeholder,
+        "blocker": "requires goal text" if has_placeholder else None,
+    }
 
 
 def _frontdesk_card(message: str) -> dict[str, object]:
@@ -13226,6 +13235,7 @@ def _frontdesk_card(message: str) -> dict[str, object]:
         if has_goal
         else 'agentdeck leader chat --message "帮助"'
     )
+    candidates = classify_frontdesk(message)
     return {
         "mode": "frontdesk",
         "title": "Frontdesk intake",
@@ -13251,7 +13261,10 @@ def _frontdesk_card(message: str) -> dict[str, object]:
                 "enabled": has_goal,
                 "blocker": None if has_goal else "requires goal text",
             },
+            *[_frontdesk_candidate_control(candidate) for candidate in candidates],
         ],
+        "candidates": candidates,
+        "route": str(candidates[0]["route"]) if candidates else None,
     }
 
 

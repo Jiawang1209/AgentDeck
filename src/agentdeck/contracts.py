@@ -1231,6 +1231,10 @@ LEADER_CHAT_FRONTDESK_CARD_FIELDS = (
     "classification",
     "next_command",
     "controls",
+    # appended by the multi-route enhancement; the eight fields above keep their
+    # original position, semantics, and values
+    "candidates",
+    "route",
 )
 
 LEADER_CHAT_SKILL_SUGGESTIONS_CARD_FIELDS = (
@@ -14642,7 +14646,25 @@ def leader_chat_example() -> dict[str, object]:
                 "enabled": True,
                 "blocker": None,
             },
+            {
+                "kind": "route",
+                "label": "Create Leader plan",
+                "command": "agentdeck leader plan --task 'Build a multi-agent smoke test'",
+                "safety": "plan_only",
+                "enabled": True,
+                "blocker": None,
+            },
         ],
+        "candidates": [
+            {
+                "route": "plan",
+                "label": "Create Leader plan",
+                "command": "agentdeck leader plan --task 'Build a multi-agent smoke test'",
+                "confidence": "medium",
+                "rationale": "goal text present without an explicit planning keyword",
+            },
+        ],
+        "route": "plan",
     }
     skill_context_card = {
         "mode": "skill_context",
