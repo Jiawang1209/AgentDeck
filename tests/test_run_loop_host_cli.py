@@ -179,6 +179,54 @@ def test_status_is_read_only_across_three_record_states(tmp_path, monkeypatch, c
     assert payload["stopped_reason"] == "gate_reached"
 
 
+def test_status_surfaces_the_human_gate_evidence(tmp_path, monkeypatch, capsys) -> None:
+    """人类门停止后,status 必须把屏上框证据原样带出来供人类去按。"""
+    root = prepare_project(tmp_path, monkeypatch)
+    write_host_record(root, {
+        "pid": None, "plan_id": "pln_host_1", "wave_count": 2, "max_waves": 10,
+        "interval": 0.0, "last_gate": "waiting_for_reply",
+        "last_wave_at": "2026-08-01T02:00:00+00:00", "stopped_reason": "human_gate",
+        "log_path": ".agentdeck/run-loop-host/host.log",
+        "human_gate": {
+            "agent_id": "planner", "box_kind": "command",
+            "command": "playwright open x", "mcp_server": None,
+            "mcp_tool": None, "waiting_hint": "› 1. Yes, proceed (y)",
+        },
+    })
+    before = StateStore(root).load()
+
+    assert cli.main(["run-loop-host", "status"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["stopped_reason"] == "human_gate"
+    assert payload["human_gate"] == {
+        "agent_id": "planner", "box_kind": "command",
+        "command": "playwright open x", "mcp_server": None,
+        "mcp_tool": None, "waiting_hint": "› 1. Yes, proceed (y)",
+    }
+    assert StateStore(root).load() == before  # 只读
+
+
+def test_status_human_gate_is_null_without_one(tmp_path, monkeypatch, capsys) -> None:
+    """没有人类门时字段必须是 null,而不是缺失。"""
+    root = prepare_project(tmp_path, monkeypatch)
+    write_host_record(root, {
+        "pid": None, "plan_id": "pln_host_1", "wave_count": 2, "max_waves": 10,
+        "interval": 0.0, "last_gate": "waiting_for_reply",
+        "last_wave_at": "2026-08-01T02:00:00+00:00",
+        "stopped_reason": "budget_exhausted",
+        "log_path": ".agentdeck/run-loop-host/host.log",
+    })
+    assert cli.main(["run-loop-host", "status"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert "human_gate" in payload
+    assert payload["human_gate"] is None
+
+    # 完全无记录时同样是 null,不是缺失
+    host_record_path(root).unlink()
+    assert cli.main(["run-loop-host", "status"]) == 0
+    assert json.loads(capsys.readouterr().out)["human_gate"] is None
+
+
 def _serve_argv(
     root: Path,
     plan_id: str,

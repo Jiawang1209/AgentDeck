@@ -198,6 +198,78 @@ def test_contract_field_tuples_and_examples() -> None:
     assert validate_run_loop_host_status_contract(bad_reason)["ok"] is False
 
 
+def test_status_contract_pins_the_full_field_list_in_order() -> None:
+    """契约扩张也必须逐字段钉死顺序,避免 GUI 面悄悄漂移。"""
+    from agentdeck.contracts import RUN_LOOP_HOST_STATUS_RESPONSE_FIELDS
+
+    assert RUN_LOOP_HOST_STATUS_RESPONSE_FIELDS == (
+        "ok",
+        "mode",
+        "running",
+        "stale",
+        "pid",
+        "plan_id",
+        "wave_count",
+        "max_waves",
+        "interval",
+        "last_gate",
+        "last_wave_at",
+        "stopped_reason",
+        "log_path",
+        "start_command_template",
+        "stop_command",
+        "human_gate",
+    )
+
+
+def test_status_validator_guards_the_human_gate_evidence() -> None:
+    from agentdeck.contracts import (
+        run_loop_host_status_example,
+        validate_run_loop_host_status_contract,
+    )
+    from agentdeck.run_loop_host import HUMAN_GATE_FIELDS
+
+    example = run_loop_host_status_example()
+    # 无人类门时 null 合法
+    assert example["human_gate"] is None
+    assert validate_run_loop_host_status_contract(example)["ok"] is True
+
+    gate = {field: "x" for field in HUMAN_GATE_FIELDS}
+    stopped = {
+        **example,
+        "running": False,
+        "stopped_reason": "human_gate",
+        "human_gate": gate,
+    }
+    assert validate_run_loop_host_status_contract(stopped)["ok"] is True
+
+    # stopped_reason=human_gate 但没有证据 → 必须拒
+    missing = {**stopped, "human_gate": None}
+    result = validate_run_loop_host_status_contract(missing)
+    assert result["ok"] is False
+    assert any("human_gate is required" in error for error in result["errors"])
+
+    # 证据不是对象 → 必须拒
+    not_object = {**stopped, "human_gate": ["planner"]}
+    assert validate_run_loop_host_status_contract(not_object)["ok"] is False
+
+    # 证据缺任一字段 → 必须逐个点名
+    for field in HUMAN_GATE_FIELDS:
+        partial = {key: value for key, value in gate.items() if key != field}
+        result = validate_run_loop_host_status_contract({**stopped, "human_gate": partial})
+        assert result["ok"] is False
+        assert any(field in error for error in result["errors"])
+
+
+def test_contract_discovery_exposes_the_human_gate_fields() -> None:
+    from agentdeck.contracts import run_loop_host_contract_payload
+    from agentdeck.run_loop_host import HUMAN_GATE_FIELDS
+
+    payload = run_loop_host_contract_payload(Path("docs/contracts/run-loop-host-schema.md"))
+    assert payload["human_gate_fields"] == list(HUMAN_GATE_FIELDS)
+    assert "human_gate" in payload["status_response_fields"]
+
+
 def test_contract_is_discoverable(capsys) -> None:
     from agentdeck import cli
 

@@ -4,6 +4,36 @@
 
 ## 2026-08-01
 
+### Surface human-gate evidence in host status and contract
+
+- **Type**: feat
+- **Motivation**: 上一切片已经把人类门证据写进 host.json / host.log /
+  `run_loop_host_stopped` 审计事件,但 `agentdeck run-loop-host status` 不读它——
+  人类拿到 `stopped_reason=human_gate` 却看不到该去哪个 pane 按哪道框,证据实际
+  等于没送到人手上;契约面也完全没有这个字段。
+- **What**: `RUN_LOOP_HOST_STATUS_RESPONSE_FIELDS` 末尾追加 `human_gate`(第 16
+  个字段),`_run_loop_host_status_payload` 从 host 记录透传
+  `record.get("human_gate")`(无记录/无门时为 `null`,绝不缺失);
+  `validate_run_loop_host_status_contract` 新增两层守门——`human_gate` 非 null 时
+  必须是对象且六个字段齐全(逐字段点名),且 `stopped_reason == "human_gate"` 时
+  `human_gate` **必须**非 null;字段清单从 `run_loop_host.HUMAN_GATE_FIELDS`
+  import(与 `RUN_LOOP_HOST_STOPPED_REASONS` 同一来源,绝不另抄一份),并作为
+  `human_gate_fields` 进入 `agentdeck contract run-loop-host` 的可发现 payload;
+  status example fixture 补 `"human_gate": None`;
+  `docs/contracts/run-loop-host-schema.md` 补 `human_gate` 状态字段行、证据对象
+  字段表、`human_gate` stopped_reason 行、检测规则节(只在 `--release-boxes` 下
+  生效、awaiting 集限定、连续两次 debounce、fail-open)和三处证据一致性说明。
+- **Impact**: GUI/人类可以直接从 `status` 一屏看到该去哪个 agent 的 pane 按哪道
+  框;半坏的 status payload(声称 human_gate 却没有证据)永远打不出来。该字段是
+  **provenance,不是授权**——AgentDeck 永不代按,按框始终是人类的动作;检测本身
+  只在 `--release-boxes` 时生效,不带该标志的宿主仍然一次 pane 都不读。契约是
+  扩张而非新增:contract index 仍是既有的 run-loop-host 条目,数量不变。
+- **Verification**: 五个新测试先 FAIL 于 `KeyError: 'human_gate'` 与字段元组不含
+  该项(status 渲染证据、无门时为 null、字段元组按序全量钉死、validator 六字段
+  逐个点名 + human_gate 必填、contract discovery 暴露 `human_gate_fields`);
+  `tests/test_run_loop_host.py` `tests/test_run_loop_host_cli.py`
+  `tests/test_contracts.py` `tests/test_agent_cli.py` 977 passed。
+
 ### Stop the run-loop host on a confirmed human gate
 
 - **Type**: feat

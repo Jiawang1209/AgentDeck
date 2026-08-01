@@ -39,7 +39,7 @@ from .review_iteration import (
     REVIEW_ITERATION_SKIP_REASONS,
     REWORK_TRIGGER_OVERALLS,
 )
-from .run_loop_host import RUN_LOOP_HOST_STOPPED_REASONS
+from .run_loop_host import HUMAN_GATE_FIELDS, RUN_LOOP_HOST_STOPPED_REASONS
 from .providers.semantic_plan_schema import SEMANTIC_LEADER_PLAN_SCHEMA_VERSION
 from .semantic_authority import SEMANTIC_AUTHORITY_SCHEMA_VERSION
 from .daemon.scheduler import DECISION_KINDS
@@ -7533,6 +7533,7 @@ RUN_LOOP_HOST_STATUS_RESPONSE_FIELDS = (
     "log_path",
     "start_command_template",
     "stop_command",
+    "human_gate",
 )
 
 RUN_LOOP_HOST_STOP_RESPONSE_FIELDS = (
@@ -7590,6 +7591,22 @@ def validate_run_loop_host_status_contract(payload: dict[str, object]) -> dict[s
         )
     if payload.get("running") is True and payload.get("stale") is True:
         errors.append("run_loop_host_status cannot be both running and stale")
+    # 人类门证据:只是屏上框的 provenance,不是授权——AgentDeck 永不代按。
+    # 字段清单单一来源自 run_loop_host.HUMAN_GATE_FIELDS,绝不在此另抄一份。
+    gate = payload.get("human_gate")
+    if gate is not None:
+        if not isinstance(gate, dict):
+            errors.append("run_loop_host_status.human_gate must be null or an object")
+        else:
+            errors.extend(
+                f"missing run_loop_host_status.human_gate field: {field}"
+                for field in HUMAN_GATE_FIELDS
+                if field not in gate
+            )
+    if payload.get("stopped_reason") == "human_gate" and gate is None:
+        errors.append(
+            "run_loop_host_status.human_gate is required when stopped_reason is human_gate"
+        )
     return {"ok": not errors, "errors": errors}
 
 
@@ -7642,6 +7659,7 @@ def run_loop_host_status_example() -> dict[str, object]:
             "agentdeck run-loop-host start --plan-id <plan_id> --confirm --max-waves <n>"
         ),
         "stop_command": "agentdeck run-loop-host stop --confirm",
+        "human_gate": None,
     }
 
 
@@ -7673,6 +7691,7 @@ def run_loop_host_contract_payload(contract_path: Path) -> dict[str, object]:
         "stop_response_fields": list(RUN_LOOP_HOST_STOP_RESPONSE_FIELDS),
         "stop_modes": list(RUN_LOOP_HOST_STOP_MODES),
         "stopped_reasons": list(RUN_LOOP_HOST_STOPPED_REASONS),
+        "human_gate_fields": list(HUMAN_GATE_FIELDS),
         "run_loop_contract": "agentdeck contract run-loop",
         "project_view_schema_version": PROJECT_VIEW_SCHEMA_VERSION,
     }

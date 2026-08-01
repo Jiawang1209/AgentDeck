@@ -20810,6 +20810,9 @@ def _run_loop_host_status_payload(root: Path) -> dict[str, object]:
             "agentdeck run-loop-host start --plan-id <plan_id> --confirm --max-waves <n>"
         ),
         "stop_command": "agentdeck run-loop-host stop --confirm",
+        # 人类门证据:仅 stopped_reason=human_gate 时非 null。它是屏上框的
+        # provenance,不是授权——按下那个框永远是人类的动作。
+        "human_gate": record.get("human_gate"),
     }
 
 

@@ -64,11 +64,33 @@ project); a stale record (dead pid) does not block a new start.
 | `log_path` | append-only JSONL log path |
 | `start_command_template` | explicit start template |
 | `stop_command` | explicit stop command |
+| `human_gate` | box evidence object, or `null` — non-null only when `stopped_reason=human_gate` |
 
 Record states: no record (never hosted / cleaned), running (`running=true`),
 stale (`stale=true`), clean stop (`pid=null`, neither running nor stale).
 `running` and `stale` are mutually exclusive. `status` never writes state,
 never probes tmux, never touches the plan.
+
+### `human_gate` evidence object
+
+Field list single source: `run_loop_host.HUMAN_GATE_FIELDS` (imported by
+`contracts.py`; discoverable as `human_gate_fields` in
+`agentdeck contract run-loop-host`).
+
+| Field | Meaning |
+| --- | --- |
+| `agent_id` | the awaited worker sitting behind the box |
+| `box_kind` | `command` or `mcp_tool` (same taxonomy as `agentdeck agent boxes`) |
+| `command` | the `$ `-line command the box is asking about, or `null` for an MCP box |
+| `mcp_server` | MCP server name for an MCP tool box, else `null` |
+| `mcp_tool` | MCP tool name for an MCP tool box, else `null` |
+| `waiting_hint` | the on-screen prompt text as captured (e.g. `› 1. Yes, proceed (y)`) |
+
+`human_gate` is **provenance, not authorization**. It only tells a human where
+to look; AgentDeck never presses the box — a human does, in that pane. The
+validator refuses a payload whose `stopped_reason` is `human_gate` while
+`human_gate` is `null`, and refuses an object missing any of the six fields, so
+a half-broken status payload never prints.
 
 ## Stop response
 
@@ -103,6 +125,41 @@ Stop `mode` enum:
 | `policy_revoked` | `approval_mode` left `autonomous` (remote brake — the child re-reads config each wave) | `agentdeck policy set-mode …` then explicit restart |
 | `signalled` | `stop --confirm` SIGTERM accepted after the current wave | `agentdeck run-loop-host status` |
 | `engine_error` | wave engine raised; only the exception type is logged, never provider output | inspect `host.log`, `agentdeck events` |
+| `human_gate` | the awaited worker is sitting behind an **undelegated** authorization box; the reply will never arrive on its own | go to that pane, read the box, press it yourself, then explicit restart |
+
+### `human_gate` detection
+
+A live run burned 834 of 846 waves (98%, 3h37m) polling a plan whose awaited
+worker sat behind a Playwright authorization box that no delegation covered.
+`waiting_for_reply` was honest but conflated two states: *the worker is
+thinking* (polling is right) and *the worker is behind a box nobody will press*
+(polling is forever). `human_gate` splits the second one out.
+
+- **Detection only runs with `--release-boxes`.** It reuses the `skipped[]`
+  that `_scan_release_delegated_boxes` already returns from the scan the host
+  performs at segment start (wave 0) and in each wave gap. A host started
+  **without** `--release-boxes` reads no pane at all — that invariant is
+  unchanged byte for byte, and no new pane-reading surface is added.
+- A skip counts as a candidate only when its `reason` is
+  `no active delegation` (a `pane capture failed` skip is runtime jitter, not a
+  human gate) **and** its `agent_id` is in this plan's awaiting set
+  (dispatched-but-unreplied approvals — the same single-source set the
+  file-channel ingestion uses). Boxes on idle agents or other plans never stop
+  this host.
+- **Debounce: the same box must be seen on two consecutive scans.** Identity is
+  `(agent_id, box_kind, command, mcp_server, mcp_tool)`; `waiting_hint` is
+  display text and does not participate. A box that appears and gets released
+  in between therefore costs at most one extra wave. The candidate lives only
+  in the serve process's memory, so a restarted host recounts from scratch.
+- **Fail-open.** Any detection failure (nothing parsed, scan raised) simply
+  does not decide — the host falls back to existing polling. Better one extra
+  wave than falsely stopping a healthy walk-away segment.
+- Stopping here **never widens authorization**: the release path (exact
+  delegation prefix / MCP two-sided equality) is untouched, no tmux input is
+  ever sent, and no plan / approval / runtime state is written — only the host
+  record, the host log and one `run_loop_host_stopped` audit event. A
+  `human_gate` stop is not a `complete` gate, so `--merge-on-complete` never
+  fires from it.
 
 **Walk-away-chain exception (2026-07-31).** `gate_reached` is only recorded when the just-finished wave's gate is not `waiting_for_reply` **and** that wave did not itself append a review-iteration round. If the wave's `review_iterations[]` carries an item with `round` (see `docs/contracts/run-loop-schema.md`), the serve loop keeps going for one more wave — bounded by `--max-waves` as always, same as `budget_exhausted` — instead of stopping at that wave's honestly-reported non-waiting gate (typically `needs_human_approval`, since the newly appended rework/re-review approvals start `pending`). This lets the next wave's normal auto-approve + dispatch pick up the appended rework itself, matching the frozen spec chain (fail → append → next wave approves+dispatches rework → … → `complete` → merge). Gate honesty is unchanged: each wave's own logged `stopped_reason` in `host.log` is exactly what that wave produced; only the serve loop's continue-vs-stop decision differs, and a round-appending wave still counts against the `--max-waves` budget like any other.
 
@@ -114,6 +171,10 @@ Stop `mode` enum:
   hosts; history is never truncated or rewritten.
 - Audit events `run_loop_host_started` / `run_loop_host_stopped` land in the
   project event journal.
+- A confirmed human gate appears in three consistent places: the record's
+  `human_gate` object, a `{"event": "human_gate", …}` log line carrying the same
+  fields plus the wave number, and the `run_loop_host_stopped` audit event's
+  `human_gate`. `status` renders the record's copy.
 
 ## Boundaries
 
