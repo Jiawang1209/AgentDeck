@@ -4,6 +4,22 @@
 
 ## 2026-08-01
 
+### Close the codex refined-rework live verification gap
+
+- **Type**: docs
+- **Motivation**: Leader 精修返工的终审把 `CodexCliProvider.refine_rework_task()`
+  列为**未验证**——修复(用 `--output-last-message` 取答案而不是把 codex
+  的交互记录当返工任务)当时只有 mock subprocess 的单元覆盖,没有真实
+  codex 确认。
+- **What**: 用真实 `codex exec` 直接调用该方法(不经 state、不写项目),
+  输入含 verdict 的三条评审意见;证据落 `docs/validation/2026-08-01-codex-refined-rework-live.md`。
+- **Impact**: 纯文档;零代码改动。两个 CLI backend 的精修路径现在都已确证
+  (claude 坏包 fail-closed 单元覆盖 + codex 真实调用干净正文),终审遗留
+  的未验证项关闭。
+- **Verification**: live 调用返回 316 字符干净返工正文,无任何 `• Ran` /
+  `└ {...}` 交互记录残留;`validate_refined_task()` 接受并由程序追加固定
+  尾句;stdout/stderr 仍为 DEVNULL,codex 诊断不被消费的不变量未变。
+
 ### Document the frontdesk contract rule in CLAUDE.md
 
 - **Type**: docs

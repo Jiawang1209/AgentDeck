@@ -62,8 +62,13 @@ provider,支持性用 `getattr` 探测(与 `plan_brief` 同模式)。落地 step
 --message <text>`(连 config 都不加载,零写是结构性的)+ 第 43 个契约
 `frontdesk-schema.md` + CLAUDE.md 规则。已知向后兼容瑕疵(已文档化):
 `route` 可与 `next_command` 不一致(旧规则冻结所致),契约示例特意选了
-该场景。**队列已清空**——剩余全部需要 human:Round 14 的 playwright
-授权框、codex 精修的 live 确认、以及新方向拍板。
+该场景。**codex 精修 live 确认已收口**(2026-08-01,证据
+`docs/validation/2026-08-01-codex-refined-rework-live.md`):真实
+`codex exec` 直接调用 `CodexCliProvider.refine_rework_task()` 返回 316 字符
+干净返工正文、零交互记录残留,`validate_refined_task()` 接受并由程序追加
+固定尾句;终审遗留的唯一未验证项关闭,两个 CLI backend 的精修路径现在
+都已确证。**队列已清空**——剩余全部需要 human:Round 14 的 playwright
+授权框、以及新方向拍板。
 
 **CLI provider 失败原因可观测已落地**(2026-08-01,b2ca1635 + 0e799272 +
 6b816c26):新纯模块 `providers/cli_failure.py` 按"解析→分类→丢弃原文"
