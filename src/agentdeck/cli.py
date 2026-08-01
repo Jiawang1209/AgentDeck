@@ -12139,9 +12139,48 @@ def _record_leader_provider_failure(
     store.append_event(EventRecord.create("leader_provider_failed", payload))
 
 
+def _plan_requested_verdict(store: StateStore, plan_id: str) -> bool:
+    """该 plan 是否真的派发过 review step——即注入过验收标准、**期待**判定。
+
+    信号与 G5 注入条件同源:dispatch 时 `base_branch` 非 None 且该步不是
+    rework 步(`worktree_base_branch` 落在 message 上)。从没要求过判定的
+    plan(无 worktree、纯实现 plan)不受零 verdict 收紧影响。
+    """
+    state = store.load()
+    rework_steps = rework_step_numbers(
+        next(
+            (
+                (item.get("plan") or {}).get("steps") or []
+                for item in state.get("plans", [])
+                if isinstance(item, dict) and item.get("plan_id") == plan_id
+            ),
+            [],
+        )
+    )
+    base_branch_messages = {
+        str(message.get("message_id"))
+        for message in state.get("messages", [])
+        if isinstance(message, dict) and message.get("worktree_base_branch")
+    }
+    for approval in state.get("approvals", []):
+        if not isinstance(approval, dict) or approval.get("plan_id") != plan_id:
+            continue
+        if approval.get("step") in rework_steps:
+            continue
+        if str(approval.get("message_id")) in base_branch_messages:
+            return True
+    return False
+
+
 def _verdict_merge_blocker(store: StateStore, plan_id: str) -> str | None:
     summary = store.plan_verdict_summary(plan_id)
     if summary is None:
+        # 零 verdict 收紧(2026-08-01 user 拍板):要过 verdict 就必须有
+        # verdict——派发过 review step(注入过验收标准)却一份有效判定都
+        # 没拿到时,委托型自动合并必须扣住;人类 `worktree merge-plan
+        # --confirm` 永不受 gate。从未要求判定的 plan 行为不变。
+        if _plan_requested_verdict(store, plan_id):
+            return "no review verdict recorded for a dispatched review step; auto-merge withheld"
         return None
     overall = summary.get("overall")
     group = summary.get("group") or {}

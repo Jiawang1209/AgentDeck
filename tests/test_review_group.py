@@ -649,3 +649,86 @@ def test_plan_status_steps_expose_review_group(tmp_path) -> None:
     assert steps[1]["review_group_member"] == 0
     assert steps[2]["review_group"] == 1
     assert steps[2]["review_group_member"] == 1
+
+
+def _seed_review_dispatch(tmp_path, *, verdict_overall: str | None, base_branch: str | None):
+    """plan pln_v:step1 coder(已回复)+ step2 reviewer(已派发已回复)。
+    base_branch 非 None 表示这是真正的 review-step 派发(注入过验收标准、
+    期待 verdict);verdict_overall=None 表示回复里没有有效 verdict。"""
+    from agentdeck.state import StateStore
+
+    root = _root(tmp_path)
+    write_default_config(root)
+    store = StateStore(root)
+    state = store.load()
+    state["plans"] = [{
+        "plan_id": "pln_v", "task": "t", "status": "planned",
+        "provider": "fake", "model": "fake-plan",
+        "plan": {"goal": "g", "summary": "s", "steps": [
+            {"step": 1, "agent_id": "coder", "role": "implementation",
+             "task": "build", "risk": "low", "requires_approval": True},
+            {"step": 2, "agent_id": "reviewer", "role": "review",
+             "task": "review it", "risk": "low", "requires_approval": True},
+        ]},
+    }]
+    state["approvals"] = [
+        {"approval_id": "apv_1", "plan_id": "pln_v", "step": 1, "agent_id": "coder",
+         "role": "implementation", "task": "build", "risk": "low",
+         "status": "dispatched", "message_id": "mv1"},
+        {"approval_id": "apv_2", "plan_id": "pln_v", "step": 2, "agent_id": "reviewer",
+         "role": "review", "task": "review it", "risk": "low",
+         "status": "dispatched", "message_id": "mv2"},
+    ]
+    state["messages"] = [
+        {"message_id": "mv1", "worktree_branch": "agentdeck/mv1",
+         "worktree_base_branch": None},
+        {"message_id": "mv2", "worktree_branch": None,
+         "worktree_base_branch": base_branch},
+    ]
+    reply = {"reply_id": "rv2", "message_id": "mv2", "from_agent": "reviewer",
+             "text": "看过了"}
+    if verdict_overall is not None:
+        reply["verdict"] = {
+            "schema_version": "review-verdict/v1", "overall": verdict_overall,
+            "criteria": [{"criterion": "c1", "verdict":
+                          "pass" if verdict_overall == "pass" else "fail"}],
+        }
+    state["replies"] = [
+        {"reply_id": "rv1", "message_id": "mv1", "from_agent": "coder", "text": "done"},
+        reply,
+    ]
+    store.save(state)
+    return root, store
+
+
+def test_review_step_without_any_verdict_withholds_merge(tmp_path) -> None:
+    """user 拍板收紧:派发过 review step(注入过验收标准、期待判定)却
+    一份有效 verdict 都没拿到时,委托型自动合并必须扣住。"""
+    from agentdeck import cli
+
+    _root_dir, store = _seed_review_dispatch(
+        tmp_path, verdict_overall=None, base_branch="agentdeck/mv1"
+    )
+    assert store.plan_verdict_summary("pln_v") is None
+    blocker = cli._verdict_merge_blocker(store, "pln_v")
+    assert blocker is not None
+    assert "no review verdict" in blocker
+
+
+def test_plan_that_never_requested_a_verdict_still_merges(tmp_path) -> None:
+    """从没派发过 review step 的 plan 不受收紧影响(没要求过判定就不强求)。"""
+    from agentdeck import cli
+
+    _root_dir, store = _seed_review_dispatch(
+        tmp_path, verdict_overall=None, base_branch=None
+    )
+    assert cli._verdict_merge_blocker(store, "pln_v") is None
+
+
+def test_review_step_with_pass_verdict_still_merges(tmp_path) -> None:
+    from agentdeck import cli
+
+    _root_dir, store = _seed_review_dispatch(
+        tmp_path, verdict_overall="pass", base_branch="agentdeck/mv1"
+    )
+    assert cli._verdict_merge_blocker(store, "pln_v") is None

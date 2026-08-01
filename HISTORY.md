@@ -4,6 +4,32 @@
 
 ## 2026-08-01
 
+### Withhold auto-merge when a dispatched review step produced no verdict
+
+- **Type**: fix
+- **Motivation**: review group 终审点名的**最后一个 verdict fail-open**
+  (user 拍板收紧):plan 派发过 review step、注入过验收标准、期待判定,
+  但 reviewer 全部输出坏格式导致零有效 verdict 时,`plan_verdict_summary`
+  返回 None → merge gate 无 blocker → **自动合并照常放行**。这是先于
+  review group 存在的单 reviewer 基线语义("无判定 = 不扣合并"),与
+  fail-closed 哲学相悖:委托型自动合并不该在"没人真正给出判定"时发生。
+- **What**: 新增 `_plan_requested_verdict(store, plan_id)`——判定该 plan
+  是否真的派发过 review step,信号与 G5 注入条件**同源**(dispatch 时
+  message 带非空 `worktree_base_branch` 且该步不是 rework 步)。
+  `_verdict_merge_blocker` 在 summary 为 None 且该 plan 要求过判定时返回
+  `no review verdict recorded for a dispatched review step; auto-merge
+  withheld`。**从未要求过判定的 plan(无 worktree 运行、纯实现 plan)
+  行为逐字节不变**——没要求过判定就不强求;人类
+  `worktree merge-plan --confirm` 永不受 gate。
+- **Impact**: verdict gate 的最后一条 fail-open 关闭;代价是 reviewer
+  输出格式坏掉时需人工介入(如实停在人类 gate,不静默合并)。
+- **Verification**: TDD——三测先 RED/GREEN:review step 零 verdict 扣住、
+  从未要求判定的 plan 仍可合并、pass verdict 仍放行;
+  review_group+verdict_ingestion+review_iteration+plan_rework+
+  run_loop_follow+run_loop_host 119 passed;全量见提交时数字。
+
+
+
 ### Escape control characters when writing TOML strings (config-bricking fix)
 
 - **Type**: fix
