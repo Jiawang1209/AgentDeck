@@ -21558,6 +21558,12 @@ GOAL_POLICY_COMMAND_TEMPLATE = (
     "--allow-agent <id> --max-approvals <N>"
 )
 
+GOAL_PLAN_SOURCE = "goal_preview"
+"""写在 `goal preview` 产出的 plan 记录上的 provenance,是第六道门的凭据。
+
+它只说明这份 plan 出自哪条路线(也就是人类看过哪一屏),不授予任何权限。
+"""
+
 
 def _goal_budget_suffix(args: argparse.Namespace, max_waves: int) -> str:
     """把本次 preview 的预算/开关原样固化进确认命令,确认绑定看过的那份。"""
@@ -21853,6 +21859,9 @@ def goal_preview_command(args: argparse.Namespace) -> int:
         plan,
         skill_context=skill_context,
         split_provenance=split_provenance,
+        # 这份 provenance 必须落在 **plan 记录** 上,不能只落在事件里:
+        # `goal start` 的第六道门要读它,而门不该去翻事件账本。
+        source=GOAL_PLAN_SOURCE,
     )
     store.append_event(
         EventRecord.create(
@@ -21862,7 +21871,7 @@ def goal_preview_command(args: argparse.Namespace) -> int:
                 "provider": record["provider"],
                 "model": record["model"],
                 "task_length": len(args.task),
-                "source": "goal_preview",
+                "source": GOAL_PLAN_SOURCE,
             },
         )
     )
@@ -21925,9 +21934,10 @@ def _render_goal_start(payload: dict[str, object]) -> str:
 def goal_start_command(args: argparse.Namespace) -> int:
     """确认一次走开式运行:批准该 plan 的审批,再把它交给后台宿主。
 
-    五道门(任一不满足拒绝且零写零 spawn):`--confirm`、
+    六道门(任一不满足拒绝且零写零 spawn):`--confirm`、
     `approval_mode == "autonomous"`、已知 `--plan-id`、`--max-waves >= 1`、
-    本项目没有活着的 run-loop 宿主。两个阶段都调用既有实现:
+    本项目没有活着的 run-loop 宿主、该 plan 出自一次 `goal preview`。
+    两个阶段都调用既有实现:
     `approval approve-plan --confirm` 与 `run-loop-host start --confirm`;
     approve 阶段失败绝不启动宿主。
     """
@@ -21941,11 +21951,15 @@ def goal_start_command(args: argparse.Namespace) -> int:
     if config.leader.approval_mode != "autonomous":
         print(GOAL_AUTONOMOUS_BLOCKER, file=sys.stderr)
         return 1
-    known = any(
-        isinstance(plan, dict) and plan.get("plan_id") == args.plan_id
-        for plan in store.load().get("plans", [])
+    plan_record = next(
+        (
+            plan
+            for plan in store.load().get("plans", [])
+            if isinstance(plan, dict) and plan.get("plan_id") == args.plan_id
+        ),
+        None,
     )
-    if not known:
+    if plan_record is None:
         print(f"unknown plan: {args.plan_id}", file=sys.stderr)
         return 1
     max_waves = GOAL_DEFAULT_MAX_WAVES if args.max_waves is None else int(args.max_waves)
@@ -21965,6 +21979,20 @@ def goal_start_command(args: argparse.Namespace) -> int:
             f"{record.get('plan_id')} (pid {record.get('pid')}); "
             "see agentdeck run-loop-host status, or stop it with "
             "agentdeck run-loop-host stop --confirm",
+            file=sys.stderr,
+        )
+        return 1
+    # 第六道门:这份 plan 必须真的出自一次 `goal preview`。仓库承重教条是
+    # "only the exact confirmed preview becomes frozen authority",而在此之前
+    # 代码只检查该 plan **存在**——一份从 `leader plan` / `run --task` 出来、
+    # 授权屏从未展示过的计划,同样能被 `goal start` 一口气批完并交给宿主走开
+    # 式执行。provenance 由 `goal preview` 写在 plan 记录上(见 GOAL_PLAN_SOURCE),
+    # 这里只读不写,与另外五道门一样零写零 spawn。
+    if plan_record.get("source") != GOAL_PLAN_SOURCE:
+        print(
+            f"goal start: plan {args.plan_id} did not come from a goal preview, so its "
+            "authorization screen was never shown; run: agentdeck goal preview --task <text> "
+            "and confirm the plan id it prints",
             file=sys.stderr,
         )
         return 1

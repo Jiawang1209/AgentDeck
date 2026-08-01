@@ -4,6 +4,47 @@
 
 ## 2026-08-01
 
+### Enforce the goal plan binding that four documents asserted and no code checked
+
+- **Type**: fix
+- **Motivation**: spec 的"安全门逐条保留 → plan 绑定"、
+  `docs/contracts/goal-schema.md` 的 "Two steps, not one"、`CLAUDE.md` 和
+  `HISTORY.md` 四处都写着 `goal start` 绑定到人类**预览过的**那份计划,
+  而代码只检查该 plan **存在**。终审取证:
+  `agentdeck leader plan --task "任意旧目标"` 产出的 plan_id 直接喂给
+  `goal start --confirm`,**退 0、批准 3 条审批、宿主起来**——一份授权屏
+  从未展示过的计划就这样进入了走开式执行。"only the exact confirmed preview
+  becomes frozen authority" 是本仓库的承重教条;四份文档断言而代码不做,
+  正是反复咬过本项目的那一类漂移。修法是**补门,不是降文档**。
+- **What**: `StateStore.record_plan` 新增可选形参 `source: str | None = None`,
+  仅在给出时写入 `record["source"]`——缺省 `None` 不写该键,故
+  `leader plan` / `run --task` 等 14 处既有调用方的 plan 记录**逐字节不变**。
+  `goal preview` 传 `source=GOAL_PLAN_SOURCE`(`"goal_preview"`,`cli.py` 单一
+  来源;`leader_plan_created` 事件本就带这个字段,但一道门不该去翻事件账本)。
+  `goal start` 补**第六道门**,与另外五道同处任何写之前:plan 记录不带该
+  provenance 即拒绝,stderr 点名 `agentdeck goal preview --task <text>`。
+  既有五道门与其顺序未动,第六道排在其后。同步 `docs/contracts/goal-schema.md`
+  (gates 五→六 + 新增第 6 条 + "Two steps" 段注明由 gate 6 强制)、spec 的
+  实现期修正新增第三条、`CLAUDE.md`、`README.md` 与 `goal_start_command` 的
+  docstring。
+- **Impact**: **严格更保守**——只增加拒绝,不放开任何路径。唯一的行为变化是:
+  未经 `goal preview` 的 plan 不再能被 `goal start` 执行(这正是四份文档
+  一直宣称的行为)。`leader plan`、`approval create-from-plan`、
+  `approval approve-plan`、`run-loop-host start` 一律未触碰;老 plan 记录
+  无需迁移(不带 `source` 的记录本就该被这道门拒绝)。provenance 只说明人类
+  看过哪一屏,**不授予任何权限**。
+- **Verification**: TDD 先红:`test_goal_start_refuses_a_plan_that_was_never_previewed`
+  以 `assert 0 == 1` 失败并在 stdout 打出"已确认并启动 / 已批准 3 条审批 /
+  pid 999001",逐字复现终审取证;`test_goal_preview_stamps_provenance_on_the_plan_record`
+  因记录无 `source` 键失败。实现后全绿。另两条反面用例把边界钉住:
+  `leader plan` 的记录**不得**带 `source`(既有行为不变)、`goal preview` 自己
+  写的 plan 照常放行。零写零 spawn 以与另外五道门同一标准取证(state.json
+  逐字节相同、events 序列相同、`spawn.calls == []`、无 host 记录、
+  approvals 仍为空)。真实项目实跑复核:state.json md5 前后相同
+  (`a79c4313…`)、events.jsonl 仍 4 行、`.agentdeck/run-loop-host/` 未被创建。
+  `pytest tests/test_goal_cli.py -q` 29 passed;全量 `pytest -q`
+  **5112 passed / 3 skipped**(+4 条新测试,零回归)。
+
 ### Make the goal preview show the allowlist it was hiding and the bounds it was faking
 
 - **Type**: fix

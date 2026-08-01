@@ -9463,7 +9463,17 @@ class StateStore:
         skill_context: dict[str, Any] | None = None,
         leader_generation: dict[str, object] | None = None,
         split_provenance: dict[str, Any] | None = None,
+        source: str | None = None,
     ) -> dict[str, Any]:
+        """Record one plan.
+
+        `source` is optional provenance naming the route that wrote this plan
+        (currently only `goal_preview`). It is persisted **only** when given,
+        so every existing caller keeps writing a byte-identical record. It is
+        provenance, not authorization: it says which screen the human saw, and
+        `goal start` refuses a plan that never carried one — it grants nothing
+        on its own.
+        """
         state = self.load()
         record = {
             "plan_id": new_id("pln"),
@@ -9479,6 +9489,8 @@ class StateStore:
             "plan": plan,
             "created_at": utc_now(),
         }
+        if source is not None:
+            record["source"] = source
         if split_provenance is not None:
             planner_provider, planner_model = split_provenance["planner_backend"]
             orchestrator_provider, orchestrator_model = split_provenance[

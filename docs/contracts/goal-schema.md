@@ -62,6 +62,7 @@ The repository's standing boundary is *only the exact confirmed preview becomes
 frozen authority*. So `goal start` binds to a `--plan-id` the human has seen in
 a preview — never to a raw sentence. `goal preview` writes a plan (equivalent
 to `leader plan`) but approves nothing, dispatches nothing and starts no host.
+That binding is **enforced** by start gate 6 below, not merely asserted here.
 
 ## Preview response (`mode=goal_preview`)
 
@@ -165,7 +166,7 @@ confirmation (see the section above).
 | `requires_explicit_user` | always `true` |
 | `safety` | always `delegated` |
 
-### Start gates (all five required; any failure ⇒ refuse, zero writes, zero spawn)
+### Start gates (all six required; any failure ⇒ refuse, zero writes, zero spawn)
 
 1. `--confirm` present.
 2. `config.leader.approval_mode == "autonomous"` — and `goal` never flips it.
@@ -182,6 +183,17 @@ confirmation (see the section above).
    **A stale record does not block.** A record whose pid is dead is exactly the
    case a fresh `goal start` should be allowed through, matching how
    `run-loop-host start` itself treats stale records; only `running` blocks.
+6. **The plan came from a `goal preview`** (enforced 2026-08-01). "Two steps,
+   not one" above is only real if the code checks it. Until this gate existed,
+   the check was merely that the plan **exists** — so a `plan_id` from
+   `leader plan` or `run --task`, whose authorization screen was never shown,
+   could be approved wholesale and handed to the host. `goal preview` now
+   persists `source = "goal_preview"` on the plan record itself (the
+   `leader_plan_created` event already carried it, but a gate should not have
+   to read the audit journal), and `goal start` refuses any plan without it,
+   naming `agentdeck goal preview --task <text>` on stderr. The provenance is
+   read-only here and authorizes nothing on its own; it only records which
+   screen the human saw.
 
 Order is fixed: create (if needed), approve, then start the host. **If the
 approve stage fails, the host is not spawned.** If the host fails to start, the already

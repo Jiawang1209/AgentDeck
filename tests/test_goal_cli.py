@@ -631,6 +631,84 @@ def test_goal_start_refuses_while_a_host_is_already_running(
     assert read_host_record(root)["pid"] == 999_101  # 活宿主一字未动
 
 
+# 2026-08-01 终审发现:spec("plan 绑定")、goal-schema.md、CLAUDE.md 和
+# HISTORY.md 四处都写着 `goal start` 绑定到人类**预览过的**那份计划,而代码
+# 只检查该 plan **存在**。取证:`leader plan --task "任意旧目标"` 产出的
+# plan_id 喂给 `goal start --confirm`,退 0、批 3 条审批、宿主起来了——一份
+# 从未展示过授权屏的计划就这样被走开式执行了。"only the exact confirmed
+# preview becomes frozen authority" 是本仓库的承重教条,四份文档断言而代码
+# 不做,正是反复咬过本项目的那一类漂移。下面这组用例把第六道门钉死。
+def test_goal_preview_stamps_provenance_on_the_plan_record(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    enable_autonomous(capsys)
+
+    plan_id = preview_json(capsys)["plan_id"]
+
+    record = next(p for p in StateStore(root).load()["plans"] if p["plan_id"] == plan_id)
+    assert record["source"] == "goal_preview"
+
+
+def test_leader_plan_records_carry_no_goal_provenance(tmp_path, monkeypatch, capsys) -> None:
+    """`leader plan` 行为逐字节不变:它的 plan 记录不带这个字段。"""
+    root = prepare_project(tmp_path, monkeypatch)
+
+    assert cli.main(["leader", "plan", "--task", "任意旧目标"]) == 0
+    plan_id = json.loads(capsys.readouterr().out)["plan_id"]
+
+    record = next(p for p in StateStore(root).load()["plans"] if p["plan_id"] == plan_id)
+    assert "source" not in record
+
+
+def test_goal_start_refuses_a_plan_that_was_never_previewed(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    """第六道门:未经 `goal preview` 的计划一律拒绝,零写零 spawn。"""
+    from agentdeck.run_loop_host import read_host_record
+
+    root = prepare_project(tmp_path, monkeypatch)
+    enable_autonomous(capsys)
+    spawn = RecordingSpawn()
+    monkeypatch.setattr(cli, "_spawn_host_process", spawn)
+
+    assert cli.main(["leader", "plan", "--task", "任意旧目标"]) == 0
+    plan_id = json.loads(capsys.readouterr().out)["plan_id"]
+
+    state_path = StateStore(root).state_path
+    before = state_path.read_bytes()
+    before_events = event_types(root)
+
+    assert cli.main(["goal", "start", "--plan-id", plan_id, "--confirm"]) == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    err = captured.err
+    assert plan_id in err
+    assert "goal preview" in err
+    assert "agentdeck goal preview --task" in err
+
+    assert state_path.read_bytes() == before
+    assert event_types(root) == before_events
+    assert spawn.calls == []
+    assert read_host_record(root) is None
+    state = StateStore(root).load()
+    assert state.get("approvals", []) == []
+
+
+def test_goal_start_accepts_the_plan_its_own_preview_wrote(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    """反面:预览过的计划照常放行——第六道门只挡没看过的那一种。"""
+    root = prepare_project(tmp_path, monkeypatch)
+    enable_autonomous(capsys)
+    monkeypatch.setattr(cli, "_spawn_host_process", RecordingSpawn(pid=999_303))
+    plan_id = preview_json(capsys)["plan_id"]
+
+    assert cli.main(["goal", "start", "--plan-id", plan_id, "--confirm", "--json"]) == 0
+    assert json.loads(capsys.readouterr().out)["host_pid"] == 999_303
+    assert "goal_started" in event_types(root)
+
+
 def test_goal_start_proceeds_past_a_stale_host_record(tmp_path, monkeypatch, capsys) -> None:
     """死 pid 的残留记录不是活宿主,正是 `goal start` 该放行的那一种。
 

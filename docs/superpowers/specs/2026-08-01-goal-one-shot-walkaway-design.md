@@ -171,3 +171,23 @@ user 指出的另一面:43 个契约 + workbench 一屏全展开,是为**机器�
 情形,与 `run-loop-host start` 对 stale 记录的既有处理同源;只有 `running`
 才拦。这条修正**严格更保守**(它只增加拒绝,不放开任何路径),并让拒绝
 重新变回原子的。
+
+### 三、门是六道:"plan 绑定"此前只写在文档里,代码不做
+
+本 spec 上文"安全门逐条保留"里的 **plan 绑定**——"该 plan 必须是
+`goal preview` 刚产出的那一个"——同时被 `docs/contracts/goal-schema.md`、
+`CLAUDE.md` 和 `HISTORY.md` 断言,而代码只检查该 plan **存在**。终审取证:
+`agentdeck leader plan --task "任意旧目标"` 产出的 plan_id 直接喂给
+`goal start --confirm`,退 0、批准 3 条审批、宿主起来——一份授权屏从未
+展示过的计划就这样进入了走开式执行。"only the exact confirmed preview
+becomes frozen authority" 是本仓库的承重教条;四份文档断言而代码不做,
+正是反复咬过本项目的那一类漂移。
+
+落地时因此补上**第六道门**:`goal preview` 把 provenance 写在 **plan 记录**
+上(`store.record_plan(..., source="goal_preview")`——`leader_plan_created`
+事件本就带这个字段,但一道门不该去翻事件账本),`goal start` 拒绝任何不带
+该 provenance 的 plan,stderr 点名 `agentdeck goal preview --task <text>`。
+`record_plan` 的 `source` 形参可选、缺省 `None` 时**不写入该键**,故
+`leader plan` / `run --task` 等既有调用方的 plan 记录逐字节不变。这条修正
+同样**严格更保守**——只增加拒绝,不放开任何路径;provenance 只是 provenance,
+不授予任何权限。
