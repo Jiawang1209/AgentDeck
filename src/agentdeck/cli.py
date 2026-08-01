@@ -134,9 +134,9 @@ from .contracts import (
     validate_release_contract,
     validate_project_view_contract,
     validate_protocol_runtime_contract,
-    validate_role_topology_contract,
-    role_topology_contract_response,
-    ROLE_TOPOLOGY_COMMAND,
+    validate_role_bindings_contract,
+    role_bindings_contract_response,
+    ROLE_BINDINGS_COMMAND,
     validate_run_loop_contract,
     validate_run_loop_follow_contract,
     validate_run_start_contract,
@@ -3035,7 +3035,7 @@ def _workbench_snapshot_payload(
     review_gate_card = _workbench_review_gate_card(project_view)
     release_preview_card = _workbench_release_preview_card(review_gate_card, project_view)
     role_topology_card = _workbench_role_topology_card(project_view, review_gate_card)
-    roles_card = _role_topology_card(config, project_view)
+    roles_card = _role_bindings_card(config, project_view)
     ledger_card = _workbench_ledger_card(project_view)
     lineage_card = _workbench_lineage_card(project_view, inbox_card, leader_inbox_card)
     queue_card = _workbench_queue_card(project_view, continue_card, active_queue_source)
@@ -5262,20 +5262,20 @@ def _workbench_role_topology_card(
     }
 
 
-def _role_topology_inspect(label: str, command: object, *, enabled: bool = True, blocker: object = None) -> dict[str, object]:
+def _role_bindings_inspect(label: str, command: object, *, enabled: bool = True, blocker: object = None) -> dict[str, object]:
     return _control(
         kind="inspect", label=label, command=command, safety="inspect", enabled=enabled, blocker=blocker
     )
 
 
-def _role_topology_worker_controls(
+def _role_bindings_worker_controls(
     agent_id: str | None, runtime_status: str | None
 ) -> list[dict[str, object]]:
     if not agent_id:
-        return [_role_topology_inspect("Inspect agents", "agentdeck agent list")]
+        return [_role_bindings_inspect("Inspect agents", "agentdeck agent list")]
     running = runtime_status == "running"
     return [
-        _role_topology_inspect("Inspect mailbox", f"agentdeck inbox --agent {agent_id}"),
+        _role_bindings_inspect("Inspect mailbox", f"agentdeck inbox --agent {agent_id}"),
         _control(
             kind="terminal",
             label="Open terminal",
@@ -5287,7 +5287,7 @@ def _role_topology_worker_controls(
     ]
 
 
-def _role_topology_card(config: ProjectConfig, project_view: dict[str, object]) -> dict[str, object]:
+def _role_bindings_card(config: ProjectConfig, project_view: dict[str, object]) -> dict[str, object]:
     """Derive the north-star six-layer binding map.
 
     Read-only: it reuses the ProjectView `agents[]` runtime projection (never
@@ -5337,7 +5337,7 @@ def _role_topology_card(config: ProjectConfig, project_view: dict[str, object]) 
 
         if binding_kind == "command":
             controls = [
-                _role_topology_inspect(
+                _role_bindings_inspect(
                     "Route one request",
                     "agentdeck frontdesk --message <text>",
                     enabled=False,
@@ -5350,7 +5350,7 @@ def _role_topology_card(config: ProjectConfig, project_view: dict[str, object]) 
             backend = identity["provider_backend"]
             transport = identity["provider_transport"]
             label, command = logical_controls[role_name]
-            controls = [_role_topology_inspect(label, command)]
+            controls = [_role_bindings_inspect(label, command)]
         else:
             if role_name == "coder":
                 agent_id, status, candidates = resolve_worker_role(agent_rows, IMPLEMENTATION_ROLE_HINTS)
@@ -5388,7 +5388,7 @@ def _role_topology_card(config: ProjectConfig, project_view: dict[str, object]) 
                 runtime = agent.get("runtime") if isinstance(agent.get("runtime"), dict) else {}
                 runtime_status = runtime.get("status")
                 pane_id = runtime.get("pane_id")
-            controls = _role_topology_worker_controls(agent_id, runtime_status if isinstance(runtime_status, str) else None)
+            controls = _role_bindings_worker_controls(agent_id, runtime_status if isinstance(runtime_status, str) else None)
 
         roles.append(
             {
@@ -5414,8 +5414,8 @@ def _role_topology_card(config: ProjectConfig, project_view: dict[str, object]) 
         return sum(1 for role in roles if role["binding_status"] == status)
 
     return {
-        "mode": "role_topology",
-        "source_command": ROLE_TOPOLOGY_COMMAND,
+        "mode": "role_bindings",
+        "source_command": ROLE_BINDINGS_COMMAND,
         "layer_count": len(roles),
         "bound_count": count("bound"),
         "unbound_count": count("unbound"),
@@ -5423,8 +5423,8 @@ def _role_topology_card(config: ProjectConfig, project_view: dict[str, object]) 
         "split_enabled": leader_split_enabled(config.leader),
         "roles": roles,
         "controls": [
-            _role_topology_inspect("Inspect role topology", ROLE_TOPOLOGY_COMMAND),
-            _role_topology_inspect("Open workbench", "agentdeck workbench"),
+            _role_bindings_inspect("Inspect role bindings", ROLE_BINDINGS_COMMAND),
+            _role_bindings_inspect("Open workbench", "agentdeck workbench"),
         ],
     }
 
@@ -6505,7 +6505,7 @@ def controls_command(args: argparse.Namespace) -> int:
 
 
 def roles_command(args: argparse.Namespace) -> int:
-    """Read-only north-star role topology.
+    """Read-only north-star role binding map.
 
     It derives every binding from existing authoritative sources, writes no
     state, appends no event, records no chat turn, calls no provider and never
@@ -6517,10 +6517,10 @@ def roles_command(args: argparse.Namespace) -> int:
     project_view = _project_view_payload_or_error(config, store)
     if project_view is None:
         return 1
-    payload = _role_topology_card(config, project_view)
-    validation = validate_role_topology_contract(payload)
+    payload = _role_bindings_card(config, project_view)
+    validation = validate_role_bindings_contract(payload)
     if not validation["ok"]:
-        print("Role topology contract validation failed", file=sys.stderr)
+        print("Role bindings contract validation failed", file=sys.stderr)
         for error in validation["errors"]:
             print(f"- {error}", file=sys.stderr)
         return 1
@@ -6528,9 +6528,9 @@ def roles_command(args: argparse.Namespace) -> int:
     return 0
 
 
-def contract_role_topology_command(args: argparse.Namespace) -> int:
-    contract_path = Path(__file__).resolve().parents[2] / "docs" / "contracts" / "role-topology-schema.md"
-    payload = role_topology_contract_response(contract_path, include_example=args.example)
+def contract_role_bindings_command(args: argparse.Namespace) -> int:
+    contract_path = Path(__file__).resolve().parents[2] / "docs" / "contracts" / "role-bindings-schema.md"
+    payload = role_bindings_contract_response(contract_path, include_example=args.example)
     _print_json(payload)
     return 0
 
@@ -22078,7 +22078,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     roles = subparsers.add_parser(
         "roles",
-        help="Show the read-only north-star role topology (which layers this project bound)",
+        help="Show the read-only north-star role binding map (which layers this project bound)",
     )
     roles.set_defaults(func=roles_command)
 
@@ -22509,14 +22509,14 @@ def build_parser() -> argparse.ArgumentParser:
     contract_frontdesk.add_argument("--example", action="store_true", help="Include a GUI-ready frontdesk example")
     contract_frontdesk.set_defaults(func=contract_frontdesk_command)
 
-    contract_role_topology = contract_subparsers.add_parser(
-        "role-topology",
-        help="Discover the read-only north-star role topology contract",
+    contract_role_bindings = contract_subparsers.add_parser(
+        "role-bindings",
+        help="Discover the read-only north-star role binding contract",
     )
-    contract_role_topology.add_argument(
-        "--example", action="store_true", help="Include a GUI-ready role topology example"
+    contract_role_bindings.add_argument(
+        "--example", action="store_true", help="Include a GUI-ready role bindings example"
     )
-    contract_role_topology.set_defaults(func=contract_role_topology_command)
+    contract_role_bindings.set_defaults(func=contract_role_bindings_command)
 
     contract_delegation = contract_subparsers.add_parser(
         "delegation",

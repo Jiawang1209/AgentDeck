@@ -331,10 +331,10 @@ CONTRACT_INDEX_SPECS = (
         "frontdesk-schema.md",
     ),
     (
-        "role-topology",
-        "agentdeck contract role-topology",
-        "agentdeck contract role-topology --example",
-        "role-topology-schema.md",
+        "role-bindings",
+        "agentdeck contract role-bindings",
+        "agentdeck contract role-bindings --example",
+        "role-bindings-schema.md",
     ),
 )
 
@@ -1454,16 +1454,18 @@ def frontdesk_contract_response(contract_path: Path, include_example: bool = Fal
     return payload
 
 
-# --- Role topology (north-star six-layer binding map) -----------------------
+# --- Role bindings (north-star six-layer binding map) -----------------------
 #
 # `agentdeck roles` and the workbench `roles_card` are the same builder and the
-# same validator. The card answers "which of the six north-star layers has this
-# project actually filled in", which is a different question from the existing
-# `role_card` ("which agents did I configure") and the existing
-# `role_topology_card` ("what is each coordination role / worker doing right
-# now"). It adds no state source and authorizes nothing.
+# same validator, and both report `mode = "role_bindings"`. The card answers
+# "which of the six north-star layers has this project actually filled in",
+# which is a different question from the existing `role_card` ("which agents did
+# I configure") and from the older workbench `role_topology_card` ("what is each
+# coordination role / worker doing right now", `mode = "role_topology"`). The
+# two modes are deliberately distinct so a GUI can tell the cards apart from the
+# payload alone. It adds no state source and authorizes nothing.
 
-ROLE_TOPOLOGY_CARD_FIELDS = (
+ROLE_BINDINGS_CARD_FIELDS = (
     "mode",
     "source_command",
     "layer_count",
@@ -1475,7 +1477,7 @@ ROLE_TOPOLOGY_CARD_FIELDS = (
     "controls",
 )
 
-ROLE_TOPOLOGY_ROLE_FIELDS = (
+ROLE_BINDINGS_ROLE_FIELDS = (
     "role",
     "layer",
     "binding_kind",
@@ -1493,18 +1495,18 @@ ROLE_TOPOLOGY_ROLE_FIELDS = (
     "controls",
 )
 
-ROLE_TOPOLOGY_CONTROL_FIELDS = ("kind", "label", "command", "safety", "enabled", "blocker")
+ROLE_BINDINGS_CONTROL_FIELDS = ("kind", "label", "command", "safety", "enabled", "blocker")
 
-ROLE_TOPOLOGY_COMMAND = "agentdeck roles"
-ROLE_TOPOLOGY_WORKBENCH_CARD = "roles_card"
+ROLE_BINDINGS_COMMAND = "agentdeck roles"
+ROLE_BINDINGS_WORKBENCH_CARD = "roles_card"
 
 
-def _validate_role_topology_role(errors: list[str], index: int, role: object) -> str | None:
+def _validate_role_bindings_role(errors: list[str], index: int, role: object) -> str | None:
     prefix = f"roles[{index}]"
     if not isinstance(role, dict):
         errors.append(f"{prefix} must be an object")
         return None
-    for field in ROLE_TOPOLOGY_ROLE_FIELDS:
+    for field in ROLE_BINDINGS_ROLE_FIELDS:
         if field not in role:
             errors.append(f"missing {prefix} field: {field}")
     if role.get("layer") not in ROLE_TOPOLOGY_LAYERS:
@@ -1552,11 +1554,11 @@ def _validate_role_topology_role(errors: list[str], index: int, role: object) ->
     elif candidates:
         errors.append(f"{prefix}.candidates must be empty unless the binding is ambiguous")
 
-    _validate_role_topology_controls(errors, prefix, role.get("controls"), require_any=True)
+    _validate_role_bindings_controls(errors, prefix, role.get("controls"), require_any=True)
     return binding_status if isinstance(binding_status, str) else None
 
 
-def _validate_role_topology_controls(
+def _validate_role_bindings_controls(
     errors: list[str], prefix: str, controls: object, *, require_any: bool
 ) -> None:
     if not isinstance(controls, list):
@@ -1568,7 +1570,7 @@ def _validate_role_topology_controls(
         if not isinstance(control, dict):
             errors.append(f"{prefix}.controls[{index}] must be an object")
             continue
-        for field in ROLE_TOPOLOGY_CONTROL_FIELDS:
+        for field in ROLE_BINDINGS_CONTROL_FIELDS:
             if field not in control:
                 errors.append(f"missing {prefix}.controls[{index}] field: {field}")
         if control.get("safety") != "inspect":
@@ -1579,27 +1581,27 @@ def _validate_role_topology_controls(
             errors.append(f"{prefix}.controls[{index}] placeholder command must be disabled")
 
 
-def validate_role_topology_contract(payload: object) -> dict[str, object]:
+def validate_role_bindings_contract(payload: object) -> dict[str, object]:
     errors: list[str] = []
     if not isinstance(payload, dict):
-        return {"ok": False, "errors": ["role topology card must be an object"]}
-    for field in ROLE_TOPOLOGY_CARD_FIELDS:
+        return {"ok": False, "errors": ["role bindings card must be an object"]}
+    for field in ROLE_BINDINGS_CARD_FIELDS:
         if field not in payload:
-            errors.append(f"missing role topology field: {field}")
-    if payload.get("mode") != "role_topology":
-        errors.append(f"role topology mode must be role_topology, got {payload.get('mode')}")
-    if payload.get("source_command") != ROLE_TOPOLOGY_COMMAND:
-        errors.append(f"role topology source_command must be {ROLE_TOPOLOGY_COMMAND}")
+            errors.append(f"missing role bindings field: {field}")
+    if payload.get("mode") != "role_bindings":
+        errors.append(f"role bindings mode must be role_bindings, got {payload.get('mode')}")
+    if payload.get("source_command") != ROLE_BINDINGS_COMMAND:
+        errors.append(f"role bindings source_command must be {ROLE_BINDINGS_COMMAND}")
     if not isinstance(payload.get("split_enabled"), bool):
-        errors.append("role topology split_enabled must be a boolean")
+        errors.append("role bindings split_enabled must be a boolean")
 
     roles = payload.get("roles")
     if not isinstance(roles, list):
-        errors.append("role topology roles must be a list")
+        errors.append("role bindings roles must be a list")
     else:
         counts = {status: 0 for status in ROLE_BINDING_STATUSES}
         for index, role in enumerate(roles):
-            status = _validate_role_topology_role(errors, index, role)
+            status = _validate_role_bindings_role(errors, index, role)
             if status in counts:
                 counts[status] += 1
         for field, status in (
@@ -1608,17 +1610,17 @@ def validate_role_topology_contract(payload: object) -> dict[str, object]:
             ("ambiguous_count", "ambiguous"),
         ):
             if payload.get(field) != counts[status]:
-                errors.append(f"role topology {field} must match the roles it counts")
+                errors.append(f"role bindings {field} must match the roles it counts")
         if payload.get("layer_count") != len(roles):
-            errors.append("role topology layer_count must match the roles it lists")
+            errors.append("role bindings layer_count must match the roles it lists")
         elif sum(counts.values()) != len(roles):
-            errors.append("role topology binding counts must add up to layer_count")
+            errors.append("role bindings binding counts must add up to layer_count")
 
-    _validate_role_topology_controls(errors, "role_topology", payload.get("controls"), require_any=True)
+    _validate_role_bindings_controls(errors, "role_bindings", payload.get("controls"), require_any=True)
     return {"ok": not errors, "errors": errors}
 
 
-def role_topology_example() -> dict[str, object]:
+def role_bindings_example() -> dict[str, object]:
     """A stable default-project shaped example; never live state."""
 
     def inspect(label: str, command: object, *, enabled: bool = True, blocker: object = None) -> dict[str, object]:
@@ -1632,8 +1634,8 @@ def role_topology_example() -> dict[str, object]:
         }
 
     return {
-        "mode": "role_topology",
-        "source_command": ROLE_TOPOLOGY_COMMAND,
+        "mode": "role_bindings",
+        "source_command": ROLE_BINDINGS_COMMAND,
         "layer_count": 6,
         "bound_count": 5,
         "unbound_count": 1,
@@ -1771,24 +1773,24 @@ def role_topology_example() -> dict[str, object]:
             },
         ],
         "controls": [
-            inspect("Inspect role topology", ROLE_TOPOLOGY_COMMAND),
+            inspect("Inspect role bindings", ROLE_BINDINGS_COMMAND),
             inspect("Open workbench", "agentdeck workbench"),
         ],
     }
 
 
-def role_topology_contract_payload(contract_path: Path) -> dict[str, object]:
+def role_bindings_contract_payload(contract_path: Path) -> dict[str, object]:
     return {
         "schema_version": PROJECT_VIEW_SCHEMA_VERSION,
-        "name": "role-topology",
-        "roles_command": ROLE_TOPOLOGY_COMMAND,
+        "name": "role-bindings",
+        "roles_command": ROLE_BINDINGS_COMMAND,
         "workbench_command": "agentdeck workbench",
-        "workbench_card": ROLE_TOPOLOGY_WORKBENCH_CARD,
+        "workbench_card": ROLE_BINDINGS_WORKBENCH_CARD,
         "contract_path": str(contract_path),
         "contract_exists": contract_path.exists(),
-        "card_fields": list(ROLE_TOPOLOGY_CARD_FIELDS),
-        "role_fields": list(ROLE_TOPOLOGY_ROLE_FIELDS),
-        "control_fields": list(ROLE_TOPOLOGY_CONTROL_FIELDS),
+        "card_fields": list(ROLE_BINDINGS_CARD_FIELDS),
+        "role_fields": list(ROLE_BINDINGS_ROLE_FIELDS),
+        "control_fields": list(ROLE_BINDINGS_CONTROL_FIELDS),
         "layers": list(ROLE_TOPOLOGY_LAYERS),
         "binding_kinds": list(ROLE_BINDING_KINDS),
         "binding_statuses": list(ROLE_BINDING_STATUSES),
@@ -1801,12 +1803,12 @@ def role_topology_contract_payload(contract_path: Path) -> dict[str, object]:
     }
 
 
-def role_topology_contract_response(contract_path: Path, include_example: bool = False) -> dict[str, object]:
-    payload = role_topology_contract_payload(contract_path)
+def role_bindings_contract_response(contract_path: Path, include_example: bool = False) -> dict[str, object]:
+    payload = role_bindings_contract_payload(contract_path)
     if include_example:
-        example = role_topology_example()
+        example = role_bindings_example()
         payload["example"] = True
-        payload["example_role_topology"] = example
+        payload["example_role_bindings"] = example
         payload["example_card_fields"] = list(example)
         payload["example_role_fields"] = list(example["roles"][0])
     return payload
@@ -8327,9 +8329,9 @@ def workbench_contract_payload(contract_path: Path) -> dict[str, object]:
         "release_preview_card_fields": list(WORKBENCH_RELEASE_PREVIEW_CARD_FIELDS),
         "role_topology_card_fields": list(WORKBENCH_ROLE_TOPOLOGY_CARD_FIELDS),
         "role_topology_item_fields": list(WORKBENCH_ROLE_TOPOLOGY_ITEM_FIELDS),
-        "roles_card_fields": list(ROLE_TOPOLOGY_CARD_FIELDS),
-        "roles_card_role_fields": list(ROLE_TOPOLOGY_ROLE_FIELDS),
-        "roles_card_contract": "agentdeck contract role-topology",
+        "roles_card_fields": list(ROLE_BINDINGS_CARD_FIELDS),
+        "roles_card_role_fields": list(ROLE_BINDINGS_ROLE_FIELDS),
+        "roles_card_contract": "agentdeck contract role-bindings",
         "ledger_card_fields": list(WORKBENCH_LEDGER_CARD_FIELDS),
         "lineage_card_fields": list(WORKBENCH_LINEAGE_CARD_FIELDS),
         "lineage_path_fields": list(WORKBENCH_LINEAGE_PATH_FIELDS),
@@ -14035,7 +14037,7 @@ def validate_workbench_contract(payload: dict[str, object]) -> dict[str, object]
         ("mission_scheduler_card", validate_mission_scheduler_contract),
         ("client_session_card", validate_client_session_contract),
         ("mission_recovery_card", validate_mission_recovery_contract),
-        ("roles_card", validate_role_topology_contract),
+        ("roles_card", validate_role_bindings_contract),
     ):
         result = validator(payload.get(field))
         for error in result["errors"]:
@@ -17681,7 +17683,7 @@ def workbench_example() -> dict[str, object]:
                 }
             ],
         },
-        "roles_card": role_topology_example(),
+        "roles_card": role_bindings_example(),
         "ledger_card": {
             "messages": project_view["messages"],
             "jobs": project_view["jobs"],

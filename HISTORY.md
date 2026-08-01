@@ -4,6 +4,55 @@
 
 ## 2026-08-01
 
+### Rename the new role card to role_bindings so GUIs can tell the two apart
+
+- **Type**: refactor
+- **Motivation**: G6 落地时暴露的命名接缝没有收口:workbench 里早就有一张
+  `role_topology_card`(旧线,"每个协调角色/worker **此刻在做什么**"),而
+  G6 新增的 `roles_card` / `agentdeck roles`("北极星六层**各自绑到了
+  什么**")**也发 `mode = "role_topology"`**。同一个标识符指两张形状不同、
+  语义不同的卡,GUI 读 `mode` 无法区分——这就是同一标识符的第二来源,
+  不能带着出厂。
+- **What**: 只改**新**面,旧卡片逐字节不动。`mode` `role_topology` →
+  `role_bindings`;契约 `role-topology` → `role-bindings`
+  (`agentdeck contract role-bindings [--example]`);文档 `git mv`
+  `docs/contracts/role-topology-schema.md` → `role-bindings-schema.md`,
+  开头新增"我在看哪张角色卡"三行对照表,写明三张卡各自回答什么问题、
+  `mode` 各是什么、以及 workbench 键仍叫 `roles_card` 这一处**刻意的
+  不对称**(键随命令 `agentdeck roles` 命名,mode 随语义命名);
+  contracts.py 符号 `ROLE_TOPOLOGY_{CARD,ROLE,CONTROL}_FIELDS` /
+  `ROLE_TOPOLOGY_{COMMAND,WORKBENCH_CARD}` / `role_topology_example` /
+  `role_topology_contract_{payload,response}` /
+  `validate_role_topology_contract` 与 cli.py 的 `_role_topology_card` /
+  `_role_topology_inspect` / `_role_topology_worker_controls` /
+  `contract_role_topology_command` 全部改 `ROLE_BINDINGS_*` /
+  `_role_bindings_*`,validator 错误前缀改 `role bindings …`,响应键
+  `example_role_topology` → `example_role_bindings`,card-level control 标签
+  改 "Inspect role bindings";测试文件 `git mv`
+  `tests/test_role_topology_cli.py` → `tests/test_role_bindings_cli.py`。
+  **不改**:workbench 键 `roles_card`、命令 `agentdeck roles`、纯推导模块
+  `src/agentdeck/role_topology.py` 及其 `ROLE_TOPOLOGY_LAYERS` / `ROLE_SPECS`
+  (它确实是六层拓扑骨架)、以及旧卡片的一切(`role_topology_card`、
+  `_workbench_role_topology_card`、`mode=role_topology`、chat
+  `mode=role_topology`、`scope=role_topology` 控件、`WORKBENCH_ROLE_TOPOLOGY_*`
+  字段)。同步 `CONTRACT_INDEX_SPECS`、contract index 文档、workbench
+  contract 的 `roles_card_contract`、workbench-schema(补上此前缺失的
+  `roles_card` 段并标注两张卡的 `mode`)、README、CLAUDE.md、handoff 和
+  测试里按序名单。契约总数仍是 44。
+- **Impact**: 这是**破坏性重命名**——`agentdeck contract role-topology`
+  不再存在(argparse 直接报 invalid choice),`roles_card.mode` 从
+  `role_topology` 变为 `role_bindings`。该面上线仅一天、无 live 消费者,
+  故不做别名兼容(留别名等于把二义性永久化)。旧 `role_topology_card`
+  的形状、mode、validator、控件与 chat 路由**完全不变**。仍是全路径只读。
+- **Verification**: `conda run --no-capture-output -n agentdeck python -m
+  pytest -q` 全量 5059 passed / 3 skipped(与重命名前同数,断言强度未
+  放松——测试只改符号名与被断言的字面量,没有删除或弱化任何一条)。
+  真实项目冒烟:全新 `git init` + `agentdeck project init` 上
+  `agentdeck roles` → `mode=role_bindings`,`agentdeck workbench` 同时给出
+  `roles_card.mode=role_bindings` 与 `role_topology_card.mode=role_topology`
+  (两卡可区分),`agentdeck contract list` → 44 条且末条为 `role-bindings`,
+  `agentdeck contract role-topology` 如期报 invalid choice。
+
 ### Fix the coordination roles ignoring the planner/orchestrator split
 
 - **Type**: fix

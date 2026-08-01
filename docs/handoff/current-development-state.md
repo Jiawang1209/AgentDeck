@@ -8,7 +8,7 @@ Updated: 2026-08-01
 `fdcb5e18` → `72e5d2a3` → 本条)**:交付一个只读面回答"我的项目把北极星
 六层各自补全成了什么"——`agentdeck roles` 与 workbench `roles_card` 是
 **同一个 builder、同一份 validator、逐字段相同**的两面,加上第 44 个契约
-`agentdeck contract role-topology` / `docs/contracts/role-topology-schema.md`。
+`agentdeck contract role-bindings` / `docs/contracts/role-bindings-schema.md`。
 设计支点是那句关键事实:六个角色**不是同一种东西**,闭合 `binding_kind`
 (`command` / `logical_leader` / `worker_agent`)同时解释了哪些字段**必然
 为 null**(logical Leader 永远没有 pane,intake 命令连 provider 都没有);
@@ -18,11 +18,13 @@ Updated: 2026-08-01
 ProjectView `agents[]` runtime 投影),**不新增配置面、不新增状态源、不读
 tmux**;推导歧义一律 `ambiguous` 且列全候选,**绝不静默择一**。纯推导逻辑
 在零 IO 的 `src/agentdeck/role_topology.py`,可以脱离项目把矩阵测透。
-**一个接缝值得记住**:workbench 里早已有一张同名 `role_topology_card`
+**一个接缝值得记住**:workbench 里早已有一张 `role_topology_card`
 (旧线的"每个协调角色/worker 此刻在做什么"),它的形状、validator 和一批
-测试都还在,所以新卡片在 workbench 里的键是 `roles_card`;三张角色卡的
-分工(`role_card` = 我配了哪些 agent,`role_topology_card` = 谁此刻在做
-什么,`roles_card` = 我补全了哪几层)写在契约文档里。
+测试都还在。两张卡最初都发 `mode = "role_topology"`,GUI 无法区分;因此
+新卡片已改名为 `mode = "role_bindings"` / 契约 `role-bindings`(2026-08-01
+修复),workbench 里的键仍是 `roles_card`。三张角色卡的分工
+(`role_card` = 我配了哪些 agent,`role_topology_card` = 谁此刻在做什么,
+`roles_card` / `role_bindings` = 我补全了哪几层)写在契约文档开头。
 **剩余需 human**:新面尚无 live 验证记录——建议在一个真实项目上跑
 `agentdeck roles` 与 `agentdeck workbench`,确认六层绑定与该项目的
 `[[agents]]` / `[review]` 实情一致(尤其 `ambiguous` 与 `unbound` 的措辞

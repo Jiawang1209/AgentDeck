@@ -132,7 +132,8 @@ AgentDeck › Mission started. Use /status or open the workbench to inspect it.
   configured every path is byte-identical to before, except that
   `verdict_summary` always carries the additive `group` projection
   (`size: 1` for a lone reviewer).
-- G6 role topology: `agentdeck roles` (and the identical workbench `roles_card`)
+- G6 role bindings: `agentdeck roles` (and the identical workbench `roles_card`,
+  `mode = role_bindings`)
   is a read-only map of the six north-star role layers — frontdesk, planner,
   orchestrator, coder, code_reviewer, round_reviewer — showing what each layer
   is bound to, with which provider/model, its lifecycle, its live runtime status
@@ -149,7 +150,10 @@ AgentDeck › Mission started. Use /status or open the workbench to inspect it.
   card reports `ambiguous`, lists **every** candidate and never silently picks
   one. The topology is an observation surface, not an authorization — it changes
   no gate and authorizes no dispatch; discovery:
-  `agentdeck contract role-topology`.
+  `agentdeck contract role-bindings`. It is a different card from the older
+  workbench `role_topology_card` (`mode = role_topology`), which reports what
+  each coordination role / worker is doing **right now**; both survive and the
+  two `mode` values keep them apart.
 
 Useful observation commands:
 

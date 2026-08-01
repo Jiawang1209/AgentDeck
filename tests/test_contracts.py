@@ -734,7 +734,7 @@ def test_contract_index_response_is_reusable_without_cli(tmp_path: Path) -> None
         "daemon-runtime-schema.md",
         "mission-scheduler-schema.md",
         "client-session-schema.md",
-        "role-topology-schema.md",
+        "role-bindings-schema.md",
     }
     for filename in docs:
         (tmp_path / filename).write_text(f"# {filename}\n", encoding="utf-8")
@@ -792,7 +792,7 @@ def test_contract_index_response_is_reusable_without_cli(tmp_path: Path) -> None
         "worktree",
         "delegation",
         "frontdesk",
-        "role-topology",
+        "role-bindings",
     ]
     for contract in payload["contracts"]:
         assert set(contract) == set(CONTRACT_INDEX_ITEM_FIELDS)

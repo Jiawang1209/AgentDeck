@@ -1,11 +1,32 @@
-# Role Topology Contract (`role-topology` via `project-view/v1`)
+# Role Bindings Contract (`role-bindings` via `project-view/v1`)
 
-Discovery entrypoint: `agentdeck contract role-topology` (`--example` adds a
+## Which Role Card Am I Looking At?
+
+AgentDeck has **three** read-only role surfaces. They answer three different
+questions and a GUI tells them apart from the payload alone — never from the
+word "role" in a field name:
+
+| Card / mode | Question it answers | Where it lives |
+| --- | --- | --- |
+| `role_bindings` (**this contract**) | "which of the six north-star layers has my project filled in, with what, and what is still missing" | `agentdeck roles`, workbench `roles_card` |
+| `role_topology` (older, unchanged) | "what is each coordination role / worker doing **right now**" — live status, blocker, next command | workbench `role_topology_card`, chat `mode=role_topology` |
+| `role_card` | "which agents did I configure, and how do I reassign their roles" | workbench `role_card` |
+
+The two topology-ish cards used to both emit `mode = "role_topology"`, which
+made them indistinguishable to a GUI reading `mode`. This card is the one that
+was renamed: it reports **bindings** (a completeness map with a fail-closed
+`bound` / `unbound` / `ambiguous` status), not live activity. The older
+`role_topology_card` keeps its name, its mode, its shape and its behaviour
+byte for byte. Note the deliberate asymmetry: the workbench **key** for this
+card stays `roles_card` (named after the `agentdeck roles` command), while its
+`mode` is `role_bindings`.
+
+Discovery entrypoint: `agentdeck contract role-bindings` (`--example` adds a
 stable GUI-ready example). Source of truth for fields, example, payload and the
-validator is `src/agentdeck/contracts.py` (`ROLE_TOPOLOGY_CARD_FIELDS`,
-`ROLE_TOPOLOGY_ROLE_FIELDS`, `ROLE_TOPOLOGY_CONTROL_FIELDS`,
-`role_topology_example()`, `role_topology_contract_payload()`,
-`validate_role_topology_contract()`). The binding derivation itself lives in the
+validator is `src/agentdeck/contracts.py` (`ROLE_BINDINGS_CARD_FIELDS`,
+`ROLE_BINDINGS_ROLE_FIELDS`, `ROLE_BINDINGS_CONTROL_FIELDS`,
+`role_bindings_example()`, `role_bindings_contract_payload()`,
+`validate_role_bindings_contract()`). The binding derivation itself lives in the
 pure module `src/agentdeck/role_topology.py` (`ROLE_TOPOLOGY_LAYERS`,
 `ROLE_BINDING_KINDS`, `ROLE_BINDING_STATUSES`, `ROLE_LIFECYCLES`, `ROLE_SPECS`,
 `IMPLEMENTATION_ROLE_HINTS`, `REVIEW_ROLE_HINTS`, `resolve_worker_role()`),
@@ -25,7 +46,7 @@ this project actually filled in, with what, and what is missing.**
 | `agentdeck roles` | the card itself |
 | `agentdeck workbench` → `roles_card` | the same card, field for field |
 
-Both come from the same builder (`_role_topology_card(config, project_view)` in
+Both come from the same builder (`_role_bindings_card(config, project_view)` in
 `src/agentdeck/cli.py`) and pass the same validator, so a GUI can render either
 without re-deriving anything. `source_command` is `agentdeck roles` on both.
 
@@ -93,8 +114,8 @@ status is `ambiguous`.
 
 | Field | Meaning |
 | --- | --- |
-| `mode` | always `role_topology` |
-| `source_command` | always `agentdeck roles` |
+| `mode` | always `role_bindings` |
+| `source_command` | always `agentdeck roles` (the workbench copy included) |
 | `layer_count` | number of `roles[]` (always the six north-star layers) |
 | `bound_count` / `unbound_count` / `ambiguous_count` | derived counts; they must match `roles[]` and add up to `layer_count` |
 | `split_enabled` | `config.leader_split_enabled()` — whether planner/orchestrator are explicitly configured or inherit `[leader]` |
@@ -155,8 +176,8 @@ The card introduces no configuration surface and no second state source:
 | Card | Question it answers |
 | --- | --- |
 | `role_card` | "which agents did I configure, and how do I reassign their roles" |
-| `role_topology_card` (workbench, older) | "what is each coordination role / worker doing right now" (live status overlay) |
-| `roles_card` / `agentdeck roles` (this contract) | "which of the six north-star layers has my project filled in, and what is missing" |
+| `role_topology_card` (workbench, older, `mode=role_topology`) | "what is each coordination role / worker doing right now" (live status overlay) |
+| `roles_card` / `agentdeck roles` (this contract, `mode=role_bindings`) | "which of the six north-star layers has my project filled in, and what is missing" |
 
 The overlapping fields (`agent_id`, `provider`, runtime status) are all derived
 from the same ProjectView snapshot; this card copies no `role_prompt` (that is

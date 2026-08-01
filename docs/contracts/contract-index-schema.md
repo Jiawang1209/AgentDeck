@@ -77,7 +77,7 @@ The index currently lists these contract names in order:
 - `worktree`
 - `delegation`
 - `frontdesk`
-- `role-topology`
+- `role-bindings`
 
 `protocol-runtime` is discoverable through `agentdeck contract protocol-runtime [--example]`; its live read-only projection is `agentdeck protocol status`, and its durable schema is `docs/contracts/protocol-runtime-schema.md`.
 

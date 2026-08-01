@@ -5,13 +5,13 @@ from pathlib import Path
 
 from agentdeck import cli
 from agentdeck.contracts import (
-    ROLE_TOPOLOGY_CARD_FIELDS,
-    ROLE_TOPOLOGY_CONTROL_FIELDS,
-    ROLE_TOPOLOGY_ROLE_FIELDS,
-    role_topology_contract_payload,
-    role_topology_contract_response,
-    role_topology_example,
-    validate_role_topology_contract,
+    ROLE_BINDINGS_CARD_FIELDS,
+    ROLE_BINDINGS_CONTROL_FIELDS,
+    ROLE_BINDINGS_ROLE_FIELDS,
+    role_bindings_contract_payload,
+    role_bindings_contract_response,
+    role_bindings_example,
+    validate_role_bindings_contract,
 )
 from agentdeck.config import write_default_config
 from agentdeck.role_topology import (
@@ -53,7 +53,7 @@ def test_roles_command_projects_the_six_north_star_layers(tmp_path, monkeypatch,
 
     payload = run_roles(capsys)
 
-    assert payload["mode"] == "role_topology"
+    assert payload["mode"] == "role_bindings"
     assert payload["source_command"] == "agentdeck roles"
     assert [role["role"] for role in payload["roles"]] == [
         "frontdesk",
@@ -64,18 +64,18 @@ def test_roles_command_projects_the_six_north_star_layers(tmp_path, monkeypatch,
         "round_reviewer",
     ]
     assert payload["layer_count"] == 6
-    assert set(payload) == set(ROLE_TOPOLOGY_CARD_FIELDS)
+    assert set(payload) == set(ROLE_BINDINGS_CARD_FIELDS)
     for role in payload["roles"]:
-        assert set(role) == set(ROLE_TOPOLOGY_ROLE_FIELDS)
+        assert set(role) == set(ROLE_BINDINGS_ROLE_FIELDS)
         assert role["layer"] in ROLE_TOPOLOGY_LAYERS
         assert role["binding_kind"] in ROLE_BINDING_KINDS
         assert role["binding_status"] in ROLE_BINDING_STATUSES
         assert role["lifecycle"] in ROLE_LIFECYCLES
         assert role["controls"], "every role needs at least one inspect control"
         for control in role["controls"]:
-            assert set(control) == set(ROLE_TOPOLOGY_CONTROL_FIELDS)
+            assert set(control) == set(ROLE_BINDINGS_CONTROL_FIELDS)
             assert control["safety"] == "inspect"
-    assert validate_role_topology_contract(payload)["ok"]
+    assert validate_role_bindings_contract(payload)["ok"]
 
 
 def test_roles_command_binds_default_workers_and_reports_missing_round_reviewer(
@@ -221,85 +221,85 @@ def test_roles_command_writes_no_state_and_appends_no_event(tmp_path, monkeypatc
 
 def test_roles_command_refuses_a_half_broken_card(tmp_path, monkeypatch, capsys) -> None:
     prepare_project(tmp_path, monkeypatch)
-    original = cli._role_topology_card
+    original = cli._role_bindings_card
 
     def broken(config, project_view):
         payload = original(config, project_view)
         payload.pop("split_enabled", None)
         return payload
 
-    monkeypatch.setattr(cli, "_role_topology_card", broken)
+    monkeypatch.setattr(cli, "_role_bindings_card", broken)
 
     exit_code = cli.main(["roles"])
 
     captured = capsys.readouterr()
     assert exit_code == 1
     assert captured.out == ""
-    assert "Role topology contract validation failed" in captured.err
+    assert "Role bindings contract validation failed" in captured.err
 
 
 def test_validator_rejects_pane_fields_outside_worker_agents() -> None:
-    payload = role_topology_example()
+    payload = role_bindings_example()
     planner = next(role for role in payload["roles"] if role["role"] == "planner")
     planner["pane_id"] = "%1"
     planner["runtime_status"] = "running"
 
-    errors = validate_role_topology_contract(payload)["errors"]
+    errors = validate_role_bindings_contract(payload)["errors"]
 
     assert any("pane_id" in error for error in errors)
     assert any("runtime_status" in error for error in errors)
 
 
 def test_validator_rejects_unbound_roles_without_a_blocker() -> None:
-    payload = role_topology_example()
+    payload = role_bindings_example()
     round_reviewer = next(role for role in payload["roles"] if role["role"] == "round_reviewer")
     assert round_reviewer["binding_status"] == "unbound"
     round_reviewer["blocker"] = None
 
-    errors = validate_role_topology_contract(payload)["errors"]
+    errors = validate_role_bindings_contract(payload)["errors"]
 
     assert any("blocker" in error for error in errors)
 
 
 def test_validator_rejects_ambiguous_roles_without_candidates_and_silent_picks() -> None:
-    payload = role_topology_example()
+    payload = role_bindings_example()
     coder = next(role for role in payload["roles"] if role["role"] == "coder")
     coder["binding_status"] = "ambiguous"
     coder["blocker"] = "several agents share an implementation role"
 
-    errors = validate_role_topology_contract(payload)["errors"]
+    errors = validate_role_bindings_contract(payload)["errors"]
 
     assert any("candidates" in error for error in errors)
     assert any("agent_id" in error for error in errors)
 
 
 def test_validator_rejects_count_drift() -> None:
-    payload = role_topology_example()
+    payload = role_bindings_example()
     payload["bound_count"] = payload["bound_count"] + 1
 
-    errors = validate_role_topology_contract(payload)["errors"]
+    errors = validate_role_bindings_contract(payload)["errors"]
 
     assert errors
 
 
 def test_validator_rejects_non_inspect_controls() -> None:
-    payload = role_topology_example()
+    payload = role_bindings_example()
     payload["controls"][0]["safety"] = "explicit_runtime"
 
-    errors = validate_role_topology_contract(payload)["errors"]
+    errors = validate_role_bindings_contract(payload)["errors"]
 
     assert any("safety" in error for error in errors)
 
 
-def test_role_topology_example_matches_the_contract() -> None:
-    payload = role_topology_example()
+def test_role_bindings_example_matches_the_contract() -> None:
+    payload = role_bindings_example()
 
-    assert validate_role_topology_contract(payload)["ok"]
-    assert list(payload) == list(ROLE_TOPOLOGY_CARD_FIELDS)
-    assert list(payload["roles"][0]) == list(ROLE_TOPOLOGY_ROLE_FIELDS)
+    assert validate_role_bindings_contract(payload)["ok"]
+    assert list(payload) == list(ROLE_BINDINGS_CARD_FIELDS)
+    assert list(payload["roles"][0]) == list(ROLE_BINDINGS_ROLE_FIELDS)
 
 
-def test_workbench_embeds_the_same_role_topology_card(tmp_path, monkeypatch, capsys) -> None:
+def test_workbench_embeds_the_same_role_bindings_card(tmp_path, monkeypatch, capsys) -> None:
     """同一个 builder 的回归钉:两面必须逐字段相同。"""
     prepare_project(tmp_path, monkeypatch)
 
@@ -308,19 +308,19 @@ def test_workbench_embeds_the_same_role_topology_card(tmp_path, monkeypatch, cap
     workbench = json.loads(capsys.readouterr().out)
 
     assert workbench["roles_card"] == roles_payload
-    assert validate_role_topology_contract(workbench["roles_card"])["ok"]
+    assert validate_role_bindings_contract(workbench["roles_card"])["ok"]
 
 
-def test_workbench_contract_discovers_the_role_topology_card(capsys) -> None:
+def test_workbench_contract_discovers_the_roles_card(capsys) -> None:
     assert cli.main(["contract", "workbench"]) == 0
     payload = json.loads(capsys.readouterr().out)
 
     assert "roles_card" in payload["snapshot_fields"]
-    assert payload["roles_card_fields"] == list(ROLE_TOPOLOGY_CARD_FIELDS)
-    assert payload["roles_card_role_fields"] == list(ROLE_TOPOLOGY_ROLE_FIELDS)
+    assert payload["roles_card_fields"] == list(ROLE_BINDINGS_CARD_FIELDS)
+    assert payload["roles_card_role_fields"] == list(ROLE_BINDINGS_ROLE_FIELDS)
 
 
-def test_workbench_validator_rejects_a_broken_role_topology_card() -> None:
+def test_workbench_validator_rejects_a_broken_roles_card() -> None:
     from agentdeck.contracts import validate_workbench_contract, workbench_example
 
     payload = workbench_example()
@@ -332,16 +332,16 @@ def test_workbench_validator_rejects_a_broken_role_topology_card() -> None:
     assert any(error.startswith("roles_card: ") for error in errors)
 
 
-def test_contract_role_topology_is_discoverable(tmp_path, capsys) -> None:
-    contract_path = tmp_path / "role-topology-schema.md"
-    contract_path.write_text("# role topology\n", encoding="utf-8")
+def test_contract_role_bindings_is_discoverable(tmp_path, capsys) -> None:
+    contract_path = tmp_path / "role-bindings-schema.md"
+    contract_path.write_text("# role bindings\n", encoding="utf-8")
 
-    payload = role_topology_contract_payload(contract_path)
+    payload = role_bindings_contract_payload(contract_path)
 
-    assert payload["name"] == "role-topology"
+    assert payload["name"] == "role-bindings"
     assert payload["roles_command"] == "agentdeck roles"
-    assert payload["card_fields"] == list(ROLE_TOPOLOGY_CARD_FIELDS)
-    assert payload["role_fields"] == list(ROLE_TOPOLOGY_ROLE_FIELDS)
+    assert payload["card_fields"] == list(ROLE_BINDINGS_CARD_FIELDS)
+    assert payload["role_fields"] == list(ROLE_BINDINGS_ROLE_FIELDS)
     assert payload["layers"] == list(ROLE_TOPOLOGY_LAYERS)
     assert payload["binding_kinds"] == list(ROLE_BINDING_KINDS)
     assert payload["binding_statuses"] == list(ROLE_BINDING_STATUSES)
@@ -350,13 +350,13 @@ def test_contract_role_topology_is_discoverable(tmp_path, capsys) -> None:
     assert payload["requires_explicit_user"] is False
     assert payload["contract_exists"] is True
 
-    response = role_topology_contract_response(contract_path, include_example=True)
+    response = role_bindings_contract_response(contract_path, include_example=True)
     assert response["example"] is True
-    assert validate_role_topology_contract(response["example_role_topology"])["ok"]
+    assert validate_role_bindings_contract(response["example_role_bindings"])["ok"]
 
-    exit_code = cli.main(["contract", "role-topology", "--example"])
+    exit_code = cli.main(["contract", "role-bindings", "--example"])
     assert exit_code == 0
     live = json.loads(capsys.readouterr().out)
-    assert live["name"] == "role-topology"
-    assert live["contract_path"].endswith("docs/contracts/role-topology-schema.md")
-    assert validate_role_topology_contract(live["example_role_topology"])["ok"]
+    assert live["name"] == "role-bindings"
+    assert live["contract_path"].endswith("docs/contracts/role-bindings-schema.md")
+    assert validate_role_bindings_contract(live["example_role_bindings"])["ok"]
