@@ -20,9 +20,26 @@ meta(fail-safe sync)、`storage events-export --confirm`、
 `events-export-mode --mode sync|on_demand --confirm`、on_demand 下
 append 跳过同锁导出(O(n²) 写消失)、events-diff 前缀比对+export_lag、
 rollback 强制先导出、shadow-status 警示 rm state.db 在 on_demand 下
-不再无损;scratch 尚未切 on_demand(等下轮 live 观察期)。③
-round_reviewer 独立角色+多 reviewer 聚合(brainstorm 中)与④ Leader
-精修回炉任务(排队)进行中。G1 frontdesk 增强仍待拍板。
+不再无损;scratch 尚未切 on_demand(等下轮 live 观察期)。③round_reviewer 独立角色 + 多 reviewer 串行聚合**已落地**
+(spec `docs/superpowers/specs/2026-08-01-review-group-round-reviewer-design.md`,
+plan 同名,6 commits 0f28d3db→9b8a9391,全量 4860 绿):user 拍板三决策
+(串行叠加 review step / config `[review]` 段 / any-fail-blocks);
+`[review].reviewers` 在 `_generate_leader_plan` 出口确定性展开(识别谓词
+= reviewers[0] 的 role,跨角色组不误伤 planning step),`review_group.py`
+纯模块做展开与聚合,`select_plan_verdict` 成为 `plan_verdict_summary` 与
+迭代触发器的**单一来源**:带组标记时只认最新**完整**组(组未齐一律不
+判定、不触发——防"先 fail 的成员开一轮、后 fail 的再开一轮"预算双烧),
+组级幂等按最后一个成员 reply;`round_reviewer` 换掉迭代复审步的执行者,
+追加的复审组自身也是组感知;`verdict_summary.group`
+(size/complete/rule/members)与 plan status 的
+`review_group`/`review_group_member` 是只读 provenance。**顺带修掉一个
+严重既有 bug**(8273d70d):`_dump_config` 白名单式回写会静默吞掉
+`[leader.planner]`/`[leader.orchestrator]`(G2,已 live 验证的功能)、
+`[daemon]` 与新 `[review]`——`policy set-mode` 一次即丢;现改为保留式
+回写。④Leader 精修回炉任务(二期)待排期,G1 frontdesk 增强仍待拍板。
+**review group live 验证待下轮 round**:scratch 配
+`[review] reviewers = ["reviewer", "planner"]`,确认展开、串行执行、
+any-fail 聚合只触发一轮、追加复审组同样成组。
 
 **Review 迭代闭环已落地(2026-07-30 拍板 / 07-31 完成,subagent-driven
 开发,11 commits d50df5ee→,全量绿)**:spec
