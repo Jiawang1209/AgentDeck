@@ -2,6 +2,42 @@
 
 Updated: 2026-08-01
 
+**`/goal` 一句话走开已落地(2026-08-01,spec/plan
+`docs/superpowers/{specs,plans}/2026-08-01-goal-one-shot-walkaway*`,
+3 commits `84c73688` → `21e79b99` → 本条,全量 5096 绿 / 3 skipped)**:
+自主度梯子(ask → approve → autonomous → run-loop → --follow → run-loop-host)
+每一档早已落地,但没有一处以梯子的形式呈现——爬到顶格要写四条命令九个标志,
+`plan_id` 还得人肉从上一条输出抄到下两条。新增 `agentdeck goal preview
+--task <text>` → `agentdeck goal start --plan-id <id> --confirm` 两步,把
+**四次确认压成一次信息完整的确认**,安全门一条不动。第 45 个契约 `goal`
+(`docs/contracts/goal-schema.md`,`agentdeck contract goal`)。
+
+要点与接缝:
+- **`goal` 不新增任何一种动作**。`preview` 复用 `_generate_leader_plan` +
+  `store.record_plan`(与 `leader plan` 同一条路径)只写 plan;`start` 依次
+  **调用**(绝不复制)`approval create-from-plan` → `approval approve-plan
+  --confirm` → `run-loop-host start --confirm` 的既有实现,三条既有命令
+  行为逐字节未动,start 之后一切由**未改动**的宿主 wave 引擎承担。
+- **落地时发现 spec 少数了一条命令**:spec 里的"四条命令"实际是五条——
+  `leader plan` 之后必须先 `approval create-from-plan` 才有 pending 审批给
+  `approve-plan` 批。因此 `goal start` 在该 plan 尚无审批时先调用这条既有
+  命令(已有审批则一条不碰,连事件都不写),否则 approve 阶段必然失败。
+- **最重要的边界**:`goal` 绝不翻 `approval_mode`。非 autonomous 项目的
+  `goal preview` 只返回非空 `blocker`(内含显式 `policy set-mode` 命令)、
+  `confirm_command=null`、next control disabled,不创建 approval、不改配置、
+  不启动宿主;validator 硬拒 blocker 非空却仍给 confirm_command 的 payload。
+- 缺省(user 拍板):`--max-waves` 缺省 300(单一来源 `GOAL_DEFAULT_MAX_WAVES`,
+  `max_waves_is_default` 驱动渲染打出"↑ 缺省值,可用 --max-waves 改"——数
+  可以来自缺省,但绝不能隐形)、`--release-boxes` 默认开、
+  `--merge-on-complete` 默认关(缺省终点=复审通过,待你合并)。
+- 呈现层渐进披露只在这两条新命令上生效:默认人类可读渲染,`--json` 才给
+  完整 payload;**本切片不改任何既有命令的默认输出**(那是破坏性变更,
+  须单独拍板)。
+- **剩余需 human**:`goal` 尚无 live 验证记录——建议在真实项目上跑一次
+  `goal preview` → `goal start`(会真的起后台宿主),确认渲染读起来确实是
+  "一次信息完整的确认",并把结果记进 `docs/validation/`。Round 14 那道框
+  仍在 pane 上等人按。
+
 **G6 Role Topology 已落地——北极星最后一相收官(2026-08-01,spec/plan
 `docs/superpowers/{specs,plans}/2026-08-01-g6-role-topology*`,11 commits
 `fdcb5e18`→`1af718ff`,全量 5075 绿)**:`agentdeck roles` + workbench

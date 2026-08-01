@@ -4,6 +4,30 @@
 
 ## 2026-08-01
 
+### Document the goal walk-away contract and run the full regression
+
+- **Type**: docs
+- **Motivation**: `goal preview` / `goal start` 已落地,需要把两步为什么不能
+  合成一步、四道门、`goal` 绝不翻 `approval_mode` 这条最重要的边界、两点
+  缺省及其理由,写成可发现、可复查的契约文档并同步各处入口。
+- **What**: 补全 `docs/contracts/goal-schema.md`(两步的理由引仓库既有边界
+  原文 "only the exact confirmed preview becomes frozen authority";`goal`
+  不新增任何一种动作的复用表——含落地时发现的 stage 0:spec 里的"四条命令"
+  实为五条,`approve-plan` 只批既有 pending 审批,`leader plan` 之后必须先
+  `approval create-from-plan`;四道门与零写零 spawn;`delegations[]` 只是展示
+  不是授权;缺省 300 wave 必须可见、放框默认开、合并默认关的理由;start
+  之后全部由未改动的宿主 wave 引擎承担)。同步
+  `docs/contracts/contract-index-schema.md`(44 → 45,`goal` 追加在
+  `role-bindings` 之后)、`README.md`、`CLAUDE.md`(开发规则 + 常用命令)与
+  `docs/handoff/current-development-state.md`。
+- **Impact**: 纯文档与索引同步,无行为变化;`goal` 成为第 45 个 GUI 可发现
+  契约。
+- **Verification**: `conda run -n agentdeck pytest -q` → **5096 passed,
+  3 skipped**(基线 5083 + 13 项新 `tests/test_goal_cli.py`);
+  `python -m compileall src tests -q` 通过;`agentdeck goal preview` 在 fake
+  provider 下的实际渲染已人工核对(计划/预算/缺省提示/委托/合并/停下条件/
+  确认命令七段齐全)。
+
 ### Land `agentdeck goal start` as the single confirmed walk-away step
 
 - **Type**: feat

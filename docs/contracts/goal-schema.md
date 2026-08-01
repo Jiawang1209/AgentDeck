@@ -27,8 +27,15 @@ gated:
 | Stage | Reused command |
 | --- | --- |
 | `goal preview` | `agentdeck leader plan --task <text>` (same planning path) |
+| `goal start` (0) | `agentdeck approval create-from-plan --plan-id <id>` — only when the plan has no approvals yet |
 | `goal start` (1) | `agentdeck approval approve-plan --plan-id <id> --confirm` |
 | `goal start` (2) | `agentdeck run-loop-host start --plan-id <id> --confirm --max-waves <n>` |
+
+Stage 0 exists because the by-hand ladder is really five commands, not four:
+`approve-plan` only approves *existing* pending approvals, so a plan straight
+out of `leader plan` has nothing to approve until `create-from-plan` runs. When
+the plan already has approvals, `goal start` touches nothing there — not even
+an audit event.
 
 Those three implementations are **called, never copied**, and their own
 behaviour is untouched. Everything after `goal start` is carried by the
@@ -133,8 +140,8 @@ selected by `merge_on_complete`; the other four always appear.
 3. `--plan-id` names a known plan.
 4. `--max-waves >= 1` (the 300 default must clear this gate too).
 
-Order is fixed: approve first, then start the host. **If the approve stage
-fails, the host is not spawned.** If the host fails to start, the already
+Order is fixed: create (if needed), approve, then start the host. **If the
+approve stage fails, the host is not spawned.** If the host fails to start, the already
 approved approvals stay approved — identical to running the two commands by
 hand — and the failure is reported honestly on stderr with a non-zero exit.
 

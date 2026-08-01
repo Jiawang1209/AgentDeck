@@ -159,6 +159,33 @@ AgentDeck › Mission started. Use /status or open the workbench to inspect it.
   workbench `role_topology_card` (`mode = role_topology`), which reports what
   each coordination role / worker is doing **right now**; both survive and the
   two `mode` values keep them apart.
+- one-shot walk-away goal: `agentdeck goal preview --task <text>` →
+  `agentdeck goal start --plan-id <id> --confirm` compresses the four commands
+  and nine flags it took to climb to the top of the autonomy ladder into two
+  steps and **one information-complete confirmation**. `preview` reuses the
+  `leader plan` path to write a plan, then lays the whole pending authorization
+  out at once — steps, budget (`300` waves by default, always printed with
+  `↑ 缺省值,可用 --max-waves 改`, plus interval / review rounds / approval
+  budget), active delegations, the merge policy, and the closed list of
+  conditions that will stop and come back to you; `start` then **calls** the
+  existing `approval approve-plan --confirm` and `run-loop-host start
+  --confirm` implementations (never copies them), so `goal` adds no new kind of
+  action and everything after it is the unchanged host wave engine. The
+  principle is **compress the confirmations, not remove them**: `--confirm`,
+  the mandatory bounded `--max-waves`, the autonomous allowlist, the approval
+  and review-round budgets, the step-ordering guard, file-channel replies and
+  `human_gate` stops are all inherited unchanged, and `goal start` has four
+  gates of its own (`--confirm`, autonomous mode, a known `--plan-id`,
+  `--max-waves >= 1`) whose refusal is zero-write and zero-spawn. The single
+  most important boundary: **`goal` never flips `approval_mode`** — a standing
+  policy decision is not a per-goal one, so a non-autonomous project gets a
+  blocker carrying the explicit `policy set-mode` command a human must run and
+  a `null` confirm command. Defaults: `--release-boxes` on (an explicitly
+  granted delegation would otherwise be pointless; unmatched boxes still stop
+  at `human_gate`), `--merge-on-complete` off (merging into main deserves its
+  own separate nod — the normal terminal state is "review passed, waiting for
+  you to merge"). Both commands render a human-readable summary by default and
+  the full payload only with `--json`; discovery: `agentdeck contract goal`.
 
 Useful observation commands:
 
