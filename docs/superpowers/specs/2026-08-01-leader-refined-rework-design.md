@@ -45,6 +45,25 @@ review group(`2026-08-01-review-group-round-reviewer-design.md`)
   provenance(`origin`/`round`/`triggered_by_reply`/`iteration_kind`)
   与模板路径**完全一致**。
 
+### 接线约束(2026-08-01 写计划时补:绝不在锁内调 provider)
+
+`append_review_iteration` 是 locked writer(整段 load→derive→mutate→save
+在 `_protocol_mutation_lock` 内)。provider 调用是秒级到分钟级的 I/O,
+**绝不能**在持锁期间发生——否则整个项目的 state 写入被一次 LLM 调用阻塞。
+
+因此精修分两步,且对状态漂移 fail-closed:
+
+1. CLI **锁外**只读推导一次(`store.load()` + 纯
+   `derive_review_iteration`),拿到回炉上下文与本次触发的
+   `triggered_by_reply`;不满足触发条件则照旧拒绝,**不调 provider**。
+2. 调 provider 精修(锁外),校验产出。
+3. 调 writer 时传 `rework_task_override=<text>` 与
+   `override_for_reply=<reply_id>`。writer 在锁内**重新推导**(唯一权威),
+   仅当自己算出的 `triggered_by_reply` 与 `override_for_reply` **相等**
+   时才采用 override;不等(期间状态漂移,例如新 verdict 到达)则用模板
+   并记 `refine_skipped_reason="state_changed"`。
+   writer 永远不自己调用 provider。
+
 ### provenance 与审计
 
 - 追加的 rework step 增可选 `task_source` ∈ {`template`(缺省,
