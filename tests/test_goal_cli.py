@@ -175,6 +175,163 @@ def test_goal_preview_render_shows_active_delegations_as_display_only(
     assert "node tests/" in capsys.readouterr().out
 
 
+# 2026-08-01 live 发现:真实项目有 22 条活跃委托,分属三个 agent,各自
+# 独立 grant 了重叠前缀。旧渲染把 agent_id 拍平,同一行 22 项读起来像
+# 一堆重复噪声,人类无法看出"哪个 agent 被授权了什么"——而这正是委托
+# 授予的那个事实。下面这组用例把真实形状钉进测试。
+LIVE_22_DELEGATIONS: tuple[tuple[str, str], ...] = (
+    ("coder", "node tests/"),
+    ("coder", "git add"),
+    ("coder", "git commit"),
+    ("coder", "git diff"),
+    ("coder", "git status"),
+    ("planner", "node tests/"),
+    ("planner", "git add"),
+    ("planner", "git commit"),
+    ("planner", "git diff"),
+    ("planner", "git status"),
+    ("reviewer", "node tests/"),
+    ("reviewer", "git add"),
+    ("reviewer", "git commit"),
+    ("reviewer", "git diff"),
+    ("reviewer", "git status"),
+    ("coder", "node --check tests/"),
+    ("coder", "rg -n"),
+    ("coder", "git log"),
+)
+
+LIVE_22_MCP_DELEGATIONS: tuple[tuple[str, str, str], ...] = (
+    ("coder", "chrome-devtools", "hover"),
+    ("coder", "chrome-devtools", "press_key"),
+    ("planner", "chrome-devtools", "hover"),
+    ("planner", "chrome-devtools", "press_key"),
+)
+
+
+def grant_live_22_delegations(capsys) -> None:
+    """复刻 live 项目的 22 条活跃委托(三个 agent,前缀互相重叠)。"""
+    for agent, prefix in LIVE_22_DELEGATIONS:
+        assert cli.main([
+            "delegation", "grant", "--agent", agent, "--prefix", prefix, "--confirm",
+        ]) == 0
+    for agent, server, tool in LIVE_22_MCP_DELEGATIONS:
+        assert cli.main([
+            "delegation", "grant", "--agent", agent,
+            "--mcp-server", server, "--mcp-tool", tool, "--confirm",
+        ]) == 0
+    capsys.readouterr()
+
+
+def delegation_block(rendered: str) -> list[str]:
+    """渲染里从 `委托` 标签起、到下一个顶层标签前的那一段。"""
+    lines = rendered.splitlines()
+    start = next(index for index, line in enumerate(lines) if line.startswith("  委托"))
+    block = [lines[start]]
+    for line in lines[start + 1 :]:
+        if line.startswith("  ") and not line.startswith("   "):
+            break
+        block.append(line)
+    return block
+
+
+def test_live_22_delegation_fixture_matches_delegation_list_active_count(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    """先钉住 fixture 本身:22 条,且都活跃(`items` 键,不是 `delegations`)。"""
+    prepare_project(tmp_path, monkeypatch)
+    enable_autonomous(capsys)
+    grant_live_22_delegations(capsys)
+
+    assert cli.main(["delegation", "list"]) == 0
+    listed = json.loads(capsys.readouterr().out)
+    assert listed["count"] == 22
+    active = [item for item in listed["items"] if item["active"]]
+    assert len(active) == 22
+
+
+def test_goal_preview_render_groups_delegations_by_agent(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    """每个 agent 一行,agent id 可见——人类要看得出谁被授权了什么。"""
+    prepare_project(tmp_path, monkeypatch)
+    enable_autonomous(capsys)
+    grant_live_22_delegations(capsys)
+
+    assert cli.main(["goal", "preview", "--task", "让测试全绿"]) == 0
+    block = delegation_block(capsys.readouterr().out)
+
+    # 三个 agent 各占一行,且每行只出现自己的 agent id
+    agent_lines = [line for line in block if any(a in line for a in ("coder", "planner", "reviewer"))]
+    assert len(agent_lines) == 3
+    assert sum("coder" in line for line in agent_lines) == 1
+    assert sum("planner" in line for line in agent_lines) == 1
+    assert sum("reviewer" in line for line in agent_lines) == 1
+    # reviewer 那一行不得混进只属于 coder 的前缀
+    reviewer_line = next(line for line in agent_lines if "reviewer" in line)
+    assert "rg -n" not in reviewer_line
+    assert "git log" not in reviewer_line
+
+
+def test_goal_preview_render_caps_each_agent_line_and_counts_the_rest(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    """长清单必须收口:每 agent 至多 6 项,余量以计数呈现,绝不再摊 22 项。"""
+    prepare_project(tmp_path, monkeypatch)
+    enable_autonomous(capsys)
+    grant_live_22_delegations(capsys)
+
+    assert cli.main(["goal", "preview", "--task", "让测试全绿"]) == 0
+    block = delegation_block(capsys.readouterr().out)
+
+    coder_line = next(line for line in block if "coder" in line)
+    # coder 有 10 条:显示 6 条 + 余 4 条的计数
+    assert coder_line.count(",") <= 5
+    assert "4" in coder_line
+    # reviewer 只有 5 条,不该出现余量计数
+    reviewer_line = next(line for line in block if "reviewer" in line)
+    assert "还有" not in reviewer_line
+    # 任何一行都不该长到不可扫读
+    assert all(len(line) < 120 for line in block)
+
+
+def test_goal_preview_render_keeps_the_honest_total_and_release_semantics(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    """总数必须仍与 `delegation list` 的活跃条数一致,放行语义保持不变。"""
+    prepare_project(tmp_path, monkeypatch)
+    enable_autonomous(capsys)
+    grant_live_22_delegations(capsys)
+
+    assert cli.main(["goal", "preview", "--task", "让测试全绿"]) == 0
+    block = delegation_block(capsys.readouterr().out)
+    text = "\n".join(block)
+
+    assert "22 条活跃委托" in text
+    assert "遇到即自动放行" in text
+
+    assert cli.main(["goal", "preview", "--task", "让测试全绿", "--no-release-boxes"]) == 0
+    text = "\n".join(delegation_block(capsys.readouterr().out))
+    assert "22 条活跃委托" in text
+    assert "--no-release-boxes" in text
+    assert "遇到即自动放行" not in text
+
+
+def test_goal_preview_render_zero_delegations_is_a_distinct_walkaway_warning(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    """零委托是实质不同的走开体验:必须明说没有框会被自动放行。"""
+    prepare_project(tmp_path, monkeypatch)
+    enable_autonomous(capsys)
+
+    assert cli.main(["goal", "preview", "--task", "让测试全绿"]) == 0
+    text = "\n".join(delegation_block(capsys.readouterr().out))
+
+    assert "无活跃委托" in text
+    assert "不会自动放行" in text
+    assert "停下来" in text
+    assert "条活跃委托,遇到即自动放行" not in text
+
+
 class RecordingSpawn:
     def __init__(self, pid: int = 999_001) -> None:
         self.pid = pid

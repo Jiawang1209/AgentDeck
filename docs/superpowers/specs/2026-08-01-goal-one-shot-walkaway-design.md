@@ -58,7 +58,9 @@ agentdeck run-loop-host start --plan-id pln_xxx --confirm --max-waves 300 \
     3. planner   审查 …
   预算    300 wave / 最多 2 轮返工 / 审批预算 20
           ↑ wave 上限为缺省值,可用 --max-waves 改
-  委托    node tests/*  (2 条活跃委托,均为只读验证前缀,遇到即自动放行)
+  委托    coder     node tests/, git status
+          reviewer  node tests/
+          共 3 条活跃委托,遇到即自动放行
   合并    不自动合并——复审通过后停下来等你点头
           (想要自动合并显式加 --merge-on-complete)
   停下来找你的条件:

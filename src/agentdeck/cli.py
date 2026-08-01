@@ -21699,6 +21699,48 @@ def _goal_truncate(text: object, limit: int = 46) -> str:
     return value if len(value) <= limit else value[: limit - 1] + "…"
 
 
+# 一个 agent 最多摊开几条委托;其余以计数收口。2026-08-01 live 发现:
+# 真实项目 22 条委托拍平成一行后完全不可扫读。
+GOAL_DELEGATIONS_PER_AGENT = 6
+
+
+def _goal_delegation_label(item: dict[str, object]) -> str:
+    if item.get("kind") == "mcp_tool":
+        return f"MCP {item.get('mcp_server')}/{item.get('mcp_tool')}"
+    return str(item.get("prefix"))
+
+
+def _goal_delegation_lines(
+    delegations: list[dict[str, object]], release_boxes: bool
+) -> list[str]:
+    """按 agent 分组渲染活跃委托——只是展示,不是授权。
+
+    2026-08-01 live 发现:三个 agent 各自 grant 了互相重叠的前缀,旧渲染
+    把 `agent_id` 拍平,同一行 22 项读起来像一堆重复噪声,人类看不出
+    **哪个 agent** 被授权了 **什么**——而这正是一条委托授予的那个事实。
+    每个 agent 独占一行、超过 N 条以计数收口,总数保持与
+    `agentdeck delegation list` 的活跃条数一致。
+    """
+    if not delegations:
+        # 零委托是实质不同的走开体验:任何授权框都会把整段停住。
+        return ["  委托    无活跃委托——不会自动放行任何授权框,每个授权框都会停下来等你按"]
+    grouped: dict[str, list[str]] = {}
+    for item in delegations:
+        grouped.setdefault(str(item.get("agent_id")), []).append(_goal_delegation_label(item))
+    width = max(len(agent) for agent in grouped)
+    lines: list[str] = []
+    for index, (agent, labels) in enumerate(grouped.items()):
+        # "委托" 是双宽字形,占 4 个显示列,故续行缩进 10 个空格对齐。
+        indent = "  委托    " if index == 0 else " " * 10
+        shown = ", ".join(labels[:GOAL_DELEGATIONS_PER_AGENT])
+        remainder = len(labels) - GOAL_DELEGATIONS_PER_AGENT
+        suffix = f"  (还有 {remainder} 条)" if remainder > 0 else ""
+        lines.append(f"{indent}{agent.ljust(width)}  {shown}{suffix}")
+    released = "遇到即自动放行" if release_boxes else "本次不自动放行(--no-release-boxes)"
+    lines.append(f"{' ' * 10}共 {len(delegations)} 条活跃委托,{released}")
+    return lines
+
+
 def _render_goal_preview(payload: dict[str, object]) -> str:
     """渐进式披露:默认给一句话 + 一个下一步,而不是 JSON 倾泻。
 
@@ -21720,18 +21762,9 @@ def _render_goal_preview(payload: dict[str, object]) -> str:
     )
     if budget["max_waves_is_default"]:
         lines.append("          ↑ wave 上限为缺省值,可用 --max-waves 改")
-    delegations = payload["delegations"]
-    if delegations:
-        shown = ", ".join(
-            str(item["prefix"])
-            if item.get("kind") != "mcp_tool"
-            else f"MCP {item.get('mcp_server')}/{item.get('mcp_tool')}"
-            for item in delegations
-        )
-        released = "遇到即自动放行" if payload["release_boxes"] else "本次不自动放行(--no-release-boxes)"
-        lines.append(f"  委托    {shown}  ({len(delegations)} 条活跃委托,{released})")
-    else:
-        lines.append("  委托    无活跃委托——遇到授权框一律停下来找你")
+    lines.extend(
+        _goal_delegation_lines(payload["delegations"], bool(payload["release_boxes"]))
+    )
     if payload["merge_on_complete"]:
         lines.append("  合并    复审通过后自动合并该 plan 的任务分支")
     else:

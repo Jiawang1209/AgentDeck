@@ -4,6 +4,39 @@
 
 ## 2026-08-01
 
+### Group goal preview delegations by agent so the authorization stays scannable
+
+- **Type**: fix
+- **Motivation**: **Live 验证**中对一个真实项目跑 `agentdeck goal preview`
+  暴露的呈现缺陷:该项目有 **22 条活跃委托,分属 coder / planner / reviewer
+  三个 agent**,各自独立 grant 了互相重叠的前缀。旧渲染把 `agent_id` 拍平成
+  一行 22 项,既不可扫读,又**看起来像数据里全是重复**(它不是)。而
+  `goal preview` 的整个意义就是让人在确认前**一眼读完整段授权**——拍平
+  之后人类看不出**哪个 agent** 被授权了**什么**,而这恰恰是一条委托授予的
+  那个事实。同一轮 live 还暴露过读错键(`delegation list` 的委托在 `items`
+  而非 `delegations`)导致把 22 条误诊成"没有委托",故新测试对着真实形状断言。
+- **What**: 只改**渲染器**,`--json` payload 逐字节不变(它本就带 `agent_id`,
+  无需扩字段)。新增纯函数 `_goal_delegation_lines()` / `_goal_delegation_label()`
+  与常量 `GOAL_DELEGATIONS_PER_AGENT = 6`(`src/agentdeck/cli.py`):按 agent
+  分组、每 agent 独占一行且 agent id 可见、每行至多 6 项、余量以 `(还有 N 条)`
+  收口,末行保留既有总数与放行语义(`共 N 条活跃委托,遇到即自动放行` /
+  `本次不自动放行(--no-release-boxes)`);零委托改为语义明确的独立一行
+  (`无活跃委托——不会自动放行任何授权框,每个授权框都会停下来等你按`),
+  因为"没有任何框会被自动放行"是实质不同的走开体验。新增五条测试
+  (`tests/test_goal_cli.py`):live 22 条 fixture 与 `delegation list` 的
+  `items[].active` 活跃计数对账、按 agent 分组且不串行、每行封顶与余量计数、
+  总数与放行语义(含 `--no-release-boxes`)、零委托告警。同步
+  `docs/superpowers/specs/2026-08-01-goal-one-shot-walkaway-design.md` 中过时的
+  渲染样例。
+- **Impact**: 纯呈现改善,零行为变化。`goal preview` 仍然只读该屏之外的一切、
+  仍然写 plan 不执行,`--json` 契约与 `validate_goal_preview_contract()` 未
+  触碰,其它命令输出未变。总数仍与 `agentdeck delegation list` 的活跃条数
+  一致——委托展示仍然只是展示,不是授权。
+- **Verification**: TDD 先红(三条新测试分别因"根本没有 per-agent 行"与零委托
+  缺少告警而失败)后绿;`pytest tests/test_goal_cli.py -q` 20 passed;全量
+  `pytest -q` 5103 passed / 3 skipped(较基线 5098 增 5 条新测试,零回归)。
+  另以真实 22 条三 agent 形状与零委托两种情形实跑渲染取证。
+
 ### Refuse a goal start before it writes when a host is already running
 
 - **Type**: fix
