@@ -771,8 +771,11 @@ class CodexCliProvider(CliLeaderProvider):
                     command,
                     input=prompt,
                     text=True,
+                    # stdout 是交互日志(plan 从 --output-last-message 文件读),
+                    # 继续丢弃;stderr 接管道仅用于失败时的有界分类(读后即弃,
+                    # 只有闭合枚举码会外泄)。
                     stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
+                    stderr=subprocess.PIPE,
                     cwd=request.config.root,
                     timeout=self._remaining_subprocess_timeout(deadline),
                     check=False,
@@ -786,11 +789,18 @@ class CodexCliProvider(CliLeaderProvider):
             if completed is None:
                 raise CliLeaderProviderError("nonzero")
             returncode = completed.returncode
+            stderr_text = completed.stderr if isinstance(completed.stderr, str) else ""
             del completed
             if returncode != 0:
-                # 该路径 stdout/stderr 走 DEVNULL(plan 从私有文件读取),
-                # 没有可分类的输出——只记进程退出码,绝不臆测 reason。
-                raise CliLeaderProviderError("nonzero", exit_code=returncode)
+                # 退出码始终记录;stderr 有内容时做有界分类(认不出即
+                # None,绝不臆测)。原文只用于匹配,不进错误消息与审计。
+                raise CliLeaderProviderError(
+                    "nonzero",
+                    exit_code=returncode,
+                    failure_reason=(
+                        classify_cli_failure("", stderr_text) if stderr_text else None
+                    ),
+                )
             plan = self._read_native_plan(result_path, request)
         except CliLeaderProviderError as error:
             pending_error = error
@@ -1162,10 +1172,12 @@ class ClaudeCliProvider(CliLeaderProvider):
                     and completed is not None
                     and completed.returncode != 0
                 ):
-                    # 该路径 stdout/stderr 走 DEVNULL/私有文件,没有可分类的
-                    # 输出——只记进程退出码,绝不臆测 reason。
+                    # stdout 已写进私有文件:做尽力而为的有界分类(失败即
+                    # None,绝不臆测),退出码始终记录。
                     process_error = CliLeaderProviderError(
-                        "nonzero", exit_code=completed.returncode
+                        "nonzero",
+                        exit_code=completed.returncode,
+                        failure_reason=self._classify_private_failure(output),
                     )
                 if process_error is None:
                     try:
@@ -1253,6 +1265,25 @@ class ClaudeCliProvider(CliLeaderProvider):
             raise CliLeaderProviderError(
                 "json_parse", "invalid_output_envelope"
             ) from None
+
+    @staticmethod
+    def _classify_private_failure(sink: _PrivateOutputSink) -> str | None:
+        """失败路径的**尽力而为**诊断:只读私有输出的有界前缀做分类。
+
+        与成功路径的 `_capture_private_output` 严格校验分开——诊断绝不
+        影响控制流:任何异常一律返回 None。读到的文本只用于匹配,读后
+        即弃,绝不存储、绝不进入错误消息或审计负载(只有闭合枚举码会)。
+        """
+        try:
+            sink.flush()
+            os.lseek(sink.fileno(), 0, os.SEEK_SET)
+            head = os.read(sink.fileno(), 4096)
+        except Exception:  # noqa: BLE001 - diagnosis must never break control flow
+            return None
+        if not head:
+            return None
+        # 语义约定:None = 没有可检查的输出;"unknown" = 检查过但认不出。
+        return classify_cli_failure(head.decode("utf-8", "replace"), "")
 
     @staticmethod
     def _capture_private_output(sink: _PrivateOutputSink) -> bytes:

@@ -155,3 +155,115 @@ def test_planning_path_reports_exit_code_without_guessing_reason(
     assert error.stage == "nonzero"
     assert error.exit_code == 1
     assert error.failure_reason is None
+
+
+def test_claude_planning_path_classifies_from_private_output(monkeypatch, tmp_path) -> None:
+    """claude 路径把 stdout 写进私有文件,失败时那份输出仍在磁盘上——
+    必须做**尽力而为**的有界分类(round 14 真实场景:额度耗尽)。"""
+    import os
+    import subprocess
+
+    from agentdeck.config import load_config, write_default_config
+    from agentdeck.providers.base import LeaderPlanRequest
+    from agentdeck.providers.cli_subprocess import (
+        ClaudeCliProvider,
+        CliLeaderProviderError,
+    )
+
+    root = tmp_path / "repo"
+    root.mkdir()
+    write_default_config(root)
+    config = load_config(root)
+
+    def fake_run(*_args, **kwargs):
+        sink = kwargs.get("stdout")
+        if sink is not None and hasattr(sink, "fileno"):
+            os.write(
+                sink.fileno(),
+                b"You're out of usage credits. Run /usage-credits to keep going.",
+            )
+        return subprocess.CompletedProcess(args=["claude"], returncode=1, stdout=None, stderr=None)
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    with pytest.raises(CliLeaderProviderError) as excinfo:
+        ClaudeCliProvider().plan_result(
+            LeaderPlanRequest(config=config, task="demo", model="m")
+        )
+
+    error = excinfo.value
+    assert error.stage == "nonzero"
+    assert error.exit_code == 1
+    assert error.failure_reason == "credits_exhausted"
+    assert "usage credits" not in str(error)
+
+
+def test_codex_planning_path_classifies_from_stderr(monkeypatch, tmp_path) -> None:
+    """codex 路径的 stdout 是交互日志(丢弃),但 stderr 现在接管道:
+    致命错误写在 stderr 时必须能分类。"""
+    import subprocess
+
+    from agentdeck.config import load_config, write_default_config
+    from agentdeck.providers.base import LeaderPlanRequest
+    from agentdeck.providers.cli_subprocess import (
+        CliLeaderProviderError,
+        CodexCliProvider,
+    )
+
+    root = tmp_path / "repo"
+    root.mkdir()
+    write_default_config(root)
+    config = load_config(root)
+
+    def fake_run(*_args, **_kwargs):
+        return subprocess.CompletedProcess(
+            args=["codex"], returncode=1, stdout=None,
+            stderr="Error: 401 Unauthorized — please run /login",
+        )
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    with pytest.raises(CliLeaderProviderError) as excinfo:
+        CodexCliProvider().plan_result(
+            LeaderPlanRequest(config=config, task="demo", model="m")
+        )
+
+    error = excinfo.value
+    assert error.exit_code == 1
+    assert error.failure_reason == "auth_required"
+    assert "Unauthorized" not in str(error)
+
+
+def test_reason_distinguishes_nothing_to_inspect_from_unclassifiable(
+    monkeypatch, tmp_path
+) -> None:
+    """语义约定:`None` = 没有可检查的输出;`"unknown"` = 检查过但认不出。"""
+    import subprocess
+
+    from agentdeck.config import load_config, write_default_config
+    from agentdeck.providers.base import LeaderPlanRequest
+    from agentdeck.providers.cli_subprocess import (
+        CliLeaderProviderError,
+        CodexCliProvider,
+    )
+
+    root = tmp_path / "repo"
+    root.mkdir()
+    write_default_config(root)
+    config = load_config(root)
+    request = LeaderPlanRequest(config=config, task="demo", model="m")
+
+    def run_with(stderr_text):
+        def fake_run(*_args, **_kwargs):
+            return subprocess.CompletedProcess(
+                args=["codex"], returncode=3, stdout=None, stderr=stderr_text
+            )
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        with pytest.raises(CliLeaderProviderError) as excinfo:
+            CodexCliProvider().plan_result(request)
+        return excinfo.value
+
+    assert run_with("").failure_reason is None            # 无输出可查
+    assert run_with("segfault at 0x0").failure_reason == "unknown"  # 查过认不出
+    assert run_with("").exit_code == 3

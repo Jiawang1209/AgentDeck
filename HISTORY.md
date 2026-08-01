@@ -4,6 +4,34 @@
 
 ## 2026-08-01
 
+### Close the CLI failure-reason gap on both planning paths
+
+- **Motivation**: 上一条只让 `plan_brief`(capture_output 路径)能分类;
+  两个具体 provider 的 **planning** 路径——也就是 round 14 真实失败的那
+  条——仍然只有退出码。user 追问"这个问题最后解决了吗",答案当时是"没
+  完全解决",遂补齐。
+- **Type**: feat
+- **What**: ①**claude 路径**:它的 stdout 本就写进私有工作区文件,失败时
+  那份输出仍在磁盘上,只是无人读取。新增
+  `ClaudeCliProvider._classify_private_failure()`——与成功路径的严格
+  `_capture_private_output` **分开**的**尽力而为**诊断:只读 4096 字节
+  前缀做分类,任何异常一律 None,**绝不影响控制流**,原文读后即弃。
+  ②**codex 路径**:stdout 是交互日志(plan 从 `--output-last-message`
+  私有文件读)继续丢弃,但 `stderr` 由 DEVNULL 改接管道,仅用于失败时的
+  有界分类;基类 `plan_result` 本就 `capture_output=True`,不是新的风险
+  类别。③统一语义:`failure_reason=None` 表示**没有可检查的输出**,
+  `"unknown"` 表示**检查过但认不出**(此前两条路径不一致)。既有测试
+  `test_leader_plan_passes_model_to_codex_cli_backend_without_dispatching`
+  原本钉的正是"stderr 丢弃",按新行为更新并注明理由。
+- **Impact**: round 14 那类失败(claude 额度耗尽写在 stdout、codex 致命
+  错误写在 stderr)现在都能给出闭合枚举原因;安全边界不变——只存枚举码
+  与退出码,provider 原文永不进错误消息、审计或状态。
+- **Verification**: TDD——claude 私有输出分类、codex stderr 分类、
+  None/unknown 语义区分共 21 passed;cli_failure+leader_cli+agent_cli+
+  contracts 1167 passed;`compileall` 干净;全量见提交时数字。
+
+
+
 ### Classify CLI Leader failures into a closed reason enum (round 14 finding)
 
 - **Type**: feat
