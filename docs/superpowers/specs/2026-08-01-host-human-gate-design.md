@@ -94,7 +94,11 @@ def _plan_awaiting(state, plan_id) -> list[tuple[str, str]]:
 - 加入闭合枚举 `RUN_LOOP_HOST_STOPPED_REASONS`(`src/agentdeck/run_loop_host.py`
   是单一来源),枚举因此变为六值。
 - `host.json` 记录携带 `human_gate` 对象:`agent_id` / `box_kind` /
-  `command` / `mcp_server` / `mcp_tool` / `waiting_hint` / `detected_at_wave`。
+  `command` / `mcp_server` / `mcp_tool` / `waiting_hint`。
+  **修正(实现期,2026-08-01)**:本节初稿还列了 `detected_at_wave`,落地时
+  去掉了。理由:该对象是**框的身份 + 屏上提示**,而 wave 号既不是框的属性、
+  `human_gate_candidate` 这个纯函数也拿不到它。wave 号并未丢失——`host.log`
+  的 `event=human_gate` 行带 `wave`,host.json 记录带 `wave_count`。
 - `host.log` 追加一条 `{"event": "human_gate", …}`。
 - 审计事件 `run_loop_host_stopped` 的 `stopped_reason=human_gate`,
   携带同一份证据。
