@@ -3035,6 +3035,7 @@ def _workbench_snapshot_payload(
     review_gate_card = _workbench_review_gate_card(project_view)
     release_preview_card = _workbench_release_preview_card(review_gate_card, project_view)
     role_topology_card = _workbench_role_topology_card(project_view, review_gate_card)
+    roles_card = _role_topology_card(config, project_view)
     ledger_card = _workbench_ledger_card(project_view)
     lineage_card = _workbench_lineage_card(project_view, inbox_card, leader_inbox_card)
     queue_card = _workbench_queue_card(project_view, continue_card, active_queue_source)
@@ -3076,6 +3077,7 @@ def _workbench_snapshot_payload(
         "review_gate_card": review_gate_card,
         "release_preview_card": release_preview_card,
         "role_topology_card": role_topology_card,
+        "roles_card": roles_card,
         "ledger_card": ledger_card,
         "lineage_card": lineage_card,
         "queue_card": queue_card,

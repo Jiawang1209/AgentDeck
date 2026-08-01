@@ -7887,6 +7887,7 @@ def test_contract_workbench_discovers_schema_for_gui_clients(capsys) -> None:
         "review_gate_card",
         "release_preview_card",
         "role_topology_card",
+        "roles_card",
         "ledger_card",
         "lineage_card",
         "queue_card",

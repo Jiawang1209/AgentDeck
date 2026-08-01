@@ -132,6 +132,24 @@ AgentDeck › Mission started. Use /status or open the workbench to inspect it.
   configured every path is byte-identical to before, except that
   `verdict_summary` always carries the additive `group` projection
   (`size: 1` for a lone reviewer).
+- G6 role topology: `agentdeck roles` (and the identical workbench `roles_card`)
+  is a read-only map of the six north-star role layers — frontdesk, planner,
+  orchestrator, coder, code_reviewer, round_reviewer — showing what each layer
+  is bound to, with which provider/model, its lifecycle, its live runtime status
+  and what is missing. The six roles are deliberately **not** flattened into one
+  agent table: a closed `binding_kind` (`command` / `logical_leader` /
+  `worker_agent`) says what kind of thing each layer is and thereby why some
+  fields are necessarily null (a logical Leader sub-role never has a pane; the
+  intake command never has a provider). Bindings are derived from existing
+  authority only — `resolved_planner_backend` / `resolved_orchestrator_backend`
+  (with the `[leader]` fallback), `leader_backend_identity`, `[review]`, and the
+  ProjectView `agents[]` runtime projection — so no tmux is read and no second
+  state source appears. `binding_status` is the closed triple
+  `bound` / `unbound` / `ambiguous`: when two agents could both be the coder the
+  card reports `ambiguous`, lists **every** candidate and never silently picks
+  one. The topology is an observation surface, not an authorization — it changes
+  no gate and authorizes no dispatch; discovery:
+  `agentdeck contract role-topology`.
 
 Useful observation commands:
 
@@ -139,6 +157,7 @@ Useful observation commands:
 agentdeck status
 agentdeck workbench
 agentdeck controls
+agentdeck roles
 agentdeck frontdesk --message "开始运行 冒烟测试"
 agentdeck events --limit 20
 agentdeck contract frontdesk --example

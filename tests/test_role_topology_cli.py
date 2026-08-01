@@ -299,6 +299,39 @@ def test_role_topology_example_matches_the_contract() -> None:
     assert list(payload["roles"][0]) == list(ROLE_TOPOLOGY_ROLE_FIELDS)
 
 
+def test_workbench_embeds_the_same_role_topology_card(tmp_path, monkeypatch, capsys) -> None:
+    """同一个 builder 的回归钉:两面必须逐字段相同。"""
+    prepare_project(tmp_path, monkeypatch)
+
+    roles_payload = run_roles(capsys)
+    assert cli.main(["workbench"]) == 0
+    workbench = json.loads(capsys.readouterr().out)
+
+    assert workbench["roles_card"] == roles_payload
+    assert validate_role_topology_contract(workbench["roles_card"])["ok"]
+
+
+def test_workbench_contract_discovers_the_role_topology_card(capsys) -> None:
+    assert cli.main(["contract", "workbench"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+
+    assert "roles_card" in payload["snapshot_fields"]
+    assert payload["roles_card_fields"] == list(ROLE_TOPOLOGY_CARD_FIELDS)
+    assert payload["roles_card_role_fields"] == list(ROLE_TOPOLOGY_ROLE_FIELDS)
+
+
+def test_workbench_validator_rejects_a_broken_role_topology_card() -> None:
+    from agentdeck.contracts import validate_workbench_contract, workbench_example
+
+    payload = workbench_example()
+    assert validate_workbench_contract(payload)["ok"]
+    payload["roles_card"]["roles"][1]["pane_id"] = "%9"
+
+    errors = validate_workbench_contract(payload)["errors"]
+
+    assert any(error.startswith("roles_card: ") for error in errors)
+
+
 def test_contract_role_topology_is_discoverable(tmp_path, capsys) -> None:
     contract_path = tmp_path / "role-topology-schema.md"
     contract_path.write_text("# role topology\n", encoding="utf-8")

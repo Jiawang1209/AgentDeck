@@ -3078,6 +3078,7 @@ WORKBENCH_SNAPSHOT_FIELDS = (
     "review_gate_card",
     "release_preview_card",
     "role_topology_card",
+    "roles_card",
     "ledger_card",
     "lineage_card",
     "queue_card",
@@ -8326,6 +8327,9 @@ def workbench_contract_payload(contract_path: Path) -> dict[str, object]:
         "release_preview_card_fields": list(WORKBENCH_RELEASE_PREVIEW_CARD_FIELDS),
         "role_topology_card_fields": list(WORKBENCH_ROLE_TOPOLOGY_CARD_FIELDS),
         "role_topology_item_fields": list(WORKBENCH_ROLE_TOPOLOGY_ITEM_FIELDS),
+        "roles_card_fields": list(ROLE_TOPOLOGY_CARD_FIELDS),
+        "roles_card_role_fields": list(ROLE_TOPOLOGY_ROLE_FIELDS),
+        "roles_card_contract": "agentdeck contract role-topology",
         "ledger_card_fields": list(WORKBENCH_LEDGER_CARD_FIELDS),
         "lineage_card_fields": list(WORKBENCH_LINEAGE_CARD_FIELDS),
         "lineage_path_fields": list(WORKBENCH_LINEAGE_PATH_FIELDS),
@@ -14031,6 +14035,7 @@ def validate_workbench_contract(payload: dict[str, object]) -> dict[str, object]
         ("mission_scheduler_card", validate_mission_scheduler_contract),
         ("client_session_card", validate_client_session_contract),
         ("mission_recovery_card", validate_mission_recovery_contract),
+        ("roles_card", validate_role_topology_contract),
     ):
         result = validator(payload.get(field))
         for error in result["errors"]:
@@ -17676,6 +17681,7 @@ def workbench_example() -> dict[str, object]:
                 }
             ],
         },
+        "roles_card": role_topology_example(),
         "ledger_card": {
             "messages": project_view["messages"],
             "jobs": project_view["jobs"],

@@ -2,6 +2,32 @@
 
 Updated: 2026-08-01
 
+**G6 Role Topology 已落地(2026-08-01,北极星最后一相,spec
+`docs/superpowers/specs/2026-08-01-g6-role-topology-design.md`,plan
+`docs/superpowers/plans/2026-08-01-g6-role-topology.md`,3 commits
+`fdcb5e18` → `72e5d2a3` → 本条)**:交付一个只读面回答"我的项目把北极星
+六层各自补全成了什么"——`agentdeck roles` 与 workbench `roles_card` 是
+**同一个 builder、同一份 validator、逐字段相同**的两面,加上第 44 个契约
+`agentdeck contract role-topology` / `docs/contracts/role-topology-schema.md`。
+设计支点是那句关键事实:六个角色**不是同一种东西**,闭合 `binding_kind`
+(`command` / `logical_leader` / `worker_agent`)同时解释了哪些字段**必然
+为 null**(logical Leader 永远没有 pane,intake 命令连 provider 都没有);
+拍平成一张 agent 表就会撒谎。绑定全部从现有权威来源推导(
+`resolved_planner_backend` / `resolved_orchestrator_backend` 的 `[leader]`
+回退、`leader_backend_identity` 的 normalized provenance、`[review]`、
+ProjectView `agents[]` runtime 投影),**不新增配置面、不新增状态源、不读
+tmux**;推导歧义一律 `ambiguous` 且列全候选,**绝不静默择一**。纯推导逻辑
+在零 IO 的 `src/agentdeck/role_topology.py`,可以脱离项目把矩阵测透。
+**一个接缝值得记住**:workbench 里早已有一张同名 `role_topology_card`
+(旧线的"每个协调角色/worker 此刻在做什么"),它的形状、validator 和一批
+测试都还在,所以新卡片在 workbench 里的键是 `roles_card`;三张角色卡的
+分工(`role_card` = 我配了哪些 agent,`role_topology_card` = 谁此刻在做
+什么,`roles_card` = 我补全了哪几层)写在契约文档里。
+**剩余需 human**:新面尚无 live 验证记录——建议在一个真实项目上跑
+`agentdeck roles` 与 `agentdeck workbench`,确认六层绑定与该项目的
+`[[agents]]` / `[review]` 实情一致(尤其 `ambiguous` 与 `unbound` 的措辞
+是否足以让人知道该改哪个配置),并把结果记进 `docs/validation/`。
+
 **宿主人类门诚实停止已落地并 live 验证(2026-08-01,spec
 `docs/superpowers/specs/2026-08-01-host-human-gate-design.md`,plan 同名,
 11 commits `8774b599`→,全量 5029 绿)**:动机是 Round 14 宿主日志实测——

@@ -4,6 +4,38 @@
 
 ## 2026-08-01
 
+### Surface the role topology card in the workbench snapshot
+
+- **Type**: feat
+- **Motivation**: G6 收官刀。GUI/TUI 的一屏入口是 `agentdeck workbench`;
+  角色拓扑如果只存在于独立命令里,GUI 就得多打一次进程才能知道"我补全了
+  哪几层"。
+- **What**: workbench snapshot 新增 `roles_card`,由**同一个**
+  `_role_topology_card(config, project_view)` builder 产出,并在
+  `validate_workbench_contract()` 里复用**同一份**
+  `validate_role_topology_contract()`(错误前缀 `roles_card: `);
+  `WORKBENCH_SNAPSHOT_FIELDS` / `workbench_example()` /
+  `agentdeck contract workbench` 的 `roles_card_fields` /
+  `roles_card_role_fields` / `roles_card_contract` 同步。
+  **注意命名接缝**:workbench 里早已有一张形状不同、测试在册的
+  `role_topology_card`(旧线的"每个协调角色/worker 此刻在做什么"),
+  因此本卡片在 workbench 中的键是 `roles_card`,三张角色卡的分工写进了
+  `docs/contracts/role-topology-schema.md`。同步 README "What works today"、
+  CLAUDE.md 契约规则 bullet 和 `docs/handoff/current-development-state.md`。
+- **Impact**: workbench 契约扩张一个只读字段(既有 `role_topology_card`
+  行为逐字节不变,`control_registry` 未接入新卡片,既有 `scope=role_topology`
+  控件不受影响)。仍是全路径只读:不写 state、不追加事件、不调 provider、
+  不读写 tmux;拓扑是观察面不是授权。
+- **Verification**: 已先确认红测失败(workbench payload 无 `roles_card`,
+  `KeyError: 'roles_card'`);实现后 `conda run -n agentdeck pytest -q`
+  全量 5058 passed / 3 skipped,`conda run -n agentdeck python -m compileall
+  src tests -q` 与 `git diff --check` 通过。新增回归钉包括
+  "workbench `roles_card` 与 `agentdeck roles` 输出逐字段相同"和
+  "workbench validator 拒绝带 pane 的 logical 层"。真实项目冒烟:全新
+  `git init` + `agentdeck project init` 上 `agentdeck roles` 输出 6 层、
+  bound 5 / unbound 1(round_reviewer 未配置,blocker 指向
+  `[review] round_reviewer`)。
+
 ### Add the role topology card and agentdeck roles command
 
 - **Type**: feat
