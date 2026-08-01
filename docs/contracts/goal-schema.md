@@ -133,12 +133,23 @@ selected by `merge_on_complete`; the other four always appear.
 | `requires_explicit_user` | always `true` |
 | `safety` | always `delegated` |
 
-### Start gates (all four required; any failure ⇒ refuse, zero writes, zero spawn)
+### Start gates (all five required; any failure ⇒ refuse, zero writes, zero spawn)
 
 1. `--confirm` present.
 2. `config.leader.approval_mode == "autonomous"` — and `goal` never flips it.
 3. `--plan-id` names a known plan.
 4. `--max-waves >= 1` (the 300 default must clear this gate too).
+5. This project has **no live run-loop host**. The reused `run-loop-host start`
+   refuses a second host on its own, but that refusal happens *after* the
+   approve stage — which would leave the approvals approved and no host
+   running. So the same liveness probe (`_host_liveness_or_none`, one source,
+   not a second rule) runs up front with the other four, and a refusal is never
+   preceded by a mutation. The stderr line names the running host's `plan_id`
+   and `pid` and points at `agentdeck run-loop-host status` /
+   `agentdeck run-loop-host stop --confirm`.
+   **A stale record does not block.** A record whose pid is dead is exactly the
+   case a fresh `goal start` should be allowed through, matching how
+   `run-loop-host start` itself treats stale records; only `running` blocks.
 
 Order is fixed: create (if needed), approve, then start the host. **If the
 approve stage fails, the host is not spawned.** If the host fails to start, the already

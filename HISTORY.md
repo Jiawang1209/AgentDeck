@@ -4,6 +4,37 @@
 
 ## 2026-08-01
 
+### Refuse a goal start before it writes when a host is already running
+
+- **Type**: fix
+- **Motivation**: "已有活宿主"不在 `goal start` 的门里,而被复用的
+  `run-loop-host start` 的单例互斥发生在**批准之后**——活宿主在跑时,
+  `goal start` 会先把整个 plan 的审批批完,再撞上宿主的 "already running"
+  而退非 0,留下**审批已批、宿主没起**的半应用状态。这违背既有门契约的
+  精神:**拒绝之前绝不发生变更**。
+- **What**: 在 `goal_start_command` 的另外四道门之后、任何写之前补上**第五道
+  门**:复用既有存活探测器 `_host_liveness_or_none`(不另写第二套规则),
+  本项目已有**活**宿主即拒绝——零写、零 spawn,stderr 点名在跑的 `plan_id`
+  与 `pid` 并指向 `agentdeck run-loop-host status` /
+  `agentdeck run-loop-host stop --confirm`。**stale 记录(死 pid)不挡**,
+  那正是一次新的 `goal start` 该放行的情形,与 `run-loop-host start` 对 stale
+  记录的既有处理同源。新增两条测试(`tests/test_goal_cli.py`):活宿主拒绝
+  取证与另外四道门同标准(state.json 逐字节相同、events 序列相同、
+  `spawn.calls == []`、host 记录未被改写),以及 stale 记录不阻断一次成功的
+  `goal start`。同步 `docs/contracts/goal-schema.md`(门从四道改为五道,显式
+  写明 stale 豁免)与 `docs/superpowers/specs/2026-08-01-goal-one-shot-walkaway-design.md`
+  (追加"实现期修正"节,记录两处修正:spec 的"三条命令"实为四条——
+  `approve-plan` 只批既有 pending 审批,故必须先 `create-from-plan`;以及门是
+  五道不是四道),并按仓库纪律同步 `README.md` 与 `CLAUDE.md` 的门数表述。
+- **Impact**: 严格更保守——只增加拒绝,不放开任何路径;`goal start` 的拒绝
+  重新变回原子的。既有命令(`run-loop-host start`、`approval approve-plan`、
+  `approval create-from-plan`)行为逐字节未动,成功路径与 stale 路径不变。
+- **Verification**: TDD 红→绿(红时 stderr 正是 `3 approval(s) … remain
+  approved`,坐实半应用状态);`conda run -n agentdeck pytest -q` →
+  **5098 passed, 3 skipped**(基线 5096 + 2);手工复现脚本证明拒绝时
+  `exit_code=1`、state.json/events/host.json 三者逐字节不变、
+  `spawn.calls == []`、审批数 0→0。
+
 ### Document the goal walk-away contract and run the full regression
 
 - **Type**: docs

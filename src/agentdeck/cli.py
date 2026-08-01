@@ -21853,10 +21853,11 @@ def _render_goal_start(payload: dict[str, object]) -> str:
 def goal_start_command(args: argparse.Namespace) -> int:
     """确认一次走开式运行:批准该 plan 的审批,再把它交给后台宿主。
 
-    四道门(任一不满足拒绝且零写零 spawn):`--confirm`、
-    `approval_mode == "autonomous"`、已知 `--plan-id`、`--max-waves >= 1`。
-    两个阶段都调用既有实现:`approval approve-plan --confirm` 与
-    `run-loop-host start --confirm`;approve 阶段失败绝不启动宿主。
+    五道门(任一不满足拒绝且零写零 spawn):`--confirm`、
+    `approval_mode == "autonomous"`、已知 `--plan-id`、`--max-waves >= 1`、
+    本项目没有活着的 run-loop 宿主。两个阶段都调用既有实现:
+    `approval approve-plan --confirm` 与 `run-loop-host start --confirm`;
+    approve 阶段失败绝不启动宿主。
     """
     config, store, exit_code = _load_project_or_error()
     if config is None or store is None:
@@ -21878,6 +21879,22 @@ def goal_start_command(args: argparse.Namespace) -> int:
     max_waves = GOAL_DEFAULT_MAX_WAVES if args.max_waves is None else int(args.max_waves)
     if max_waves < 1:
         print("goal start requires --max-waves >= 1", file=sys.stderr)
+        return 1
+    # 第五道门:宿主单例互斥要在**任何写之前**判定。既有 `run-loop-host start`
+    # 自己也拒绝第二个宿主,但那一步发生在批准之后——真让它去拒,就会留下
+    # "审批已批、宿主没起"的半应用状态,违背"拒绝之前绝不发生变更"。
+    # 复用同一个存活探测器(不另写一套规则):stale 记录(死 pid)不挡,
+    # 那正是一次新的 `goal start` 该放行的情形,与 `run-loop-host start` 同源。
+    host_record, host_running, _host_stale = _host_liveness_or_none(Path(config.root))
+    if host_running:
+        record = host_record or {}
+        print(
+            "goal start: a run-loop host is already running for plan "
+            f"{record.get('plan_id')} (pid {record.get('pid')}); "
+            "see agentdeck run-loop-host status, or stop it with "
+            "agentdeck run-loop-host stop --confirm",
+            file=sys.stderr,
+        )
         return 1
 
     plan_id = str(args.plan_id)

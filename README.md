@@ -174,9 +174,13 @@ AgentDeck › Mission started. Use /status or open the workbench to inspect it.
   principle is **compress the confirmations, not remove them**: `--confirm`,
   the mandatory bounded `--max-waves`, the autonomous allowlist, the approval
   and review-round budgets, the step-ordering guard, file-channel replies and
-  `human_gate` stops are all inherited unchanged, and `goal start` has four
+  `human_gate` stops are all inherited unchanged, and `goal start` has five
   gates of its own (`--confirm`, autonomous mode, a known `--plan-id`,
-  `--max-waves >= 1`) whose refusal is zero-write and zero-spawn. The single
+  `--max-waves >= 1`, and **no live run-loop host** — a stale record does not
+  block) whose refusal is zero-write and zero-spawn. The live-host gate is
+  evaluated with the other four *before any mutation*, reusing the same
+  liveness probe as `run-loop-host start`, so a refusal is never preceded by
+  approving the plan. The single
   most important boundary: **`goal` never flips `approval_mode`** — a standing
   policy decision is not a per-goal one, so a non-autonomous project gets a
   blocker carrying the explicit `policy set-mode` command a human must run and

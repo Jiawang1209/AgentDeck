@@ -333,6 +333,81 @@ def test_goal_start_never_spawns_the_host_when_approve_fails(
     assert "run_loop_host_started" not in event_types(root)
 
 
+def test_goal_start_refuses_while_a_host_is_already_running(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    """第五道门:已有活宿主时拒绝,且拒绝之前一个字节都不写。
+
+    与另外四道门同标准取证:state.json 逐字节相同、events 序列相同、
+    零 spawn、host 记录未被改写。
+    """
+    from agentdeck.run_loop_host import host_record_path, read_host_record, write_host_record
+
+    root = prepare_project(tmp_path, monkeypatch)
+    enable_autonomous(capsys)
+    spawn = RecordingSpawn()
+    monkeypatch.setattr(cli, "_spawn_host_process", spawn)
+    plan_id = preview_json(capsys)["plan_id"]
+
+    write_host_record(root, {
+        "pid": 999_101, "plan_id": "pln_other_host", "wave_count": 2, "max_waves": 40,
+        "interval": 10.0, "last_gate": "waiting_for_reply", "last_wave_at": None,
+        "stopped_reason": None, "log_path": ".agentdeck/run-loop-host/host.log",
+    })
+    monkeypatch.setattr(cli, "_host_pid_alive", lambda _pid: True)
+
+    state_path = StateStore(root).state_path
+    before = state_path.read_bytes()
+    before_events = event_types(root)
+    before_record = host_record_path(root).read_bytes()
+
+    assert cli.main(["goal", "start", "--plan-id", plan_id, "--confirm"]) == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    err = captured.err
+    assert "already running" in err
+    assert "999101" in err and "pln_other_host" in err
+    assert "agentdeck run-loop-host status" in err
+    assert "agentdeck run-loop-host stop --confirm" in err
+
+    assert state_path.read_bytes() == before
+    assert event_types(root) == before_events
+    assert spawn.calls == []
+    assert host_record_path(root).read_bytes() == before_record
+    assert read_host_record(root)["pid"] == 999_101  # 活宿主一字未动
+
+
+def test_goal_start_proceeds_past_a_stale_host_record(tmp_path, monkeypatch, capsys) -> None:
+    """死 pid 的残留记录不是活宿主,正是 `goal start` 该放行的那一种。
+
+    与 `run-loop-host start` 对 stale 记录的既有处理同源。
+    """
+    from agentdeck.run_loop_host import read_host_record, write_host_record
+
+    root = prepare_project(tmp_path, monkeypatch)
+    enable_autonomous(capsys)
+    spawn = RecordingSpawn(pid=999_202)
+    monkeypatch.setattr(cli, "_spawn_host_process", spawn)
+    plan_id = preview_json(capsys)["plan_id"]
+
+    write_host_record(root, {
+        "pid": 999_201, "plan_id": "pln_dead_host", "wave_count": 5, "max_waves": 40,
+        "interval": 10.0, "last_gate": "waiting_for_reply", "last_wave_at": None,
+        "stopped_reason": None, "log_path": ".agentdeck/run-loop-host/host.log",
+    })
+    monkeypatch.setattr(cli, "_host_pid_alive", lambda _pid: False)
+
+    assert cli.main(["goal", "start", "--plan-id", plan_id, "--confirm", "--json"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+
+    assert payload["ok"] is True
+    assert payload["host_pid"] == 999_202
+    assert len(spawn.calls) == 1
+    assert read_host_record(root)["pid"] == 999_202
+    assert read_host_record(root)["plan_id"] == plan_id
+    assert "goal_started" in event_types(root)
+
+
 def test_validate_goal_start_contract_guards_the_response() -> None:
     from agentdeck.contracts import goal_start_example, validate_goal_start_contract
 

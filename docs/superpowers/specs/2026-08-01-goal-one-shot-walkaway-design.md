@@ -132,3 +132,40 @@ user 指出的另一面:43 个契约 + workbench 一屏全展开,是为**机器�
    停下)。合并默认关的理由:**合并进 main 应当是一次单独的点头**——跑完
    停在"复审通过,待合并",把 `worktree merge-plan --confirm` 留给人。
    想要最满的走开,显式加 `--merge-on-complete` 即可。
+
+## 实现期修正(2026-08-01,落地时发现)
+
+### 一、"三条命令"其实是四条:阶段 0 必须先建审批
+
+本 spec 正文一路写作"`leader plan` → `approve-plan --confirm` →
+`run-loop-host start --confirm`",落地时发现这条链**按原样写会每次都失败**:
+`approval approve-plan` 只批准**已存在的** pending 审批,而一个刚从
+`leader plan` 出来的 plan 一条审批都没有,approve 阶段必然报
+"no pending approvals" 并停住。人手工爬这道梯子时同样要先跑一条
+`approval create-from-plan`——真实的梯子是**四条命令,不是三条**;
+连上 preview 里那次 `leader plan`,`goal` 覆盖的是五条。
+
+因此 `goal start` 在批准之前插入**阶段 0**:该 plan 尚无审批时调用既有的
+`agentdeck approval create-from-plan --plan-id <id>`;已有审批则一条不碰,
+连事件都不写。这**不削弱"不新增任何一种动作"**——阶段 0 同样是一条早已
+存在、早已被 sanction 的命令,同样是**被调用而非被复制**,只是本 spec
+写作时把它数漏了。
+
+### 二、门是五道,不是四道:活宿主必须在写之前判定
+
+正文只列了四道门(`--confirm`、`autonomous`、已知 `--plan-id`、
+`--max-waves >= 1`),"已有活宿主"不在其中——因为被复用的
+`run-loop-host start` 自己就有单例互斥,看上去无需重复。但那道互斥发生在
+**批准之后**:活宿主在跑时,`goal start` 会先把整个 plan 的审批批完,
+再撞上宿主的"already running"而退非 0,留下**审批已批、宿主没起**的
+半应用状态。这违背本仓库既有门契约的精神——**拒绝之前绝不发生变更**。
+
+落地时因此补上**第五道门**,与另外四道一起在任何写之前判定:本项目已有
+活宿主即拒绝,零写、零 spawn,stderr 点名在跑的 `plan_id` 与 `pid`,
+并指向 `agentdeck run-loop-host status` / `agentdeck run-loop-host stop
+--confirm`。存活判定**复用** `_host_liveness_or_none`(不另写第二套规则)。
+
+**stale 记录不挡**:pid 已死的残留记录正是一次新的 `goal start` 该放行的
+情形,与 `run-loop-host start` 对 stale 记录的既有处理同源;只有 `running`
+才拦。这条修正**严格更保守**(它只增加拒绝,不放开任何路径),并让拒绝
+重新变回原子的。
