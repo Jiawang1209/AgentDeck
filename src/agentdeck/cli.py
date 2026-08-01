@@ -160,10 +160,8 @@ from .delegation_match import is_composite_command, normalize_match
 from .frontdesk import FRONTDESK_ROUTE_SAFETY, classify_frontdesk, frontdesk_goal
 from .review_group import expand_review_group
 from .role_topology import (
-    IMPLEMENTATION_ROLE_HINTS,
-    REVIEW_ROLE_HINTS,
     ROLE_SPECS,
-    resolve_worker_role,
+    resolve_worker_roles,
 )
 from .review_iteration import (
     build_refine_prompt,
@@ -5287,6 +5285,45 @@ def _role_bindings_worker_controls(
     ]
 
 
+def _role_bindings_worker_layer(
+    bindings: dict[str, dict[str, object]], layer: str
+) -> tuple[str | None, str, list[str], list[dict[str, object]]]:
+    """Project one layer out of the one-pass worker resolution."""
+    resolved = bindings.get(layer) or {}
+    agent_id = resolved.get("agent_id")
+    candidates = resolved.get("candidates")
+    conflicts = resolved.get("conflicts")
+    return (
+        agent_id if isinstance(agent_id, str) else None,
+        str(resolved.get("binding_status") or "unbound"),
+        list(candidates) if isinstance(candidates, list) else [],
+        list(conflicts) if isinstance(conflicts, list) else [],
+    )
+
+
+def _role_bindings_collision_blocker(conflicts: list[dict[str, object]]) -> str | None:
+    """Name a cross-layer role collision, or `None` when there is none.
+
+    A single agent whose free-text role reads as several north-star layers is
+    ambiguous evidence for each of them: binding it would either send work to
+    the wrong worker or let one worker review its own work. The only fix is a
+    human editing the role text, so the blocker says exactly that.
+    """
+    described = [
+        f"{conflict.get('agent_id')} reads as both the "
+        + " and ".join(str(layer) for layer in conflict.get("layers") or [])
+        + " layers"
+        for conflict in conflicts
+        if isinstance(conflict, dict)
+    ]
+    if not described:
+        return None
+    return (
+        "; ".join(described)
+        + "; disambiguate the role text in [[agents]] so each layer matches one agent"
+    )
+
+
 def _role_bindings_card(config: ProjectConfig, project_view: dict[str, object]) -> dict[str, object]:
     """Derive the north-star six-layer binding map.
 
@@ -5319,6 +5356,9 @@ def _role_bindings_card(config: ProjectConfig, project_view: dict[str, object]) 
 
     reviewers = tuple(config.review.reviewers)
     round_reviewer = config.review.round_reviewer
+    # Resolved in one pass so a role reading as two layers is visible as the
+    # ambiguous evidence it is, instead of quietly binding whichever layer asks.
+    worker_bindings = resolve_worker_roles(agent_rows)
 
     roles: list[dict[str, object]] = []
     for spec in ROLE_SPECS:
@@ -5353,11 +5393,13 @@ def _role_bindings_card(config: ProjectConfig, project_view: dict[str, object]) 
             controls = [_role_bindings_inspect(label, command)]
         else:
             if role_name == "coder":
-                agent_id, status, candidates = resolve_worker_role(agent_rows, IMPLEMENTATION_ROLE_HINTS)
+                agent_id, status, candidates, conflicts = _role_bindings_worker_layer(
+                    worker_bindings, "coder"
+                )
                 if status == "unbound":
                     blocker = "no configured agent has an implementation role; add one to [[agents]]"
                 elif status == "ambiguous":
-                    blocker = (
+                    blocker = _role_bindings_collision_blocker(conflicts) or (
                         "several agents share an implementation role: "
                         f"{', '.join(candidates)}; give exactly one the implementation role"
                     )
@@ -5365,14 +5407,16 @@ def _role_bindings_card(config: ProjectConfig, project_view: dict[str, object]) 
                 if reviewers:
                     agent_id, status, candidates = reviewers[0], "bound", []
                 else:
-                    agent_id, status, candidates = resolve_worker_role(agent_rows, REVIEW_ROLE_HINTS)
+                    agent_id, status, candidates, conflicts = _role_bindings_worker_layer(
+                        worker_bindings, "code_reviewer"
+                    )
                     if status == "unbound":
                         blocker = (
                             "no configured agent has a review role; add one to [[agents]] "
                             "or set [review] reviewers"
                         )
                     elif status == "ambiguous":
-                        blocker = (
+                        blocker = _role_bindings_collision_blocker(conflicts) or (
                             "several agents share a review role: "
                             f"{', '.join(candidates)}; set [review] reviewers to choose"
                         )

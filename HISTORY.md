@@ -4,6 +4,39 @@
 
 ## 2026-08-01
 
+### Close the cross-layer hole in role binding resolution
+
+- **Type**: fix
+- **Motivation**: G6 的 `ambiguous` 本意是 fail-closed"绝不静默择一",但
+  歧义只在**单个** hint 集合内部检测,跨集合碰撞会以 `bound` + `blocker=null`
+  溜过去。两条真实序列:(A) 真正的实现者角色写作"开发编码"(不命中任何提示)、
+  reviewer 写作"代码审查与实现验证"(同时命中 实现 与 审查)→ **coder 层绑到
+  了 reviewer 身上**,真实现者从图上整个消失;(B) 一个 agent 角色写作
+  "implementation review" → coder 与 code_reviewer **绑到同一人**,而本项目的
+  review 迭代设计明文禁止"coder 复审自己"。
+- **What**: 纯模块 `role_topology.py` 新增 `WORKER_ROLE_HINTS`(声明序的
+  `coder`/`code_reviewer` 两层)与 `resolve_worker_roles()`——**一次解析所有
+  hint 匹配层**,这是看见跨层碰撞的唯一方式:角色同时命中多层的 agent 是
+  *歧义证据*,对每一层都记 `ambiguous` + `agent_id=null` + 进 `candidates`,
+  并在新增的 `conflicts[]`(`{agent_id, layers[]}`)里点名。`resolve_worker_role()`
+  保留三元组签名,改为同一次解析的薄投影,因此单层入口(本缺陷的入口)同样
+  fail-closed。CLI `_role_bindings_card` 改为一次性解析,新增
+  `_role_bindings_collision_blocker()` 生成点名碰撞并要求人类去 `[[agents]]`
+  改角色文本的 blocker;层内歧义的既有行为与 blocker 逐字节不变。模块仍
+  零 IO、零 LLM、不 import cli/state/config。
+- **Impact**: 只读观察面收紧,不改任何 gate、不授权任何 dispatch。既有
+  单层歧义、`unbound`、单层唯一命中三种行为不变;跨层碰撞从 `bound` 变为
+  `ambiguous`(fail-closed 方向),`ambiguous_count` 随之变化。契约文档
+  `binding_status Is Fail-Closed` 一节此前声称 `bound` 是"exactly one binding
+  resolved",强于实情,已与代码对齐并写明两类碰撞。
+- **Verification**: 先红后绿。红:两条序列在纯模块里复现 `('reviewer','bound',[])`
+  / `('hybrid','bound',[])`;绿后同样输入返回 `(None,'ambiguous',['reviewer'])`
+  / `(None,'ambiguous',['hybrid'])`。新增 7 条纯模块测试(跨层碰撞、真实现者
+  不被顶替、层内歧义保持、单层 shim 同样 fail-closed)与 1 条走
+  `agentdeck roles` 的 CLI 测试(两层同时 ambiguous、blocker 点名 agent+两层+
+  `[[agents]]`、`ambiguous_count==2`、过 validator)。既有 `resolve_worker_role`
+  测试一条未删、一条未弱化,全部仍绿。
+
 ### Record the G6 implementation-time corrections in the spec
 
 - **Type**: docs

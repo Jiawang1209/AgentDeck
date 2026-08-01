@@ -207,6 +207,36 @@ def test_roles_command_reports_ambiguous_binding_and_never_picks_one(
     assert payload["ambiguous_count"] == 1
 
 
+def test_roles_command_refuses_to_bind_a_role_that_reads_as_two_layers(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    """跨层碰撞 fail-closed:一个既像实现又像审查的角色不能绑定任何一层。"""
+    root = prepare_project(tmp_path, monkeypatch)
+    append_config(
+        root,
+        "[[agents]]\n"
+        'agent_id = "hybrid"\n'
+        'role = "implementation review"\n'
+        'provider = "codex"\n'
+        'command = "codex"\n'
+        'workspace_mode = "shared"\n',
+    )
+
+    payload = run_roles(capsys)
+    roles = roles_by_name(payload)
+
+    for name in ("coder", "code_reviewer"):
+        role = roles[name]
+        assert role["binding_status"] == "ambiguous", name
+        assert role["agent_id"] is None, name
+        assert "hybrid" in role["candidates"], name
+        assert "hybrid" in str(role["blocker"]), name
+        assert "coder" in str(role["blocker"]) and "code_reviewer" in str(role["blocker"]), name
+        assert "[[agents]]" in str(role["blocker"]), name
+    assert payload["ambiguous_count"] == 2
+    assert validate_role_bindings_contract(payload)["ok"]
+
+
 def test_roles_command_writes_no_state_and_appends_no_event(tmp_path, monkeypatch, capsys) -> None:
     root = prepare_project(tmp_path, monkeypatch)
     events_path = root / ".agentdeck" / "state" / "events.jsonl"

@@ -29,7 +29,8 @@ validator is `src/agentdeck/contracts.py` (`ROLE_BINDINGS_CARD_FIELDS`,
 `validate_role_bindings_contract()`). The binding derivation itself lives in the
 pure module `src/agentdeck/role_topology.py` (`ROLE_TOPOLOGY_LAYERS`,
 `ROLE_BINDING_KINDS`, `ROLE_BINDING_STATUSES`, `ROLE_LIFECYCLES`, `ROLE_SPECS`,
-`IMPLEMENTATION_ROLE_HINTS`, `REVIEW_ROLE_HINTS`, `resolve_worker_role()`),
+`IMPLEMENTATION_ROLE_HINTS`, `REVIEW_ROLE_HINTS`, `WORKER_ROLE_HINTS`,
+`resolve_worker_roles()`, `resolve_worker_role()`),
 which has zero IO and imports nothing from `cli`/`state`/`config`.
 
 Frozen design:
@@ -94,14 +95,30 @@ right now. Do not conflate them.
 
 | Value | Meaning |
 | --- | --- |
-| `bound` | exactly one binding resolved |
+| `bound` | exactly one agent resolved for this layer, **and that agent resolves for no other layer** |
 | `unbound` | this project has not configured the layer (for example no `[review] round_reviewer`) |
-| `ambiguous` | several candidates resolved and no existing fact picks between them |
+| `ambiguous` | several candidates resolved, or the single candidate is also evidence for another layer, and no existing fact picks between them |
 
-`ambiguous` is the fail-closed expression: when two agents both read as an
-implementation role, the card reports `agent_id = null`, `binding_status =
+`ambiguous` is the fail-closed expression, and it covers **two** kinds of
+collision:
+
+- *within one layer* — two agents both read as an implementation role;
+- *across layers* — one agent's free-text role reads as several layers at once
+  (`"implementation review"`, `"代码审查与实现验证"`). Such a role is ambiguous
+  **evidence**, so it binds neither layer. Binding it to one layer would hand
+  work to whichever layer asked first — possibly the reviewer, silently
+  erasing the real implementer from the map — and binding it to both would make
+  one worker review its own work, which the review-iteration design explicitly
+  bars.
+
+In every case the card reports `agent_id = null`, `binding_status =
 "ambiguous"` and lists **every** candidate in `candidates[]`. It never silently
-picks the first one — a wrong silent pick would send work to the wrong worker.
+picks — a wrong silent pick would send work to the wrong worker. Because both
+hint-matched worker layers (`coder`, `code_reviewer`) are resolved in a single
+pass by `resolve_worker_roles()`, a cross-layer collision is visible to both;
+the `blocker` names the colliding agent and both layers, and asks the human to
+disambiguate the `role` text in `[[agents]]`. `resolve_worker_role()` (single
+layer) is a thin projection of the same pass and is fail-closed identically.
 
 None of the three states is an error and none of them blocks any command: the
 topology is an observation surface, not a gate.
