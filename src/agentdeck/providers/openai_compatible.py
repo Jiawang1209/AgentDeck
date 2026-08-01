@@ -26,6 +26,7 @@ from agentdeck.semantic_planning import (
 from .base import (
     LeaderPlanRequest,
     LeaderPlanResult,
+    build_refine_rework_prompt,
     leader_planner_brief_prompt_lines,
     leader_skill_context_prompt_lines,
     validate_provider_plan_schema,
@@ -198,6 +199,54 @@ class OpenAICompatibleProvider:
         except URLError as error:
             raise RuntimeError(f"provider request failed: {error.reason}") from None
         return validate_planner_brief(self._extract_plan(data))
+
+    def refine_rework_task(
+        self,
+        *,
+        task: str,
+        feedback: str,
+        model: str | None = None,
+    ) -> str:
+        """把审查意见精修成回炉任务正文——纯文本进、纯文本出。
+
+        一次调用即止:不要求 JSON、不解析 schema、不重试。任何失败都
+        fail-closed 抛出,由调用方回落确定性模板并如实报告。"""
+        api_key = os.environ.get(self.api_key_env)
+        if not api_key:
+            raise RuntimeError(f"{self.api_key_env} is not set")
+        payload = {
+            "model": model or self.model,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": build_refine_rework_prompt(task=task, feedback=feedback),
+                },
+                {
+                    "role": "user",
+                    "content": task,
+                },
+            ],
+        }
+        body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        req = request.Request(
+            f"{self.base_url}/chat/completions",
+            data=body,
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
+            method="POST",
+        )
+        try:
+            with request.urlopen(req, timeout=self.timeout) as response:
+                data = json.loads(response.read().decode("utf-8"))
+        except HTTPError as error:
+            raise RuntimeError(
+                f"provider HTTP {error.code}: {_bounded_http_error_detail(error)}"
+            ) from None
+        except URLError as error:
+            raise RuntimeError(f"provider request failed: {error.reason}") from None
+        return self._extract_message_content(data)
 
     def _legacy_plan(self, plan_request: LeaderPlanRequest) -> dict[str, object]:
         api_key = os.environ.get(self.api_key_env)
@@ -667,7 +716,8 @@ class OpenAICompatibleProvider:
         return "\n".join(lines)
 
     @staticmethod
-    def _extract_plan(response: dict[str, object]) -> dict[str, object]:
+    def _extract_message_content(response: dict[str, object]) -> str:
+        """取第一条 choice 的 message content 纯文本(不解析结构)。"""
         choices = response.get("choices")
         if not isinstance(choices, list) or not choices:
             raise RuntimeError("provider response missing choices")
@@ -680,6 +730,11 @@ class OpenAICompatibleProvider:
         content = message.get("content")
         if not isinstance(content, str):
             raise RuntimeError("provider response missing message content")
+        return content
+
+    @staticmethod
+    def _extract_plan(response: dict[str, object]) -> dict[str, object]:
+        content = OpenAICompatibleProvider._extract_message_content(response)
         try:
             parsed = json.loads(content)
         except JSONDecodeError as exc:

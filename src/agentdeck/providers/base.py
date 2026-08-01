@@ -131,6 +131,26 @@ def leader_skill_context_prompt_lines(skill_context: dict[str, Any] | None) -> l
     ]
 
 
+REFINE_REWORK_OUTPUT_INSTRUCTION = (
+    "只输出返工任务正文本身:不要前言、不要标题、不要代码块包裹、不要输出 JSON。"
+)
+
+
+def build_refine_rework_prompt(*, task: str, feedback: str) -> str:
+    """Leader 精修回炉任务的单次纯文本 prompt(审查事实在前,原任务兜底在后)。
+
+    产出就是回炉任务正文本身——绝不要求模型输出 JSON,也不授权模型改动
+    step 结构或负责人。调用方一次调用即止,任何不合格产出都回落模板。"""
+    return "\n".join(
+        [
+            feedback,
+            "",
+            f"原任务: {task}",
+            REFINE_REWORK_OUTPUT_INSTRUCTION,
+        ]
+    )
+
+
 def leader_planner_brief_prompt_lines(
     planner_brief: dict[str, Any] | None,
 ) -> list[str]:

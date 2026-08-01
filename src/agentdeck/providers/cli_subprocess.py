@@ -25,6 +25,7 @@ from agentdeck.semantic_planning import (
 from .base import (
     LeaderPlanRequest,
     LeaderPlanResult,
+    build_refine_rework_prompt,
     leader_planner_brief_prompt_lines,
     leader_skill_context_prompt_lines,
     validate_provider_plan_schema,
@@ -360,6 +361,47 @@ class CliLeaderProvider:
         except (RuntimeError, JSONDecodeError):
             raise CliLeaderProviderError("json_parse") from None
         return validate_planner_brief(parsed)
+
+    def refine_rework_task(
+        self,
+        *,
+        task: str,
+        feedback: str,
+        model: str | None = None,
+    ) -> str:
+        """把审查意见精修成回炉任务正文——纯文本进、纯文本出。
+
+        一次调用即止:不解析 JSON、不重试、不改 step 结构。任何失败都
+        fail-closed 抛出,由调用方回落确定性模板并如实报告。"""
+        prompt = build_refine_rework_prompt(task=task, feedback=feedback)
+        command = self._command_with_model(model) if model else list(self.command)
+        try:
+            result = subprocess.run(
+                command,
+                input=prompt,
+                text=True,
+                capture_output=True,
+                timeout=self.timeout,
+                check=False,
+            )
+        except subprocess.TimeoutExpired:
+            raise CliLeaderProviderError("timeout") from None
+        except OSError:
+            raise CliLeaderProviderError("nonzero") from None
+        if result.returncode != 0:
+            # 诊断:退出码是进程事实;reason 是闭合枚举码(解析→分类→丢弃
+            # 原文),二者都不含 provider 输出片段。
+            raise CliLeaderProviderError(
+                "nonzero",
+                exit_code=result.returncode,
+                failure_reason=classify_cli_failure(result.stdout, result.stderr),
+            )
+        if len(result.stdout.encode("utf-8")) > MAX_CLI_LEADER_OUTPUT_BYTES:
+            raise CliLeaderProviderError("oversize")
+        return self._refined_text(result.stdout)
+
+    def _refined_text(self, stdout: str) -> str:
+        return stdout
 
     def _brief_json(self, stdout: str) -> object:
         return self._load_json_plan(stdout.strip())
@@ -1090,6 +1132,16 @@ class ClaudeCliProvider(CliLeaderProvider):
         "--output-format",
         "--no-session-persistence",
     )
+
+    def _refined_text(self, stdout: str) -> str:
+        """`claude --print --output-format json` 的信封:取 result 纯文本。"""
+        try:
+            envelope = json.loads(stdout.strip())
+        except JSONDecodeError:
+            return stdout
+        if isinstance(envelope, dict) and isinstance(envelope.get("result"), str):
+            return envelope["result"]
+        return stdout
 
     def _brief_json(self, stdout: str) -> object:
         text = stdout.strip()

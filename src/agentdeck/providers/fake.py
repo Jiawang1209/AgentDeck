@@ -72,6 +72,24 @@ class FakeLeaderProvider:
             "macro_steps": ["理解并拆解目标", "执行核心工作", "验证并汇总结果"],
         }
 
+    def refine_rework_task(
+        self,
+        *,
+        task: str,
+        feedback: str,
+        model: str | None = None,
+    ) -> str:
+        """本地 dry-run 精修:确定性重排已给事实,不做任何 IO。"""
+        del model
+        bullets = [line for line in feedback.splitlines() if line.startswith("- ")]
+        return "\n".join(
+            [
+                f"返工任务(fake 精修): {task}",
+                "按下列审查意见逐条修复:",
+                *(bullets or ["- 见审查意见原文"]),
+            ]
+        )
+
     def _legacy_plan(self, request: LeaderPlanRequest) -> dict[str, object]:
         steps = []
         for index, agent in enumerate(request.config.agents, start=1):

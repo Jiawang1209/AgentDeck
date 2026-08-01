@@ -299,3 +299,218 @@ def test_writer_never_reaches_a_provider() -> None:
         if isinstance(node, (ast.Name, ast.Attribute))
     ]
     assert not any("provider" in name.lower() for name in identifiers), identifiers
+
+
+# --------------------------------------------------------------------------
+# Task 2:provider `refine_rework_task`(纯文本进、纯文本出,一次调用)
+# --------------------------------------------------------------------------
+
+
+def _refine_feedback() -> str:
+    return build_refine_prompt(
+        original_task="实现登录页", verdict=_verdict("fail"), members=_members()
+    )
+
+
+def test_fake_provider_refines_deterministically_without_io() -> None:
+    from agentdeck.providers.fake import FakeLeaderProvider
+
+    provider = FakeLeaderProvider()
+    first = provider.refine_rework_task(task="实现登录页", feedback=_refine_feedback())
+    second = provider.refine_rework_task(task="实现登录页", feedback=_refine_feedback())
+
+    assert isinstance(first, str) and first.strip()
+    assert "实现登录页" in first
+    assert first == second
+    assert validate_refined_task(first).endswith(REWORK_TASK_FOOTER)
+
+
+def test_fake_provider_refine_is_keyword_only() -> None:
+    from agentdeck.providers.fake import FakeLeaderProvider
+
+    with pytest.raises(TypeError):
+        FakeLeaderProvider().refine_rework_task("实现登录页", "反馈")
+
+
+def _mock_refine_cli(monkeypatch, stdout: str, returncode: int = 0, stderr: str = ""):
+    import subprocess as _subprocess
+
+    calls: list[dict] = []
+
+    def fake_run(command, **kwargs):
+        calls.append({"command": list(command), "kwargs": kwargs})
+        return _subprocess.CompletedProcess(
+            command, returncode=returncode, stdout=stdout, stderr=stderr
+        )
+
+    monkeypatch.setattr("agentdeck.providers.cli_subprocess.subprocess.run", fake_run)
+    return calls
+
+
+def test_cli_provider_refine_returns_stdout_text(monkeypatch) -> None:
+    from agentdeck.providers.cli_subprocess import CodexCliProvider
+
+    calls = _mock_refine_cli(monkeypatch, "先修复 2 个失败测试,再补 a11y 断言。\n")
+
+    text = CodexCliProvider().refine_rework_task(
+        task="实现登录页", feedback=_refine_feedback(), model="refine-model"
+    )
+
+    assert text.strip() == "先修复 2 个失败测试,再补 a11y 断言。"
+    assert len(calls) == 1, "精修只调用一次 provider,绝不重试"
+    assert calls[0]["command"][:2] == ["codex", "--model"]
+    assert "refine-model" in calls[0]["command"]
+    prompt = calls[0]["kwargs"]["input"]
+    assert "实现登录页" in prompt
+    assert "tests pass" in prompt
+    assert calls[0]["kwargs"]["capture_output"] is True
+    assert calls[0]["kwargs"]["check"] is False
+    assert calls[0]["kwargs"]["timeout"] == CodexCliProvider.timeout
+
+
+def test_cli_provider_refine_nonzero_exit_fails_closed(monkeypatch) -> None:
+    from agentdeck.providers.cli_failure import CLI_FAILURE_REASONS
+    from agentdeck.providers.cli_subprocess import (
+        CliLeaderProviderError,
+        CodexCliProvider,
+    )
+
+    _mock_refine_cli(monkeypatch, "", returncode=7, stderr="boom")
+
+    with pytest.raises(CliLeaderProviderError) as excinfo:
+        CodexCliProvider().refine_rework_task(task="实现登录页", feedback="反馈")
+
+    assert excinfo.value.stage == "nonzero"
+    assert excinfo.value.exit_code == 7
+    assert excinfo.value.failure_reason in CLI_FAILURE_REASONS
+
+
+def test_cli_provider_refine_timeout_fails_closed(monkeypatch) -> None:
+    import subprocess as _subprocess
+
+    from agentdeck.providers.cli_subprocess import (
+        CliLeaderProviderError,
+        CodexCliProvider,
+    )
+
+    def fake_run(command, **kwargs):
+        raise _subprocess.TimeoutExpired(command, 1)
+
+    monkeypatch.setattr("agentdeck.providers.cli_subprocess.subprocess.run", fake_run)
+
+    with pytest.raises(CliLeaderProviderError) as excinfo:
+        CodexCliProvider().refine_rework_task(task="实现登录页", feedback="反馈")
+    assert excinfo.value.stage == "timeout"
+
+
+def test_claude_provider_refine_unwraps_result_envelope(monkeypatch) -> None:
+    from agentdeck.providers.cli_subprocess import ClaudeCliProvider
+
+    envelope = json.dumps({"type": "result", "result": "修复失败测试。"})
+    calls = _mock_refine_cli(monkeypatch, envelope)
+
+    text = ClaudeCliProvider().refine_rework_task(task="实现登录页", feedback="反馈")
+
+    assert text.strip() == "修复失败测试。"
+    assert calls[0]["command"][0] == "claude"
+
+
+class _RefineApiResponse:
+    def __init__(self, content: object) -> None:
+        self._body = json.dumps(
+            {"choices": [{"message": {"content": content}}]}, ensure_ascii=False
+        ).encode("utf-8")
+
+    def read(self) -> bytes:
+        return self._body
+
+    def __enter__(self) -> "_RefineApiResponse":
+        return self
+
+    def __exit__(self, *args: object) -> bool:
+        return False
+
+
+def _mock_refine_api(monkeypatch, content: object) -> list[dict]:
+    calls: list[dict] = []
+    monkeypatch.setenv("AGENTDECK_LEADER_API_KEY", "test-key")
+
+    def fake_urlopen(http_request, timeout):
+        calls.append(
+            {
+                "url": http_request.full_url,
+                "body": json.loads(http_request.data.decode("utf-8")),
+                "timeout": timeout,
+            }
+        )
+        return _RefineApiResponse(content)
+
+    monkeypatch.setattr(
+        "agentdeck.providers.openai_compatible.request.urlopen", fake_urlopen
+    )
+    return calls
+
+
+def test_api_provider_refine_returns_message_text(monkeypatch) -> None:
+    from agentdeck.providers.openai_compatible import OpenAICompatibleProvider
+
+    calls = _mock_refine_api(monkeypatch, "先修复 2 个失败测试。")
+
+    text = OpenAICompatibleProvider(timeout=30).refine_rework_task(
+        task="实现登录页", feedback=_refine_feedback(), model="refine-model"
+    )
+
+    assert text.strip() == "先修复 2 个失败测试。"
+    assert len(calls) == 1, "精修只调用一次 provider,绝不重试"
+    body = calls[0]["body"]
+    assert body["model"] == "refine-model"
+    assert "response_format" not in body, "精修产出是纯文本,不得要求 JSON"
+    system_message = body["messages"][0]
+    assert system_message["role"] == "system"
+    assert "tests pass" in system_message["content"]
+    assert body["messages"][1] == {"role": "user", "content": "实现登录页"}
+
+
+def test_api_provider_refine_requires_api_key(monkeypatch) -> None:
+    from agentdeck.providers.openai_compatible import OpenAICompatibleProvider
+
+    monkeypatch.delenv("AGENTDECK_LEADER_API_KEY", raising=False)
+    with pytest.raises(RuntimeError, match="AGENTDECK_LEADER_API_KEY"):
+        OpenAICompatibleProvider(timeout=30).refine_rework_task(
+            task="实现登录页", feedback="反馈"
+        )
+
+
+def test_api_provider_refine_rejects_missing_message_content(monkeypatch) -> None:
+    from agentdeck.providers.openai_compatible import OpenAICompatibleProvider
+
+    _mock_refine_api(monkeypatch, {"not": "text"})
+    with pytest.raises(RuntimeError, match="message content"):
+        OpenAICompatibleProvider(timeout=30).refine_rework_task(
+            task="实现登录页", feedback="反馈"
+        )
+
+
+def test_deepseek_provider_inherits_refine(monkeypatch) -> None:
+    from agentdeck.providers.deepseek import DeepSeekProvider
+
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    with pytest.raises(RuntimeError, match="DEEPSEEK_API_KEY"):
+        DeepSeekProvider(timeout=30).refine_rework_task(task="实现登录页", feedback="反馈")
+
+
+def test_every_leader_provider_implements_refine() -> None:
+    """三处实现覆盖全部 Leader provider(codex/claude 继承 CLI 基类)。"""
+    from agentdeck.providers.cli_subprocess import ClaudeCliProvider, CodexCliProvider
+    from agentdeck.providers.deepseek import DeepSeekProvider
+    from agentdeck.providers.fake import FakeLeaderProvider
+    from agentdeck.providers.openai_compatible import OpenAICompatibleProvider
+
+    for provider in (
+        FakeLeaderProvider,
+        CodexCliProvider,
+        ClaudeCliProvider,
+        OpenAICompatibleProvider,
+        DeepSeekProvider,
+    ):
+        assert callable(getattr(provider, "refine_rework_task", None)), provider

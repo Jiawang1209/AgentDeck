@@ -4,6 +4,47 @@
 
 ## 2026-08-01
 
+### Add provider `refine_rework_task`
+
+- **Motivation**: Task 1 已让 writer 能采用锁外传入的精修回炉任务,但没有
+  任何 provider 能生成它。本条是
+  `docs/superpowers/plans/2026-08-01-leader-refined-rework.md` **Task 2**:
+  给三处实现(覆盖全部 Leader provider)各加一个纯文本方法,CLI `--refine`
+  入口是 Task 3。
+- **Type**: feat
+- **What**: 三处各加
+  `refine_rework_task(*, task, feedback, model=None) -> str`,复用各自
+  `plan_brief` 的既有 prompt/传输/超时惯用法,**只返回纯文本**:不解析
+  JSON、不校验 schema、不重试(spec:一次调用,不合格由调用方回落模板)。
+  ①`providers/base.py` 新增共享纯函数 `build_refine_rework_prompt(task,
+  feedback)`(审查事实在前、原任务兜底在后、末尾"只输出正文"指令)。
+  ②`fake.py`:确定性重排已给事实,零 IO。③`cli_subprocess.py` 基类
+  (codex/claude 继承):同一 `subprocess.run(input=prompt, capture_output=
+  True, timeout, check=False)` 惯用法,非零退出抛
+  `CliLeaderProviderError("nonzero", exit_code=…, failure_reason=
+  classify_cli_failure(…))`、超时抛 `timeout`、超限抛 `oversize`;新增可
+  覆写钩子 `_refined_text(stdout)`,`ClaudeCliProvider` 覆写它拆
+  `--output-format json` 的 `{"result": …}` 信封(与既有 `_brief_json`
+  覆写同构),否则回炉任务会变成 JSON 信封原文。④`openai_compatible.py`
+  基类(DeepSeek 继承):同一 `/chat/completions` 请求,**不带**
+  `response_format`(产出是纯文本),system=精修 prompt、user=原任务;
+  `_extract_plan` 抽出 `_extract_message_content` 复用(错误串不变)。
+- **Impact**: 纯新增能力,现有调用路径零变化——`plan`/`plan_result`/
+  `plan_brief` 逐字节不变。**codex 规划路径的 OS 边界丢弃不变量未被触碰**
+  (`stdout=DEVNULL, stderr=DEVNULL` 原样;精修是独立调用路径,与
+  `plan_brief` 一样用 `capture_output=True`)。`base.py` 的 `LeaderProvider`
+  Protocol 仍只声明 `plan`——与 `plan_brief` 同一模式,调用方用
+  `getattr(provider, "refine_rework_task", None)` 探测,Task 3 据此映射
+  `unsupported_provider`。provider 仍只产文本,不得改 step 结构或负责人,
+  也不绕过审批。
+- **Verification**: 严格 TDD——`tests/test_refined_rework.py` 新增 11 条
+  provider 测试先 RED(11 failed, 23 passed)后 GREEN(34 passed);定向回归
+  refined_rework + provider_openai_compatible + cli_structured_output +
+  leader_cli **498 passed**(含对抗性守卫
+  `test_codex_discards_subprocess_diagnostics_at_the_os_boundary` 未改动即
+  通过);加跑 plan_brief_providers/split_planning/cli_failure_reason 共
+  **549 passed**;`compileall src` 干净。
+
 ### Add the refined-rework override to the iteration writer
 
 - **Motivation**: 迭代闭环的回炉任务是确定性模板(fail 标准原文 +
