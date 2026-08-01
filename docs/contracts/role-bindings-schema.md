@@ -166,7 +166,36 @@ status is `ambiguous`.
 | `pane_id` | the ProjectView pane binding; `null` when not running or not a worker layer |
 | `blocker` | non-empty exactly when `binding_status != "bound"` |
 | `candidates` | non-empty exactly when `binding_status == "ambiguous"` |
+| `group_members` | the full ordered `[review] reviewers` group on the `code_reviewer` layer, head included; `[]` everywhere else |
 | `controls` | at least one `kind=inspect` control; bound workers also get a `kind=terminal` control that is disabled with `agent is not running` until the pane exists |
+
+### `candidates` Is Ambiguity; `group_members` Is Membership
+
+These two lists look alike and mean opposite things, so the validator keeps
+them apart. `candidates` is the **fail-closed** signal: it is non-empty exactly
+when the binding could not be made, and reading it means "AgentDeck refused to
+pick — a human must". `group_members` is a **completed** binding that happens
+to name more than one agent: `[review] reviewers = ["reviewer", "planner"]` is
+a two-member serial review group, so the layer is `bound` to the head
+(`agent_id = "reviewer"`, the same primary-reviewer rule `review_group` uses),
+`candidates` is `[]`, and `group_members` is `["reviewer", "planner"]` in
+configured order — which is the serial dispatch order.
+
+Conflating them would blur the fail-closed signal in both directions: a GUI
+that rendered a healthy two-member group as `candidates` would show a
+configuration warning for a correctly configured project, and one that reported
+genuine ambiguity as `group_members` would draw a "group" AgentDeck has in fact
+refused to bind. So `group_members` is empty unless the role is `code_reviewer`
+**and** `[review].reviewers` is configured — a `code_reviewer` resolved by the
+role-hint fallback is a single agent, not a group of one, and reports `[]`.
+When `group_members` is non-empty its first element must equal `agent_id`: the
+head *is* the binding, and the validator refuses a card whose group leader is
+not the agent it says it bound.
+
+`group_members` is read-only provenance like everything else on this card. It
+changes no gate, authorizes no dispatch, and does not affect how the review
+group is actually expanded or scheduled (that stays `src/agentdeck/review_group.py`'s
+job, from the same `[review].reviewers`).
 
 Every control uses `kind`, `label`, `command`, `safety`, `enabled`, `blocker`,
 and **every control is `safety=inspect`**. Controls carrying a `<placeholder>`
@@ -195,7 +224,8 @@ The card introduces no configuration surface and no second state source:
   projection — **tmux is never read**;
 - `[review].reviewers` / `[review].round_reviewer` are read exactly as the
   review-group feature already parses them (a configured `reviewers` group
-  binds its head, which is the same primary-reviewer rule `review_group` uses).
+  binds its head, which is the same primary-reviewer rule `review_group` uses,
+  and reports the whole ordered group in `group_members`).
 
 ## Safety Boundary
 

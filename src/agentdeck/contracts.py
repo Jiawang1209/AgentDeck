@@ -1493,8 +1493,13 @@ ROLE_BINDINGS_ROLE_FIELDS = (
     "pane_id",
     "blocker",
     "candidates",
+    "group_members",
     "controls",
 )
+
+# The one layer that can be a *group* rather than a single agent: a configured
+# `[review] reviewers` list is dispatched serially, member after member.
+ROLE_BINDINGS_GROUP_ROLE = "code_reviewer"
 
 ROLE_BINDINGS_CONTROL_FIELDS = ("kind", "label", "command", "safety", "enabled", "blocker")
 
@@ -1582,6 +1587,30 @@ def _validate_role_bindings_role(errors: list[str], index: int, role: object) ->
             errors.append(f"{prefix}.candidates must list every ambiguous candidate")
     elif candidates:
         errors.append(f"{prefix}.candidates must be empty unless the binding is ambiguous")
+
+    # `group_members` is *membership*, never ambiguity. A configured two-member
+    # review group is `bound` with an empty `candidates[]` and both members
+    # listed here; conflating the two would blur the fail-closed signal that
+    # `candidates` exists to carry.
+    group_members = role.get("group_members")
+    if not isinstance(group_members, list) or not all(
+        isinstance(member, str) for member in group_members
+    ):
+        errors.append(f"{prefix}.group_members must be a list of strings")
+    elif group_members:
+        if role_name != ROLE_BINDINGS_GROUP_ROLE:
+            errors.append(
+                f"{prefix}.group_members must be empty outside the "
+                f"{ROLE_BINDINGS_GROUP_ROLE} layer"
+            )
+        elif group_members[0] != role.get("agent_id"):
+            # The head of the group *is* the binding. If these two ever drift
+            # apart the card is drawing a group whose leader is not the agent
+            # it says it bound.
+            errors.append(
+                f"{prefix}.group_members must start with the bound agent_id "
+                f"{role.get('agent_id')!r}, got {group_members[0]!r}"
+            )
 
     _validate_role_bindings_controls(errors, prefix, role.get("controls"), require_any=True)
     return (
@@ -1701,6 +1730,7 @@ def role_bindings_example() -> dict[str, object]:
                 "pane_id": None,
                 "blocker": None,
                 "candidates": [],
+                "group_members": [],
                 "controls": [
                     inspect(
                         "Route one request",
@@ -1725,6 +1755,7 @@ def role_bindings_example() -> dict[str, object]:
                 "pane_id": None,
                 "blocker": None,
                 "candidates": [],
+                "group_members": [],
                 "controls": [inspect("Inspect plans", "agentdeck plan list")],
             },
             {
@@ -1742,6 +1773,7 @@ def role_bindings_example() -> dict[str, object]:
                 "pane_id": None,
                 "blocker": None,
                 "candidates": [],
+                "group_members": [],
                 "controls": [inspect("Inspect Leader actions", "agentdeck leader actions")],
             },
             {
@@ -1759,6 +1791,7 @@ def role_bindings_example() -> dict[str, object]:
                 "pane_id": None,
                 "blocker": None,
                 "candidates": [],
+                "group_members": [],
                 "controls": [
                     inspect("Inspect mailbox", "agentdeck inbox --agent coder"),
                     {
@@ -1786,6 +1819,7 @@ def role_bindings_example() -> dict[str, object]:
                 "pane_id": "%2",
                 "blocker": None,
                 "candidates": [],
+                "group_members": [],
                 "controls": [
                     inspect("Inspect mailbox", "agentdeck inbox --agent reviewer"),
                     {
@@ -1813,6 +1847,7 @@ def role_bindings_example() -> dict[str, object]:
                 "pane_id": None,
                 "blocker": "set [review] round_reviewer to enable a dedicated acceptance reviewer",
                 "candidates": [],
+                "group_members": [],
                 "controls": [inspect("Inspect agents", "agentdeck agent list")],
             },
         ],

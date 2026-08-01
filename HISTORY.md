@@ -4,6 +4,51 @@
 
 ## 2026-08-01
 
+### Report the whole review group in the role bindings card, not just its head
+
+- **Type**: fix
+- **Motivation**: **live validation** 对一个真实配置项目跑 `agentdeck roles`,
+  除一处**漏报**外每条事实都对:该项目配了 `[review] reviewers =
+  ["reviewer", "planner"]` 这样一个**两人串行 review 组**,卡片却只显示
+  `code_reviewer … agent=reviewer`。绑组首是刻意且有文档的(与
+  `review_group` 同一条主 reviewer 规则),不是正确性 bug;但 AgentDeck 在
+  该环节实际派发的第二个 reviewer `planner` 在拓扑里完全不可见,照此卡片
+  作画的 GUI 会为一个真跑两人组的项目画出单个 reviewer 节点——一张以
+  **拓扑**命名的卡片在漏报实际拓扑。
+- **What**: `roles[]` 每项新增只读、附加字段 `group_members`:配了
+  `[review] reviewers` 时 `code_reviewer` 层按**配置顺序**(即串行派发顺序)
+  列出整组含组首,其余一切情形为 `[]`——包括无 `[review] reviewers` 时靠
+  role 语义命中的 `code_reviewer`(那是单个 agent,不是只有一人的组)。
+  `candidates` 语义**一字未动**(仍只在 `binding_status == "ambiguous"` 时
+  非空):`group_members` 是**成员**,`candidates` 是**歧义**,validator 把
+  二者分开守门——`group_members` 必须是字符串列表、`code_reviewer` 之外必须
+  为空、非空时首元素必须等于 `agent_id`(组首**就是**绑定,这条是钉住选头
+  与成员表不脱节的回归钉)。同步 `ROLE_BINDINGS_ROLE_FIELDS`、
+  `validate_role_bindings_contract`、`role_bindings_example()`(六层各补
+  `[]`)、`_role_bindings_card` builder、role-bindings 契约文档(角色字段表 +
+  一节专述 `candidates` 与 `group_members` 为何绝不可混用)、README、
+  CLAUDE.md。契约发现面 `role_fields` 与 workbench `roles_card_role_fields`
+  都从 `ROLE_BINDINGS_ROLE_FIELDS` 派生,随之自动同步。
+- **Impact**: 纯附加,GUI 契约向后兼容——既有字段语义与取值逐字节不变,
+  `candidates` 的 fail-closed 信号不被稀释。未配 `[review] reviewers` 的
+  项目(含 example fixture 与 workbench 嵌入面)除多出恒为 `[]` 的
+  `group_members` 外输出不变。全路径仍只读:不写 state、不追加事件、不调
+  provider、不读写 tmux;`group_members` 是 provenance,不改 gate、不授权
+  dispatch、不影响 `review_group.py` 从同一份 `[review].reviewers` 实际展开
+  review 组的行为。
+- **Verification**: 先红(`KeyError: 'group_members'` 与 validator 零报错)
+  后绿;8 条新测试:两人组报全员且 `candidates == []`、role-hint 回退报
+  `[]`、单人组报自身、`code_reviewer` 之外带成员被拒、组首≠`agent_id`
+  被拒、非字符串成员被拒、组首正确时通过、成员与候选混填仍被 `candidates`
+  子句拒。既有断言一条未删未弱化——`set(role) == set(ROLE_BINDINGS_ROLE_
+  FIELDS)` 与 `list(payload["roles"][0]) == list(ROLE_BINDINGS_ROLE_FIELDS)`
+  这类**精确**字段表断言原样保留(随字段表增长,仍同样严格)。真实项目
+  live 复核:`[review] reviewers = ["reviewer", "planner"]` →
+  `agent_id="reviewer"`, `candidates=[]`,
+  `group_members=["reviewer", "planner"]`。全量
+  `conda run -n agentdeck pytest -q` = **5083 passed, 3 skipped**
+  (基线 5075 + 8 条新测试)。
+
 ### Make the role bindings validator enforce what the contract already says
 
 - **Type**: fix

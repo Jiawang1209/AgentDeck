@@ -148,8 +148,13 @@ AgentDeck › Mission started. Use /status or open the workbench to inspect it.
   state source appears. `binding_status` is the closed triple
   `bound` / `unbound` / `ambiguous`: when two agents could both be the coder the
   card reports `ambiguous`, lists **every** candidate and never silently picks
-  one. The topology is an observation surface, not an authorization — it changes
-  no gate and authorizes no dispatch; discovery:
+  one. A configured `[review] reviewers` group is a different thing from
+  ambiguity: the layer binds its head and reports the **whole ordered group**
+  in the additive `group_members` (`["reviewer", "planner"]` in configured —
+  i.e. serial dispatch — order) while `candidates` stays empty, so a GUI never
+  draws a lone reviewer for a project that really runs a two-person review
+  group. The topology is an observation surface, not an authorization — it
+  changes no gate and authorizes no dispatch; discovery:
   `agentdeck contract role-bindings`. It is a different card from the older
   workbench `role_topology_card` (`mode = role_topology`), which reports what
   each coordination role / worker is doing **right now**; both survive and the

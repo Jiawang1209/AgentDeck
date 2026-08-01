@@ -183,6 +183,58 @@ def test_roles_command_binds_the_configured_review_group_head(tmp_path, monkeypa
     assert payload["unbound_count"] == 0
 
 
+def test_roles_command_reports_the_whole_configured_review_group(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    """两人串行 review 组不能只画出组长 —— 拓扑卡必须报全员。"""
+    root = prepare_project(tmp_path, monkeypatch)
+    append_config(root, '[review]\nreviewers = ["reviewer", "planner"]\n')
+
+    payload = run_roles(capsys)
+    roles = roles_by_name(payload)
+    code_reviewer = roles["code_reviewer"]
+
+    assert code_reviewer["binding_status"] == "bound"
+    assert code_reviewer["agent_id"] == "reviewer"
+    # membership is not ambiguity: a bound group still has no candidates
+    assert code_reviewer["candidates"] == []
+    # configured order is the serial dispatch order
+    assert code_reviewer["group_members"] == ["reviewer", "planner"]
+    for name, role in roles.items():
+        if name != "code_reviewer":
+            assert role["group_members"] == [], name
+    assert validate_role_bindings_contract(payload)["ok"]
+
+
+def test_roles_command_reports_no_group_for_the_role_hint_fallback(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    """没配 `[review] reviewers` 时命中的是单个 agent,不是组。"""
+    prepare_project(tmp_path, monkeypatch)
+
+    payload = run_roles(capsys)
+    roles = roles_by_name(payload)
+
+    assert roles["code_reviewer"]["binding_status"] == "bound"
+    assert roles["code_reviewer"]["agent_id"] == "reviewer"
+    assert roles["code_reviewer"]["group_members"] == []
+    for role in payload["roles"]:
+        assert role["group_members"] == [], role["role"]
+
+
+def test_roles_command_reports_a_single_member_group_as_itself(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    append_config(root, '[review]\nreviewers = ["reviewer"]\n')
+
+    payload = run_roles(capsys)
+    roles = roles_by_name(payload)
+
+    assert roles["code_reviewer"]["group_members"] == ["reviewer"]
+    assert validate_role_bindings_contract(payload)["ok"]
+
+
 def test_roles_command_reports_ambiguous_binding_and_never_picks_one(
     tmp_path, monkeypatch, capsys
 ) -> None:
@@ -357,6 +409,59 @@ def test_validator_rejects_ambiguous_roles_without_candidates_and_silent_picks()
 
     assert any("candidates" in error for error in errors)
     assert any("agent_id" in error for error in errors)
+
+
+def test_validator_rejects_group_members_outside_the_review_group_layer() -> None:
+    """只有 code_reviewer 有 review 组 —— 别的层带成员就是在冒充组。"""
+    payload = role_bindings_example()
+    coder = next(role for role in payload["roles"] if role["role"] == "coder")
+    coder["group_members"] = ["coder"]
+
+    errors = validate_role_bindings_contract(payload)["errors"]
+
+    assert any("group_members" in error for error in errors)
+
+
+def test_validator_rejects_a_group_whose_head_is_not_the_binding() -> None:
+    """回归钉:组首必须就是绑定的那个 agent,否则选头与成员表已经脱节。"""
+    payload = role_bindings_example()
+    code_reviewer = next(role for role in payload["roles"] if role["role"] == "code_reviewer")
+    assert code_reviewer["agent_id"] == "reviewer"
+    code_reviewer["group_members"] = ["planner", "reviewer"]
+
+    errors = validate_role_bindings_contract(payload)["errors"]
+
+    assert any("group_members" in error for error in errors)
+
+
+def test_validator_accepts_a_group_headed_by_the_bound_agent() -> None:
+    payload = role_bindings_example()
+    code_reviewer = next(role for role in payload["roles"] if role["role"] == "code_reviewer")
+    code_reviewer["group_members"] = ["reviewer", "planner"]
+
+    assert validate_role_bindings_contract(payload)["ok"]
+
+
+def test_validator_rejects_non_string_group_members() -> None:
+    payload = role_bindings_example()
+    code_reviewer = next(role for role in payload["roles"] if role["role"] == "code_reviewer")
+    code_reviewer["group_members"] = ["reviewer", 7]
+
+    errors = validate_role_bindings_contract(payload)["errors"]
+
+    assert any("group_members" in error for error in errors)
+
+
+def test_validator_keeps_candidates_and_group_members_apart() -> None:
+    """成员不是歧义:一个 bound 的两人组仍必须 `candidates == []`。"""
+    payload = role_bindings_example()
+    code_reviewer = next(role for role in payload["roles"] if role["role"] == "code_reviewer")
+    code_reviewer["group_members"] = ["reviewer", "planner"]
+    code_reviewer["candidates"] = ["reviewer", "planner"]
+
+    errors = validate_role_bindings_contract(payload)["errors"]
+
+    assert any("candidates" in error for error in errors)
 
 
 def test_validator_rejects_count_drift() -> None:

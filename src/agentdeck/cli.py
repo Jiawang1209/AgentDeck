@@ -5396,6 +5396,9 @@ def _role_bindings_card(config: ProjectConfig, project_view: dict[str, object]) 
         pane_id: object = None
         blocker: object = None
         candidates: list[str] = []
+        # Membership, not ambiguity: only a configured `[review] reviewers`
+        # group fills this in, and it stays empty for every other layer.
+        group_members: list[str] = []
         status = "bound"
 
         if binding_kind == "command":
@@ -5428,7 +5431,13 @@ def _role_bindings_card(config: ProjectConfig, project_view: dict[str, object]) 
                     )
             elif role_name == "code_reviewer":
                 if reviewers:
+                    # The head is the binding (same primary-reviewer rule
+                    # `review_group` uses), but a GUI drawing only the head
+                    # would draw one reviewer for a project that really runs a
+                    # serial group. Report the whole group, in configured order
+                    # — that order is the dispatch order.
                     agent_id, status, candidates = reviewers[0], "bound", []
+                    group_members = list(reviewers)
                 else:
                     agent_id, status, candidates, conflicts = _role_bindings_worker_layer(
                         worker_bindings, "code_reviewer"
@@ -5473,6 +5482,7 @@ def _role_bindings_card(config: ProjectConfig, project_view: dict[str, object]) 
                 "pane_id": pane_id,
                 "blocker": blocker,
                 "candidates": list(candidates),
+                "group_members": list(group_members),
                 "controls": controls,
             }
         )
