@@ -4,6 +4,25 @@
 
 ## 2026-08-01
 
+### Add the pure role topology derivation module
+
+- **Type**: feat
+- **Motivation**: G6 Role Topology(北极星最后一相)的第一刀。绑定推导必须
+  可以脱离项目、脱离 IO 把矩阵测透,否则"六层各绑到了什么"这件事只能靠
+  跑真实项目来验证。
+- **What**: 新增纯推导模块 `src/agentdeck/role_topology.py`:闭合枚举
+  `ROLE_TOPOLOGY_LAYERS` / `ROLE_BINDING_KINDS` / `ROLE_BINDING_STATUSES` /
+  `ROLE_LIFECYCLES`、北极星六层静态骨架 `ROLE_SPECS`(声明序即展示序)、
+  role 文本语义命中 `IMPLEMENTATION_ROLE_HINTS` / `REVIEW_ROLE_HINTS`,以及
+  `resolve_worker_role(agents, hints)` —— 恰好一个命中为 `bound`,零个为
+  `unbound`,多个为 `ambiguous` 且列全候选,**绝不静默择一**。模块零 IO、
+  零 LLM,不 import `cli` / `state` / `config`,输入是纯数据。
+- **Impact**: 纯新增;零行为变化(尚无消费面)。为后续 `agentdeck roles`
+  卡片和 workbench 集成提供唯一一份绑定推导来源。
+- **Verification**: 已先确认红测失败(`ModuleNotFoundError: No module named
+  'agentdeck.role_topology'`);实现后 `conda run -n agentdeck pytest
+  tests/test_role_topology.py -q` 10 项通过。
+
 ### Freeze the G6 role topology design spec
 
 - **Type**: docs
