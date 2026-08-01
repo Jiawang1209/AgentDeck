@@ -4,6 +4,24 @@
 
 ## 2026-08-01
 
+### Catalogue the late-validation audit and its 10 remaining latent sites
+
+- **Type**: docs
+- **Motivation**: `/goal` 终审 Finding 3 的收尾一句是"根因是个模式,不是
+  一次性问题"。审计证实:**12 处**站点在不可逆副作用之后才校验契约。已修
+  当下可达的 2 处(`1319d643`、`ed56c6b6`),剩 10 处必须留账,否则下次给
+  那些 payload 加一个字段就会静默变成谎言。
+- **What**: `docs/roadmap/2026-08-01-late-validation-audit.md`——缺陷类定义、
+  审计方法论、已修 2 处的后果链条、10 处潜伏站点按"效果等级 × 可达性"
+  排序的余账、前三处的最小修法建议、以及已检查干净的覆盖面。
+- **Impact**: 纯文档;零代码改动。配合 `1319d643` 写入 CLAUDE.md 的通用
+  纪律使用。
+- **Verification**: 审计的方法论产出值得单独记:**"效果会不会残留"与
+  "校验器会不会真的失败"必须分开问**。前者 7/7 实测残留;后者多数为否
+  ——那些 payload 是字面量 + 闭合枚举 + 从被检查列表自己算出的计数,
+  校验器**今天是恒真式**。只问前者会得到"12 处全是 bug"的过度警报,
+  只问后者会漏掉"改一个字段就变谎言"的脆弱性。
+
 ### Stop one item's failure from erasing the record of a batch dispatch that already pressed keys
 
 - **Type**: fix
