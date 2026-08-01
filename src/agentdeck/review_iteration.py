@@ -561,4 +561,12 @@ def derive_review_iteration(
         "rework_step": rework_step,
         "review_step": review_steps[0],
         "review_steps": review_steps,
+        # 精修入口(`plan rework --refine`)复用的**同一份**已入账事实,
+        # 使 prompt 与模板绝不各自推导一遍(单一来源);只是投影,
+        # 不改变任何模板路径的输出。
+        "refine_context": {
+            "original_task": str(implementation.get("task") or ""),
+            "verdict": verdict,
+            "members": members,
+        },
     }

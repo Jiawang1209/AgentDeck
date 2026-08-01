@@ -514,3 +514,291 @@ def test_every_leader_provider_implements_refine() -> None:
         DeepSeekProvider,
     ):
         assert callable(getattr(provider, "refine_rework_task", None)), provider
+
+
+# --------------------------------------------------------------------------
+# Task 3:CLI `--refine`(锁外推导 → provider → 校验 → writer override)
+# --------------------------------------------------------------------------
+
+
+class _StubProvider:
+    """记录调用的 Leader provider 替身;`text`/`error` 二选一。"""
+
+    name = "stub"
+
+    def __init__(self, *, text: str | None = None, error: Exception | None = None) -> None:
+        self._text = text
+        self._error = error
+        self.calls: list[dict] = []
+
+    def refine_rework_task(self, *, task: str, feedback: str, model=None) -> str:
+        self.calls.append({"task": task, "feedback": feedback, "model": model})
+        if self._error is not None:
+            raise self._error
+        return self._text  # type: ignore[return-value]
+
+
+class _NoRefineProvider:
+    """legacy provider:没有 `refine_rework_task`(调用方按 unsupported 回落)。"""
+
+    name = "legacy"
+
+
+def _install_provider(monkeypatch, provider: object) -> list[str]:
+    """把 CLI 的 provider 工厂换成返回 `provider` 的替身,返回请求过的名字。"""
+    requested: list[str] = []
+
+    def factory(name: str):
+        requested.append(name)
+        return provider
+
+    monkeypatch.setattr("agentdeck.cli.leader_provider", factory)
+    return requested
+
+
+def _forbid_provider(monkeypatch) -> None:
+    """任何 provider 构造都判定失败——用于钉"绝不调 provider"的路径。"""
+
+    def factory(name: str):
+        raise AssertionError(f"provider must not be constructed: {name}")
+
+    monkeypatch.setattr("agentdeck.cli.leader_provider", factory)
+
+
+def _seeded_cli(tmp_path, monkeypatch, overall: str = "fail") -> Path:
+    from test_plan_rework_cli import prepare_seeded_project
+
+    return prepare_seeded_project(tmp_path, monkeypatch, overall)
+
+
+def _steps(root: Path) -> list[dict]:
+    from agentdeck.state import StateStore
+
+    return StateStore(root).load()["plans"][0]["plan"]["steps"]
+
+
+def test_refine_without_confirm_refuses_zero_write(tmp_path, monkeypatch, capsys) -> None:
+    """`--refine` 必须与 `--confirm` 同给;单给 `--refine` 拒绝、零写,
+    且**在拒绝之前**绝不调用 provider。"""
+    from agentdeck import cli
+    from agentdeck.state import StateStore
+
+    root = _seeded_cli(tmp_path, monkeypatch)
+    _forbid_provider(monkeypatch)
+    before = StateStore(root).load()
+
+    assert cli.main(["plan", "rework", "--plan-id", "pln_1", "--refine"]) == 1
+    assert "confirm" in capsys.readouterr().err
+    assert StateStore(root).load() == before
+
+
+def test_refine_success_lands_provider_text_with_provenance(tmp_path, monkeypatch, capsys) -> None:
+    from agentdeck import cli
+    from agentdeck.state import StateStore
+
+    root = _seeded_cli(tmp_path, monkeypatch)
+    provider = _StubProvider(text="只修 2 个失败测试,别动 a11y。")
+    requested = _install_provider(monkeypatch, provider)
+
+    assert cli.main(["plan", "rework", "--plan-id", "pln_1", "--confirm", "--refine"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+
+    assert payload["refined"] is True
+    assert "refine_skipped_reason" not in payload
+    assert len(provider.calls) == 1, "精修只调用一次 provider,绝不重试"
+    # prompt 来自已入账事实:原任务 + fail 标准
+    assert provider.calls[0]["task"] == "build the widget"
+    assert "build the widget" in provider.calls[0]["feedback"]
+    assert requested == ["deepseek"], "使用配置的 Leader provider"
+
+    rework = _steps(root)[2]
+    assert rework["task"].startswith("只修 2 个失败测试,别动 a11y。")
+    assert rework["task"].rstrip().endswith(REWORK_TASK_FOOTER)  # 收尾指令由程序追加
+    assert rework["task_source"] == "leader_refined"
+    assert "task_source" not in _steps(root)[3]  # 复审步永不带
+    # 派发读的是 approval.task
+    approvals = [
+        a for a in StateStore(root).load()["approvals"]
+        if a["approval_id"] in payload["approval_ids"]
+    ]
+    assert approvals[0]["task"] == rework["task"]
+
+    event = _rework_event(root)
+    assert event["payload"]["refined"] is True
+
+
+def test_refine_provider_error_falls_back_and_audits(tmp_path, monkeypatch, capsys) -> None:
+    """provider 抖动绝不阻断迭代:模板版落地、命令仍退出 0、失败如实记账。"""
+    from agentdeck import cli
+    from agentdeck.state import StateStore
+
+    root = _seeded_cli(tmp_path, monkeypatch)
+    _install_provider(monkeypatch, _StubProvider(error=RuntimeError("boom")))
+
+    assert cli.main(["plan", "rework", "--plan-id", "pln_1", "--confirm", "--refine"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["refined"] is False
+    assert payload["refine_skipped_reason"] == "provider_error"
+
+    rework = _steps(root)[2]
+    assert "task_source" not in rework
+    assert "原任务: build the widget" in rework["task"]  # 确定性模板
+
+    state = StateStore(root).load()
+    errors = state.get("leader_errors") or []
+    assert errors and errors[-1]["mode"] == "plan_rework_refine"
+    failed = [e for e in _events(root) if e["event_type"] == "leader_provider_failed"]
+    assert failed and failed[-1]["payload"]["mode"] == "plan_rework_refine"
+
+
+@pytest.mark.parametrize("bad", ["", "   ", "x" * (MAX_REWORK_TASK_CHARS + 1)])
+def test_refine_invalid_output_falls_back(tmp_path, monkeypatch, capsys, bad) -> None:
+    from agentdeck import cli
+
+    root = _seeded_cli(tmp_path, monkeypatch)
+    _install_provider(monkeypatch, _StubProvider(text=bad))
+
+    assert cli.main(["plan", "rework", "--plan-id", "pln_1", "--confirm", "--refine"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["refined"] is False
+    assert payload["refine_skipped_reason"] == "invalid_output"
+    assert "task_source" not in _steps(root)[2]
+    assert bad.strip() not in _steps(root)[2]["task"] or not bad.strip()
+
+
+def test_refine_unsupported_provider_falls_back(tmp_path, monkeypatch, capsys) -> None:
+    from agentdeck import cli
+
+    root = _seeded_cli(tmp_path, monkeypatch)
+    _install_provider(monkeypatch, _NoRefineProvider())
+
+    assert cli.main(["plan", "rework", "--plan-id", "pln_1", "--confirm", "--refine"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["refined"] is False
+    assert payload["refine_skipped_reason"] == "unsupported_provider"
+    assert "task_source" not in _steps(root)[2]
+
+
+def test_refine_reasons_are_all_in_the_closed_enum(tmp_path, monkeypatch, capsys) -> None:
+    from agentdeck import cli
+
+    for provider, expected in (
+        (_StubProvider(error=RuntimeError("boom")), "provider_error"),
+        (_StubProvider(text=""), "invalid_output"),
+        (_NoRefineProvider(), "unsupported_provider"),
+    ):
+        base = tmp_path / expected
+        base.mkdir()
+        _seeded_cli(base, monkeypatch)
+        _install_provider(monkeypatch, provider)
+        assert cli.main(["plan", "rework", "--plan-id", "pln_1", "--confirm", "--refine"]) == 0
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["refine_skipped_reason"] == expected
+        assert payload["refine_skipped_reason"] in REFINE_SKIP_REASONS
+
+
+def test_refine_refusal_never_reaches_a_provider(tmp_path, monkeypatch, capsys) -> None:
+    """不满足触发条件时照旧拒绝,且**在调 provider 之前**就拒绝
+    (spec:锁外推导先跑,拒绝路径零 provider 调用、零写)。"""
+    from agentdeck import cli
+    from agentdeck.state import StateStore
+
+    root = _seeded_cli(tmp_path, monkeypatch, "pass")
+    _forbid_provider(monkeypatch)
+    before = StateStore(root).load()
+
+    assert cli.main(["plan", "rework", "--plan-id", "pln_1", "--confirm", "--refine"]) == 1
+    assert "verdict_pass" in capsys.readouterr().err
+    assert StateStore(root).load() == before
+
+    assert cli.main(["plan", "rework", "--plan-id", "pln_ghost", "--confirm", "--refine"]) == 1
+    assert "no_plan" in capsys.readouterr().err
+    assert StateStore(root).load() == before
+
+
+def test_plan_rework_without_refine_never_constructs_a_provider(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    """无 `--refine` 的模板路径必须逐字节同现状:provider 工厂一次都不碰。"""
+    from agentdeck import cli
+
+    root = _seeded_cli(tmp_path, monkeypatch)
+    _forbid_provider(monkeypatch)
+
+    assert cli.main(["plan", "rework", "--plan-id", "pln_1", "--confirm"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["refined"] is False
+    assert "refine_skipped_reason" not in payload
+    assert "task_source" not in _steps(root)[2]
+    assert "原任务: build the widget" in _steps(root)[2]["task"]
+
+
+def test_run_loop_never_reaches_the_refine_path(tmp_path, monkeypatch, capsys) -> None:
+    """run-loop 的迭代钩子**不提供** refine 入口(spec 安全边界):
+    ①`--refine` 只挂在 `plan rework` 的解析器上;②源码里传 override 的
+    调用点只有 `plan_rework_command`;③一次 autonomous wave 全程零 provider。"""
+    import ast
+
+    from agentdeck import cli
+
+    source = Path(cli.__file__).read_text(encoding="utf-8")
+    assert source.count('"--refine"') == 1, "只有 plan rework 解析器声明 --refine"
+
+    tree = ast.parse(source)
+    holders = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        for call in ast.walk(node):
+            if isinstance(call, ast.Call) and any(
+                kw.arg in {"rework_task_override", "override_for_reply"}
+                for kw in call.keywords
+            ):
+                holders.add(node.name)
+    assert holders == {"plan_rework_command"}, holders
+
+    root = _seeded_cli(tmp_path, monkeypatch)
+    cli.main([
+        "policy", "set-mode", "--mode", "autonomous", "--confirm",
+        "--allow-agent", "coder", "--allow-agent", "reviewer", "--max-approvals", "8",
+    ])
+    capsys.readouterr()
+    _forbid_provider(monkeypatch)
+    assert cli.main(["run-loop", "--plan-id", "pln_1", "--confirm"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["review_iterations"][0]["round"] == 1
+    assert "task_source" not in _steps(root)[2]
+
+    with pytest.raises(SystemExit):
+        cli.main(["run-loop", "--plan-id", "pln_1", "--confirm", "--refine"])
+
+
+def test_plan_rework_contract_carries_refined() -> None:
+    from agentdeck.contracts import (
+        PLAN_REWORK_RESPONSE_FIELDS,
+        plan_rework_contract_payload,
+        plan_rework_example,
+        validate_plan_rework_contract,
+    )
+
+    assert "refined" in PLAN_REWORK_RESPONSE_FIELDS
+    example = plan_rework_example()
+    assert example["refined"] is False
+    assert validate_plan_rework_contract(example)["ok"] is True
+
+    missing = dict(example)
+    missing.pop("refined")
+    assert validate_plan_rework_contract(missing)["ok"] is False
+    assert validate_plan_rework_contract({**example, "refined": "yes"})["ok"] is False
+    assert validate_plan_rework_contract({**example, "refined": 1})["ok"] is False
+
+    # 可选 skip reason 必须落在闭合枚举内(绝不留存 provider 原文)
+    for reason in REFINE_SKIP_REASONS:
+        payload = {**example, "refined": False, "refine_skipped_reason": reason}
+        assert validate_plan_rework_contract(payload)["ok"] is True
+    bad = {**example, "refined": False, "refine_skipped_reason": "provider said no"}
+    assert validate_plan_rework_contract(bad)["ok"] is False
+
+    discovery = plan_rework_contract_payload(Path("docs/contracts/plan-rework-schema.md"))
+    assert discovery["refine_skip_reasons"] == list(REFINE_SKIP_REASONS)
+    assert "--refine" in discovery["refine_command_template"]

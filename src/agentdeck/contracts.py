@@ -28,7 +28,11 @@ from .models import (
 )
 from .providers.plan_schema import LEADER_PLAN_SCHEMA_VERSION
 from .review_group import REVIEW_GROUP_RULE
-from .review_iteration import REVIEW_ITERATION_SKIP_REASONS, REWORK_TRIGGER_OVERALLS
+from .review_iteration import (
+    REFINE_SKIP_REASONS,
+    REVIEW_ITERATION_SKIP_REASONS,
+    REWORK_TRIGGER_OVERALLS,
+)
 from .run_loop_host import RUN_LOOP_HOST_STOPPED_REASONS
 from .providers.semantic_plan_schema import SEMANTIC_LEADER_PLAN_SCHEMA_VERSION
 from .semantic_authority import SEMANTIC_AUTHORITY_SCHEMA_VERSION
@@ -7486,6 +7490,7 @@ PLAN_REWORK_RESPONSE_FIELDS = (
     "steps",
     "approval_ids",
     "triggered_by_reply",
+    "refined",
     "next_command",
     "requires_explicit_user",
     "safety",
@@ -7496,6 +7501,15 @@ def validate_plan_rework_contract(payload: dict[str, object]) -> dict[str, objec
     errors = _validate_fields(payload, PLAN_REWORK_RESPONSE_FIELDS, "plan_rework")
     if payload.get("mode") != "plan_rework":
         errors.append(f"plan_rework.mode must be plan_rework, got {payload.get('mode')}")
+    if not isinstance(payload.get("refined"), bool):
+        errors.append("plan_rework.refined must be a bool")
+    if "refine_skipped_reason" in payload:
+        # 闭合枚举:响应只记这些码,绝不留存 provider 原文。
+        if payload.get("refine_skipped_reason") not in REFINE_SKIP_REASONS:
+            errors.append(
+                "plan_rework.refine_skipped_reason must be one of "
+                f"{list(REFINE_SKIP_REASONS)}, got {payload.get('refine_skipped_reason')}"
+            )
     round_value = payload.get("round")
     if not isinstance(round_value, int) or isinstance(round_value, bool) or round_value < 1:
         errors.append("plan_rework.round must be an int >= 1")
@@ -7519,6 +7533,7 @@ def plan_rework_example() -> dict[str, object]:
         "steps": [3, 4],
         "approval_ids": ["apv_rework", "apv_rereview"],
         "triggered_by_reply": "rep_example",
+        "refined": False,
         "next_command": "agentdeck approval list",
         "requires_explicit_user": True,
         "safety": "explicit_user",
@@ -7529,10 +7544,14 @@ def plan_rework_contract_payload(contract_path: Path) -> dict[str, object]:
     return {
         "schema_version": PROJECT_VIEW_SCHEMA_VERSION,
         "rework_command_template": "agentdeck plan rework --plan-id <plan_id> --confirm",
+        "refine_command_template": (
+            "agentdeck plan rework --plan-id <plan_id> --confirm --refine"
+        ),
         "contract_path": str(contract_path),
         "contract_exists": contract_path.exists(),
         "response_fields": list(PLAN_REWORK_RESPONSE_FIELDS),
         "skip_reasons": list(REVIEW_ITERATION_SKIP_REASONS),
+        "refine_skip_reasons": list(REFINE_SKIP_REASONS),
         "trigger_overalls": sorted(REWORK_TRIGGER_OVERALLS),
         "run_loop_contract": "agentdeck contract run-loop",
     }

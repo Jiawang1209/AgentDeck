@@ -98,8 +98,12 @@ AgentDeck › Mission started. Use /status or open the workbench to inspect it.
   fail → rework → re-review → pass → merge chain runs inside one bounded
   invocation, while exhausted budgets fall back to the human gate with the
   merge withheld (`verdict_blocked`); explicit manual trigger:
-  `agentdeck plan rework --plan-id <id> --confirm`; discovery:
-  `agentdeck contract plan-rework`;
+  `agentdeck plan rework --plan-id <id> --confirm`, whose opt-in `--refine`
+  flag has the configured Leader provider distill the review feedback into the
+  rework task once (explicit-only — run-loop never refines, so it still never
+  calls a provider — and any provider failure falls back to the deterministic
+  template with `refined: false` + a closed `refine_skipped_reason`, exit 0);
+  discovery: `agentdeck contract plan-rework`;
 - review groups + round reviewer: the optional `[review]` config section turns
   one review stage into an ordered group of reviewers — `reviewers = ["reviewer",
   "planner"]` deterministically expands every review step into N consecutive

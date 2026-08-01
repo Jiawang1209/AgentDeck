@@ -152,7 +152,13 @@ from .contracts import (
 from .autonomy import run_loop_gate, select_auto_approvals
 from .delegation_match import is_composite_command, normalize_match
 from .review_group import expand_review_group
-from .review_iteration import plan_review_rounds, rework_step_numbers
+from .review_iteration import (
+    build_refine_prompt,
+    derive_review_iteration,
+    plan_review_rounds,
+    rework_step_numbers,
+    validate_refined_task,
+)
 from .run_loop_host import (
     append_host_log,
     host_log_path,
@@ -19358,6 +19364,64 @@ def plan_board_command(args: argparse.Namespace) -> int:
     return 0
 
 
+def _refine_rework_task(
+    config: ProjectConfig, store: StateStore, preview: dict[str, object]
+) -> tuple[str | None, str | None]:
+    """Lock-free Leader refinement of one rework task.
+
+    Returns `(validated_text | None, skip_reason | None)` and **never
+    raises**: every failure mode (unsupported provider, provider exception or
+    timeout, unusable output) falls back to the deterministic template and is
+    reported truthfully through the closed `REFINE_SKIP_REASONS` enum — an
+    iteration must never be blocked by provider flakiness, and the template is
+    itself a usable product. Provider exceptions are still audited via
+    `leader_errors[]` + `leader_provider_failed` (`mode=plan_rework_refine`);
+    the raw provider text is never persisted as a reason.
+
+    Called **only** from the explicit `plan rework --refine` path: the run-loop
+    engine hook has no entry here, keeping the live-verified "run-loop never
+    calls a Leader provider" invariant intact. Runs entirely outside the state
+    mutation lock (see the refined-rework spec) — the writer adopts the result
+    only when its own in-lock derivation agrees on `triggered_by_reply`.
+    """
+    provider_name = config.leader.provider
+    model_label = config.leader.model
+    context = preview.get("refine_context")
+    context = context if isinstance(context, dict) else {}
+    original_task = str(context.get("original_task") or "")
+    try:
+        provider = leader_provider(provider_name)
+    except Exception:
+        return None, "unsupported_provider"
+    # Support is detected structurally (the LeaderProvider protocol does not
+    # declare the method), so a legacy provider degrades to the template
+    # instead of crashing the append.
+    refine = getattr(provider, "refine_rework_task", None)
+    if not callable(refine):
+        return None, "unsupported_provider"
+    feedback = build_refine_prompt(
+        original_task=original_task,
+        verdict=context.get("verdict") or {},
+        members=context.get("members"),
+    )
+    try:
+        raw = refine(task=original_task, feedback=feedback, model=model_label)
+    except Exception as exc:
+        _record_leader_provider_failure(
+            store,
+            "plan_rework_refine",
+            provider_name,
+            model_label,
+            original_task,
+            exc,
+        )
+        return None, "provider_error"
+    try:
+        return validate_refined_task(raw), None
+    except ValueError:
+        return None, "invalid_output"
+
+
 def plan_rework_command(args: argparse.Namespace) -> int:
     config, store, exit_code = _load_project_or_error()
     if config is None or store is None:
@@ -19365,11 +19429,32 @@ def plan_rework_command(args: argparse.Namespace) -> int:
     if not args.confirm:
         print("plan rework requires --confirm", file=sys.stderr)
         return 1
+    plan_id = str(args.plan_id)
+    review_binding = _review_binding(config)
+    rework_task_override: str | None = None
+    override_for_reply: str | None = None
+    local_skip_reason: str | None = None
+    if getattr(args, "refine", False):
+        # Lock-free read-only preview first: a refusal is reported exactly as
+        # the template path reports it and costs zero provider calls.
+        preview = derive_review_iteration(
+            store.load(), plan_id, config.autonomous.max_review_rounds, review_binding
+        )
+        if not preview.get("ok"):
+            print(f"plan rework refused: {preview.get('reason')}", file=sys.stderr)
+            return 1
+        rework_task_override, local_skip_reason = _refine_rework_task(
+            config, store, preview
+        )
+        if rework_task_override is not None:
+            override_for_reply = str(preview["triggered_by_reply"])
     result = store.append_review_iteration(
-        str(args.plan_id),
+        plan_id,
         config.autonomous.max_review_rounds,
         source="explicit",
-        review_binding=_review_binding(config),
+        review_binding=review_binding,
+        rework_task_override=rework_task_override,
+        override_for_reply=override_for_reply,
     )
     if not result.get("ok"):
         print(f"plan rework refused: {result.get('reason')}", file=sys.stderr)
@@ -19377,15 +19462,21 @@ def plan_rework_command(args: argparse.Namespace) -> int:
     payload = {
         "ok": True,
         "mode": "plan_rework",
-        "plan_id": str(args.plan_id),
+        "plan_id": plan_id,
         "round": result["round"],
         "steps": result["steps"],
         "approval_ids": result["approval_ids"],
         "triggered_by_reply": result["triggered_by_reply"],
+        "refined": bool(result.get("refined")),
         "next_command": "agentdeck approval list",
         "requires_explicit_user": True,
         "safety": "explicit_user",
     }
+    # The writer can still downgrade an adopted override to `state_changed`
+    # (state drifted between the lock-free preview and the in-lock derivation).
+    skipped_reason = result.get("refine_skipped_reason") or local_skip_reason
+    if not payload["refined"] and skipped_reason:
+        payload["refine_skipped_reason"] = str(skipped_reason)
     validation = validate_plan_rework_contract(payload)
     if not validation["ok"]:
         print("plan rework contract validation failed", file=sys.stderr)
@@ -22237,6 +22328,14 @@ def build_parser() -> argparse.ArgumentParser:
     )
     plan_rework.add_argument("--plan-id", required=True, help="Plan with a failing review verdict")
     plan_rework.add_argument("--confirm", action="store_true", help="Explicitly confirm the append")
+    plan_rework.add_argument(
+        "--refine",
+        action="store_true",
+        help=(
+            "Let the configured Leader provider refine the rework task once "
+            "(explicit only; falls back to the deterministic template on any failure)"
+        ),
+    )
     plan_rework.set_defaults(func=plan_rework_command)
 
     approval = subparsers.add_parser("approval", help="Approval gate commands")

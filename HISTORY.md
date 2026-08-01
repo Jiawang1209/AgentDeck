@@ -4,6 +4,61 @@
 
 ## 2026-08-01
 
+### Add `plan rework --refine`
+
+- **Motivation**: Task 1 让 writer 能采用锁外传入的精修回炉任务,Task 2 让
+  每个 Leader provider 能生成它,但还没有任何入口把两者接起来。本条是
+  `docs/superpowers/plans/2026-08-01-leader-refined-rework.md` **Task 3**
+  (收尾):给显式命令加 `--refine`,并同步契约、文档与全量回归。
+- **Type**: feat
+- **What**: ①`cli.py` 的 `plan rework` 解析器加 `--refine`(store_true);
+  命令流严格按 spec"接线约束"分三步:**锁外**只读 `derive_review_iteration`
+  推导一次(拒绝就照旧打印 `plan rework refused: <reason>` 退出 1,**在此之前
+  绝不构造 provider**)→ 新纯辅助 `_refine_rework_task()` 调一次 provider 并
+  `validate_refined_task()` 校验 → 带 `rework_task_override` /
+  `override_for_reply` 调 locked writer(writer 锁内重新推导,漂移则自行降级
+  `state_changed`)。`--refine` 无 `--confirm` 仍在既有 confirm 检查处拒绝、
+  零写、零 provider 调用。②回落矩阵闭合且命令**始终退出 0**:provider 构造
+  失败或缺 `refine_rework_task`(按 `getattr` 结构探测,`LeaderProvider`
+  Protocol 不声明该方法,与 `split_planning.plan_brief` 同一惯用法)→
+  `unsupported_provider`;provider 抛异常/超时 → `provider_error` 且经
+  `_record_leader_provider_failure(mode="plan_rework_refine")` 记
+  `leader_errors[]` + `leader_provider_failed`(不吞异常,但不阻断追加);
+  产出不合格 → `invalid_output`。③`review_iteration.derive_review_iteration`
+  的 ok-result 增只读投影 `refine_context`(original_task/verdict/members),
+  使精修 prompt 与确定性模板复用**同一份**已入账事实,不各自推导一遍;
+  模板路径输出逐字节不变。④契约:`PLAN_REWORK_RESPONSE_FIELDS` 加
+  `refined`,`validate_plan_rework_contract()` 要求 `refined` 是 bool、可选
+  `refine_skipped_reason` 必须落在从纯模块 import 的闭合枚举
+  `REFINE_SKIP_REASONS` 内(单一来源,不重打);example 与 discovery payload
+  同步(`refine_command_template` / `refine_skip_reasons`)。⑤文档:
+  `docs/contracts/plan-rework-schema.md` 新增 "Optional Leader refinement"
+  段(显式门、锁外一次调用、provenance `task_source=leader_refined`、
+  "provider 失败回落模板且命令仍成功"、"run-loop 永不精修")与
+  `refine_skip_reasons` 表,并修正原"never calls a provider"安全边界句;
+  CLAUDE.md 迭代闭环 bullet、README 同步。
+- **Impact**: 用户可见新增:`agentdeck plan rework --plan-id <id> --confirm
+  --refine`,响应新增 `refined`(bool)与可选 `refine_skipped_reason`。
+  安全边界不变——`--refine` 是显式 opt-in;**run-loop / run-loop --all /
+  --follow / run-loop-host 无 refine 入口**,"run-loop 绝不调用 Leader
+  provider"这条 live 验证的不变量完整保留;精修只改回炉任务文本,触发条件、
+  预算、审批语义、step 顺序守卫、merge gate 全不变;`task_source` 只是
+  provenance,不是授权。无 `--refine` 时行为逐字节同现状(provider 工厂
+  一次都不碰)。
+- **Verification**: 严格 TDD——先加 12 个失败测试(RED: 12 failed / 34
+  passed),实现后 `tests/test_refined_rework.py` 46 passed。阶梯:
+  定向套件 130 passed;`tests/test_contracts.py`
+  `test_agent_cli.py` `test_cli_structured_output.py`
+  `test_provider_openai_compatible.py` `test_leader_cli.py` 1375 passed;
+  `compileall src tests` 通过;`git diff --check` 干净;全量
+  `pytest tests/ -q` 4943 passed, 3 skipped。新增测试钉住:无 `--refine`
+  时 provider 工厂被调用即 fail;拒绝路径(verdict_pass / no_plan)零
+  provider 调用零写;三条回落原因;成功路径 step 与 approval 双面带精修
+  文本 + `task_source=leader_refined`;AST 断言全 `cli.py` 里传
+  `rework_task_override` / `override_for_reply` 的调用点**只有**
+  `plan_rework_command`、`"--refine"` 只声明一次、一次 autonomous
+  run-loop wave 全程零 provider 且 `--refine` 被 run-loop 解析器拒绝。
+
 ### Add provider `refine_rework_task`
 
 - **Motivation**: Task 1 已让 writer 能采用锁外传入的精修回炉任务,但没有
