@@ -4,6 +4,31 @@
 
 ## 2026-08-01
 
+### Stop a legal agent_id from taking workbench down
+
+- **Type**: fix
+- **Motivation**: `config.py` 的 `_agent_spec` 对 `agent_id` 没有字符集约束,
+  `agent_id = "co<der"` 是 `load_config` 接受、`agentdeck status` 正常处理的
+  合法配置。但 `_role_bindings_worker_controls` 会把它插进
+  `agentdeck inbox --agent {agent_id}`,而 control 注册表规则(enabled 且命令
+  含 `<` 即判为未禁用的占位符命令)分不清真 `<` 与模板 `<`——于是
+  `agentdeck roles` 退 1,**`agentdeck workbench` 也退 1 且 stdout 为空**,
+  而 workbench 是 `agentdeck controls`、`ui serve`、dashboard 和 chat
+  workbench mode 的上游。相对 `08ffa473` 是新回归。
+- **What**: 在 **builder** 处收口:`_role_bindings_worker_controls` 发现插值后
+  命令含 `<` 时,把该 control 发成 `enabled=false` 并给出点名 agent id、指向
+  `[[agents]]` 的 blocker(命令文本保留,便于人类看清会跑什么)。**不**放宽
+  validator 规则(它正是抓住本缺陷的守卫),**不**给 config 的 `agent_id` 加
+  字符集限制(那会拒绝今天能加载的配置,超出范围)。契约文档补一节说明这条
+  builder 侧责任。
+- **Impact**: 只读面更健壮:合法配置不再能让只读卡片和整个 workbench 硬失败。
+  不含 `<` 的 agent id 行为逐字节不变(`enabled` 与 blocker 取值不变)。
+- **Verification**: 先红后绿。红:真项目里 `agent_id="co<der"` +
+  `[review] round_reviewer="co<der"` 时 `agentdeck workbench` 退 1、stdout 0 字节;
+  绿后同一项目退 0、stdout 150089 字节,round_reviewer 仍 `bound`,两个 control
+  均 disabled 且带 blocker。新增 2 条测试:`roles` 路径与直接驱动
+  `agentdeck workbench` 断言 exit 0 的回归钉。
+
 ### Close the cross-layer hole in role binding resolution
 
 - **Type**: fix

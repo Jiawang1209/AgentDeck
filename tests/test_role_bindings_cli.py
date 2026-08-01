@@ -237,6 +237,62 @@ def test_roles_command_refuses_to_bind_a_role_that_reads_as_two_layers(
     assert validate_role_bindings_contract(payload)["ok"]
 
 
+def test_roles_command_survives_an_agent_id_containing_a_placeholder_character(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    """合法但含 `<` 的 agent_id 不得让只读卡片自毁。"""
+    root = prepare_project(tmp_path, monkeypatch)
+    append_config(
+        root,
+        "[[agents]]\n"
+        'agent_id = "co<der"\n'
+        'role = "acceptance"\n'
+        'provider = "codex"\n'
+        'command = "codex"\n'
+        'workspace_mode = "shared"\n'
+        "\n"
+        "[review]\n"
+        'round_reviewer = "co<der"\n',
+    )
+
+    payload = run_roles(capsys)
+    roles = roles_by_name(payload)
+
+    round_reviewer = roles["round_reviewer"]
+    assert round_reviewer["binding_status"] == "bound"
+    assert round_reviewer["agent_id"] == "co<der"
+    for control in round_reviewer["controls"]:
+        assert control["enabled"] is False
+        assert control["blocker"]
+    assert validate_role_bindings_contract(payload)["ok"]
+
+
+def test_workbench_survives_an_agent_id_containing_a_placeholder_character(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    """workbench 喂给 controls / ui serve / dashboard —— 它绝不能因一个合法 agent_id 硬失败。"""
+    root = prepare_project(tmp_path, monkeypatch)
+    append_config(
+        root,
+        "[[agents]]\n"
+        'agent_id = "co<der"\n'
+        'role = "acceptance"\n'
+        'provider = "codex"\n'
+        'command = "codex"\n'
+        'workspace_mode = "shared"\n'
+        "\n"
+        "[review]\n"
+        'round_reviewer = "co<der"\n',
+    )
+
+    exit_code = cli.main(["workbench"])
+
+    captured = capsys.readouterr()
+    assert exit_code == 0, captured.err
+    workbench = json.loads(captured.out)
+    assert validate_role_bindings_contract(workbench["roles_card"])["ok"]
+
+
 def test_roles_command_writes_no_state_and_appends_no_event(tmp_path, monkeypatch, capsys) -> None:
     root = prepare_project(tmp_path, monkeypatch)
     events_path = root / ".agentdeck" / "state" / "events.jsonl"

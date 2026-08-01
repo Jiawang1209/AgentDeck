@@ -163,6 +163,15 @@ and **every control is `safety=inspect`**. Controls carrying a `<placeholder>`
 must be disabled with a matching blocker (the `frontdesk` layer's
 `agentdeck frontdesk --message <text>` is the standing example).
 
+`agent_id` is free-form in `[[agents]]`, so an interpolated worker command can
+come out looking like a placeholder template (`agentdeck inbox --agent co<der`).
+The validator cannot tell a real `<` from a template `<`, so the **builder**
+resolves it: any control whose interpolated command would contain `<` is
+emitted disabled, with a blocker naming the agent id and pointing at
+`[[agents]]`. A legal config never makes this read-only card — or `agentdeck
+workbench`, which embeds it and feeds `controls` / `ui serve` / the dashboard —
+fail.
+
 ## Derivation Reuses Existing Authority
 
 The card introduces no configuration surface and no second state source:

@@ -5271,16 +5271,39 @@ def _role_bindings_worker_controls(
 ) -> list[dict[str, object]]:
     if not agent_id:
         return [_role_bindings_inspect("Inspect agents", "agentdeck agent list")]
+    # `agent_id` is free-form in `[[agents]]`, so an interpolated command can
+    # come out looking like a `<placeholder>` template. A control carrying `<`
+    # must never be enabled — the registry rule that catches placeholder
+    # commands cannot tell the two apart, and a half-broken control would take
+    # the whole read-only card (and `workbench`, and everything fed by it) down
+    # with it. Show the command, disable it, and say why.
+    placeholder_blocker = (
+        f"agent id {agent_id!r} contains '<', which reads as a placeholder command; "
+        "rename the agent in [[agents]] to use this control"
+    )
+    literal = "<" in agent_id
     running = runtime_status == "running"
+    terminal_command = f"agentdeck agent terminal --agent {agent_id}" if running else None
     return [
-        _role_bindings_inspect("Inspect mailbox", f"agentdeck inbox --agent {agent_id}"),
+        _role_bindings_inspect(
+            "Inspect mailbox",
+            f"agentdeck inbox --agent {agent_id}",
+            enabled=not literal,
+            blocker=placeholder_blocker if literal else None,
+        ),
         _control(
             kind="terminal",
             label="Open terminal",
-            command=f"agentdeck agent terminal --agent {agent_id}" if running else None,
+            command=terminal_command,
             safety="inspect",
-            enabled=running,
-            blocker=None if running else "agent is not running",
+            enabled=running and not literal,
+            blocker=(
+                placeholder_blocker
+                if literal and running
+                else None
+                if running
+                else "agent is not running"
+            ),
         ),
     ]
 
