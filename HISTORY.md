@@ -4,6 +4,36 @@
 
 ## 2026-08-01
 
+### Add the frontdesk multi-route classifier
+
+- **Type**: feat
+- **Motivation**: G1 承诺前台把用户原话"分类为 plan/run/help/skill/memory
+  等候选路径",但现状 `_frontdesk_card` 只有两档 `classification`
+  (`planning_candidate` / `needs_goal`)与一条 `next_command`——用户说
+  "看看现在什么状态"或"我想加个 skill",前台都只会把它当成 plan 目标或
+  让人去看帮助。冻结设计见
+  `docs/superpowers/specs/2026-08-01-frontdesk-multiroute-design.md` A 节。
+- **What**: 新增纯模块 `src/agentdeck/frontdesk.py`:闭合枚举
+  `FRONTDESK_ROUTES = ("plan","run","status","help","skill","memory")`、
+  确定性档位 `FRONTDESK_CONFIDENCES = ("high","medium","low")`、
+  `FRONTDESK_ROUTE_SAFETY`(plan=plan_only、run=approval_gated、其余
+  inspect)与 `classify_frontdesk(message) -> list[dict]`。每个候选是
+  `{route,label,command,confidence,rationale}`;强措辞命中 = high、弱线索
+  = medium、无任何命中时以 help 兜底 = low;同档位按 `FRONTDESK_ROUTES`
+  声明顺序稳定排序。`plan` 只在可提取目标时出现,`run` 需要启动语气**且**
+  可提取目标。`rationale` 只写 `matched "<词>"`(该词必在原话中)或两条固定
+  说明,不做推理。`frontdesk_goal()` 与既有
+  `cli._frontdesk_goal_from_message` 同一份规则,供下一刀直接复用。
+- **Impact**: 本刀只加纯模块,尚未接入任何卡面或命令,用户可见行为为零。
+  模块零 IO、不 import cli/state/config、不查 state、不读 tmux、绝不调用
+  provider;候选命令只是建议文本,不是授权。
+- **Verification**: TDD——先 RED(`ModuleNotFoundError: agentdeck.frontdesk`,
+  收集期即失败),后 GREEN:`tests/test_frontdesk.py` 30 passed。测试覆盖
+  六条路由各自的强/弱命中、多路由共存排序、同档位 tiebreak、兜底 help、
+  空消息、候选字段冻结、`rationale` 只引用原话中出现的词、重复调用
+  确定性、返回值不共享可变状态,以及用 AST 扫描源码证明模块只 import
+  `__future__`/`re`/`shlex` 且无 `open`/`exec` 等调用。
+
 ### Close final-review findings on refined rework
 
 - **Type**: fix
