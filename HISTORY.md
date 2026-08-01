@@ -4,6 +4,42 @@
 
 ## 2026-08-01
 
+### Add the refined-rework override to the iteration writer
+
+- **Motivation**: 迭代闭环的回炉任务是确定性模板(fail 标准原文 +
+  reviewer 回复原文),Round 13 证明它够用;但 reviewer 意见冗长、跨多位
+  reviewer 分散时,实现者仍要自己筛。让 Leader 把意见**提炼**成聚焦的返
+  工任务是可选增强。本条是
+  `docs/superpowers/plans/2026-08-01-leader-refined-rework.md` **Task 1**:
+  只落地纯推导与 writer 接线,provider 方法与 `--refine` 命令是后两 task。
+- **Type**: feat
+- **What**: ①`review_iteration.py` 新增 `REFINE_SKIP_REASONS` 闭合枚举
+  (`provider_error`/`invalid_output`/`state_changed`/`unsupported_provider`)、
+  `build_refine_prompt(original_task, verdict, members)`(原任务 + 每条
+  fail 标准与证据 + 复用 `build_group_review_text` 的逐 reviewer 署名段;
+  **绝不**要求模型输出 JSON——产出就是回炉任务正文)、
+  `validate_refined_task(text)`(fail-closed:非 str/空/超长抛 `ValueError`,
+  通过则追加固定收尾指令 `REWORK_TASK_FOOTER`),模板与精修共用同一条
+  收尾常量与同一上限。②`state.py` `append_review_iteration` 增两个**只能
+  关键字传**的参数 `rework_task_override` / `override_for_reply`:writer
+  **永不调用 provider**(锁内绝不做秒级 I/O),只在自己锁内推导出的
+  `triggered_by_reply` 与 `override_for_reply` 相等时采用 override 并给该
+  rework step 打 `task_source="leader_refined"`;不等即判定状态漂移,回落
+  模板并报 `refine_skipped_reason="state_changed"`。响应与
+  `plan_rework_appended` 事件增 `refined`(与可选 `refine_skipped_reason`)。
+- **Impact**: 无 override 时**逐字节不变**——追加的 step 等于纯推导输出,
+  不带 `task_source` 键;既有四参调用点(run-loop 引擎钩子、CLI)签名未
+  变且拿不到 refine 入口。安全边界不变:精修只改回炉**任务文本**,触发
+  条件、预算、审批语义、step 顺序守卫与 merge gate 全部原样;长度上限按
+  追加收尾指令后的**最终落地文本**计,超出即拒绝(回炉任务的长度不变量
+  是对落地文本的,不是对模型原文的)。半坏 override 抛错且零写。
+- **Verification**: 严格 TDD——新 `tests/test_refined_rework.py` 23 passed;
+  RED 由三处刻意变异复核(去掉 `task_source`、把漂移判定改成恒真、去掉
+  收尾指令追加 → 5 failed,证明测试确实咬合);定向回归
+  refined_rework + review_iteration + review_group + plan_rework_cli +
+  review_verdict_ingestion **122 passed**;`compileall` 干净;
+  `git diff --check` 干净;全量 `pytest tests/ -q` **4920 passed, 3 skipped**。
+
 ### Close the CLI failure-reason gap on both planning paths
 
 - **Motivation**: 上一条只让 `plan_brief`(capture_output 路径)能分类;

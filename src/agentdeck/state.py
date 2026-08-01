@@ -56,6 +56,7 @@ from .mission import (
 )
 from .review_group import REVIEW_GROUP_RULE
 from .review_iteration import (
+    MAX_REWORK_TASK_CHARS,
     derive_review_iteration,
     plan_review_rounds,
     select_plan_verdict,
@@ -10204,6 +10205,9 @@ class StateStore:
         max_review_rounds: int,
         source: str,
         review_binding: dict[str, Any] | None = None,
+        *,
+        rework_task_override: str | None = None,
+        override_for_reply: str | None = None,
     ) -> dict[str, Any]:
         """Sole write path of the review iteration loop: append the derived
         rework + re-review step(s) to the plan, create their pending
@@ -10212,7 +10216,29 @@ class StateStore:
         `review_binding` carries the pure `[review]` config data (the store
         never takes a ProjectConfig); callers that already hold the config
         pass it in, otherwise it is read from this project's config. Absent
-        or empty binding == today's byte-identical clone behavior."""
+        or empty binding == today's byte-identical clone behavior.
+
+        `rework_task_override` is a refined rework task the caller computed
+        **outside this lock** (see the refined-rework spec); this writer never
+        reaches out to a Leader backend itself — holding the mutation lock
+        across a seconds-to-minutes network call would block every state write
+        in the project. The override is adopted only when this writer's own
+        in-lock derivation (the sole authority) reproduces the same
+        `triggered_by_reply` as `override_for_reply`; otherwise state drifted
+        between the caller's lock-free preview and this write, and the
+        deterministic template is used with `refine_skipped_reason`
+        `"state_changed"` (a refinement of a superseded verdict must never be
+        pinned onto a newer round). Without an override the appended steps are
+        byte-identical to the template path (no `task_source` key)."""
+        if rework_task_override is not None:
+            # 调用方必须已过 validate_refined_task;半坏 override 是编程错误,
+            # fail-closed 抛错且零写,绝不静默落地半坏回炉任务。
+            if (
+                not isinstance(rework_task_override, str)
+                or not rework_task_override.strip()
+                or len(rework_task_override) > MAX_REWORK_TASK_CHARS
+            ):
+                raise ValueError("rework_task_override must be a validated task text")
         state = self.load()
         if review_binding is None:
             review_binding = self._config_review_binding()
@@ -10221,6 +10247,15 @@ class StateStore:
         )
         if not derived.get("ok"):
             return derived
+        refined = False
+        refine_skipped_reason: str | None = None
+        if rework_task_override is not None:
+            if derived["triggered_by_reply"] == override_for_reply:
+                derived["rework_step"]["task"] = rework_task_override
+                derived["rework_step"]["task_source"] = "leader_refined"
+                refined = True
+            else:
+                refine_skipped_reason = "state_changed"
         plan_record = next(
             plan for plan in state["plans"] if plan.get("plan_id") == plan_id
         )
@@ -10251,26 +10286,29 @@ class StateStore:
             )
         state.setdefault("approvals", []).extend(approvals)
         self.save(state)
-        self.append_event(
-            EventRecord.create(
-                "plan_rework_appended",
-                {
-                    "plan_id": plan_id,
-                    "round": derived["round"],
-                    "source": source,
-                    "triggered_by_reply": derived["triggered_by_reply"],
-                    "steps": [step["step"] for step in new_steps],
-                    "approval_count": len(approvals),
-                },
-            )
-        )
-        return {
+        payload = {
+            "plan_id": plan_id,
+            "round": derived["round"],
+            "source": source,
+            "triggered_by_reply": derived["triggered_by_reply"],
+            "steps": [step["step"] for step in new_steps],
+            "approval_count": len(approvals),
+            "refined": refined,
+        }
+        if refine_skipped_reason is not None:
+            payload["refine_skipped_reason"] = refine_skipped_reason
+        self.append_event(EventRecord.create("plan_rework_appended", payload))
+        result = {
             "ok": True,
             "round": derived["round"],
             "triggered_by_reply": derived["triggered_by_reply"],
             "steps": [step["step"] for step in new_steps],
             "approval_ids": [approval["approval_id"] for approval in approvals],
+            "refined": refined,
         }
+        if refine_skipped_reason is not None:
+            result["refine_skipped_reason"] = refine_skipped_reason
+        return result
 
     def create_chat_assignment_approval(self, agent_id: str, role: str, task: str) -> dict[str, Any]:
         state = self.load()

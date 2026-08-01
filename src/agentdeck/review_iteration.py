@@ -20,6 +20,16 @@ from .review_verdict import REVIEW_VERDICT_SCHEMA_VERSION
 REVIEW_ITERATION_ORIGIN = "review_iteration"
 REWORK_TRIGGER_OVERALLS = frozenset({"fail", "needs_changes"})
 MAX_REWORK_TASK_CHARS = 4000
+# 固定收尾指令:模板与精修产出共用同一条,且永远由程序追加,不依赖模型自觉。
+REWORK_TASK_FOOTER = "修复后 commit 到任务分支。"
+
+# 精修回落原因的闭合枚举:响应/事件只记这些码,绝不留存 provider 原文。
+REFINE_SKIP_REASONS = (
+    "provider_error",
+    "invalid_output",
+    "state_changed",
+    "unsupported_provider",
+)
 
 # 闭合拒绝原因:调用方按原因决定沉默跳过还是如实报告。
 REVIEW_ITERATION_SKIP_REASONS = (
@@ -295,7 +305,7 @@ def build_rework_task(
             if item.get("evidence"):
                 entry += f" (证据: {item['evidence']})"
             header.append(entry)
-    footer = "修复后 commit 到任务分支。"
+    footer = REWORK_TASK_FOOTER
     text = "\n".join([*header, "审查意见原文:", reply_text, footer])
     if len(text) > MAX_REWORK_TASK_CHARS:
         pointers = " / ".join(
@@ -304,6 +314,73 @@ def build_rework_task(
         marker = f"\n[审查意见已截断,全文见 {pointers}]\n{footer}"
         text = text[: MAX_REWORK_TASK_CHARS - len(marker)] + marker
     return text
+
+
+def build_refine_prompt(
+    *,
+    original_task: str,
+    verdict: dict[str, Any],
+    members: list[dict[str, Any]] | None,
+) -> str:
+    """Leader 精修 prompt:原任务 + 每条 fail 标准(带证据) + 每位非 pass
+    reviewer 的署名段。纯文本进、纯文本出——**绝不**要求模型输出 JSON
+    (产出就是回炉任务本身),也绝不授权模型改动 step 结构。
+
+    `members` 为组路径的成员列表(与 `build_group_review_text` 同一形状);
+    无组时调用方可传 None 或合成单成员列表。本函数只重排**已入账**的事实,
+    不读文件、不读 pane、不调用任何 provider。
+    """
+    overall = str(verdict.get("overall"))
+    score = verdict.get("score")
+    lines = [
+        "你是软件项目的 Leader。下面是一次代码审查未通过的记录。",
+        "请把审查意见提炼成一份聚焦、可执行的返工任务,直接写给实现者看。",
+        "只输出返工任务正文本身:不要前言、不要标题、不要代码块包裹。",
+        "只依据下面给出的事实,不要臆造未提到的问题,也不要改动任务的负责人或步骤结构。",
+        "",
+        f"原任务: {original_task}",
+        "审查判定: " + overall + (f" (score {score})" if isinstance(score, int) else ""),
+    ]
+    failed = [
+        item
+        for item in verdict.get("criteria", [])
+        if isinstance(item, dict) and item.get("verdict") == "fail"
+    ]
+    if failed:
+        lines.append("未通过的验收标准:")
+        for item in failed:
+            entry = f"- {item.get('criterion')}"
+            if item.get("evidence"):
+                entry += f" (证据: {item['evidence']})"
+            lines.append(entry)
+    review_text = build_group_review_text(members) if members else ""
+    if review_text:
+        lines += ["", "审查意见原文(按 reviewer 分段):", review_text]
+    return "\n".join(lines)
+
+
+def validate_refined_task(text: Any) -> str:
+    """fail-closed 校验精修产出,返回可直接落地的回炉任务文本。
+
+    非空字符串、且**追加固定收尾指令后**长度不超过 `MAX_REWORK_TASK_CHARS`
+    才通过;否则抛 `ValueError`(调用方回落确定性模板)。长度上限按最终
+    落地文本计——回炉任务的长度不变量是对落地文本的,不是对模型原文的。
+    收尾指令由本函数追加(已在末尾则不重复),永不依赖模型自觉。
+    """
+    if not isinstance(text, str):
+        raise ValueError("refined task must be a string")
+    stripped = text.strip()
+    if not stripped:
+        raise ValueError("refined task must not be empty")
+    if stripped.endswith(REWORK_TASK_FOOTER):
+        normalized = stripped
+    else:
+        normalized = f"{stripped}\n{REWORK_TASK_FOOTER}"
+    if len(normalized) > MAX_REWORK_TASK_CHARS:
+        raise ValueError(
+            f"refined task exceeds {MAX_REWORK_TASK_CHARS} chars"
+        )
+    return normalized
 
 
 def _review_binding_pairs(
