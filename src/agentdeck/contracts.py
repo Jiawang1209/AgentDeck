@@ -38,6 +38,7 @@ from .role_topology import (
     ROLE_BINDING_KINDS,
     ROLE_BINDING_STATUSES,
     ROLE_LIFECYCLES,
+    ROLE_SPECS,
     ROLE_TOPOLOGY_LAYERS,
 )
 from .review_iteration import (
@@ -1500,12 +1501,19 @@ ROLE_BINDINGS_CONTROL_FIELDS = ("kind", "label", "command", "safety", "enabled",
 ROLE_BINDINGS_COMMAND = "agentdeck roles"
 ROLE_BINDINGS_WORKBENCH_CARD = "roles_card"
 
+# One source of truth for "which layer is which kind of thing": the same static
+# skeleton the builder walks. A payload that pairs a role name with a layer,
+# binding kind or lifecycle the skeleton does not declare is self-contradictory
+# — for example a `frontdesk` item claiming to be a `worker_agent` with an
+# `agent_id` — and is rejected rather than rendered.
+ROLE_BINDINGS_SPECS_BY_ROLE = {str(spec["role"]): spec for spec in ROLE_SPECS}
 
-def _validate_role_bindings_role(errors: list[str], index: int, role: object) -> str | None:
+
+def _validate_role_bindings_role(errors: list[str], index: int, role: object) -> tuple[str | None, str | None]:
     prefix = f"roles[{index}]"
     if not isinstance(role, dict):
         errors.append(f"{prefix} must be an object")
-        return None
+        return None, None
     for field in ROLE_BINDINGS_ROLE_FIELDS:
         if field not in role:
             errors.append(f"missing {prefix} field: {field}")
@@ -1520,6 +1528,20 @@ def _validate_role_bindings_role(errors: list[str], index: int, role: object) ->
     if role.get("lifecycle") not in ROLE_LIFECYCLES:
         errors.append(f"{prefix}.lifecycle must be one of {list(ROLE_LIFECYCLES)}")
 
+    role_name = role.get("role")
+    spec = ROLE_BINDINGS_SPECS_BY_ROLE.get(role_name) if isinstance(role_name, str) else None
+    if spec is None:
+        errors.append(
+            f"{prefix}.role must be one of {list(ROLE_BINDINGS_SPECS_BY_ROLE)}, got {role_name!r}"
+        )
+    else:
+        for field in ("layer", "binding_kind", "lifecycle"):
+            if role.get(field) != spec[field]:
+                errors.append(
+                    f"{prefix}.{field} must be {spec[field]!r} for the {role_name} layer, "
+                    f"got {role.get(field)!r}"
+                )
+
     # Necessity clauses: a layer that is not pane-backed can never carry pane
     # provenance, and the command layer has no provider at all.
     if binding_kind != "worker_agent":
@@ -1533,6 +1555,13 @@ def _validate_role_bindings_role(errors: list[str], index: int, role: object) ->
         for field in ("provider", "model", "backend", "transport"):
             if role.get(field) is not None:
                 errors.append(f"{prefix}.{field} must be null for a command binding")
+    # `model` / `backend` / `transport` describe the Leader's reasoning backend.
+    # A worker layer is a pane running a CLI, so carrying them there would be a
+    # second, contradictory provenance source.
+    if binding_kind == "worker_agent":
+        for field in ("model", "backend", "transport"):
+            if role.get(field) is not None:
+                errors.append(f"{prefix}.{field} must be null outside logical_leader bindings")
 
     if binding_status == "bound":
         if role.get("blocker"):
@@ -1555,7 +1584,10 @@ def _validate_role_bindings_role(errors: list[str], index: int, role: object) ->
         errors.append(f"{prefix}.candidates must be empty unless the binding is ambiguous")
 
     _validate_role_bindings_controls(errors, prefix, role.get("controls"), require_any=True)
-    return binding_status if isinstance(binding_status, str) else None
+    return (
+        role_name if isinstance(role_name, str) else None,
+        binding_status if isinstance(binding_status, str) else None,
+    )
 
 
 def _validate_role_bindings_controls(
@@ -1600,10 +1632,22 @@ def validate_role_bindings_contract(payload: object) -> dict[str, object]:
         errors.append("role bindings roles must be a list")
     else:
         counts = {status: 0 for status in ROLE_BINDING_STATUSES}
+        seen: list[str] = []
         for index, role in enumerate(roles):
-            status = _validate_role_bindings_role(errors, index, role)
+            role_name, status = _validate_role_bindings_role(errors, index, role)
+            if role_name is not None:
+                seen.append(role_name)
             if status in counts:
                 counts[status] += 1
+        # The card is a completeness map, so it must actually be complete: every
+        # north-star layer exactly once. An empty `roles[]` with all counts zero
+        # is a binding map that reports nothing, not a valid one.
+        for expected in ROLE_BINDINGS_SPECS_BY_ROLE:
+            appearances = seen.count(expected)
+            if appearances == 0:
+                errors.append(f"role bindings roles must cover the north-star layer {expected}")
+            elif appearances > 1:
+                errors.append(f"role bindings roles must list the {expected} layer exactly once")
         for field, status in (
             ("bound_count", "bound"),
             ("unbound_count", "unbound"),

@@ -377,6 +377,83 @@ def test_validator_rejects_non_inspect_controls() -> None:
     assert any("safety" in error for error in errors)
 
 
+def test_validator_rejects_leader_provenance_on_worker_layers() -> None:
+    """`model`/`backend`/`transport` 描述 Leader 推理后端 —— worker 层必须为 null。"""
+    payload = role_bindings_example()
+    coder = next(role for role in payload["roles"] if role["role"] == "coder")
+    coder["model"] = "deepseek-chat"
+    coder["backend"] = "api"
+    coder["transport"] = "http"
+
+    errors = validate_role_bindings_contract(payload)["errors"]
+
+    assert any("model" in error for error in errors)
+    assert any("backend" in error for error in errors)
+    assert any("transport" in error for error in errors)
+
+
+def test_validator_rejects_an_empty_binding_map() -> None:
+    payload = role_bindings_example()
+    payload["roles"] = []
+    payload["layer_count"] = 0
+    payload["bound_count"] = 0
+    payload["unbound_count"] = 0
+    payload["ambiguous_count"] = 0
+
+    result = validate_role_bindings_contract(payload)
+
+    assert not result["ok"]
+    assert any("north-star" in error for error in result["errors"])
+
+
+def test_validator_rejects_a_role_name_outside_the_six_north_star_layers() -> None:
+    payload = role_bindings_example()
+    payload["roles"][0]["role"] = "broker"
+
+    result = validate_role_bindings_contract(payload)
+
+    assert not result["ok"]
+    assert any("broker" in error for error in result["errors"])
+
+
+def test_validator_rejects_a_layer_kind_that_contradicts_the_role_specs() -> None:
+    """frontdesk 是命令,不是 worker agent —— 组合矛盾必须被拒。"""
+    payload = role_bindings_example()
+    frontdesk = next(role for role in payload["roles"] if role["role"] == "frontdesk")
+    frontdesk["binding_kind"] = "worker_agent"
+    frontdesk["agent_id"] = "coder"
+
+    result = validate_role_bindings_contract(payload)
+
+    assert not result["ok"]
+    assert any("binding_kind" in error for error in result["errors"])
+
+
+def test_validator_rejects_a_layer_or_lifecycle_that_contradicts_the_role_specs() -> None:
+    payload = role_bindings_example()
+    planner = next(role for role in payload["roles"] if role["role"] == "planner")
+    planner["layer"] = "work"
+    planner["lifecycle"] = "on_demand"
+
+    result = validate_role_bindings_contract(payload)
+
+    assert not result["ok"]
+    assert any("layer" in error for error in result["errors"])
+    assert any("lifecycle" in error for error in result["errors"])
+
+
+def test_validator_rejects_duplicated_role_layers() -> None:
+    payload = role_bindings_example()
+    payload["roles"].append(dict(payload["roles"][0]))
+    payload["layer_count"] = len(payload["roles"])
+    payload["bound_count"] = payload["bound_count"] + 1
+
+    result = validate_role_bindings_contract(payload)
+
+    assert not result["ok"]
+    assert any("once" in error for error in result["errors"])
+
+
 def test_role_bindings_example_matches_the_contract() -> None:
     payload = role_bindings_example()
 

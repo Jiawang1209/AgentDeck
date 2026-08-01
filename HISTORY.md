@@ -4,6 +4,31 @@
 
 ## 2026-08-01
 
+### Make the role bindings validator enforce what the contract already says
+
+- **Type**: fix
+- **Motivation**: validator 是嵌入式 payload(workbench `roles_card`、契约
+  example、未来 GUI 投影)的既定守卫,但它接受了三类契约文档明文禁止的
+  payload:(1) `worker_agent` 层携带非 null `model`/`backend`/`transport`
+  ——文档说这三者只属于 `logical_leader`,validator 却只对 `binding_kind
+  == "command"` 置空;(2) `roles: []` 且所有计数为 0 —— 一张什么都不报的
+  "完整性地图"通过校验;(3) 六个北极星角色名之外的 `role`,以及与
+  `ROLE_SPECS` 自相矛盾的 `layer`/`binding_kind`/`lifecycle` 组合(例如
+  `frontdesk` 声明成带 `agent_id` 的 `worker_agent`)。builder 今天到不了
+  这些状态,但守卫不该靠"没人这么写"成立。
+- **What**: `contracts.py` 从 `ROLE_SPECS` 派生 `ROLE_BINDINGS_SPECS_BY_ROLE`
+  作为单一来源,`_validate_role_bindings_role` 改为返回 `(role_name, status)`
+  并新增三组子句:worker 层的 `model`/`backend`/`transport` 必须为 null;
+  `role` 必须是六个北极星名字之一;`layer`/`binding_kind`/`lifecycle` 必须
+  等于该 role 在 `ROLE_SPECS` 里声明的值。卡片级新增覆盖检查:`roles[]`
+  必须**恰好一次**覆盖全部六层(空表与重复层都拒)。契约文档同步。
+- **Impact**: 纯收紧,只影响非法 payload。既有 builder 输出、
+  `role_bindings_example()`、workbench 嵌入面逐字段不变,全部仍通过。
+- **Verification**: 先红后绿,6 条新测试逐条钉住新增子句(worker 层 Leader
+  provenance、空绑定表、越界 role 名、`frontdesk` 声明成 worker_agent、
+  `planner` 改 layer+lifecycle、重复层)。既有 validator 测试一条未删、
+  未弱化。
+
 ### Stop a legal agent_id from taking workbench down
 
 - **Type**: fix

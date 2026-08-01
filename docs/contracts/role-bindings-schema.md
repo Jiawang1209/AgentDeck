@@ -75,7 +75,17 @@ validator enforces exactly that:
   are always `null`. The intake layer has no provider at all.
 - Worker layers carry `provider` and pane provenance but no `model` /
   `backend` / `transport`: those describe the Leader's reasoning backend, and a
-  worker agent is a pane running a CLI, not an API-backed reasoner.
+  worker agent is a pane running a CLI, not an API-backed reasoner. The
+  validator enforces this too, not just the `command` case.
+
+The role name, `layer`, `binding_kind` and `lifecycle` are not independent
+choices: the validator derives the expected triple for each role name from
+`ROLE_SPECS` (one source of truth, the same skeleton the builder walks) and
+rejects any combination the skeleton does not declare — a `frontdesk` item
+claiming to be a `worker_agent` with an `agent_id`, a `planner` item claiming
+the `work` layer, or a role name outside the six. `roles[]` must also cover
+every north-star layer **exactly once**: a partial or empty binding map reports
+nothing, and a completeness map that reports nothing is not valid.
 
 ## Closed Enums
 
