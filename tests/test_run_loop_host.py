@@ -90,6 +90,63 @@ def test_human_gate_is_a_closed_stopped_reason() -> None:
     assert len(set(RUN_LOOP_HOST_STOPPED_REASONS)) == 6
 
 
+def test_human_gate_candidate_matches_undelegated_box_on_awaited_agent() -> None:
+    from agentdeck.run_loop_host import human_gate_candidate
+
+    skipped = [{
+        "agent_id": "planner", "command": "playwright_cli.sh open file:///x",
+        "box_kind": "command", "mcp_server": None, "mcp_tool": None,
+        "waiting_hint": "› 1. Yes, proceed (y)", "reason": "no active delegation",
+    }]
+    assert human_gate_candidate(skipped, {"planner"}) == {
+        "agent_id": "planner",
+        "box_kind": "command",
+        "command": "playwright_cli.sh open file:///x",
+        "mcp_server": None,
+        "mcp_tool": None,
+        "waiting_hint": "› 1. Yes, proceed (y)",
+    }
+
+
+def test_human_gate_candidate_ignores_agents_outside_the_awaiting_set() -> None:
+    from agentdeck.run_loop_host import human_gate_candidate
+
+    skipped = [{"agent_id": "idle_bot", "command": "x", "box_kind": "command",
+                "mcp_server": None, "mcp_tool": None, "waiting_hint": "h",
+                "reason": "no active delegation"}]
+    assert human_gate_candidate(skipped, {"planner"}) is None
+
+
+def test_human_gate_candidate_ignores_pane_capture_failures() -> None:
+    from agentdeck.run_loop_host import human_gate_candidate
+
+    skipped = [{"agent_id": "planner", "command": None,
+                "reason": "pane capture failed", "iteration": 3}]
+    assert human_gate_candidate(skipped, {"planner"}) is None
+
+
+def test_human_gate_candidate_returns_none_for_empty_scan() -> None:
+    from agentdeck.run_loop_host import human_gate_candidate
+
+    assert human_gate_candidate([], {"planner"}) is None
+
+
+def test_same_human_gate_compares_by_agent_and_box_identity() -> None:
+    from agentdeck.run_loop_host import same_human_gate
+
+    a = {"agent_id": "planner", "box_kind": "command", "command": "x",
+         "mcp_server": None, "mcp_tool": None, "waiting_hint": "h1"}
+    b = {"agent_id": "planner", "box_kind": "command", "command": "x",
+         "mcp_server": None, "mcp_tool": None, "waiting_hint": "h2"}
+    c = {"agent_id": "planner", "box_kind": "command", "command": "y",
+         "mcp_server": None, "mcp_tool": None, "waiting_hint": "h1"}
+
+    assert same_human_gate(a, b) is True   # hint 变化不影响身份
+    assert same_human_gate(a, c) is False  # 命令不同 = 不同的框
+    assert same_human_gate(None, a) is False
+    assert same_human_gate(a, None) is False
+
+
 def test_plan_awaiting_lists_dispatched_unreplied_approvals_for_this_plan_only() -> None:
     """awaiting 集单一来源:文件通道摄入与宿主人类门判定共用同一份定义。"""
     from agentdeck.cli import _plan_awaiting

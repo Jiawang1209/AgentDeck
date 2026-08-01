@@ -105,3 +105,38 @@ def append_host_log(root: Path, entry: dict[str, Any]) -> None:
     directory.mkdir(parents=True, exist_ok=True)
     with host_log_path(root).open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(entry, ensure_ascii=False, sort_keys=True) + "\n")
+
+
+# 人类门证据的身份键:同一道框判定用,waiting_hint 是展示文本不参与身份。
+_HUMAN_GATE_IDENTITY = ("agent_id", "box_kind", "command", "mcp_server", "mcp_tool")
+_HUMAN_GATE_FIELDS = (*_HUMAN_GATE_IDENTITY, "waiting_hint")
+
+
+def human_gate_candidate(
+    skipped: list[dict[str, Any]], awaiting_agents: set[str]
+) -> dict[str, Any] | None:
+    """从一次框扫描的 skipped 项里挑出人类门候选。
+
+    只认「未委托」且「落在本 plan awaiting 集内」的框。pane capture 失败
+    是 runtime 抖动而非人类门。解析不出任何候选一律 None——fail-open 到
+    既有轮询行为,宁可多转也绝不误停一个正常的走开段。
+    """
+    for item in skipped:
+        if not isinstance(item, dict):
+            continue
+        if item.get("reason") != "no active delegation":
+            continue
+        agent_id = item.get("agent_id")
+        if agent_id not in awaiting_agents:
+            continue
+        return {field: item.get(field) for field in _HUMAN_GATE_FIELDS}
+    return None
+
+
+def same_human_gate(
+    left: dict[str, Any] | None, right: dict[str, Any] | None
+) -> bool:
+    """两次扫描看到的是否是同一道框(debounce 用)。"""
+    if not left or not right:
+        return False
+    return all(left.get(key) == right.get(key) for key in _HUMAN_GATE_IDENTITY)

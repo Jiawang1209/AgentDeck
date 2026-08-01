@@ -4,6 +4,24 @@
 
 ## 2026-08-01
 
+### Add pure human-gate candidate derivation
+
+- **Type**: feat
+- **Motivation**: 人类门判定矩阵(未委托框 / awaiting 集内外 / pane capture
+  失败 / 同一道框 debounce)必须能被测透,不能埋在 serve 循环的 IO 里。
+- **What**: `src/agentdeck/run_loop_host.py` 追加两个纯函数(零 IO、不 import
+  cli/state):`human_gate_candidate(skipped, awaiting_agents)` 从一次框扫描的
+  `skipped[]` 里挑出候选——只认 `reason == "no active delegation"` 且 agent
+  落在本 plan awaiting 集内的项,返回 agent_id/box_kind/command/mcp_server/
+  mcp_tool/waiting_hint 六字段证据,挑不出一律 None;`same_human_gate(a, b)`
+  按 `(agent_id, box_kind, command, mcp_server, mcp_tool)` 判定是否同一道框,
+  `waiting_hint` 只是展示文本不参与身份,任一侧为 None 一律 False。
+- **Impact**: 纯新增推导层,尚未接线到 serve 循环,无用户可见行为变化。
+  fail-open 是刻意的:解析不出候选就回落既有轮询,宁可多转一个 wave 也绝不
+  误停一个正常的走开段;判定只上报证据,绝不代按任何框。
+- **Verification**: 五个判定矩阵单测(命中 / awaiting 集外 / pane capture 失败 /
+  空扫描 / 身份比较,先 FAIL 于 ImportError);run-loop host 16 passed。
+
 ### Add human_gate to the host stopped reason enum
 
 - **Type**: feat
