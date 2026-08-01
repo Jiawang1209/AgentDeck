@@ -4,6 +4,28 @@
 
 ## 2026-08-01
 
+### Freeze the host human-gate design spec
+
+- **Type**: docs
+- **Motivation**: Round 14 宿主日志实测:846 个 wave 里 834 个完全空转
+  (98%),最长连续空转 610 wave,run 6/7 共 3h37m 100% 空转——全部消耗在
+  一道没人按的 Playwright 授权框上。根因是 `stopped_reason=waiting_for_reply`
+  兼职了两种状态:"worker 在思考"(会自己解决)与"worker 卡在人类门上"
+  (永远不会自己解决),宿主分不清,于是把安全预算喂给了人类门,而人类
+  一个信号都没收到。
+- **What**: 冻结 `docs/superpowers/specs/2026-08-01-host-human-gate-design.md`。
+  user 拍板"人类门诚实停止";关键洞察是**零新增能力面**——`--release-boxes`
+  的扫描已经返回 `skipped[]` 且已携带全部证据,宿主只是把它丢进了 `_`。
+  四处实现默认写死:只在 `--release-boxes` 时生效、只看本 plan awaiting 集
+  (抽出单一来源 helper)、同一道框连续两次才判定、只做宿主不动 `--follow`。
+- **Impact**: 纯文档;零代码改动。新 `stopped_reason=human_gate` 将使闭合
+  枚举变六值,`waiting_for_reply` 语义随之更准确。
+- **Verification**: 数据来自 `host.log` 880 行逐 wave 统计(按 wave 号回绕
+  切分出 7 次宿主运行);plan 状态经 `leader review` 复核——step1 coder、
+  step2 reviewer 已回复(verdict pass 4/4),step3 planner 已派发未回复,
+  `group.complete=false` 扣住自动合并,证实空转是在正确地等一个永不到来
+  的回复。
+
 ### Close the codex refined-rework live verification gap
 
 - **Type**: docs
