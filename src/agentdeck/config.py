@@ -497,8 +497,36 @@ def update_leader_provider(root: Path, provider: str, model: str | None = None) 
     return load_config(root).leader
 
 
+# TOML 基本字符串的短转义;其余控制字符走 \uXXXX。
+_TOML_SHORT_ESCAPES = {
+    "\\": "\\\\",
+    '"': '\\"',
+    "\b": "\\b",
+    "\t": "\\t",
+    "\n": "\\n",
+    "\f": "\\f",
+    "\r": "\\r",
+}
+
+
 def _quote_toml(value: str) -> str:
-    return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
+    """转义为 TOML 基本字符串。
+
+    控制字符必须转义:含换行的 `role_prompt`(`agent assign-role
+    --role-prompt`)此前会写出非法 TOML 并**砖掉项目配置**——写入成功,
+    之后每条命令的 `load_config` 都以 TOMLDecodeError 失败。
+    """
+    out = ['"']
+    for char in value:
+        escaped = _TOML_SHORT_ESCAPES.get(char)
+        if escaped is not None:
+            out.append(escaped)
+        elif char < " " or char == "\x7f":
+            out.append(f"\\u{ord(char):04X}")
+        else:
+            out.append(char)
+    out.append('"')
+    return "".join(out)
 
 
 def _toml_scalar(value: object) -> str | None:

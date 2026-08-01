@@ -4,6 +4,29 @@
 
 ## 2026-08-01
 
+### Escape control characters when writing TOML strings (config-bricking fix)
+
+- **Type**: fix
+- **Motivation**: review group 终审列出的既有缺陷,实测**今天就能砖掉
+  项目配置**:`agentdeck agent assign-role --agent coder --role-prompt
+  "第一行\n第二行"` 写入"成功",但 `_quote_toml` 只转义了 `\` 与 `"`,
+  裸换行进入 TOML 基本字符串即非法——此后**每条命令**的 `load_config`
+  都以 `TOMLDecodeError: Illegal character '\n'` 失败,项目不可用且错误
+  信息与真正的起因(上一条 assign-role)完全脱节。
+- **What**: `_quote_toml` 改为完整的 TOML 基本字符串转义:短转义表
+  (`\\ \" \b \t \n \f \r`)+ 其余控制字符与 DEL 走 `\uXXXX`。修复同时
+  覆盖两条写路径——显式段(role_prompt、project name 等)与保留式回写
+  (未知段里的字符串),因为二者共用该 helper。
+- **Impact**: 多行 role_prompt 现可写入并逐字节读回;任何含控制字符的
+  配置值不再能写出非法 TOML。既有单行值的输出逐字节不变。
+- **Verification**: TDD——先复现(写入成功 → reload TOMLDecodeError)再
+  RED/GREEN;新增多行 role_prompt 往返测试(含制表符/CR/引号/反斜杠,
+  断言 `agent list` 后续命令仍正常)与保留段控制字符往返测试;
+  agent_cli+review_group+autonomy+leader_cli+contracts 1195 passed 零
+  回归;全量见提交时数字。
+
+
+
 ### Harden review-group edges and make config preservation fail loudly
 
 - **Type**: fix

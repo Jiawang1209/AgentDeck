@@ -424,6 +424,27 @@ def test_config_writers_preserve_native_datetimes(tmp_path: Path) -> None:
     assert after["stamps"] == before["stamps"]
 
 
+def test_config_writers_preserve_control_characters(tmp_path: Path) -> None:
+    """保留式回写的字符串同样要转义控制字符(与 role_prompt 同源修复);
+    否则未知段里的一个换行就能砖掉整份配置。"""
+    import tomllib
+
+    root = _root(tmp_path)
+    write_default_config(root)
+    path = root / ".agentdeck" / "config.toml"
+    path.write_text(
+        path.read_text(encoding="utf-8") + '\n[notes]\ntext = "a\\nb\\tc"\n',
+        encoding="utf-8",
+    )
+    before = tomllib.loads(path.read_text(encoding="utf-8"))
+    assert before["notes"]["text"] == "a\nb\tc"
+
+    update_leader_approval_mode(root, "approve")
+
+    after = tomllib.loads(path.read_text(encoding="utf-8"))
+    assert after["notes"] == before["notes"]
+
+
 def test_config_writer_refuses_unrepresentable_value(tmp_path: Path) -> None:
     """不可表示的值必须**报错**而不是静默消失——白名单回写永远不该
     成为数据丢失面(2026-08-01 终审 follow-up)。"""

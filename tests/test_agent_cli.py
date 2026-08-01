@@ -14692,3 +14692,38 @@ def test_skills_lock_verify_reports_drift_read_only(tmp_path, monkeypatch, capsy
     assert p2["in_sync"] is False
     assert [c["name"] for c in p2["changed"]] == ["b"]
     assert StateStore(root).load() == before   # read-only
+
+
+def test_assign_role_with_multiline_prompt_keeps_config_loadable(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    """含换行/制表符的 role_prompt 曾写出非法 TOML 并**砖掉项目配置**
+    (写入成功,之后每条命令的 load_config 都失败)。控制字符必须按 TOML
+    基本字符串规则转义,并原样读回。"""
+    root = prepare_project(tmp_path, monkeypatch)
+    prompt = '第一行\n第二行\t带制表符\r\n含"引号"与反斜杠\\'
+
+    assert (
+        cli.main(
+            [
+                "agent",
+                "assign-role",
+                "--agent",
+                "coder",
+                "--role",
+                "implementation",
+                "--role-prompt",
+                prompt,
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+
+    # 配置仍可加载,且 prompt 逐字节保真
+    config = cli.load_config(root)
+    coder = next(agent for agent in config.agents if agent.agent_id == "coder")
+    assert coder.role_prompt == prompt
+    # 后续任意命令不再因非法 TOML 而崩
+    assert cli.main(["agent", "list"]) == 0
+    capsys.readouterr()
