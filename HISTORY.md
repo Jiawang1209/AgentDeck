@@ -4,6 +4,40 @@
 
 ## 2026-08-01
 
+### Land `agentdeck goal start` as the single confirmed walk-away step
+
+- **Type**: feat
+- **Motivation**: preview 已经把整段将要发生的授权摊开,缺的是**那一次**
+  确认:让人不再手抄 plan_id、不再对同一件事确认四次,同时四道安全门一条
+  不减。
+- **What**: 新增 `agentdeck goal start --plan-id <id> --confirm [预算标志]`。
+  它**不新增任何一种动作**,只按顺序调用既有实现(调用,不复制):
+  `approval create-from-plan`(仅当该 plan 尚无审批时,补上人手工链路里
+  同样要跑的一步)→ `approval approve-plan --plan-id <id> --confirm` →
+  `run-loop-host start --plan-id <id> --confirm --max-waves <n>`;新增
+  `_run_reused_command()` 只负责收住被调用命令的 stdout(免得一次
+  `goal start` 打三段 JSON),stderr 原样透出。响应经
+  `validate_goal_start_contract()` 守门,默认人类可读渲染、`--json` 给完整
+  payload,并追加一条 `goal_started` 审计事件。
+- **Impact**: 四道门,任一不满足拒绝且**零写零 spawn**:`--confirm`、
+  `approval_mode == "autonomous"`(`goal` 绝不代人翻这个开关,只回显显式
+  `policy set-mode` 命令)、已知 `--plan-id`(确认绑定的是看过的那份计划,
+  不是一句话)、`--max-waves >= 1`(缺省 300 也要过这一关)。**approve 阶段
+  失败绝不启动宿主**;宿主启动失败时已批准的审批保持已批准(与人手工跑
+  这两条命令的结果一致)并如实报错非 0。宿主自己的 `run_loop_host_started`
+  事件不得被抑制。start 之后的一切由**未改动**的宿主 wave 引擎承担:
+  approval-gated、白名单+预算、只派 running pane、绝不 force-spawn、
+  绝不读 pane 推断完成、只认文件通道回复、step 顺序守卫、human_gate 诚实
+  停下——一条都没放宽。`approval approve-plan` / `run-loop-host start` /
+  `approval create-from-plan` 三条既有命令的行为逐字节未动。
+- **Verification**: `tests/test_goal_cli.py` 增加 5 项(先红后绿:四道门逐条
+  拒绝且 state 字节与事件序列不变、零 spawn、无 host record;成功路径
+  approve 先于 host start 先于 goal_started 且缺省 `--release-boxes` 透传、
+  `--merge-on-complete` 不透传;显式 `--max-waves 7 --merge-on-complete
+  --no-release-boxes` 全程透传到 host record;approve 失败时零 spawn、
+  零事件、无 host record;start validator);
+  `pytest tests/test_goal_cli.py -q` → 13 passed。
+
 ### Land `agentdeck goal preview` and the goal contract
 
 - **Type**: feat

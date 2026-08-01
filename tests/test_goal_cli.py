@@ -175,6 +175,176 @@ def test_goal_preview_render_shows_active_delegations_as_display_only(
     assert "node tests/" in capsys.readouterr().out
 
 
+class RecordingSpawn:
+    def __init__(self, pid: int = 999_001) -> None:
+        self.pid = pid
+        self.calls: list[tuple[list[str], str]] = []
+
+    def __call__(self, argv: list[str], cwd) -> int:
+        self.calls.append((list(argv), str(cwd)))
+        return self.pid
+
+
+def event_types(root: Path) -> list[str]:
+    path = root / ".agentdeck" / "state" / "events.jsonl"
+    if not path.exists():
+        return []
+    return [json.loads(line)["event_type"] for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+
+
+def test_goal_start_four_gates_refuse_with_zero_writes_and_zero_spawn(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    spawn = RecordingSpawn()
+    monkeypatch.setattr(cli, "_spawn_host_process", spawn)
+    plan_id = preview_json(capsys)["plan_id"]  # 非 autonomous 时也会产出 plan
+    state_path = StateStore(root).state_path
+    before = state_path.read_bytes()
+    before_events = event_types(root)
+
+    # 1. 缺 --confirm
+    assert cli.main(["goal", "start", "--plan-id", plan_id]) == 1
+    assert "confirm" in capsys.readouterr().err
+    # 2. 非 autonomous 模式(goal 绝不代人翻这个开关)
+    assert cli.main(["goal", "start", "--plan-id", plan_id, "--confirm"]) == 1
+    err = capsys.readouterr().err
+    assert "autonomous" in err and "policy set-mode" in err
+
+    enable_autonomous(capsys)
+    state_path = StateStore(root).state_path
+    before = state_path.read_bytes()
+    before_events = event_types(root)
+    # 3. 未知 plan
+    assert cli.main(["goal", "start", "--plan-id", "pln_ghost", "--confirm"]) == 1
+    assert "unknown plan" in capsys.readouterr().err
+    # 4. --max-waves < 1(缺省 300 也要过这一关)
+    assert cli.main(["goal", "start", "--plan-id", plan_id, "--confirm", "--max-waves", "0"]) == 1
+    assert "max-waves" in capsys.readouterr().err
+
+    assert state_path.read_bytes() == before
+    assert event_types(root) == before_events
+    assert spawn.calls == []
+    from agentdeck.run_loop_host import read_host_record
+
+    assert read_host_record(root) is None
+
+
+def test_goal_start_approves_then_hosts_and_audits_both(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    enable_autonomous(capsys)
+    spawn = RecordingSpawn(pid=999_007)
+    monkeypatch.setattr(cli, "_spawn_host_process", spawn)
+    plan_id = preview_json(capsys)["plan_id"]
+
+    assert cli.main(["goal", "start", "--plan-id", plan_id, "--confirm", "--json"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+
+    assert payload["ok"] is True
+    assert payload["mode"] == "goal_start"
+    assert payload["plan_id"] == plan_id
+    assert payload["approved_count"] == 3
+    assert payload["host_pid"] == 999_007
+    assert payload["max_waves"] == 300
+    assert payload["release_boxes"] is True
+    assert payload["merge_on_complete"] is False
+    assert payload["status_command"] == "agentdeck run-loop-host status"
+    assert payload["stop_command"] == "agentdeck run-loop-host stop --confirm"
+    assert payload["next_command"] == "agentdeck run-loop-host status"
+    assert payload["safety"] == "delegated"
+    assert payload["requires_explicit_user"] is True
+
+    # 顺序:先批准,再启动宿主;宿主自己的事件不得被抑制
+    types = event_types(root)
+    assert types.index("approval_plan_approved") < types.index("run_loop_host_started")
+    assert types.index("run_loop_host_started") < types.index("goal_started")
+
+    # 缺省透传给宿主
+    argv, cwd = spawn.calls[0]
+    assert argv[:3] == ["agentdeck", "run-loop-host", "serve"]
+    assert "--max-waves" in argv and "300" in argv
+    assert "--release-boxes" in argv
+    assert "--merge-on-complete" not in argv
+    assert cwd == str(root)
+
+    state = StateStore(root).load()
+    plan_approvals = [a for a in state["approvals"] if a["plan_id"] == plan_id]
+    assert len(plan_approvals) == 3
+    assert {a["status"] for a in plan_approvals} == {"approved"}
+    from agentdeck.run_loop_host import read_host_record
+
+    assert read_host_record(root)["pid"] == 999_007
+
+
+def test_goal_start_passes_explicit_budget_and_switches_through(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    enable_autonomous(capsys)
+    spawn = RecordingSpawn()
+    monkeypatch.setattr(cli, "_spawn_host_process", spawn)
+    plan_id = preview_json(capsys, "--max-waves", "7", "--merge-on-complete")["plan_id"]
+
+    assert cli.main([
+        "goal", "start", "--plan-id", plan_id, "--confirm",
+        "--max-waves", "7", "--merge-on-complete", "--no-release-boxes",
+    ]) == 0
+    rendered = capsys.readouterr().out
+    assert not rendered.lstrip().startswith("{")
+    assert "999001" in rendered or "999,001" in rendered
+
+    argv, _cwd = spawn.calls[0]
+    assert "7" in argv and "--merge-on-complete" in argv
+    assert "--release-boxes" not in argv
+    from agentdeck.run_loop_host import read_host_record
+
+    record = read_host_record(root)
+    assert record["max_waves"] == 7
+    assert record["merge_on_complete"] is True
+    assert record["release_boxes"] is False
+
+
+def test_goal_start_never_spawns_the_host_when_approve_fails(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    enable_autonomous(capsys)
+    spawn = RecordingSpawn()
+    monkeypatch.setattr(cli, "_spawn_host_process", spawn)
+    plan_id = preview_json(capsys)["plan_id"]
+    # 人类已手工批准过 → approve 阶段没有 pending 可批,必须失败
+    assert cli.main(["approval", "create-from-plan", "--plan-id", plan_id]) == 0
+    assert cli.main(["approval", "approve-plan", "--plan-id", plan_id, "--confirm"]) == 0
+    capsys.readouterr()
+
+    before_events = event_types(root)
+
+    assert cli.main(["goal", "start", "--plan-id", plan_id, "--confirm"]) == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "no pending approvals" in captured.err
+
+    assert event_types(root) == before_events  # 失败的 approve 阶段一个事件都不写
+    assert spawn.calls == []
+    from agentdeck.run_loop_host import read_host_record
+
+    assert read_host_record(root) is None
+    assert "goal_started" not in event_types(root)
+    assert "run_loop_host_started" not in event_types(root)
+
+
+def test_validate_goal_start_contract_guards_the_response() -> None:
+    from agentdeck.contracts import goal_start_example, validate_goal_start_contract
+
+    example = goal_start_example()
+    assert validate_goal_start_contract(example) == {"ok": True, "errors": []}
+
+    broken = dict(example, max_waves=0)
+    result = validate_goal_start_contract(broken)
+    assert result["ok"] is False
+    assert any("max_waves" in error for error in result["errors"])
+
+
 def test_validate_goal_preview_contract_rejects_confirm_command_behind_a_blocker() -> None:
     from agentdeck.contracts import goal_preview_example, validate_goal_preview_contract
 

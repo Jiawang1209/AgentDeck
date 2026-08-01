@@ -10,6 +10,7 @@ from collections.abc import Mapping
 import contextlib
 import hashlib
 import inspect
+import io
 import importlib.metadata
 import importlib.util
 import json
@@ -21807,6 +21808,161 @@ def goal_preview_command(args: argparse.Namespace) -> int:
     return 0
 
 
+def _run_reused_command(func, args: argparse.Namespace) -> tuple[int, dict[str, object] | None]:
+    """调用一条既有命令并接住它的 JSON 响应。
+
+    `goal` 不新增任何一种动作:它调用既有实现,绝不复制其逻辑。这里只把
+    被调用命令的 stdout 收进来(免得一次 `goal start` 打三段 JSON),
+    stderr 原样透出,让失败原因保持人类可见。
+    """
+    buffer = io.StringIO()
+    with contextlib.redirect_stdout(buffer):
+        exit_code = func(args)
+    text = buffer.getvalue().strip()
+    if not text:
+        return exit_code, None
+    try:
+        return exit_code, json.loads(text)
+    except json.JSONDecodeError:
+        return exit_code, None
+
+
+def _render_goal_start(payload: dict[str, object]) -> str:
+    lines = [
+        "已确认并启动:",
+        f"  计划    {payload['plan_id']}  (已批准 {payload['approved_count']} 条审批)",
+        f"  宿主    pid {payload['host_pid']} / {payload['max_waves']} wave / "
+        f"每 {float(payload['interval']):g}s 一轮",
+        "  放框    " + (
+            "命中活跃委托的授权框自动放行,未命中一律停下来找你"
+            if payload["release_boxes"]
+            else "本次不自动放行任何授权框"
+        ),
+        "  合并    " + (
+            "复审通过后自动合并该 plan 的任务分支"
+            if payload["merge_on_complete"]
+            else "不自动合并——复审通过后停下来等你点头"
+        ),
+        "",
+        f"  跟进    {payload['status_command']}",
+        f"  停止    {payload['stop_command']}",
+    ]
+    return "\n".join(lines)
+
+
+def goal_start_command(args: argparse.Namespace) -> int:
+    """确认一次走开式运行:批准该 plan 的审批,再把它交给后台宿主。
+
+    四道门(任一不满足拒绝且零写零 spawn):`--confirm`、
+    `approval_mode == "autonomous"`、已知 `--plan-id`、`--max-waves >= 1`。
+    两个阶段都调用既有实现:`approval approve-plan --confirm` 与
+    `run-loop-host start --confirm`;approve 阶段失败绝不启动宿主。
+    """
+    config, store, exit_code = _load_project_or_error()
+    if config is None or store is None:
+        return exit_code
+    if not args.confirm:
+        print("goal start requires --confirm", file=sys.stderr)
+        return 1
+    # `goal` 绝不代人翻 approval_mode:它是长期策略,不是一次目标的附属决定。
+    if config.leader.approval_mode != "autonomous":
+        print(GOAL_AUTONOMOUS_BLOCKER, file=sys.stderr)
+        return 1
+    known = any(
+        isinstance(plan, dict) and plan.get("plan_id") == args.plan_id
+        for plan in store.load().get("plans", [])
+    )
+    if not known:
+        print(f"unknown plan: {args.plan_id}", file=sys.stderr)
+        return 1
+    max_waves = GOAL_DEFAULT_MAX_WAVES if args.max_waves is None else int(args.max_waves)
+    if max_waves < 1:
+        print("goal start requires --max-waves >= 1", file=sys.stderr)
+        return 1
+
+    plan_id = str(args.plan_id)
+    # 阶段 0:该 plan 还没有审批时,用既有命令把待批审批建出来(人手工跑这条
+    # 链路时同样要先 create-from-plan)。已有审批则一条不碰,连事件都不写。
+    has_approvals = any(
+        isinstance(item, dict) and item.get("plan_id") == plan_id
+        for item in store.load().get("approvals", [])
+    )
+    if not has_approvals:
+        create_code, _created = _run_reused_command(
+            approval_create_from_plan_command, argparse.Namespace(plan_id=plan_id)
+        )
+        if create_code != 0:
+            return create_code
+    # 阶段 1:批准。失败即止——绝不启动宿主。
+    approve_code, approved = _run_reused_command(
+        approval_approve_plan_command, argparse.Namespace(plan_id=plan_id, confirm=True)
+    )
+    if approve_code != 0:
+        return approve_code
+    approved_count = int((approved or {}).get("approved_count", 0))
+    # 阶段 2:启动后台宿主(既有实现,自带它自己的四道门与单例互斥)。
+    host_code, host = _run_reused_command(
+        run_loop_host_start_command,
+        argparse.Namespace(
+            plan_id=plan_id,
+            confirm=True,
+            max_waves=max_waves,
+            interval=float(args.interval),
+            release_boxes=bool(args.release_boxes),
+            merge_on_complete=bool(args.merge_on_complete),
+            max_review_rounds=None,
+        ),
+    )
+    if host_code != 0 or not host:
+        print(
+            f"goal start: the host did not start; {approved_count} approval(s) for {plan_id} "
+            "remain approved (see agentdeck approval list)",
+            file=sys.stderr,
+        )
+        return host_code or 1
+
+    payload = {
+        "ok": True,
+        "mode": "goal_start",
+        "plan_id": plan_id,
+        "approved_count": approved_count,
+        "host_pid": host.get("pid"),
+        "max_waves": max_waves,
+        "interval": float(args.interval),
+        "release_boxes": bool(args.release_boxes),
+        "merge_on_complete": bool(args.merge_on_complete),
+        "status_command": "agentdeck run-loop-host status",
+        "stop_command": "agentdeck run-loop-host stop --confirm",
+        "next_command": "agentdeck run-loop-host status",
+        "requires_explicit_user": True,
+        "safety": "delegated",
+    }
+    validation = validate_goal_start_contract(payload)
+    if not validation["ok"]:
+        print("goal start contract validation failed", file=sys.stderr)
+        for error in validation["errors"]:
+            print(f"- {error}", file=sys.stderr)
+        return 1
+    store.append_event(
+        EventRecord.create(
+            "goal_started",
+            {
+                "plan_id": plan_id,
+                "approved_count": approved_count,
+                "max_waves": max_waves,
+                "interval": float(args.interval),
+                "release_boxes": bool(args.release_boxes),
+                "merge_on_complete": bool(args.merge_on_complete),
+            },
+        )
+    )
+    if args.json:
+        _print_json(payload)
+    else:
+        print(_render_goal_start(payload))
+    return 0
+
+
 def run_loop_command(args: argparse.Namespace) -> int:
     config, store, exit_code = _load_project_or_error()
     if config is None or store is None:
@@ -22281,6 +22437,36 @@ def build_parser() -> argparse.ArgumentParser:
     )
     goal_preview.set_defaults(release_boxes=True, json=False, func=goal_preview_command)
     goal_preview.add_argument(
+        "--json", action="store_true", help="Print the full contract payload instead of the render"
+    )
+
+    goal_start = goal_subparsers.add_parser(
+        "start",
+        help="Confirm a previewed plan: approve it, then hand it to the background host",
+    )
+    goal_start.add_argument("--plan-id", required=True, help="Plan id from a goal preview")
+    goal_start.add_argument("--confirm", action="store_true", help="Explicitly confirm the run")
+    goal_start.add_argument(
+        "--max-waves",
+        type=int,
+        default=None,
+        help=f"Bounded wave budget (default {GOAL_DEFAULT_MAX_WAVES}; must be >= 1)",
+    )
+    goal_start.add_argument("--interval", type=float, default=10.0, help="Seconds between waves")
+    goal_start.add_argument(
+        "--merge-on-complete",
+        dest="merge_on_complete",
+        action="store_true",
+        help="Merge the plan's task branches when the final gate is complete (default off)",
+    )
+    goal_start.add_argument(
+        "--no-release-boxes",
+        dest="release_boxes",
+        action="store_false",
+        help="Do not release delegation-covered authorization boxes (default is to release them)",
+    )
+    goal_start.set_defaults(release_boxes=True, json=False, func=goal_start_command)
+    goal_start.add_argument(
         "--json", action="store_true", help="Print the full contract payload instead of the render"
     )
 
