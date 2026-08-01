@@ -20533,6 +20533,30 @@ def mission_resume_command(args: argparse.Namespace) -> int:
     return _mission_execution_command(args, resume=True)
 
 
+def _plan_awaiting(
+    state: dict[str, object], plan_id: str
+) -> list[tuple[str, str]]:
+    """(message_id, agent_id) for this plan's dispatched-but-unreplied approvals.
+
+    单一来源:文件通道摄入与宿主人类门判定共用同一份 awaiting 定义,
+    绝不允许出现第二套。
+    """
+    replied_messages = {
+        str(reply.get("message_id"))
+        for reply in state.get("replies", [])
+        if isinstance(reply, dict)
+    }
+    return [
+        (str(approval.get("message_id")), str(approval.get("agent_id")))
+        for approval in state.get("approvals", [])
+        if isinstance(approval, dict)
+        and approval.get("plan_id") == plan_id
+        and approval.get("status") == "dispatched"
+        and approval.get("message_id")
+        and str(approval.get("message_id")) not in replied_messages
+    ]
+
+
 def _ingest_plan_reply_files(
     config: ProjectConfig, store: StateStore, plan_id: str
 ) -> list[dict[str, object]]:
@@ -20540,20 +20564,7 @@ def _ingest_plan_reply_files(
     (dispatched-but-unreplied messages); never reads the pane."""
     captured_replies: list[dict[str, object]] = []
     state_now = store.load()
-    replied_messages = {
-        str(reply.get("message_id"))
-        for reply in state_now.get("replies", [])
-        if isinstance(reply, dict)
-    }
-    awaiting = [
-        (str(approval.get("message_id")), str(approval.get("agent_id")))
-        for approval in state_now.get("approvals", [])
-        if isinstance(approval, dict)
-        and approval.get("plan_id") == plan_id
-        and approval.get("status") == "dispatched"
-        and approval.get("message_id")
-        and str(approval.get("message_id")) not in replied_messages
-    ]
+    awaiting = _plan_awaiting(state_now, plan_id)
     for awaiting_message, awaiting_agent in awaiting:
         captured = _capture_reply_from_file_channel(config, store, awaiting_agent, awaiting_message)
         if captured is None:

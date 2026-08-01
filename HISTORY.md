@@ -4,6 +4,23 @@
 
 ## 2026-08-01
 
+### Extract the plan awaiting set as a single source
+
+- **Type**: refactor
+- **Motivation**: 宿主人类门判定必须只看**本 plan 正在等待的 agent** 上的
+  授权框(别的 plan、闲置 agent 身上的框不该停掉这台宿主),而这份 awaiting
+  定义已经存在于文件通道摄入里。若在宿主侧另写一份,立刻会出现两套 awaiting
+  语义并各自漂移。
+- **What**: 把内联在 `_ingest_plan_reply_files` 里的 awaiting 计算原样抽出为
+  纯 helper `_plan_awaiting(state, plan_id) -> list[(message_id, agent_id)]`
+  (本 plan 内已派发且 message 无 reply 的审批),`_ingest_plan_reply_files`
+  改为调用它。
+- **Impact**: 纯重构,零行为变化;摄入路径逐字节等价(同一份 `store.load()`
+  快照、同一顺序、同一过滤条件)。后续人类门判定复用同一个 helper,单一来源。
+- **Verification**: 新增 helper 单测(跨 plan / 已回复 / 未派发三类必须被排除);
+  run-loop host + follow + host CLI + verdict ingestion + review iteration +
+  plan rework + agent CLI 共 479 passed。
+
 ### Freeze the host human-gate design spec
 
 - **Type**: docs

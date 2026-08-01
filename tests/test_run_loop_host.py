@@ -83,6 +83,23 @@ def test_append_host_log_is_jsonl_and_appends(tmp_path: Path) -> None:
     assert [json.loads(line)["wave"] for line in lines] == [1, 2]
 
 
+def test_plan_awaiting_lists_dispatched_unreplied_approvals_for_this_plan_only() -> None:
+    """awaiting 集单一来源:文件通道摄入与宿主人类门判定共用同一份定义。"""
+    from agentdeck.cli import _plan_awaiting
+
+    state = {
+        "approvals": [
+            {"plan_id": "pln_a", "status": "dispatched", "message_id": "msg_1", "agent_id": "coder"},
+            {"plan_id": "pln_a", "status": "dispatched", "message_id": "msg_2", "agent_id": "reviewer"},
+            {"plan_id": "pln_a", "status": "approved", "message_id": "msg_3", "agent_id": "planner"},
+            {"plan_id": "pln_b", "status": "dispatched", "message_id": "msg_4", "agent_id": "coder"},
+        ],
+        "replies": [{"message_id": "msg_2"}],
+    }
+
+    assert _plan_awaiting(state, "pln_a") == [("msg_1", "coder")]
+
+
 def test_contract_field_tuples_and_examples() -> None:
     from agentdeck.contracts import (
         RUN_LOOP_HOST_START_RESPONSE_FIELDS,
