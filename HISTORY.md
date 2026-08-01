@@ -4,6 +4,21 @@
 
 ## 2026-08-01
 
+### Carry the waiting hint on undelegated box skips
+
+- **Type**: feat
+- **Motivation**: 宿主人类门停止要给人类带出"屏上到底是什么框"这份证据。
+  扫描 `_scan_release_delegated_boxes` 已经算出 `waiting_hint`,但只放进了
+  released 项;未命中委托的 skipped 项(正是人类门候选)反而没带。
+- **What**: 在 `if match is None:` 分支的 skipped dict 里追加 `waiting_hint`。
+  只改这一处;pane capture 失败那条 skipped 保持不变(它没有 hint,且按 spec
+  不算人类门,是 runtime 抖动)。
+- **Impact**: 纯附加字段,`agent boxes` / `boxes watch` / 宿主扫描的 `skipped[]`
+  形状向后兼容(既有断言只点名 `reason` / `command`)。不改放行路径、不发送
+  任何 tmux 输入、不新增 pane 读取。
+- **Verification**: 新增 `boxes watch` skipped 项 waiting_hint 断言(先 FAIL
+  于 `KeyError: 'waiting_hint'`);delegation CLI 40 passed。
+
 ### Extract the plan awaiting set as a single source
 
 - **Type**: refactor

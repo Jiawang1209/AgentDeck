@@ -338,6 +338,28 @@ def test_boxes_watch_skips_non_delegated_box(tmp_path, monkeypatch, capsys) -> N
     assert '"event_type": "auth_box_released"' not in _events_text(root)
 
 
+def test_boxes_watch_skipped_box_carries_waiting_hint(tmp_path, monkeypatch, capsys) -> None:
+    """人类门检测要靠 skipped 项的屏上证据;waiting_hint 必须带出来。"""
+    root = prepare_project(tmp_path, monkeypatch)
+    bind_coder(root)
+    fake = FakeTmuxBackend()
+    monkeypatch.setattr(cli, "TmuxBackend", lambda: fake)
+    fake.output = CODEX_AUTH_BOX.replace("node tests/focus-carousel-tab-order.mjs", "rm -rf /tmp/x")
+    cli.main(["delegation", "grant", "--agent", "coder", "--prefix", "node tests/", "--confirm"])
+    capsys.readouterr()
+    _enable_autonomous(capsys)
+    fake.sent.clear()
+
+    assert cli.main(["boxes", "watch", "--agent", "coder", "--confirm", "--iterations", "1", "--interval", "0"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+
+    skipped = payload["skipped"][0]
+    assert skipped["reason"] == "no active delegation"
+    assert skipped["waiting_hint"]
+    assert isinstance(skipped["waiting_hint"], str)
+    assert fake.sent == []
+
+
 def test_boxes_watch_survives_pane_loss_mid_scan(tmp_path, monkeypatch, capsys) -> None:
     # round 12 live 发现:pane 在扫描间隙消失时 capture-pane 非零退出,
     # boxes watch 曾裸 traceback 崩 CLI(违反"不让异常崩溃 CLI"规则)。

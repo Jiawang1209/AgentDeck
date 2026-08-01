@@ -10266,6 +10266,8 @@ def _scan_release_delegated_boxes(
                     "agent_id": agent_id,
                     "command": command,
                     **_box_fields(command, mcp_box),
+                    # 屏上原文提示:宿主人类门证据靠它,纯附加字段。
+                    "waiting_hint": waiting_hint,
                     "reason": "no active delegation",
                     "iteration": iteration,
                 }
