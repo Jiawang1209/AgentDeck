@@ -15302,6 +15302,106 @@ def test_dispatch_ready_reports_dispatched_when_inbox_card_fails_contract(tmp_pa
     assert len(fake.sent) == 1
 
 
+def _approve_every_step(root, monkeypatch, capsys, *, task: str):
+    """批量派发前置:三个 agent 都有 pane、plan 三步全部批准。"""
+    for agent_id, pane_id in (("planner", "%42"), ("coder", "%43"), ("reviewer", "%44")):
+        bind_agent(root, agent_id, pane_id)
+    fake = FakeTmuxBackend()
+    monkeypatch.setattr(cli, "TmuxBackend", lambda: fake)
+    cli.main(["leader", "plan", "--provider", "fake", "--model", "fake-plan", "--task", task])
+    plan_id = json.loads(capsys.readouterr().out)["plan_id"]
+    cli.main(["approval", "create-from-plan", "--plan-id", plan_id])
+    approvals = json.loads(capsys.readouterr().out)["approvals"]
+    for approval in approvals:
+        cli.main(["approval", "approve", "--approval-id", approval["approval_id"]])
+        capsys.readouterr()
+    return plan_id, [str(item["approval_id"]) for item in approvals], fake
+
+
+def _raise_for_approval(monkeypatch, target_approval_id: str, error: Exception) -> None:
+    """模拟 preview 与 dispatch 之间的 pane 丢失竞态:指定审批派发时抛错。"""
+    real = cli._dispatch_approved_approval
+
+    def racing_dispatch(approval, *, approval_id, config, store, backend):
+        if approval_id == target_approval_id:
+            raise error
+        return real(approval, approval_id=approval_id, config=config, store=store, backend=backend)
+
+    monkeypatch.setattr(cli, "_dispatch_approved_approval", racing_dispatch)
+
+
+def test_dispatch_ready_keeps_reporting_when_one_item_raises(tmp_path, monkeypatch, capsys) -> None:
+    """一项抛错不得中止整批,也不得抹掉已经发生的派发。"""
+    from agentdeck.contracts import validate_approval_dispatch_ready_contract
+
+    root = prepare_project(tmp_path, monkeypatch)
+    _plan_id, approval_ids, fake = _approve_every_step(
+        root, monkeypatch, capsys, task="批量派发中途竞态"
+    )
+    _raise_for_approval(monkeypatch, approval_ids[1], RuntimeError("agent is not spawned: coder"))
+
+    exit_code = cli.main(["approval", "dispatch-ready", "--confirm"])
+    payload = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 1
+    assert validate_approval_dispatch_ready_contract(payload) == {"ok": True, "errors": []}
+    assert payload["ok"] is False
+    assert payload["dispatched_count"] == 2
+    assert payload["blocked_count"] == 0
+    assert payload["skipped_count"] == 0
+    assert payload["failed_count"] == 1
+    assert [item["status"] for item in payload["results"]] == ["dispatched", "failed", "dispatched"]
+    failed = payload["results"][1]
+    assert failed["approval_id"] == approval_ids[1]
+    assert failed["agent_id"] == "coder"
+    assert failed["message_id"] is None
+    assert failed["trace_command"] is None
+    assert "agent is not spawned: coder" in failed["blocker"]
+    assert "may have partially completed" in failed["blocker"]
+    assert failed["dispatch_command"] == f"agentdeck approval dispatch --approval-id {approval_ids[1]}"
+    assert payload["results"][2]["approval_id"] == approval_ids[2]
+    assert payload["results"][2]["message_id"].startswith("msg_")
+
+    # 后续项照常派发,已发生的派发照常入账。
+    assert [pane for pane, _text in fake.sent] == ["%42", "%44"]
+    events = _read_events(root)
+    types = [event["event_type"] for event in events]
+    assert types.count("approval_dispatched") == 2
+    assert types.count("approval_dispatch_failed") == 1
+    assert types.count("approval_dispatch_ready_completed") == 1
+    failure_event = next(e for e in events if e["event_type"] == "approval_dispatch_failed")
+    assert failure_event["payload"]["approval_id"] == approval_ids[1]
+    assert failure_event["payload"]["agent_id"] == "coder"
+    assert "agent is not spawned: coder" in failure_event["payload"]["detail"]
+    completed = next(e for e in events if e["event_type"] == "approval_dispatch_ready_completed")
+    assert completed["payload"] == {"dispatched_count": 2, "blocked_count": 0, "failed_count": 1}
+    state = StateStore(root).load()
+    statuses = {a["approval_id"]: a["status"] for a in state["approvals"]}
+    assert statuses[approval_ids[0]] == "dispatched"
+    assert statuses[approval_ids[1]] == "approved"
+    assert statuses[approval_ids[2]] == "dispatched"
+
+
+def test_dispatch_ready_survives_an_unexpected_exception_type(tmp_path, monkeypatch, capsys) -> None:
+    """任何异常类型都不得中止整批 —— 已派发的 prompt 绝不能被静默丢账。"""
+    root = prepare_project(tmp_path, monkeypatch)
+    _plan_id, approval_ids, fake = _approve_every_step(
+        root, monkeypatch, capsys, task="批量派发遇到意外异常"
+    )
+    _raise_for_approval(monkeypatch, approval_ids[1], KeyError("worktree_branch"))
+
+    exit_code = cli.main(["approval", "dispatch-ready", "--confirm"])
+    payload = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 1
+    assert payload["failed_count"] == 1
+    assert payload["dispatched_count"] == 2
+    assert "worktree_branch" in payload["results"][1]["blocker"]
+    assert [pane for pane, _text in fake.sent] == ["%42", "%44"]
+    types = [event["event_type"] for event in _read_events(root)]
+    assert types.count("approval_dispatch_ready_completed") == 1
+
+
 def test_run_loop_does_not_record_a_failed_dispatch_for_a_successful_one(tmp_path, monkeypatch, capsys) -> None:
     root = prepare_project(tmp_path, monkeypatch)
     plan_id, approval_id, fake = _approve_first_step_only(root, monkeypatch, capsys, task="run-loop 不得重复 prompt")

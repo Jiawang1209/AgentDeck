@@ -767,6 +767,7 @@ APPROVAL_DISPATCH_READY_RESPONSE_FIELDS = (
     "dispatched_count",
     "blocked_count",
     "skipped_count",
+    "failed_count",
     "results",
 )
 
@@ -11002,6 +11003,7 @@ def validate_approval_dispatch_ready_contract(payload: dict[str, object]) -> dic
     if isinstance(results, list):
         dispatched_count = 0
         blocked_count = 0
+        failed_count = 0
         for index, result in enumerate(results):
             if not isinstance(result, dict):
                 errors.append("dispatch_ready.results items must be objects")
@@ -11022,8 +11024,14 @@ def validate_approval_dispatch_ready_contract(payload: dict[str, object]) -> dic
                 blocked_count += 1
                 if not result.get("blocker"):
                     errors.append(f"dispatch_ready.results[{index}].blocker is required when blocked")
+            elif status == "failed":
+                failed_count += 1
+                if not result.get("blocker"):
+                    errors.append(f"dispatch_ready.results[{index}].blocker is required when failed")
             else:
-                errors.append(f"dispatch_ready.results[{index}].status must be dispatched or blocked")
+                errors.append(
+                    f"dispatch_ready.results[{index}].status must be dispatched, blocked, or failed"
+                )
             approval_id = result.get("approval_id")
             expected_dispatch = f"agentdeck approval dispatch --approval-id {approval_id}"
             if result.get("dispatch_command") != expected_dispatch:
@@ -11034,6 +11042,12 @@ def validate_approval_dispatch_ready_contract(payload: dict[str, object]) -> dic
             errors.append("dispatch_ready.blocked_count must match blocked results")
         if payload.get("skipped_count") != blocked_count:
             errors.append("dispatch_ready.skipped_count must match blocked results")
+        if payload.get("failed_count") != failed_count:
+            errors.append("dispatch_ready.failed_count must match failed results")
+        # 有项失败的批次绝不能报成整批成功:操作者据此决定是否重跑,而重跑
+        # 会把同一份 prompt 二次发给已经收到任务的 worker。
+        if payload.get("ok") is not (failed_count == 0):
+            errors.append("dispatch_ready.ok must be false when any result failed")
     elif "results" in payload:
         errors.append("dispatch_ready.results must be a list")
     return {"ok": not errors, "errors": errors}
@@ -19068,14 +19082,17 @@ def approval_dispatch_degraded_example() -> dict[str, object]:
 
 
 def approval_dispatch_ready_example() -> dict[str, object]:
+    # 例子刻意覆盖三种结果状态,因此 ok=false:批次里有项失败时命令仍然打印
+    # 完整 JSON,但以非 0 退出,绝不把"有 worker 没派成"报成整批成功。
     return {
-        "ok": True,
+        "ok": False,
         "mode": "dispatch_ready",
         "requires_explicit_user": True,
         "safety": "explicit_runtime",
         "dispatched_count": 1,
         "blocked_count": 1,
         "skipped_count": 1,
+        "failed_count": 1,
         "results": [
             {
                 "approval_id": "apv_ready",
@@ -19096,6 +19113,19 @@ def approval_dispatch_ready_example() -> dict[str, object]:
                 "trace_command": None,
                 "blocker": "agent is not spawned: coder",
                 "dispatch_command": "agentdeck approval dispatch --approval-id apv_blocked",
+            },
+            {
+                "approval_id": "apv_failed",
+                "status": "failed",
+                "agent_id": "reviewer",
+                "pane_id": "%43",
+                "message_id": None,
+                "trace_command": None,
+                "blocker": (
+                    "dispatch raised and may have partially completed: agent is not spawned: reviewer; "
+                    "run agentdeck approval list and agentdeck events --limit 20 before retrying"
+                ),
+                "dispatch_command": "agentdeck approval dispatch --approval-id apv_failed",
             },
         ],
     }

@@ -20377,13 +20377,51 @@ def approval_dispatch_ready_command(args: argparse.Namespace) -> int:
                 }
             )
             continue
-        dispatched = _dispatch_approved_approval(
-            approval,
-            approval_id=approval_id,
-            config=config,
-            store=store,
-            backend=backend,
-        )
+        # 这是一批不可逆效果:每成功一项,prompt 就已经进了那个 worker 的
+        # pane。让某一项的异常(例如 preview 与 dispatch 之间 pane 消失的
+        # 竞态)冒泡穿出循环,会让操作者只看到 traceback、拿不到 JSON、也
+        # 拿不到收尾事件,于是无从知道前面哪些 worker 已经收到任务——最自然
+        # 的补救(重跑一遍)会把同一份 prompt 二次发给它们。因此逐项兜住:
+        # 失败变成一条 status=failed 的结果,整批继续跑完并如实报账。
+        try:
+            dispatched = _dispatch_approved_approval(
+                approval,
+                approval_id=approval_id,
+                config=config,
+                store=store,
+                backend=backend,
+            )
+        except Exception as exc:  # noqa: BLE001 - 任何异常都不得中止整批
+            detail = str(exc) or exc.__class__.__name__
+            store.append_event(
+                EventRecord.create(
+                    "approval_dispatch_failed",
+                    {
+                        "approval_id": approval_id,
+                        "plan_id": approval.get("plan_id"),
+                        "agent_id": preview.get("agent_id"),
+                        "pane_id": preview.get("pane_id"),
+                        "detail": detail,
+                    },
+                )
+            )
+            results.append(
+                {
+                    "approval_id": approval_id,
+                    "status": "failed",
+                    "agent_id": preview.get("agent_id"),
+                    "pane_id": preview.get("pane_id"),
+                    "message_id": None,
+                    "trace_command": None,
+                    # 抛点可能在 prompt 已经送出之后,所以绝不能说"没发生"。
+                    "blocker": (
+                        f"dispatch raised and may have partially completed: {detail}; "
+                        "run agentdeck approval list and agentdeck events --limit 20 before retrying"
+                    ),
+                    "dispatch_command": f"agentdeck approval dispatch --approval-id {approval_id}",
+                }
+            )
+            continue
         results.append(
             {
                 "approval_id": approval_id,
@@ -20398,23 +20436,26 @@ def approval_dispatch_ready_command(args: argparse.Namespace) -> int:
         )
     dispatched_count = sum(1 for item in results if item.get("status") == "dispatched")
     blocked_count = sum(1 for item in results if item.get("status") == "blocked")
+    failed_count = sum(1 for item in results if item.get("status") == "failed")
     store.append_event(
         EventRecord.create(
             "approval_dispatch_ready_completed",
             {
                 "dispatched_count": dispatched_count,
                 "blocked_count": blocked_count,
+                "failed_count": failed_count,
             },
         )
     )
     payload = {
-        "ok": True,
+        "ok": failed_count == 0,
         "mode": "dispatch_ready",
         "requires_explicit_user": True,
         "safety": "explicit_runtime",
         "dispatched_count": dispatched_count,
         "blocked_count": blocked_count,
         "skipped_count": blocked_count,
+        "failed_count": failed_count,
         "results": results,
     }
     validation = validate_approval_dispatch_ready_contract(payload)
@@ -20424,7 +20465,9 @@ def approval_dispatch_ready_command(args: argparse.Namespace) -> int:
             print(f"- {error}", file=sys.stderr)
         return 1
     _print_json(payload)
-    return 0
+    # 与 worktree merge-plan 同一约定:部分失败照常打印完整 JSON,但以非 0
+    # 退出,避免脚本把"有 worker 没派成"读成整批成功。
+    return 0 if payload["ok"] else 1
 
 
 def approval_auto_command(args: argparse.Namespace) -> int:

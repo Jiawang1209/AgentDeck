@@ -128,6 +128,7 @@ Response fields are `approve_plan_response_fields` (`ok`, `mode=approval_plan_ap
   "dispatched_count": 1,
   "blocked_count": 1,
   "skipped_count": 1,
+  "failed_count": 0,
   "results": [
     {
       "approval_id": "apv_ready",
@@ -153,7 +154,46 @@ Response fields are `approve_plan_response_fields` (`ok`, `mode=approval_plan_ap
 }
 ```
 
-Every `results[]` item uses the same result field set. Dispatched items must include `message_id` and `trace_command`, while blocked items must include `blocker`. Before printing, `agentdeck approval dispatch-ready --confirm` validates the response with `validate_approval_dispatch_ready_contract()`.
+Every `results[]` item uses the same result field set. Dispatched items must include `message_id` and `trace_command`, while blocked and failed items must include `blocker`. Before printing, `agentdeck approval dispatch-ready --confirm` validates the response with `validate_approval_dispatch_ready_contract()`.
+
+### Partial Failure
+
+Dispatch-ready is a **batch of irreversible effects**: every item it completes has already pushed a prompt into a real agent pane, marked its approval `dispatched`, and written `approval_dispatched` to the journal. One item raising must therefore never abort the loop, because the operator would get a traceback with no JSON and no completion event, could not tell which workers had already been prompted, and the natural recovery — running the command again — would **re-prompt the workers that already received their task**.
+
+The per-item dispatch is wrapped: any exception (for example the `agent is not spawned` race, where the target pane disappears between the readiness check that planned the batch and the dispatch itself) becomes a `results[]` item with `status: "failed"`, and the batch continues to the remaining approvals. A failed approval keeps its `approved` status, so it can be retried with the explicit single-item `dispatch_command`.
+
+```json
+{
+  "ok": false,
+  "mode": "dispatch_ready",
+  "requires_explicit_user": true,
+  "safety": "explicit_runtime",
+  "dispatched_count": 2,
+  "blocked_count": 0,
+  "skipped_count": 0,
+  "failed_count": 1,
+  "results": [
+    { "approval_id": "apv_first", "status": "dispatched", "...": "..." },
+    {
+      "approval_id": "apv_racing",
+      "status": "failed",
+      "agent_id": "coder",
+      "pane_id": "%43",
+      "message_id": null,
+      "trace_command": null,
+      "blocker": "dispatch raised and may have partially completed: agent is not spawned: coder; run agentdeck approval list and agentdeck events --limit 20 before retrying",
+      "dispatch_command": "agentdeck approval dispatch --approval-id apv_racing"
+    },
+    { "approval_id": "apv_third", "status": "dispatched", "...": "..." }
+  ]
+}
+```
+
+`blocker` deliberately says the dispatch **may have partially completed** rather than that it did not happen: the raise can land after the prompt is already in the pane (the tmux write succeeded but a later step failed), so the honest report is "unknown, check before retrying". `status=blocked` remains the different, stronger statement — the item was never attempted because the preview found a blocker.
+
+Each failure appends an `approval_dispatch_failed` audit event (`approval_id`, `plan_id`, `agent_id`, `pane_id`, `detail`) so the condition stays visible in `agentdeck events`. The `approval_dispatch_ready_completed` summary event carries `dispatched_count`, `blocked_count`, and `failed_count`, and is always appended — the operator always learns exactly which approvals were dispatched, which were blocked, and which failed and why.
+
+**Exit code**: the command prints its full JSON payload either way, then exits `0` when `failed_count == 0` and `1` when at least one item failed — the same partial-outcome convention as `agentdeck worktree merge-plan --confirm` (`return 0 if payload["ok"] else 1`). `ok` mirrors that: `validate_approval_dispatch_ready_contract()` rejects a payload that claims `ok: true` while any result failed, so a batch with a failure can never be read as plain success. Blocked items do not affect `ok` or the exit code: they are the normal, expected outcome of a not-yet-ready agent, and nothing irreversible happened for them.
 
 ## Boundaries
 
@@ -163,4 +203,5 @@ Every `results[]` item uses the same result field set. Dispatched items must inc
 - `agentdeck approval dispatch-ready --confirm` must pass `validate_approval_dispatch_ready_contract()` before printing JSON.
 - The read-only queue path must not create plans, create approvals, approve, reject, dispatch work, capture replies, ack inbox items, or send tmux input.
 - The dispatch-ready path may dispatch approved runtime-ready items only after `--confirm`; it must not dispatch blocked items, ack inbox items, capture replies, or bypass the single-dispatch lineage path.
+- The dispatch-ready path must never let one item's failure abort the batch or discard the record of the items it already dispatched: it always prints its JSON payload and always appends `approval_dispatch_ready_completed`, and it exits non-zero when `failed_count > 0`.
 - GUI clients should prefer `controls[]`, while retaining `preview_command`, `approve_command`, `reject_command`, `dispatch_command`, `can_dispatch`, and `dispatch_blocker` for compatibility.

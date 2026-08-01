@@ -34,6 +34,7 @@ _MILESTONES = {
     ),
     "approval_auto_completed": lambda p: ("Auto-approve run", f"{_detail(p, 'auto_approved') or 0} approved, {_detail(p, 'dispatched') or 0} dispatched"),
     "approval_dispatched": lambda p: ("Approval dispatched", _detail(p, "approval_id")),
+    "approval_dispatch_failed": lambda p: ("Approval dispatch failed", _detail(p, "approval_id")),
     "approval_dispatch_ready_completed": lambda p: ("Batch dispatch completed", _detail(p, "dispatched_count", "count")),
     "task_dispatched": lambda p: ("Task dispatched", _detail(p, "agent_id", "to_agent")),
     "task_replied": lambda p: ("Reply captured", _detail(p, "agent_id", "from_agent")),

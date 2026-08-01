@@ -4,6 +4,62 @@
 
 ## 2026-08-01
 
+### Stop one item's failure from erasing the record of a batch dispatch that already pressed keys
+
+- **Type**: fix
+- **Motivation**: `approval_dispatch_ready_command` 的逐项循环**连一个
+  try 都没有**:`_dispatch_approved_approval` 抛的任何异常(最现实的是
+  `RuntimeError("agent is not spawned: <id>")`——批次是按"规划时的 readiness
+  检查"选出来的,而某个 agent 的 pane 完全可能在检查与派发之间消失或被停,
+  正是委托扫描早已显式处理的那个 pane 丢失条件)都会**掀翻整批**。这是一条
+  往多个真实 agent pane 按键的批量命令:5 项里第 3 项抛错时,第 1、2 项的
+  prompt 早已进了 pane、approval 早已标记 `dispatched`、`approval_dispatched`
+  早已落账,而操作者只拿到一个 Python traceback——没有 JSON、没有
+  `approval_dispatch_ready_completed`,**无从知道哪些 worker 已经收到任务**。
+  最自然的补救(再跑一遍)会把同一份 prompt **二次发给已经拿到任务的
+  worker**。这是上一次修复(`1319d643`)在同一函数里点名的姊妹缺陷,也是
+  同一缺陷类在派发路径上的下一个 live-reachable 实例:在不可逆效果的循环里,
+  一项失败绝不能抹掉已经成功的那些项的记录。
+- **What**: 逐项 `try/except Exception`(与 run-loop 派发循环同一先例)兜住
+  失败:该项变成 `status="failed"` 的 `results[]` 项,循环**继续跑完剩余
+  审批**。`blocker` 措辞刻意是 `dispatch raised and may have partially
+  completed: <detail>; run agentdeck approval list and agentdeck events
+  --limit 20 before retrying`——抛点可能落在 prompt 已经送出**之后**,
+  所以诚实的报告是"未知,重试前先查",绝不能表述成"它没有发生";
+  `status=blocked` 仍是更强的另一句话(preview 有 blocker,压根没尝试)。
+  每次失败追加一条 `approval_dispatch_failed` 审计事件
+  (`approval_id`/`plan_id`/`agent_id`/`pane_id`/`detail`),并在
+  `history.py` 的里程碑表登记为 "Approval dispatch failed"。响应契约就地
+  注册:`APPROVAL_DISPATCH_READY_RESPONSE_FIELDS` 新增 `failed_count`,
+  `validate_approval_dispatch_ready_contract()` 接受 `failed` 状态(必须有
+  `blocker`)、校验 `failed_count`、并**拒绝有失败项却声称 `ok: true` 的
+  payload**,`approval_dispatch_ready_example()` 覆盖 dispatched/blocked/
+  failed 三种状态。退出码沿用本仓库既有的部分失败约定(`worktree
+  merge-plan --confirm` 的 `return 0 if payload["ok"] else 1`):照常打印
+  完整 JSON,`failed_count == 0` 退 0,有失败项退 1;blocked 项不影响 `ok`
+  与退出码(那是 agent 尚未就绪的正常结果,且没有任何不可逆效果发生)。
+  同步 `docs/contracts/approvals-schema.md` 的 Dispatch Shape 区(新增
+  Partial Failure 小节,含退出码约定与边界条款)和 `CLAUDE.md` 的
+  dispatch-ready 纪律条。
+- **Impact**: 成功路径逐字节不变——同样的 tmux 输入、同样的
+  `approval_dispatched` 事件、同样的 state 迁移、同样的逐项 payload 形状;
+  全成功批次仍是 `ok: true` + 退 0。变的只有失败路径:整批不再被掀翻,
+  剩余审批照常派发,失败项保持 `approved` 可用单条 `dispatch_command` 重试,
+  JSON 与收尾事件**总是**产出,操作者总能确知哪些派发了、哪些 blocked、
+  哪些失败及原因。破坏性变化:响应新增 `failed_count` 字段(GUI 客户端可发现),
+  且有失败项的批次现在退 1——脚本不能再把部分失败读成整批成功。
+- **Verification**: TDD 先红:取证测试真实驱动一个三审批批次(planner/coder/
+  reviewer 各有 pane、三步全批准),中间那项在派发点抛
+  `RuntimeError("agent is not spawned: coder")`,钉住旧行为并全绿——异常穿出
+  `cli.main`、stdout 为空、事件里 `approval_dispatched` 只有 1 条且没有
+  `approval_dispatch_ready_completed`,而第 1 项的 prompt 确实已经送出、
+  approval 已是 `dispatched`,第 3 项从未被尝试。改成正确期望后转红,修复后转绿。
+  留下 6 条正式测试:2 条 CLI(RuntimeError 竞态的完整 payload/事件/state
+  断言;`KeyError` 这类意外异常同样不掀翻整批)+ 4 条契约(failed_count 计数、
+  failed 项缺 blocker 被拒、有失败项却 `ok: true` 被拒、未知 status 被拒);
+  既有的 `..._accepts_example` 现在校验的是覆盖 dispatched/blocked/failed
+  三状态的 example。全量 5144 passed / 3 skipped(基线 5138 + 本次 6 条)。
+
 ### Stop a presentational inbox card from reporting a dispatch that happened as failed
 
 - **Type**: fix

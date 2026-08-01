@@ -4042,6 +4042,56 @@ def test_validate_approval_dispatch_ready_contract_checks_counts() -> None:
     }
 
 
+def test_validate_approval_dispatch_ready_contract_checks_failed_count() -> None:
+    payload = approval_dispatch_ready_example()
+    payload["failed_count"] = 0
+
+    result = validate_approval_dispatch_ready_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": ["dispatch_ready.failed_count must match failed results"],
+    }
+
+
+def test_validate_approval_dispatch_ready_contract_requires_a_failed_reason() -> None:
+    payload = approval_dispatch_ready_example()
+    payload["results"][2]["blocker"] = None
+
+    result = validate_approval_dispatch_ready_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": ["dispatch_ready.results[2].blocker is required when failed"],
+    }
+
+
+def test_validate_approval_dispatch_ready_contract_rejects_ok_when_an_item_failed() -> None:
+    payload = approval_dispatch_ready_example()
+    payload["ok"] = True
+
+    result = validate_approval_dispatch_ready_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": ["dispatch_ready.ok must be false when any result failed"],
+    }
+
+
+def test_validate_approval_dispatch_ready_contract_rejects_an_unknown_status() -> None:
+    payload = approval_dispatch_ready_example()
+    payload["results"][2]["status"] = "unknown"
+    payload["failed_count"] = 0
+    payload["ok"] = True
+
+    result = validate_approval_dispatch_ready_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": ["dispatch_ready.results[2].status must be dispatched, blocked, or failed"],
+    }
+
+
 def test_inbox_contract_payload_is_reusable_without_cli(tmp_path: Path) -> None:
     contract_path = tmp_path / "inbox-schema.md"
     contract_path.write_text("# Inbox Contract\n", encoding="utf-8")
