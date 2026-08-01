@@ -82,7 +82,7 @@ Each control item uses:
 
 ## Safety Rules
 
-`verdict_summary` is an additive read-only field carrying the G5 quantified-review projection: the plan's latest reply with a valid `review-verdict/v1` payload aligned with the plan's G2 acceptance criteria, as exactly `criteria_total`, `passed`, `failed`, `unknown`, `overall`, nullable `score`, `unverified[]`, and `extra[]`; `null` when no reply carries a verdict. It matches `leader review`'s `verdict_summary`, is validated by the shared verdict-summary check, and never changes summary readiness, gates, or approval semantics.
+`verdict_summary` is an additive read-only field carrying the G5 quantified-review projection: the plan's latest reply with a valid `review-verdict/v1` payload aligned with the plan's G2 acceptance criteria, as exactly `criteria_total`, `passed`, `failed`, `unknown`, `overall`, nullable `score`, `unverified[]`, `extra[]`, and `group` (the review-group provenance card — `size`/`complete`/`rule`/`members[]`, an implicit `size=1` group on the single-reviewer path; see `docs/contracts/leader-review-schema.md`); `null` when no reply carries a verdict. It matches `leader review`'s `verdict_summary`, is validated by the shared verdict-summary check, and never changes summary readiness, gates, or approval semantics.
 
 `agentdeck leader summary --plan-id <id>` must pass `validate_leader_summary_contract()` before printing JSON. Contract failures must return a non-zero exit code and must not print partial summary output.
 

@@ -9774,6 +9774,10 @@ class StateStore:
                     "origin": step.get("origin"),
                     "round": step.get("round"),
                     "triggered_by_reply": step.get("triggered_by_reply"),
+                    # review 组 provenance:普通 step 为 None,组成员带组号和
+                    # 组内序号。只读展示,不授权 dispatch、不改审批语义。
+                    "review_group": step.get("review_group"),
+                    "review_group_member": step.get("review_group_member"),
                 }
                 if approval and approval.get("reason"):
                     status_item["reason"] = approval.get("reason")

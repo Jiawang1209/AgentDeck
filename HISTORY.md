@@ -4,6 +4,58 @@
 
 ## 2026-08-01
 
+### Expose review group provenance in contracts and docs
+
+- **Type**: feat
+- **Motivation**: Task 4 让 `plan_verdict_summary` 给每份 verdict 摘要挂上
+  `group` provenance(单 reviewer 也投影隐式 `size=1` 组,让 GUI 单双路径
+  同构),但 `_validate_verdict_summary` 用的是**精确键集**比对
+  (`set(value) != set(REVIEW_VERDICT_SUMMARY_FIELDS)`),于是三个消费面
+  (leader review / leader summary / run_progress)一律拒绝新形状、退非 0、
+  不打印半坏 JSON——两条 G5 摄入测试因此红着交接。本切片把 `group` 正式
+  纳入契约并补齐文档,同时把组标记透出到 `plan status` step。
+- **What**:
+  - `src/agentdeck/contracts.py`:`REVIEW_VERDICT_SUMMARY_FIELDS` 新增
+    `"group"`;新增 `REVIEW_VERDICT_GROUP_FIELDS` /
+    `REVIEW_VERDICT_GROUP_MEMBER_FIELDS` 与 `_validate_verdict_group()`,
+    逐项校验 `size`(int ≥ 1)、`complete`(bool)、`rule`(必须等于从
+    `.review_group` import 的 `REVIEW_GROUP_RULE`——规则字面量单一来源,
+    不在 contracts 里重打)、`members[]`(精确键集 + 非空 `agent_id` +
+    `step` ≥ 1 + `overall` 属 pass/fail/needs_changes + 可空 `reply_id`)与
+    `size == len(members)` 的内部自洽,malformed 形状带索引报错;三个消费面
+    经既有 `_validate_verdict_summary` 自动获得该校验。
+  - `src/agentdeck/state.py`:`plan_status` step item 在既有
+    `origin`/`round`/`triggered_by_reply` provenance 旁新增
+    `review_group`/`review_group_member` 透传(普通 step 为 `None`)。
+  - `tests/test_review_group.py`:新增 `test_verdict_summary_contract_
+    accepts_group`(canonical `leader_review_example()` 挂上完整 group 仍
+    过 validator;`rule` 改成 `majority`、`size` 与成员数不符必须被拒)与
+    `test_plan_status_steps_expose_review_group`。
+  - `tests/test_review_verdict_ingestion.py`:`_expected_summary` 新增
+    `group` 形参,新增 `_single_reviewer_group()` 从 state 实取该条 verdict
+    回复的 agent/step/reply_id 构造隐式 `size=1` 组——两条测试仍是逐字段
+    全等比对,未放宽任何断言。
+  - 文档:`docs/contracts/leader-review-schema.md` 补 `group` 字段与"组完成
+    才产出摘要"语义,`leader-summary-schema.md` / `run-schema.md` 同步字段
+    列表,`project-view-schema.md` 的 step provenance 段落补两个组键,
+    `CLAUDE.md` 新增 review 组 + round_reviewer 规则条目(`[review]` 语义、
+    reviewers[0] 角色签名谓词、any-fail-blocks、组完成才触发、组级幂等、
+    复审组同样组感知、缺省逐字节不变),`README.md` 补一条 feature bullet。
+- **Impact**: `verdict_summary` 现在是九字段(新增 `group`),三个消费面恢复
+  正常输出;`plan status` step 多两个只读键。`group` 与 step 组标记都只是
+  provenance——不授权 dispatch、不改 review/merge gate、不绕过审批。无
+  `[review]` 配置时组恒为 `size=1`/`complete=true`,GUI 与 gate 语义不变。
+- **Verification**: 两条新测试先红(`'group' not in
+  REVIEW_VERDICT_SUMMARY_FIELDS`、`KeyError: 'review_group'`),Task 4 遗留的
+  两条 G5 摄入测试也先红(`leader_summary.verdict_summary must be null or a
+  verdict summary object`);实现后 `pytest tests/test_review_group.py
+  tests/test_review_iteration.py tests/test_plan_rework_cli.py -q` → 68
+  passed;`pytest tests/test_contracts.py tests/test_agent_cli.py
+  tests/test_review_verdict_ingestion.py tests/test_run_loop_follow.py -q`
+  → 932 passed;`python -m compileall src tests` 全绿;`git diff --check`
+  无输出;全量 `pytest tests/ -q` → 4860 passed, 3 skipped, 0 failed;
+  `git diff d84cca6a..HEAD -- src/agentdeck/daemon/` 为空。
+
 ### Aggregate review groups any-fail-blocks and honor round_reviewer
 
 - **Type**: feat

@@ -27,6 +27,7 @@ from .models import (
     PROJECT_VIEW_SEMANTIC_AUTHORITY_FIELDS,
 )
 from .providers.plan_schema import LEADER_PLAN_SCHEMA_VERSION
+from .review_group import REVIEW_GROUP_RULE
 from .review_iteration import REVIEW_ITERATION_SKIP_REASONS, REWORK_TRIGGER_OVERALLS
 from .run_loop_host import RUN_LOOP_HOST_STOPPED_REASONS
 from .providers.semantic_plan_schema import SEMANTIC_LEADER_PLAN_SCHEMA_VERSION
@@ -3066,6 +3067,21 @@ REVIEW_VERDICT_SUMMARY_FIELDS = (
     "score",
     "unverified",
     "extra",
+    "group",
+)
+
+REVIEW_VERDICT_GROUP_FIELDS = (
+    "size",
+    "complete",
+    "rule",
+    "members",
+)
+
+REVIEW_VERDICT_GROUP_MEMBER_FIELDS = (
+    "agent_id",
+    "step",
+    "overall",
+    "reply_id",
 )
 
 LEADER_REVIEW_CONTROL_FIELDS = (
@@ -10019,6 +10035,49 @@ def _validate_verdict_summary(
         ):
             errors.append(
                 f"{prefix}.verdict_summary.{list_field} must be a list of non-empty strings"
+            )
+    _validate_verdict_group(errors, prefix, value.get("group"))
+
+
+def _validate_verdict_group(errors: list[str], prefix: str, group: object) -> None:
+    """`group` 是 review 组 provenance:单 reviewer 也是 size=1 的隐式组。
+
+    它只描述这份 verdict 由哪些 reviewer 汇总而来,不是授权,也不改 gate。
+    """
+    where = f"{prefix}.verdict_summary.group"
+    if not isinstance(group, dict) or set(group) != set(REVIEW_VERDICT_GROUP_FIELDS):
+        errors.append(f"{where} must be a verdict group object")
+        return
+    size = group.get("size")
+    if type(size) is not int or size < 1:
+        errors.append(f"{where}.size must be an integer >= 1")
+    if type(group.get("complete")) is not bool:
+        errors.append(f"{where}.complete must be a boolean")
+    if group.get("rule") != REVIEW_GROUP_RULE:
+        errors.append(f"{where}.rule must be {REVIEW_GROUP_RULE}")
+    members = group.get("members")
+    if not isinstance(members, list):
+        errors.append(f"{where}.members must be a list")
+        return
+    if type(size) is int and size != len(members):
+        errors.append(f"{where}.size must match members length")
+    for index, member in enumerate(members):
+        if not isinstance(member, dict) or set(member) != set(
+            REVIEW_VERDICT_GROUP_MEMBER_FIELDS
+        ):
+            errors.append(f"{where}.members[{index}] must be a verdict group member object")
+            continue
+        if not isinstance(member.get("agent_id"), str) or not member.get("agent_id"):
+            errors.append(f"{where}.members[{index}].agent_id must be a non-empty string")
+        step = member.get("step")
+        if type(step) is not int or step < 1:
+            errors.append(f"{where}.members[{index}].step must be an integer >= 1")
+        if member.get("overall") not in {"pass", "fail", "needs_changes"}:
+            errors.append(f"{where}.members[{index}].overall is invalid")
+        reply_id = member.get("reply_id")
+        if reply_id is not None and (not isinstance(reply_id, str) or not reply_id):
+            errors.append(
+                f"{where}.members[{index}].reply_id must be null or a non-empty string"
             )
 
 

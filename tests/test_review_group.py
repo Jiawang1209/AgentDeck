@@ -371,3 +371,55 @@ def test_round_reviewer_replaces_single_rereview(tmp_path) -> None:
     steps = store.load()["plans"][0]["plan"]["steps"]
     appended = [s for s in steps if s.get("origin") == "review_iteration"]
     assert [s["agent_id"] for s in appended] == ["coder", "planner"]
+
+
+def test_verdict_summary_contract_accepts_group() -> None:
+    from agentdeck.contracts import (
+        REVIEW_VERDICT_SUMMARY_FIELDS,
+        leader_review_example,
+        validate_leader_review_contract,
+    )
+    from agentdeck.review_group import REVIEW_GROUP_RULE
+
+    assert "group" in REVIEW_VERDICT_SUMMARY_FIELDS
+    example = leader_review_example()
+    assert validate_leader_review_contract(example)["ok"] is True
+
+    example["verdict_summary"] = {
+        "criteria_total": 1,
+        "passed": 0,
+        "failed": 1,
+        "unknown": 0,
+        "overall": "fail",
+        "score": 40,
+        "unverified": [],
+        "extra": [],
+        "group": {
+            "size": 2,
+            "complete": True,
+            "rule": REVIEW_GROUP_RULE,
+            "members": [
+                {"agent_id": "reviewer", "step": 2, "overall": "pass", "reply_id": "rep_a"},
+                {"agent_id": "planner", "step": 3, "overall": "fail", "reply_id": "rep_b"},
+            ],
+        },
+    }
+    assert validate_leader_review_contract(example)["ok"] is True
+
+    # rule 不是 any_fail_blocks、size 与成员数不符一律拒绝(不打印半坏 JSON)。
+    example["verdict_summary"]["group"]["rule"] = "majority"
+    assert validate_leader_review_contract(example)["ok"] is False
+    example["verdict_summary"]["group"]["rule"] = REVIEW_GROUP_RULE
+    example["verdict_summary"]["group"]["size"] = 3
+    assert validate_leader_review_contract(example)["ok"] is False
+
+
+def test_plan_status_steps_expose_review_group(tmp_path) -> None:
+    _root_dir, store = _seed_group_store(tmp_path, ["pass", "fail"])
+    steps = store.plan_status("pln_g")["steps"]
+    assert steps[0]["review_group"] is None
+    assert steps[0]["review_group_member"] is None
+    assert steps[1]["review_group"] == 1
+    assert steps[1]["review_group_member"] == 0
+    assert steps[2]["review_group"] == 1
+    assert steps[2]["review_group_member"] == 1

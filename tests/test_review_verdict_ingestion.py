@@ -232,7 +232,7 @@ def _run_plan_to_replies(
     return plan_id, message_ids
 
 
-def _expected_summary(task: str) -> dict[str, object]:
+def _expected_summary(task: str, group: dict[str, object]) -> dict[str, object]:
     return {
         "criteria_total": 2,
         "passed": 1,
@@ -242,6 +242,29 @@ def _expected_summary(task: str) -> dict[str, object]:
         "score": 70,
         "unverified": ["全部相关验证通过"],
         "extra": ["额外检查项"],
+        "group": group,
+    }
+
+
+def _single_reviewer_group(root: Path, message_id: str) -> dict[str, object]:
+    """单 reviewer 路径的隐式 size=1 组:成员就是那条带 verdict 的回复本身。"""
+    state = StateStore(root).load()
+    reply = next(item for item in state["replies"] if item.get("message_id") == message_id)
+    approval = next(
+        item for item in state["approvals"] if item.get("message_id") == message_id
+    )
+    return {
+        "size": 1,
+        "complete": True,
+        "rule": "any_fail_blocks",
+        "members": [
+            {
+                "agent_id": approval["agent_id"],
+                "step": approval["step"],
+                "overall": "needs_changes",
+                "reply_id": reply["reply_id"],
+            }
+        ],
     }
 
 
@@ -264,17 +287,18 @@ def test_leader_review_and_run_progress_expose_verdict_summary(
     _enable_split(root)
     task = "量化验收目标"
     verdict = _summary_verdict(task)
-    plan_id, _ = _run_plan_to_replies(
+    plan_id, message_ids = _run_plan_to_replies(
         root, monkeypatch, capsys, json.dumps(verdict, ensure_ascii=False)
     )
+    group = _single_reviewer_group(root, message_ids[-1])
 
     assert cli.main(["leader", "review", "--plan-id", plan_id]) == 0
     review = json.loads(capsys.readouterr().out)
-    assert review["verdict_summary"] == _expected_summary(task)
+    assert review["verdict_summary"] == _expected_summary(task, group)
 
     assert cli.main(["run", "--plan-id", plan_id]) == 0
     progress = json.loads(capsys.readouterr().out)
-    assert progress["verdict_summary"] == _expected_summary(task)
+    assert progress["verdict_summary"] == _expected_summary(task, group)
 
 
 def test_leader_summary_exposes_verdict_summary(tmp_path, monkeypatch, capsys) -> None:
@@ -282,13 +306,14 @@ def test_leader_summary_exposes_verdict_summary(tmp_path, monkeypatch, capsys) -
     _enable_split(root)
     task = "量化验收目标"
     verdict = _summary_verdict(task)
-    plan_id, _ = _run_plan_to_replies(
+    plan_id, message_ids = _run_plan_to_replies(
         root, monkeypatch, capsys, json.dumps(verdict, ensure_ascii=False)
     )
+    group = _single_reviewer_group(root, message_ids[-1])
 
     assert cli.main(["leader", "summary", "--plan-id", plan_id]) == 0
     summary = json.loads(capsys.readouterr().out)
-    assert summary["verdict_summary"] == _expected_summary(task)
+    assert summary["verdict_summary"] == _expected_summary(task, group)
 
 
 def test_verdict_summary_null_without_any_verdict(tmp_path, monkeypatch, capsys) -> None:

@@ -99,7 +99,19 @@ AgentDeck › Mission started. Use /status or open the workbench to inspect it.
   invocation, while exhausted budgets fall back to the human gate with the
   merge withheld (`verdict_blocked`); explicit manual trigger:
   `agentdeck plan rework --plan-id <id> --confirm`; discovery:
-  `agentdeck contract plan-rework`.
+  `agentdeck contract plan-rework`;
+- review groups + round reviewer: the optional `[review]` config section turns
+  one review stage into an ordered group of reviewers — `reviewers = ["reviewer",
+  "planner"]` deterministically expands every review step into N consecutive
+  serial steps at plan generation (no parallel dispatch, execution engine
+  unchanged), aggregated **any-fail-blocks** and only judged once the whole
+  group has replied, so a partial group never burns an extra iteration round;
+  `round_reviewer = "planner"` swaps who performs the re-review an iteration
+  round appends (appended re-review groups are themselves group-aware). The
+  resulting `verdict_summary.group` (`size`/`complete`/`rule`/`members[]`) and
+  the `review_group`/`review_group_member` markers on `plan status` steps are
+  read-only provenance — never authorization. With no `[review]` section
+  configured, every path is byte-identical to before.
 
 Useful observation commands:
 
