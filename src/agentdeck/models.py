@@ -82,6 +82,12 @@ class AutonomousPolicy:
 
 
 @dataclass(frozen=True)
+class ReviewConfig:
+    round_reviewer: str | None = None
+    reviewers: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
 class ProjectConfig:
     name: str
     root: str
@@ -90,6 +96,7 @@ class ProjectConfig:
     runtime: RuntimeConfig
     daemon: DaemonConfig = DaemonConfig()
     autonomous: AutonomousPolicy = AutonomousPolicy()
+    review: ReviewConfig = ReviewConfig()
     skills: dict[str, Any] = field(default_factory=dict)
 
 

@@ -13,6 +13,7 @@ from .models import (
     LeaderConfig,
     LeaderSubroleConfig,
     ProjectConfig,
+    ReviewConfig,
     RuntimeConfig,
 )
 
@@ -340,6 +341,34 @@ def load_config(root: Path | None = None) -> ProjectConfig:
         max_approvals=int(autonomous_raw.get("max_approvals", 0)) if isinstance(autonomous_raw, dict) else 0,
         max_review_rounds=rounds_raw,
     )
+    review_raw = raw.get("review", {})
+    if not isinstance(review_raw, dict):
+        raise ValueError("review section must be a table")
+    known_agents = {agent.agent_id for agent in agents}
+
+    round_reviewer_raw = review_raw.get("round_reviewer")
+    if round_reviewer_raw is None:
+        round_reviewer = None
+    else:
+        if not isinstance(round_reviewer_raw, str) or not round_reviewer_raw.strip():
+            raise ValueError("review round_reviewer must be a non-empty agent id")
+        if round_reviewer_raw not in known_agents:
+            raise ValueError(f"review round_reviewer is not a configured agent: {round_reviewer_raw}")
+        round_reviewer = round_reviewer_raw
+
+    reviewers_raw = review_raw.get("reviewers", [])
+    if not isinstance(reviewers_raw, list):
+        raise ValueError("review reviewers must be a list of agent ids")
+    reviewers: list[str] = []
+    for item in reviewers_raw:
+        if not isinstance(item, str) or not item.strip():
+            raise ValueError("review reviewers entries must be non-empty agent ids")
+        if item not in known_agents:
+            raise ValueError(f"review reviewer is not a configured agent: {item}")
+        if item in reviewers:
+            raise ValueError(f"review reviewers must be unique: {item}")
+        reviewers.append(item)
+    review = ReviewConfig(round_reviewer=round_reviewer, reviewers=tuple(reviewers))
     skills_raw = raw.get("skills", {})
     allowed_sources = (
         skills_raw.get("allowed_sources", []) if isinstance(skills_raw, dict) else []
@@ -354,6 +383,7 @@ def load_config(root: Path | None = None) -> ProjectConfig:
         runtime=runtime,
         daemon=daemon,
         autonomous=autonomous,
+        review=review,
         skills=skills,
     )
 

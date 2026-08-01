@@ -4,6 +4,40 @@
 
 ## 2026-08-01
 
+### Add `[review]` config section (round_reviewer, reviewers)
+
+- **Type**: feat
+- **Motivation**: `docs/superpowers/plans/2026-08-01-review-group-round-reviewer.md`
+  Task 1——为后续把一个 review 环节确定性展开为多个串行 reviewer step
+  (any-fail-blocks 聚合)和把迭代回炉复审换成独立 `round_reviewer` 打地基。
+  硬承诺:没有 `[review]` 配置时,行为逐字节不变。
+- **What**: `src/agentdeck/models.py` 新增 `ReviewConfig` frozen dataclass
+  (`round_reviewer: str | None = None`、`reviewers: tuple[str, ...] = ()`),
+  紧邻 `AutonomousPolicy`;`ProjectConfig` 新增 `review: ReviewConfig =
+  ReviewConfig()` 字段。`src/agentdeck/config.py` 在 `AutonomousPolicy(...)`
+  构造之后、`agents` 元组已建好时解析 `[review]`(fail-closed,镜像
+  `_validated_max_review_rounds` 的风格):`round_reviewer` 缺省 `None`,
+  非空字符串且必须是已配置 agent;`reviewers` 缺省 `[]`,必须是字符串
+  列表、每项非空、必须是已配置 agent、且互不重复;`[review]` 本身非
+  table 直接拒绝。新增 `tests/test_review_group.py` 覆盖默认值、双键
+  解析、七种 fail-closed 场景(未知 agent、空字符串、重复成员、非法
+  类型)和空 `reviewers = []` 视为关闭。
+- **Impact**: 纯新增可选配置字段,`review_group.py` 展开/聚合模块和
+  cli/state 接线留给后续 task(YAGNI)。**发现并记录一个既有 gap**:
+  `config.py::_dump_config` 只白名单重写 project/leader/agents/runtime/
+  autonomous/skills 六个顶层 table(`[daemon]` 早已有相同 gap),不认识
+  `[review]`;因此任何走 `_dump_config(raw)` round-trip 的 config writer
+  (例如 `update_leader_approval_mode`,被 `agentdeck policy set-mode`
+  调用)会静默丢弃已配置的 `[review]` 段。未按 Task 1 discipline 私自
+  重新设计 `_dump_config`——已用一条固定测试把当前行为钉住并原样上报,
+  留给 plan owner 决定是否/何时修 `_dump_config` 让它保留未知 table。
+- **Verification**: TDD——先写 `tests/test_review_group.py` 跑 RED(8
+  failed / 2 passed,因 `config.py` 尚未解析 `[review]`);实现后
+  `pytest tests/test_review_group.py tests/test_autonomy.py
+  tests/test_leader_subrole_config.py -q` 31 passed;`pytest tests/ -k
+  config -q` 141 passed 确认姊妹 config 套件零回归;`python -m
+  compileall src/agentdeck/models.py src/agentdeck/config.py` 干净。
+
 ### SQLite 5d: on-demand events export mode（O(n²) 写消失点）
 
 - **Type**: feat
