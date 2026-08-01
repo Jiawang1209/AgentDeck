@@ -151,6 +151,7 @@ from .contracts import (
 )
 from .autonomy import run_loop_gate, select_auto_approvals
 from .delegation_match import is_composite_command, normalize_match
+from .review_group import expand_review_group
 from .review_iteration import plan_review_rounds, rework_step_numbers
 from .run_loop_host import (
     append_host_log,
@@ -12148,6 +12149,17 @@ def _verdict_merge_blocker(store: StateStore, plan_id: str) -> str | None:
     return f"review verdict overall is {overall}; auto-merge withheld"
 
 
+def _review_group_reviewers(config: ProjectConfig) -> tuple[tuple[str, str], ...]:
+    """(agent_id, role) 纯数据;未配置或成员未知时返回空元组(不展开)。"""
+    roles = {agent.agent_id: agent.role for agent in config.agents}
+    pairs = [
+        (agent_id, roles[agent_id])
+        for agent_id in config.review.reviewers
+        if agent_id in roles
+    ]
+    return tuple(pairs)
+
+
 def _generate_leader_plan(
     config: ProjectConfig,
     store: StateStore,
@@ -12182,7 +12194,8 @@ def _generate_leader_plan(
                 store, source, provider.name, model_label, task, exc
             )
             raise
-        return plan, provider.name, model_label, None
+        reviewers = _review_group_reviewers(config)
+        return expand_review_group(plan, reviewers), provider.name, model_label, None
     planner_provider_name, planner_model = resolved_planner_backend(config.leader)
     orchestrator_provider_name, orchestrator_model = resolved_orchestrator_backend(
         config.leader
@@ -12213,7 +12226,13 @@ def _generate_leader_plan(
         "orchestrator_backend": result.orchestrator_backend,
         "planner_brief": result.planner_brief,
     }
-    return result.plan, orchestrator_provider_name, orchestrator_model, split_provenance
+    reviewers = _review_group_reviewers(config)
+    return (
+        expand_review_group(result.plan, reviewers),
+        orchestrator_provider_name,
+        orchestrator_model,
+        split_provenance,
+    )
 
 
 def _leader_provider_name(config: ProjectConfig, requested_provider: str | None) -> str:

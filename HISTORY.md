@@ -4,6 +4,39 @@
 
 ## 2026-08-01
 
+### Expand review groups at plan generation
+
+- **Type**: feat
+- **Motivation**: Task 2 落了纯展开模块 `expand_review_group`,但从未被
+  调用——plan 生成路径仍产出未展开的单个 review step。需要在 Leader
+  实际生成 plan 的地方接线,同时保证无 `[review]` 配置时行为逐字节
+  不变(硬兼容承诺)。
+- **What**: `src/agentdeck/cli.py` 新增 `_review_group_reviewers(config)`
+  纯 helper,把 `config.review.reviewers`(agent id 列表)映射为
+  `(agent_id, role)` 元组,角色取自 `config.agents`,未知 id 防御性
+  跳过。`_generate_leader_plan` 的两个 return 点(非 split 分支
+  `return plan, provider.name, model_label, None`;split 分支
+  `return result.plan, orchestrator_provider_name, orchestrator_model,
+  split_provenance`)都改为先 `expand_review_group(plan, reviewers)`
+  再返回,`record_plan`、provider prompt、fake provider 零改动。
+- **Impact**: 配置 `[review].reviewers` 后,`agentdeck leader plan` 生成
+  的 plan 会把匹配的 review step 确定性展开为 N 个连续 step(编号
+  `1..n`),下游执行引擎(线性 plan、step 顺序守卫、worktree 链式检出、
+  文件通道、审批预算)不变,仍把展开后的 step 当普通 step 处理。未配置
+  `[review]` 时 `_review_group_reviewers` 返回空元组,`expand_review_group`
+  提前 no-op 返回原 plan 对象,plan 结构逐字节不变。
+- **Verification**: TDD——append 2 条测试到 `tests/test_review_group.py`
+  (`test_generated_plan_expands_review_group`、
+  `test_generated_plan_is_unchanged_without_review_config`),先确认 RED
+  (`assert 0 == 2`,expansion 未接线);检查 fake provider `_legacy_plan`
+  按 `config.agents` 顺序逐 agent 出一个 step(默认顺序 planner→coder→
+  reviewer,角色 planning/implementation/review),确认默认配置下
+  `reviewers=["reviewer","planner"]` 的首位角色签名 `review` 恰好命中
+  fake plan 第 3 个 step,测试按计划原样可用,无需改写断言。实现后
+  `pytest tests/test_review_group.py tests/test_agent_cli.py
+  tests/test_contracts.py -q` → 933 passed(23 + 380 + 530,子集拆分
+  求和一致);`python -m compileall src` 干净。
+
 ### Add review-group pure module (deterministic expansion + any-fail-blocks aggregation)
 
 - **Type**: feat

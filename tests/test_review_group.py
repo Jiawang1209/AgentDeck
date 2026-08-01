@@ -231,3 +231,41 @@ def test_aggregate_any_fail_blocks() -> None:
     assert aggregate_group_verdicts([member("pass"), member("pass")])["overall"] == "pass"
     assert aggregate_group_verdicts([member("pass"), member("needs_changes")])["overall"] == "needs_changes"
     assert aggregate_group_verdicts([member("needs_changes"), member("fail")])["overall"] == "fail"
+
+
+def test_generated_plan_expands_review_group(tmp_path, monkeypatch, capsys) -> None:
+    from agentdeck import cli
+    from agentdeck.state import StateStore
+
+    root = _root(tmp_path)
+    (root / ".git").mkdir()
+    _config_with(root, '[review]\nreviewers = ["reviewer", "planner"]\n')
+    monkeypatch.chdir(root)
+
+    assert cli.main([
+        "leader", "plan", "--task", "demo work",
+        "--provider", "fake", "--model", "fake-plan",
+    ]) == 0
+    capsys.readouterr()
+    plan = StateStore(root).load()["plans"][-1]["plan"]
+    review_steps = [s for s in plan["steps"] if s.get("origin") == "review_group"]
+    assert len(review_steps) == 2
+    assert [s["agent_id"] for s in review_steps] == ["reviewer", "planner"]
+    assert [s["step"] for s in plan["steps"]] == list(range(1, len(plan["steps"]) + 1))
+
+
+def test_generated_plan_is_unchanged_without_review_config(tmp_path, monkeypatch, capsys) -> None:
+    from agentdeck import cli
+    from agentdeck.state import StateStore
+
+    root = _root(tmp_path)
+    (root / ".git").mkdir()
+    write_default_config(root)
+    monkeypatch.chdir(root)
+    assert cli.main([
+        "leader", "plan", "--task", "demo work",
+        "--provider", "fake", "--model", "fake-plan",
+    ]) == 0
+    capsys.readouterr()
+    plan = StateStore(root).load()["plans"][-1]["plan"]
+    assert all(s.get("origin") is None for s in plan["steps"])
