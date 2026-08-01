@@ -3726,6 +3726,53 @@ def test_status_surfaces_logical_coordination_roles_for_planner_orchestrator_spl
     assert all(item["pane_id"] is None for item in roles.values())
 
 
+def test_coordination_roles_honour_the_configured_planner_orchestrator_split(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    """`[leader.planner]` / `[leader.orchestrator]` must reach the coordination roles.
+
+    Regression: `leader_coordination_roles` used to be fed the plain `[leader]`
+    provider/model, so ProjectView `leader.coordination_roles[]` and the
+    workbench `role_topology_card` reported the wrong backend for a project that
+    had split planning from orchestration. Both surfaces must reuse the same
+    `resolved_planner_backend` / `resolved_orchestrator_backend` helpers the
+    plan-record provenance already uses.
+    """
+    root = prepare_project(tmp_path, monkeypatch)
+    config_path = root / ".agentdeck" / "config.toml"
+    config_path.write_text(
+        config_path.read_text(encoding="utf-8")
+        + '\n[leader.planner]\nprovider = "codex-cli"\nmodel = "gpt-5-codex"\n'
+        + '\n[leader.orchestrator]\nprovider = "claude-cli"\nmodel = "sonnet-4.6"\n',
+        encoding="utf-8",
+    )
+
+    exit_code = cli.main(["status"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    roles = {item["role_id"]: item for item in payload["leader"]["coordination_roles"]}
+    assert roles["planner"]["provider"] == "codex-cli"
+    assert roles["planner"]["model"] == "gpt-5-codex"
+    assert roles["orchestrator"]["provider"] == "claude-cli"
+    assert roles["orchestrator"]["model"] == "sonnet-4.6"
+    # the intake role has no Leader backend at all and must stay deterministic
+    assert roles["frontdesk"]["provider"] == "local-rule"
+    assert roles["frontdesk"]["model"] == "deterministic"
+
+    exit_code = cli.main(["workbench"])
+
+    assert exit_code == 0
+    workbench = json.loads(capsys.readouterr().out)
+    card_roles = {
+        role["role_id"]: role for role in workbench["role_topology_card"]["roles"]
+    }
+    assert card_roles["planner"]["provider"] == "codex-cli"
+    assert card_roles["orchestrator"]["provider"] == "claude-cli"
+    # the workbench role item shape carries no `model`; provider is the projection
+    assert "model" not in card_roles["planner"]
+
+
 def test_leader_chat_skill_context_is_read_only_and_avoids_provider_calls(tmp_path, monkeypatch, capsys) -> None:
     root = prepare_project(tmp_path, monkeypatch)
     monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)

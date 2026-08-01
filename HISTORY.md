@@ -4,6 +4,37 @@
 
 ## 2026-08-01
 
+### Fix the coordination roles ignoring the planner/orchestrator split
+
+- **Type**: fix
+- **Motivation**: G2 之后,`[leader.planner]` / `[leader.orchestrator]` 可以把
+  规划和编排指到不同后端,但 ProjectView `leader.coordination_roles[]` 一直用
+  `leader_coordination_roles(config.leader.provider, config.leader.model)` 构造,
+  于是 `planner` / `orchestrator` 两项永远报**平铺的 `[leader]` 后端**。这是
+  一条 GUI 可消费的卡片在说假话:真实项目里 `[leader.planner]` 配了
+  `codex-cli` / `gpt-5-codex`,旧的 workbench `role_topology_card` 仍显示
+  `provider = deepseek`,而新的 `roles_card` 显示 `codex-cli`——同一份配置,
+  两张卡互相矛盾。
+- **What**: `state.leader_coordination_roles()` 改为接收**已解析**的
+  `(provider, model)` 二元组 `planner_backend` / `orchestrator_backend`
+  (必填,不给缺省),调用点传 `config.resolved_planner_backend(config.leader)` /
+  `resolved_orchestrator_backend(config.leader)`——与新 `roles_card` 和 plan
+  record provenance **同一对 helper**,不新增第三条解析路径。`frontdesk` 仍是
+  确定性的 `local-rule` / `deterministic`,不受影响。
+- **Impact**: ProjectView `leader.coordination_roles[]`、workbench
+  `role_topology_card`、`leader status` 的 `coordination_roles` 投影现在对
+  split 项目报真实后端;未配置 split 的项目行为逐字节不变(resolver 的
+  `[leader]` 回退与旧代码等价)。字段形状、枚举、契约与安全边界均未变;仍是
+  只读投影,不是授权。旧 workbench 卡片的 role item 形状**本来就不含
+  `model`**(只投影 `provider`),本次不强行加字段。
+- **Verification**: 先写红测
+  `test_coordination_roles_honour_the_configured_planner_orchestrator_split`,
+  确认失败(`assert 'deepseek' == 'codex-cli'`);修复后转绿。
+  `conda run --no-capture-output -n agentdeck python -m pytest -q` 全量
+  5059 passed / 3 skipped(基线 5058 + 本次新增 1)。既有
+  `test_status_surfaces_logical_coordination_roles_for_planner_orchestrator_split`
+  (无 split 场景)保持绿,证明回退路径未变。
+
 ### Surface the role topology card in the workbench snapshot
 
 - **Type**: feat

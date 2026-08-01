@@ -19,7 +19,14 @@ import threading
 from typing import Any, Callable, Iterable, Mapping
 import weakref
 
-from .config import CONFIG_DIR, ensure_project_layout, load_config, project_root
+from .config import (
+    CONFIG_DIR,
+    ensure_project_layout,
+    load_config,
+    project_root,
+    resolved_orchestrator_backend,
+    resolved_planner_backend,
+)
 from .storage.shadow import (
     EVENTS_AUTHORITY_SQLITE as _EVENTS_AUTHORITY_SQLITE,
     EVENTS_EXPORT_ON_DEMAND as _EVENTS_EXPORT_ON_DEMAND,
@@ -2853,7 +2860,22 @@ def leader_backend_identity(provider: str | None, model: str | None, dispatch_re
     }
 
 
-def leader_coordination_roles(provider: str | None, model: str | None) -> list[dict[str, Any]]:
+def leader_coordination_roles(
+    planner_backend: tuple[str | None, str | None],
+    orchestrator_backend: tuple[str | None, str | None],
+) -> list[dict[str, Any]]:
+    """Project the logical frontdesk / planner / orchestrator coordination roles.
+
+    `planner_backend` / `orchestrator_backend` are the already-resolved
+    `(provider, model)` pairs from `config.resolved_planner_backend()` /
+    `resolved_orchestrator_backend()`, which encode the `[leader.planner]` /
+    `[leader.orchestrator]` overrides and their `[leader]` fallback. They are
+    passed in rather than derived here so this projection can never quietly
+    report the plain `[leader]` backend for a project that split planning from
+    orchestration, and so no second resolution path is introduced.
+    """
+    planner_provider, planner_model = planner_backend
+    orchestrator_provider, orchestrator_model = orchestrator_backend
     return [
         {
             "role_id": "frontdesk",
@@ -2873,8 +2895,8 @@ def leader_coordination_roles(provider: str | None, model: str | None) -> list[d
         {
             "role_id": "planner",
             "label": "Planner",
-            "provider": provider,
-            "model": model,
+            "provider": planner_provider,
+            "model": planner_model,
             "lifecycle": "persistent",
             "responsibility": "Create macro plans and acceptance criteria without dispatching workers.",
             "state_source": "plans",
@@ -2888,8 +2910,8 @@ def leader_coordination_roles(provider: str | None, model: str | None) -> list[d
         {
             "role_id": "orchestrator",
             "label": "Orchestrator",
-            "provider": provider,
-            "model": model,
+            "provider": orchestrator_provider,
+            "model": orchestrator_model,
             "lifecycle": "persistent",
             "responsibility": "Review plans, choose approval-gated actions, and coordinate worker handoff.",
             "state_source": "leader_actions",
@@ -12308,7 +12330,10 @@ class StateStore:
             "approval_mode": config.leader.approval_mode,
         }
         leader["leader_backend"] = leader_backend_identity(config.leader.provider, config.leader.model)
-        leader["coordination_roles"] = leader_coordination_roles(config.leader.provider, config.leader.model)
+        leader["coordination_roles"] = leader_coordination_roles(
+            resolved_planner_backend(config.leader),
+            resolved_orchestrator_backend(config.leader),
+        )
         daemon_record = state.get("daemon_runtime")
         daemon_state = (
             str(daemon_record.get("state"))
