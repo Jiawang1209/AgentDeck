@@ -21588,7 +21588,18 @@ def _goal_stop_conditions(merge_on_complete: bool) -> list[dict[str, str]]:
         terminal,
         {"kind": "human_gate", "summary": "遇到未命中活跃委托的授权框,停下来等你按"},
         {"kind": "review_budget_exhausted", "summary": "复审预算耗尽而仍未通过"},
-        {"kind": "approval_outside_allowlist", "summary": "白名单外的 agent 需要审批"},
+        # 2026-08-01 终审修正:旧文案 "白名单外的 agent 需要审批" 对**这次确认**
+        # 是假的。`goal start` 阶段 1 复用的 `approval approve-plan --confirm` 是
+        # 人类批准,它一次性批准该 plan 的全部 pending 审批,不看 allowlist 也不
+        # 看 max_approvals。白名单只筛**自主自动批准**——也就是本次确认之后才
+        # 产生的审批(典型是复审不过触发的返工轮)。
+        {
+            "kind": "approval_outside_allowlist",
+            "summary": (
+                "本次确认之后新产生的审批(如返工轮)若属白名单外 agent,"
+                "停下来等你批(本次确认本身已一次性批准该 plan 的全部步骤)"
+            ),
+        },
         {"kind": "wave_budget_exhausted", "summary": "wave 上限用尽"},
     ]
 
@@ -21617,12 +21628,16 @@ def _goal_preview_payload(
 ) -> dict[str, object]:
     plan_id = str(record["plan_id"])
     plan = record.get("plan") if isinstance(record.get("plan"), dict) else {}
+    allowed_agents = list(config.autonomous.allowed_agents)
     steps = [
         {
             "step": step.get("step"),
             "agent_id": step.get("agent_id"),
             "role": step.get("role"),
             "task": step.get("task"),
+            # 展示,不是门:这次确认会批准每一步(人类批准对白名单免疫),
+            # 这个标记只让人看见自己放行的哪几步在自主集合之外。
+            "in_allowlist": step.get("agent_id") in allowed_agents,
         }
         for step in (plan or {}).get("steps", [])
         if isinstance(step, dict)
@@ -21681,6 +21696,7 @@ def _goal_preview_payload(
             "interval": float(args.interval),
             "max_review_rounds": int(config.autonomous.max_review_rounds),
             "max_approvals": int(config.autonomous.max_approvals),
+            "allowed_agents": allowed_agents,
         },
         "delegations": _goal_active_delegations(store),
         "merge_on_complete": merge_on_complete,
@@ -21748,6 +21764,7 @@ def _render_goal_preview(payload: dict[str, object]) -> str:
     """
     steps = payload["steps"]
     budget = payload["budget"]
+    allowed = list(budget["allowed_agents"])
     width = max((len(str(step["agent_id"])) for step in steps), default=0)
     lines = [
         "将要授权:",
@@ -21755,13 +21772,35 @@ def _render_goal_preview(payload: dict[str, object]) -> str:
     ]
     for step in steps:
         agent = str(step["agent_id"]).ljust(width)
-        lines.append(f"    {step['step']}. {agent}  {_goal_truncate(step['task'])}")
+        # 白名单外的步骤要在自己那一行被点名——它照样会被这次确认批准,
+        # 人类有权在点头前看见自己放行的范围超出了自主集合。
+        mark = "" if step["in_allowlist"] else "  ← 白名单外"
+        lines.append(f"    {step['step']}. {agent}  {_goal_truncate(step['task'])}{mark}")
+    outside = [str(step["agent_id"]) for step in steps if not step["in_allowlist"]]
+    lines.append(
+        f"  批准    本次确认一次性批准全部 {payload['step_count']} 步,现在就批,不逐步问你"
+    )
+    if outside:
+        # 去重但保序:同一个 agent 出现在多步时只点一次名。
+        unique_outside = list(dict.fromkeys(outside))
+        lines.append(
+            f"          其中 {'、'.join(unique_outside)} 不在 autonomous 白名单内,"
+            "人类确认对白名单免疫,这几步同样会被批准"
+        )
+    allowlist_text = "、".join(allowed) if allowed else "(空)"
     lines.append(
         f"  预算    {budget['max_waves']} wave / 每 {budget['interval']:g}s 一轮 / "
-        f"最多 {budget['max_review_rounds']} 轮返工 / 审批预算 {budget['max_approvals']}"
+        f"最多 {budget['max_review_rounds']} 轮返工"
     )
     if budget["max_waves_is_default"]:
         lines.append("          ↑ wave 上限为缺省值,可用 --max-waves 改")
+    lines.append(
+        f"  白名单  {allowlist_text}  /  审批预算 {budget['max_approvals']}"
+    )
+    lines.append(
+        "          ↑ 这两条只约束本次确认之后的自主自动批准(如返工轮),"
+        "不约束上面那次批准"
+    )
     lines.extend(
         _goal_delegation_lines(payload["delegations"], bool(payload["release_boxes"]))
     )

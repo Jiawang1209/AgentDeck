@@ -72,8 +72,8 @@ to `leader plan`) but approves nothing, dispatches nothing and starts no host.
 | `task` | the goal sentence, echoed |
 | `plan_id` | the plan just written by the configured Leader |
 | `step_count` | must equal `len(steps)` |
-| `steps[]` | compact `step` / `agent_id` / `role` / `task` |
-| `budget` | `max_waves`, `max_waves_is_default`, `interval`, `max_review_rounds`, `max_approvals` |
+| `steps[]` | compact `step` / `agent_id` / `role` / `task` / `in_allowlist` |
+| `budget` | `max_waves`, `max_waves_is_default`, `interval`, `max_review_rounds`, `max_approvals`, `allowed_agents` |
 | `delegations[]` | active delegations: `delegation_id` / `agent_id` / `kind` / `prefix` / `mcp_server` / `mcp_tool` |
 | `merge_on_complete` | default `false` |
 | `release_boxes` | default `true` |
@@ -103,6 +103,36 @@ to `leader plan`) but approves nothing, dispatches nothing and starts no host.
    human. `--no-release-boxes` and `--merge-on-complete` change these
    explicitly, and both are frozen into `confirm_command`.
 
+### What this one confirmation actually approves (corrected 2026-08-01)
+
+`goal start` stage 1 calls `approval approve-plan --plan-id <id> --confirm`,
+which is a **human** approval: it approves **every** pending approval of the
+plan. It does not consult `select_auto_approvals`, `allowed_agents` or
+`max_approvals` — human approval has always been allowlist-blind in this
+repository, and that behaviour is correct and unchanged.
+
+What was wrong was the **screen**. It printed `审批预算 N` and a stop condition
+reading "白名单外的 agent 需要审批", both of which describe bounds that do
+*not* bound this confirmation, while omitting the allowlist itself — the one
+config item that decides what the autonomous engine may auto-approve later.
+An information-complete confirmation may not show a constraint that will not
+hold. The preview therefore now:
+
+- carries `budget.allowed_agents` (the autonomous allowlist) beside
+  `max_approvals`, and prints them together under a `白名单` label with the
+  note that **both bound only approvals arising after this confirmation**
+  (typically the rework rounds a failed review appends);
+- carries `steps[].in_allowlist` and marks every out-of-allowlist step on its
+  own rendered line (`← 白名单外`), then names those agents once under the
+  `批准` label — so the human sees exactly whose work they are authorizing
+  beyond the autonomous set;
+- states plainly that this confirmation approves all N steps up front;
+- rewords the `approval_outside_allowlist` stop condition to say what is true:
+  it applies to approvals created *after* this confirmation.
+
+`in_allowlist` and `allowed_agents` are **display**, not gates: they change
+nothing about what gets approved.
+
 ### `delegations[]` is display, not authorization
 
 It is a compact read-only projection of the same data source as `agentdeck
@@ -116,6 +146,8 @@ refusal/esc path is never automated.
 `review_budget_exhausted`, `approval_outside_allowlist`,
 `wave_budget_exhausted`. Exactly one `review_passed_*` terminal appears,
 selected by `merge_on_complete`; the other four always appear.
+`approval_outside_allowlist` is scoped to approvals created **after** this
+confirmation (see the section above).
 
 ## Start response (`mode=goal_start`)
 

@@ -188,8 +188,16 @@ AgentDeck › Mission started. Use /status or open the workbench to inspect it.
   granted delegation would otherwise be pointless; unmatched boxes still stop
   at `human_gate`), `--merge-on-complete` off (merging into main deserves its
   own separate nod — the normal terminal state is "review passed, waiting for
-  you to merge"). Both commands render a human-readable summary by default and
-  the full payload only with `--json`; discovery: `agentdeck contract goal`.
+  you to merge"). The preview says plainly that **this one confirmation
+  approves all N steps up front**, prints the autonomous allowlist
+  (`budget.allowed_agents`) next to the approval budget with the note that
+  both bound only the *later* autonomous auto-approvals (rework rounds), and
+  marks every step whose agent falls outside that allowlist
+  (`steps[].in_allowlist`, rendered `← 白名单外`) — human approval has always
+  been allowlist-blind, so the screen must show whose work is being authorized
+  beyond the autonomous set rather than imply a bound that does not hold. Both
+  commands render a human-readable summary by default and the full payload only
+  with `--json`; discovery: `agentdeck contract goal`.
 
 Useful observation commands:
 

@@ -53,12 +53,14 @@ def test_goal_preview_lays_out_the_whole_authorization_under_defaults(
     assert payload["plan_id"].startswith("pln_")
     assert payload["step_count"] == len(payload["steps"]) == 3
     assert [step["agent_id"] for step in payload["steps"]] == ["planner", "coder", "reviewer"]
-    assert set(payload["steps"][0]) == {"step", "agent_id", "role", "task"}
+    # 字段清单随 in_allowlist 一起生长,断言仍然逐字段精确
+    assert set(payload["steps"][0]) == {"step", "agent_id", "role", "task", "in_allowlist"}
     # user 拍板的两点缺省
     assert payload["budget"]["max_waves"] == 300
     assert payload["budget"]["max_waves_is_default"] is True
     assert payload["budget"]["max_approvals"] == 20
     assert payload["budget"]["max_review_rounds"] == 2
+    assert payload["budget"]["allowed_agents"] == ["coder"]
     assert payload["release_boxes"] is True
     assert payload["merge_on_complete"] is False
     assert payload["blocker"] is None
@@ -330,6 +332,101 @@ def test_goal_preview_render_zero_delegations_is_a_distinct_walkaway_warning(
     assert "不会自动放行" in text
     assert "停下来" in text
     assert "条活跃委托,遇到即自动放行" not in text
+
+
+# 2026-08-01 终审发现:preview 印着"审批预算 N"和"白名单外的 agent 需要审批",
+# 但 `goal start` 阶段 1 复用的 `approval approve-plan --confirm` 是**人类批准**,
+# 它一次性批准该 plan 的全部 pending 审批,既不看 allowlist 也不看 max_approvals
+# (那两条只约束 autonomous **自动**批准,即后续返工轮)。行为是对的——人类批准
+# 一向对 allowlist 免疫——错的是那块屏:它印了两条不约束这次确认的界,又完全
+# 不印真正决定后续自动批准范围的白名单本身。下面这组用例把"信息完整"钉死。
+def test_goal_preview_shows_the_autonomous_allowlist(tmp_path, monkeypatch, capsys) -> None:
+    prepare_project(tmp_path, monkeypatch)
+    enable_autonomous(capsys, max_approvals=1)
+
+    payload = preview_json(capsys)
+
+    assert payload["budget"]["allowed_agents"] == ["coder"]
+    assert payload["budget"]["max_approvals"] == 1
+
+
+def test_goal_preview_marks_which_steps_fall_outside_the_allowlist(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    """人类要看得出:这次确认放行的到底有谁,其中谁在 autonomous 集合之外。"""
+    prepare_project(tmp_path, monkeypatch)
+    enable_autonomous(capsys, max_approvals=1)
+
+    payload = preview_json(capsys)
+
+    assert [step["agent_id"] for step in payload["steps"]] == ["planner", "coder", "reviewer"]
+    assert [step["in_allowlist"] for step in payload["steps"]] == [False, True, False]
+    # 字段清单同步生长,且仍然逐字段精确
+    assert set(payload["steps"][0]) == {"step", "agent_id", "role", "task", "in_allowlist"}
+
+
+def test_goal_preview_render_says_this_confirmation_approves_every_step(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    """屏上必须写明:这一次确认一次性批准全部 N 步,白名单外的也在内。"""
+    prepare_project(tmp_path, monkeypatch)
+    enable_autonomous(capsys, max_approvals=1)
+
+    assert cli.main(["goal", "preview", "--task", "让测试全绿"]) == 0
+    rendered = capsys.readouterr().out
+
+    assert "一次性批准全部 3 步" in rendered
+    # 白名单本身可见,且点名两个白名单外的 agent
+    assert "白名单" in rendered
+    assert "coder" in rendered
+    planner_line = next(line for line in rendered.splitlines() if "planner" in line)
+    reviewer_line = next(line for line in rendered.splitlines() if "reviewer" in line)
+    assert "白名单外" in planner_line
+    assert "白名单外" in reviewer_line
+    coder_line = next(
+        line for line in rendered.splitlines() if "coder" in line and line.strip().startswith("2.")
+    )
+    assert "白名单外" not in coder_line
+
+
+def test_goal_preview_says_the_budget_bounds_only_later_auto_approvals(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    """`max_approvals` / 白名单只约束**本次确认之后**的自主自动批准(返工轮)。"""
+    prepare_project(tmp_path, monkeypatch)
+    enable_autonomous(capsys, max_approvals=1)
+
+    assert cli.main(["goal", "preview", "--task", "让测试全绿"]) == 0
+    rendered = capsys.readouterr().out
+
+    assert "本次确认之后" in rendered
+    assert "自动批准" in rendered
+
+    payload = preview_json(capsys)
+    outside = next(
+        item for item in payload["stop_conditions"] if item["kind"] == "approval_outside_allowlist"
+    )
+    # 旧文案 "白名单外的 agent 需要审批" 不成立于本次确认,必须说清它管的是之后
+    assert "本次确认之后" in outside["summary"]
+
+
+def test_goal_start_still_approves_every_step_including_outside_the_allowlist(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    """行为不变:人类确认一向对 allowlist 免疫。本切片只改屏,不改这一点。"""
+    root = prepare_project(tmp_path, monkeypatch)
+    enable_autonomous(capsys, max_approvals=1)
+    monkeypatch.setattr(cli, "_spawn_host_process", RecordingSpawn())
+    plan_id = preview_json(capsys)["plan_id"]
+
+    assert cli.main(["goal", "start", "--plan-id", plan_id, "--confirm", "--json"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+
+    assert payload["approved_count"] == 3
+    state = StateStore(root).load()
+    approved = [a for a in state["approvals"] if a["plan_id"] == plan_id]
+    assert {a["agent_id"] for a in approved} == {"planner", "coder", "reviewer"}
+    assert {a["status"] for a in approved} == {"approved"}
 
 
 class RecordingSpawn:

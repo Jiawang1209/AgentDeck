@@ -8196,7 +8196,14 @@ GOAL_PREVIEW_RESPONSE_FIELDS = (
     "controls",
 )
 
-GOAL_PREVIEW_STEP_FIELDS = ("step", "agent_id", "role", "task")
+GOAL_PREVIEW_STEP_FIELDS = ("step", "agent_id", "role", "task", "in_allowlist")
+"""`in_allowlist` 只是**展示**:这一步的 agent 是否在 autonomous 白名单里。
+
+它不改变这次确认批准了什么——`goal start` 复用的 `approval approve-plan
+--confirm` 是**人类批准**,人类批准一向对白名单免疫,该 plan 的每一步都会被
+批准。这个字段存在的唯一理由是让人在点头前看见:自己正在放行的这几步里,
+哪几步的 agent 处在后续自主自动批准的集合之外。
+"""
 
 GOAL_PREVIEW_BUDGET_FIELDS = (
     "max_waves",
@@ -8204,7 +8211,12 @@ GOAL_PREVIEW_BUDGET_FIELDS = (
     "interval",
     "max_review_rounds",
     "max_approvals",
+    "allowed_agents",
 )
+"""`max_approvals` 与 `allowed_agents` 只约束**本次确认之后**的自主自动批准
+(例如复审不过触发的返工轮),不约束这次确认本身。两者必须同屏出现:只印
+预算不印白名单,等于把真正决定自动批准范围的那一半藏了起来。
+"""
 
 GOAL_PREVIEW_DELEGATION_FIELDS = (
     "delegation_id",
@@ -8305,6 +8317,8 @@ def validate_goal_preview_contract(payload: dict[str, object]) -> dict[str, obje
                 for field in GOAL_PREVIEW_STEP_FIELDS
                 if field not in step
             )
+            if "in_allowlist" in step and not isinstance(step["in_allowlist"], bool):
+                errors.append(f"goal_preview.steps[{index}].in_allowlist must be a bool")
         if payload.get("step_count") != len(steps):
             errors.append("goal_preview.step_count must match len(steps)")
 
@@ -8322,6 +8336,9 @@ def validate_goal_preview_contract(payload: dict[str, object]) -> dict[str, obje
             errors.append("goal_preview.budget.max_waves must be an int >= 1")
         if not isinstance(budget.get("max_waves_is_default"), bool):
             errors.append("goal_preview.budget.max_waves_is_default must be a bool")
+        allowed = budget.get("allowed_agents")
+        if not isinstance(allowed, list) or not all(isinstance(item, str) for item in allowed):
+            errors.append("goal_preview.budget.allowed_agents must be a list of strings")
 
     delegations = payload.get("delegations")
     if not isinstance(delegations, list):
@@ -8423,8 +8440,20 @@ def goal_preview_example() -> dict[str, object]:
         "plan_id": "pln_example",
         "step_count": 2,
         "steps": [
-            {"step": 1, "agent_id": "coder", "role": "implementation", "task": "实现并自测"},
-            {"step": 2, "agent_id": "reviewer", "role": "review", "task": "审查实现与测试"},
+            {
+                "step": 1,
+                "agent_id": "coder",
+                "role": "implementation",
+                "task": "实现并自测",
+                "in_allowlist": True,
+            },
+            {
+                "step": 2,
+                "agent_id": "reviewer",
+                "role": "review",
+                "task": "审查实现与测试",
+                "in_allowlist": False,
+            },
         ],
         "budget": {
             "max_waves": GOAL_DEFAULT_MAX_WAVES,
@@ -8432,6 +8461,7 @@ def goal_preview_example() -> dict[str, object]:
             "interval": 10.0,
             "max_review_rounds": 2,
             "max_approvals": 20,
+            "allowed_agents": ["coder"],
         },
         "delegations": [
             {
@@ -8452,7 +8482,13 @@ def goal_preview_example() -> dict[str, object]:
             },
             {"kind": "human_gate", "summary": "遇到未委托的授权框,停下来等你按"},
             {"kind": "review_budget_exhausted", "summary": "复审预算耗尽而仍未通过"},
-            {"kind": "approval_outside_allowlist", "summary": "白名单外的 agent 需要审批"},
+            {
+                "kind": "approval_outside_allowlist",
+                "summary": (
+                    "本次确认之后新产生的审批(如返工轮)若属白名单外 agent,"
+                    "停下来等你批(本次确认本身已一次性批准该 plan 的全部步骤)"
+                ),
+            },
             {"kind": "wave_budget_exhausted", "summary": "wave 上限用尽"},
         ],
         "blocker": None,

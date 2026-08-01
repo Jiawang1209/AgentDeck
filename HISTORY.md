@@ -4,6 +4,47 @@
 
 ## 2026-08-01
 
+### Make the goal preview show the allowlist it was hiding and the bounds it was faking
+
+- **Type**: fix
+- **Motivation**: 终审对着"信息完整的确认"这条价值主张逐项核 preview,发现
+  屏上印的两条界**不约束这次确认**,而真正要紧的那条配置**完全没印**。
+  `goal start` 阶段 1 复用的 `approval approve-plan --confirm` 是**人类批准**,
+  它一次性批准该 plan 的全部 pending 审批,既不查 `select_auto_approvals`、
+  也不看 `allowed_agents` / `max_approvals`(那两条只筛 autonomous **自动**
+  批准,即返工轮)。取证:`--allow-agent coder --max-approvals 1` 的项目,
+  preview 印着"审批预算 1"和"白名单外的 agent 需要审批",`goal start` 却
+  报 `approved_count: 3`,`planner` / `reviewer` 双双在白名单外被批准。
+  **行为是对的**——人类批准一向对白名单免疫,这一点不动;错的是那块屏:
+  它展示了不成立的约束,又把决定后续自动批准范围的白名单藏了起来。而
+  "确认授权的一切都必须在这一屏上可见,屏上的每一条界都必须真的成立"
+  正是这条命令存在的全部理由。
+- **What**: 只改**展示**,批准行为逐字节不变。payload 新增
+  `budget.allowed_agents`(autonomous 白名单)与 `steps[].in_allowlist`,
+  分别登记进 `GOAL_PREVIEW_BUDGET_FIELDS` / `GOAL_PREVIEW_STEP_FIELDS`,
+  `validate_goal_preview_contract()` 增两条类型校验(allowed_agents 必须是
+  字符串列表、in_allowlist 必须是 bool),example fixture 同步。渲染器
+  (`_render_goal_preview`)新增 `批准` 段明说"本次确认一次性批准全部 N 步,
+  现在就批,不逐步问你",并点名白名单外的 agent;每个白名单外的步骤在自己
+  那一行标 `← 白名单外`;`审批预算` 从 `预算` 行移到新的 `白名单` 行与白名单
+  同屏,附一行"↑ 这两条只约束本次确认之后的自主自动批准(如返工轮),不约束
+  上面那次批准"。`approval_outside_allowlist` 的 summary 从"白名单外的 agent
+  需要审批"改写为说明它管的是本次确认**之后**新产生的审批。
+- **Impact**: 零行为变化——`goal start` 仍批准全部步骤(新增一条测试把这条
+  正确行为钉住),approve-plan / create-from-plan / run-loop-host start 一律
+  未触碰。`goal preview` 的 `--json` payload 增两个字段(向后兼容的新增),
+  GUI 由此不用解析渲染文本也能自己画出白名单与越界步骤。`in_allowlist` /
+  `allowed_agents` 与 `delegations[]` 同性质:只是展示,不是授权。
+- **Verification**: TDD 先红:四条新测试分别因 payload 无 `allowed_agents`、
+  step 无 `in_allowlist`、渲染无"一次性批准全部 3 步"、渲染无"本次确认之后"
+  而失败;实现后绿。第五条测试(`goal start` 在 `--allow-agent coder
+  --max-approvals 1` 下仍 `approved_count == 3`、三个 agent 全 approved)
+  自始至终绿,证明本切片没碰行为。既有那条精确字段清单断言
+  (`set(payload["steps"][0]) == {...}`)同步生长为五个字段,**仍然逐字段
+  精确**,未放松。`pytest tests/test_goal_cli.py -q` 25 passed;全量
+  `pytest -q` **5108 passed / 3 skipped**(基线 5103,+5 条新测试,零回归)。
+  另在真实项目上实跑渲染取证。
+
 ### Correct the delegation premise in the human-gate live record
 
 - **Type**: docs
