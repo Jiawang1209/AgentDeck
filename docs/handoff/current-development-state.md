@@ -2,6 +2,30 @@
 
 Updated: 2026-08-01
 
+**`/goal` 一句话走开已落地(2026-08-01,user 提出并拍板两点缺省,spec/plan
+`docs/superpowers/{specs,plans}/2026-08-01-goal-one-shot-walkaway*`,
+8 commits `84c73688`→`543f86e6`,全量 5113 绿)**:`agentdeck goal preview
+--task <text>` → `goal start --plan-id <id> --confirm`,把爬到自主度顶格的
+四条命令九个标志压成**一次信息完整的确认**。原则是 user 定的:**压缩确认,
+不是去掉确认**——仪式(plan_id 人肉传递、interval 靠猜、同一件事确认四次)
+消灭,安全门一条不动。`goal` **不新增任何一种动作**,只调用既有的
+`leader plan` / `create-from-plan` / `approve-plan --confirm` /
+`run-loop-host start --confirm`(被调用而非被复制)。**六道门**全部在任何写
+之前判定(`--confirm`、autonomous、已知 plan、`--max-waves>=1`、无活宿主、
+**plan 必须来自 goal preview**),任一不过零写零 spawn。缺省:`--max-waves`
+300 但必须在 preview 里显示、`--release-boxes` 开、`--merge-on-complete` 关。
+**落地与终审共修掉五处**:①"三条命令"其实是四条(`approve-plan` 只批已存在
+的审批,必须先 `create-from-plan`——我 spec 数漏了);②活宿主不在门内导致
+"先批准再被拒"的半应用状态(补第五道门);③**preview 显示了两条不 bind 的
+约束**(`审批预算`/白名单只约束**本次确认之后**的自主自动批准,而本次确认
+是一次性批准全部步骤)且完全没显示白名单——现已改为分行标注并在步骤上标出
+白名单外 agent;④**plan 绑定四处文档都写了、代码一处没实现**(现已持久化
+`source=goal_preview` 并加为第六道门);⑤宿主契约校验在 spawn **之后**,
+失败时 `goal start` 谎称"宿主没起"(改为"可能已起,去查 status")。
+**live 已验**:真项目 preview 渲染、白名单/预算分行、委托按 agent 分组、
+plan 绑定门拒绝且零写零 spawn。**剩余需 human**:完整走开段(真 `goal start`
+→ 宿主跑完)尚未 live;Round 14 那道框仍在 pane 上等人按。
+
 **`/goal` 一句话走开已落地(2026-08-01,spec/plan
 `docs/superpowers/{specs,plans}/2026-08-01-goal-one-shot-walkaway*`,
 3 commits `84c73688` → `21e79b99` → 本条,全量 5096 绿 / 3 skipped)**:
