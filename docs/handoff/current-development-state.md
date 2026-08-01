@@ -2,6 +2,26 @@
 
 Updated: 2026-08-01
 
+**契约晚校验审计与两处修复(2026-08-01,`39c540b7`→`c02c6b35`,全量 5144 绿)**:
+`/goal` 终审 Finding 3 的收尾一句"根因是个模式"引出的系统性审计,余账在
+`docs/roadmap/2026-08-01-late-validation-audit.md`。**12 处**站点在不可逆
+副作用之后才校验契约。方法论产出:**"效果会不会残留"与"校验器会不会
+真的失败"必须分开问**——前者 7/7 实测残留,后者多数为否(payload 是字面量
++ 闭合枚举 + 从被检查列表自己算的计数,校验器**今天是恒真式**),所以多数
+是**脆弱性**而非现行谎言。**已修当下可达的两处**:①`_dispatch_approved_approval`
+在 `send_input` 后校验活状态重建的 inbox 卡且**抛异常**,run-loop 据此给
+真发生的派发记 `run_loop_dispatch_failed` 并邀请重派——**同一 worker 被提示
+两次**(`1319d643`,改为降级 `inbox_card: null` + blocker + 专用审计事件;
+红测还发现真正可达形态是渲染 `AttributeError` 直接崩出 `cli.main`);
+②`approval dispatch-ready --confirm` 批量循环**无 try/except**,一项异常
+撕掉整批、不写完成事件不出 JSON,人不知道哪几个 worker 已被提示
+(`ed56c6b6`,逐项容错 + 始终出 JSON/事件 + `failed_count>0` 退非 0)。
+通用纪律已写入 CLAUDE.md。**另修** `--interval` 八处入口零校验(`39c540b7`):
+负值因 `if interval > 0` 守卫而**静默等于不睡**,会把"300 wave 跑 8 小时"
+的授权变成"300 wave 跑一分钟",而该值正印在 `goal preview` 的确认屏上;
+现统一 `>= 0`(0 合法),并有"第九处 `--interval` 出现即红"的守卫测试。
+**余账**:10 处潜伏站点见审计文档,改动那些 payload 时必须同时处理。
+
 **`/goal` 一句话走开已落地(2026-08-01,user 提出并拍板两点缺省,spec/plan
 `docs/superpowers/{specs,plans}/2026-08-01-goal-one-shot-walkaway*`,
 8 commits `84c73688`→`543f86e6`,全量 5113 绿)**:`agentdeck goal preview
