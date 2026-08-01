@@ -190,7 +190,7 @@ def test_status_surfaces_the_human_gate_evidence(tmp_path, monkeypatch, capsys) 
         "human_gate": {
             "agent_id": "planner", "box_kind": "command",
             "command": "playwright open x", "mcp_server": None,
-            "mcp_tool": None, "waiting_hint": "› 1. Yes, proceed (y)",
+            "mcp_tool": None, "waiting_hint": _REAL_WAITING_HINT,
         },
     })
     before = StateStore(root).load()
@@ -201,7 +201,7 @@ def test_status_surfaces_the_human_gate_evidence(tmp_path, monkeypatch, capsys) 
     assert payload["human_gate"] == {
         "agent_id": "planner", "box_kind": "command",
         "command": "playwright open x", "mcp_server": None,
-        "mcp_tool": None, "waiting_hint": "› 1. Yes, proceed (y)",
+        "mcp_tool": None, "waiting_hint": _REAL_WAITING_HINT,
     }
     assert StateStore(root).load() == before  # 只读
 
@@ -464,11 +464,19 @@ def _waiting_wave(*_args, **_kwargs) -> dict:
             "next_command": "agentdeck capture-reply"}
 
 
+# 屏上原文提示是 _detect_waiting_for_input 返回的 **marker 行**,不是选项行
+# (终审 2026-08-01 F4:此处原本写成 "› 1. Yes, proceed (y)",自洽但不对应
+# 真实取值;live 证据与 delegation contract 示例都是这一句)。
+_REAL_WAITING_HINT = "Press enter to confirm or esc to cancel"
+
+
 def _undelegated_box(command: str = "playwright open x", agent_id: str = "coder") -> dict:
     return {
         "agent_id": agent_id, "command": command, "box_kind": "command",
         "mcp_server": None, "mcp_tool": None,
-        "waiting_hint": "› 1. Yes, proceed (y)",
+        "waiting_hint": _REAL_WAITING_HINT,
+        # 真待批框(活动选择器在屏上)。人类门检测要求这道正证明。
+        "box_pending": True,
         "reason": "no active delegation", "iteration": 0,
     }
 
@@ -503,12 +511,12 @@ def test_serve_stops_on_the_second_consecutive_sighting_of_the_same_human_gate(
     assert record["wave_count"] == 1
     assert record["human_gate"] == {
         "agent_id": "coder", "box_kind": "command", "command": "playwright open x",
-        "mcp_server": None, "mcp_tool": None, "waiting_hint": "› 1. Yes, proceed (y)",
+        "mcp_server": None, "mcp_tool": None, "waiting_hint": _REAL_WAITING_HINT,
     }
     gate_lines = [line for line in _log_lines(root) if line.get("event") == "human_gate"]
     assert len(gate_lines) == 1
     assert gate_lines[0]["agent_id"] == "coder"
-    assert gate_lines[0]["waiting_hint"] == "› 1. Yes, proceed (y)"
+    assert gate_lines[0]["waiting_hint"] == _REAL_WAITING_HINT
     assert gate_lines[0]["wave"] == 1
     events = (root / ".agentdeck" / "state" / "events.jsonl").read_text(encoding="utf-8")
     assert '"stopped_reason": "human_gate"' in events
@@ -704,3 +712,132 @@ def test_stop_clears_stale_record(tmp_path, monkeypatch, capsys) -> None:
     assert payload["mode"] == "run_loop_host_stale_cleared"
     assert killed == []  # 死进程不发信号
     assert read_host_record(root)["pid"] is None
+
+
+# ── 端到端:真实检测器,不 mock 扫描 ────────────────────────────────────
+#
+# 终审 2026-08-01 指出的覆盖缺口:上面每个 serve 级人类门测试都 monkeypatch
+# 掉了 `_scan_release_delegated_boxes`,于是 pane 文本 → 框解析 → 候选这一
+# 整段从未被端到端执行过。F1(已答复的折叠框停掉健康走开段)正是因此活过
+# 了七个 commit 和一次 live PASS——live 那次恰好是一道真待批框,只走了
+# happy path。下面的测试喂真实 pane 文本、跑真实扫描。
+
+_PENDING_BOX_PANE = """\
+  Would you like to run the following command?
+
+  $ ./scripts/smoke.sh --dry-run
+
+› 1. Yes, proceed (y)
+  2. Yes, and don't ask again for commands that start with `./scripts/` (p)
+  3. No, and tell Codex what to do differently (esc)
+
+  Press enter to confirm or esc to cancel
+"""
+
+# 已答复的框折叠成单行历史:marker "Would you like to run" 仍在,但正文与
+# 选项列表都没了 —— 屏上没有任何东西在等人按。
+_ANSWERED_BOX_PANE = """\
+• Ran node tests/a.mjs
+  Would you like to run the following command? -> Yes
+• Working (esc to interrupt)
+"""
+
+# 更阴险的一种:已答复的框上方还留着一条陈旧的 `$ ` 行,提取器会刮出一条
+# 从来没有对应过任何框的命令。
+_ANSWERED_BOX_WITH_STALE_COMMAND_PANE = """\
+• Ran node tests/a.mjs
+  Would you like to run the following command? -> Yes
+  $ ./scripts/deploy.sh --dry-run
+• Working (esc to interrupt)
+"""
+
+
+class _PaneBackend:
+    """只回放固定 pane 文本;记录是否有人往 pane 里发过按键。"""
+
+    def __init__(self, pane_text: str) -> None:
+        self.pane_text = pane_text
+        self.sent: list[tuple[str, str]] = []
+
+    def capture_output(self, _runtime, pane_id: str, _lines: int) -> str:
+        return self.pane_text
+
+    def send_input(self, _runtime, pane_id: str, text: str) -> None:
+        self.sent.append((pane_id, text))
+
+
+def _seed_running_agent(root: Path, agent_id: str = "coder", pane_id: str = "%9") -> None:
+    store = StateStore(root)
+    state = store.load()
+    state.setdefault("agents", {})[agent_id] = {
+        "agent_id": agent_id, "status": "running", "pane_id": pane_id,
+        "session": "agentdeck-test", "cwd": str(root),
+    }
+    store.save(state)
+
+
+def _serve_against_pane(root, plan_id, monkeypatch, capsys, pane_text, max_waves=4):
+    enable_autonomous(capsys)
+    _seed_dispatched_approval(root, plan_id, agent_id="coder")
+    _seed_running_agent(root)
+    _host_record_for_gate(root, plan_id, max_waves)
+    backend = _PaneBackend(pane_text)
+    monkeypatch.setattr(cli, "TmuxBackend", lambda: backend)
+    monkeypatch.setattr(cli, "_run_loop_single_wave", _waiting_wave)
+    # `_scan_release_delegated_boxes` 刻意 **不** mock —— 这正是本节的意义。
+    assert cli.main(_serve_argv(root, plan_id, max_waves, release_boxes=True)) == 0
+    return backend, read_host_record(root)
+
+
+def test_serve_stops_on_a_real_pending_box_through_the_unmocked_scanner(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    """真待批框走完整条 pane→解析→候选→debounce 链路,必须停。"""
+    root = prepare_project(tmp_path, monkeypatch)
+    plan_id = seed_plan(root)
+    backend, record = _serve_against_pane(
+        root, plan_id, monkeypatch, capsys, _PENDING_BOX_PANE
+    )
+
+    assert record["stopped_reason"] == "human_gate"
+    assert record["wave_count"] == 1
+    gate = record["human_gate"]
+    assert gate["agent_id"] == "coder"
+    assert gate["box_kind"] == "command"
+    assert gate["command"] == "./scripts/smoke.sh --dry-run"
+    assert gate["waiting_hint"] == _REAL_WAITING_HINT
+    # 绝不代按:检测路径一个按键都不发
+    assert backend.sent == []
+
+
+def test_serve_does_not_stop_on_an_already_answered_collapsed_box(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    """终审 F1 回归:已答复的折叠框产出全 None 身份,全 None 恒等于自身,
+    debounce 会必然确认 —— 修复前这里会误停一个健康的走开段。"""
+    root = prepare_project(tmp_path, monkeypatch)
+    plan_id = seed_plan(root)
+    backend, record = _serve_against_pane(
+        root, plan_id, monkeypatch, capsys, _ANSWERED_BOX_PANE
+    )
+
+    assert record["stopped_reason"] == "budget_exhausted"
+    assert record["human_gate"] is None
+    assert [line for line in _log_lines(root) if line.get("event") == "human_gate"] == []
+    assert backend.sent == []
+
+
+def test_serve_does_not_stop_on_a_stale_command_line_above_an_answered_box(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    """终审 F2 回归:陈旧 `$ ` 行能刮出一条从未对应过任何框的命令
+    (box_kind=command),仅靠身份非空挡不住 —— 必须要求屏上确有待批框。"""
+    root = prepare_project(tmp_path, monkeypatch)
+    plan_id = seed_plan(root)
+    backend, record = _serve_against_pane(
+        root, plan_id, monkeypatch, capsys, _ANSWERED_BOX_WITH_STALE_COMMAND_PANE
+    )
+
+    assert record["stopped_reason"] == "budget_exhausted"
+    assert record["human_gate"] is None
+    assert backend.sent == []

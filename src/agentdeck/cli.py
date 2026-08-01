@@ -10016,6 +10016,26 @@ def _box_fields(
     }
 
 
+# 待批框的活动选择器字形。判据与 _MCP_TOOL_BOX_PATTERN 里那道硬约束同源:
+# 待批框在正文正下方渲染 "› 1. Yes, proceed (y)";已答复的框折叠成单行
+# 历史后跟的是 "-> Yes" 等文本,永不含该字形。它同时保证:只有预选项正是
+# 裸回车将按下的选项 1 时才算"待批"。
+_ACTIVE_BOX_SELECTOR = "›1."
+
+
+def _box_is_pending(output: str) -> bool:
+    """屏上是否真有一道**待批**框,而不是已答复的折叠残留。
+
+    终审 2026-08-01 发现:`_detect_waiting_for_input` 的 marker
+    "Would you like to run" 在**已答复**的折叠框(`… ? -> Yes`)上同样命中,
+    而命令框提取器不像 MCP 提取器那样要求选择器字形,于是一道早已答复的
+    框既能产出全 None 身份(全 None 恒等于自身 → debounce 必然确认),也能
+    从残留 `$ ` 行刮出一条从未存在过的命令。人类门检测因此要求这道正证明。
+    """
+    region = _pending_box_region(output.splitlines())
+    return _ACTIVE_BOX_SELECTOR in "".join("\n".join(region).split())
+
+
 def _match_active_delegation(
     state: dict[str, object],
     agent_id: str,
@@ -10254,6 +10274,7 @@ def _scan_release_delegated_boxes(
                     # capture 失败时屏上什么都没读到,更不是人类门。
                     **_box_fields(None, None),
                     "waiting_hint": None,
+                    "box_pending": False,
                     "reason": "pane capture failed",
                     "iteration": iteration,
                 }
@@ -10275,6 +10296,9 @@ def _scan_release_delegated_boxes(
                     **_box_fields(command, mcp_box),
                     # 屏上原文提示:宿主人类门证据靠它,纯附加字段。
                     "waiting_hint": waiting_hint,
+                    # 屏上确有待批框(活动选择器字形)。人类门检测要求它为真
+                    # ——已答复的折叠残留绝不能停掉一个健康的走开段。
+                    "box_pending": _box_is_pending(output),
                     "reason": "no active delegation",
                     "iteration": iteration,
                 }

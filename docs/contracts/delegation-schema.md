@@ -210,6 +210,14 @@ Commands:
   `_scan_release_delegated_boxes` used by `run-loop --release-boxes`) carry
   the same `box_kind`/`mcp_server`/`mcp_tool` fields as `release-box`;
   `released[]` items additionally carry `match_kind`/`matched_segments`.
+  Every `skipped[]` item — both reasons — additionally carries `waiting_hint`
+  (the captured on-screen marker line) and `box_pending` (whether the pane
+  genuinely shows a pending box, proven by the active selector glyph `›1.`).
+  Both keys are present on **both** skip shapes, null/false on the
+  `pane capture failed` branch, so a consumer never has to branch on `reason`
+  to read the array. They exist for the run-loop host's human-gate detection
+  (`docs/contracts/run-loop-host-schema.md`) and are **evidence only** — they
+  do not affect which boxes are released, and never authorize a press.
 
 ## Recommended read-only starter pack (2026-08-01)
 

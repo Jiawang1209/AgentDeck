@@ -84,7 +84,31 @@ Field list single source: `run_loop_host.HUMAN_GATE_FIELDS` (imported by
 | `command` | the `$ `-line command the box is asking about, or `null` for an MCP box |
 | `mcp_server` | MCP server name for an MCP tool box, else `null` |
 | `mcp_tool` | MCP tool name for an MCP tool box, else `null` |
-| `waiting_hint` | the on-screen prompt text as captured (e.g. `› 1. Yes, proceed (y)`) |
+| `waiting_hint` | the on-screen prompt **marker line** as captured (e.g. `Press enter to confirm or esc to cancel`) — this is what `_detect_waiting_for_input` returns, not the option line |
+
+### A gate is only decided on positive proof
+
+Detection requires **four** conditions, and any failure of any one of them
+fails open to ordinary polling — burning budget is always preferable to
+truncating a healthy walk-away segment:
+
+1. the scan classified the box as `no active delegation` (a `pane capture
+   failed` skip is runtime flakiness, not a human gate);
+2. the agent is in **this plan's** awaiting set (a box on an idle agent, or on
+   an agent awaited by a different plan, never stops this host);
+3. `box_pending` — the pane genuinely shows a **pending** box, proven by the
+   active selector glyph `›1.` (whitespace-folded) inside the pending-box
+   region, the same hard constraint `_MCP_TOOL_BOX_PATTERN` already enforces.
+   This matters because `_detect_waiting_for_input`'s `Would you like to run`
+   marker also fires on an **already-answered** collapsed box (`… ? -> Yes`),
+   where nothing is waiting for anyone;
+4. a parsed box identity (`box_kind` non-null). An unparsed box yields an
+   all-null identity, and an all-null identity always equals itself — so the
+   two-sighting debounce would confirm on the first pair every time.
+
+Conditions 3 and 4 were added after a final adversarial review (2026-08-01)
+demonstrated both false-stop paths end to end. They are regression-nailed by
+tests that drive real pane text through the **unmocked** scanner.
 
 `human_gate` is **provenance, not authorization**. It only tells a human where
 to look; AgentDeck never presses the box — a human does, in that pane. The

@@ -4,6 +4,34 @@
 
 ## 2026-08-01
 
+### Require positive proof of a pending box before a human-gate stop
+
+- **Type**: fix
+- **Motivation**: 终审对抗性复查端到端复现了**两条误停路径**——人类门检测
+  只要求"未委托 + 在 awaiting 集内",而 `_detect_waiting_for_input` 的
+  marker `Would you like to run` 在**已答复**的折叠框(`… ? -> Yes`)上同样
+  命中。于是:①两个提取器都失败时产出**全 None 身份**,而全 None 恒等于
+  自身,debounce 必然确认,一个健康的走开段被误停;②残留 `$ ` 行还能刮出
+  一条从未对应过任何框的假命令,身份非空照样误停并把假命令递给人类。二者
+  都违反本功能自己冻结的 fail-open 条款。
+- **What**: 新纯 helper `_box_is_pending()` 用活动选择器字形 `›1.`
+  (挂起框区域内全空白折叠后)证明屏上确有待批框——与 `_MCP_TOOL_BOX_PATTERN`
+  已有的那道硬约束同源;扫描的两种 `skipped[]` 都带 `box_pending`(形状对称);
+  `human_gate_candidate` 判据由二条加到四条,新增 `box_pending` 与
+  `box_kind` 非空。放行路径一字未动——`box_pending` 只是证据,不改变哪些框
+  被放行。顺带修掉终审 F4(三处 `waiting_hint` 示例写成了选项行而非 marker
+  行,自洽但不对应真实取值)与 F5(delegation contract 未同步 `skipped[]`
+  新字段)。
+- **Impact**: 检测严格收紧,只在**正证明**下停止;两条误停路径消失。
+  真待批框行为不变(live 证据的框带 `›1.`,照常停)。副作用是
+  delegation-schema 里"解析不出的措辞只退化为既有 skip 行为"那句重新成立
+  ——修复前它已被本功能变成假话。
+- **Verification**: 四个新测试**在拆掉守卫后全红、装回后全绿**,是真回归钉;
+  其中三个是端到端的——喂真实 pane 文本、跑**未 mock** 的
+  `_scan_release_delegated_boxes`,补上终审指出的覆盖缺口(此前每个 serve
+  级人类门测试都 mock 掉了扫描,F1 才能活过七个 commit 和一次 live PASS)。
+  全量 pytest 5029 passed / 3 skipped(5024 基线 + 5 个新测试)。
+
 ### Live-verify the host human-gate stop
 
 - **Type**: docs

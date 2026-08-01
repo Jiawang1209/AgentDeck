@@ -119,9 +119,21 @@ def human_gate_candidate(
 ) -> dict[str, Any] | None:
     """从一次框扫描的 skipped 项里挑出人类门候选。
 
-    只认「未委托」且「落在本 plan awaiting 集内」的框。pane capture 失败
-    是 runtime 抖动而非人类门。解析不出任何候选一律 None——fail-open 到
-    既有轮询行为,宁可多转也绝不误停一个正常的走开段。
+    四条判据全部成立才算候选:
+
+    1. `reason == "no active delegation"` —— pane capture 失败是 runtime
+       抖动而非人类门;
+    2. agent 落在本 plan 的 awaiting 集内 —— 别的 plan、闲置 agent 身上的
+       框不该停掉这台宿主;
+    3. `box_pending` —— 屏上确有一道**待批**框(活动选择器字形)。终审
+       2026-08-01 发现:已答复的折叠框(`… ? -> Yes`)同样会命中
+       `_detect_waiting_for_input` 的 marker,若不要求这道正证明,一道
+       早已答复的框就能停掉一个健康的走开段;
+    4. `box_kind` 非空 —— 解析不出框身份时不判定,这是 spec 冻结的
+       fail-open 条款(全 None 身份恒等于自身,会让 debounce 必然确认)。
+
+    任何一条不成立就跳过该项;全都不成立返回 None——fail-open 到既有
+    轮询行为,宁可多转也绝不误停一个正常的走开段。
     """
     for item in skipped:
         if not isinstance(item, dict):
@@ -130,6 +142,10 @@ def human_gate_candidate(
             continue
         agent_id = item.get("agent_id")
         if agent_id not in awaiting_agents:
+            continue
+        if not item.get("box_pending"):
+            continue
+        if not item.get("box_kind"):
             continue
         return {field: item.get(field) for field in HUMAN_GATE_FIELDS}
     return None

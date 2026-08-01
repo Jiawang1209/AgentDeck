@@ -23,6 +23,11 @@ def test_paths_are_under_project_agentdeck(tmp_path: Path) -> None:
     assert host_log_path(tmp_path).name == "host.log"
 
 
+# 屏上原文提示是 _detect_waiting_for_input 返回的 **marker 行**,不是选项行
+# (终审 2026-08-01 F4)。live 证据与 delegation contract 示例都是这一句。
+_REAL_WAITING_HINT = "Press enter to confirm or esc to cancel"
+
+
 def test_stopped_reasons_are_closed_enum() -> None:
     assert RUN_LOOP_HOST_STOPPED_REASONS == (
         "gate_reached",
@@ -96,7 +101,8 @@ def test_human_gate_candidate_matches_undelegated_box_on_awaited_agent() -> None
     skipped = [{
         "agent_id": "planner", "command": "playwright_cli.sh open file:///x",
         "box_kind": "command", "mcp_server": None, "mcp_tool": None,
-        "waiting_hint": "› 1. Yes, proceed (y)", "reason": "no active delegation",
+        "waiting_hint": _REAL_WAITING_HINT, "box_pending": True,
+        "reason": "no active delegation",
     }]
     assert human_gate_candidate(skipped, {"planner"}) == {
         "agent_id": "planner",
@@ -104,8 +110,48 @@ def test_human_gate_candidate_matches_undelegated_box_on_awaited_agent() -> None
         "command": "playwright_cli.sh open file:///x",
         "mcp_server": None,
         "mcp_tool": None,
-        "waiting_hint": "› 1. Yes, proceed (y)",
+        "waiting_hint": _REAL_WAITING_HINT,
     }
+
+
+def test_human_gate_candidate_requires_a_pending_box_on_screen() -> None:
+    """终审 2026-08-01 F1/F2:已答复的折叠框绝不能停掉一个健康的走开段。
+
+    marker "Would you like to run" 在 `… ? -> Yes` 这种已答复残留上同样命中,
+    因此 `box_pending` 是必需的正证明,而非可选补充。
+    """
+    from agentdeck.run_loop_host import human_gate_candidate
+
+    answered = {
+        "agent_id": "planner", "command": "deploy.sh", "box_kind": "command",
+        "mcp_server": None, "mcp_tool": None,
+        "waiting_hint": "Would you like to run the following command? -> Yes",
+        "box_pending": False, "reason": "no active delegation",
+    }
+    assert human_gate_candidate([answered], {"planner"}) is None
+    # 缺失该键(旧形状)同样 fail-open,绝不按"没说不行就是行"处理
+    assert human_gate_candidate([{k: v for k, v in answered.items()
+                                  if k != "box_pending"}], {"planner"}) is None
+
+
+def test_human_gate_candidate_requires_a_parsed_box_identity() -> None:
+    """spec 冻结条款:解析不出框一律不判定。
+
+    全 None 身份恒等于自身,若放行会让 debounce 必然确认 —— 一次误停。
+    """
+    from agentdeck.run_loop_host import human_gate_candidate, same_human_gate
+
+    unparsed = {
+        "agent_id": "planner", "command": None, "box_kind": None,
+        "mcp_server": None, "mcp_tool": None,
+        "waiting_hint": "Would you like to run the following command? -> Yes",
+        "box_pending": True, "reason": "no active delegation",
+    }
+    assert human_gate_candidate([unparsed], {"planner"}) is None
+    # 说明为什么这条必须挡在候选阶段:全 None 身份自等
+    all_none = {key: None for key in
+                ("agent_id", "box_kind", "command", "mcp_server", "mcp_tool")}
+    assert same_human_gate(all_none, all_none) is True
 
 
 def test_human_gate_candidate_ignores_agents_outside_the_awaiting_set() -> None:
