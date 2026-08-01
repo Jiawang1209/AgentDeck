@@ -2,6 +2,27 @@
 
 Updated: 2026-08-01
 
+**G6 Role Topology 已落地——北极星最后一相收官(2026-08-01,spec/plan
+`docs/superpowers/{specs,plans}/2026-08-01-g6-role-topology*`,11 commits
+`fdcb5e18`→`1af718ff`,全量 5075 绿)**:`agentdeck roles` + workbench
+`roles_card`(mode `role_bindings`)+ 第 44 契约 `role-bindings`,只读展示
+北极星六层各自绑到了什么。设计支点=六个角色由**三种绑定方式**承载
+(`command`/`logical_leader`/`worker_agent`),某些字段必然为 null。
+**落地时暴露三件事**:①spec 漏查——workbench 早有一个形状不同的
+`role_topology_card`(答"此刻状态"),两卡当时都发 `mode=role_topology`;
+新卡改名 `role_bindings`,旧卡一字不动,分工写进 schema doc 开头。
+②**既有真 bug**:旧卡 planner/orchestrator provider 硬编码取
+`config.leader.provider`,自 G2 起一直无视 `[leader.*]` 覆盖(配 codex-cli
+仍报 deepseek,GUI 可消费卡片在撒谎);已改走 `resolved_*_backend` 并有
+回归测试。③**终审第五次命中 fail-open**:契约文档说 `bound`="恰好解析到
+一个绑定",实际只成立"恰好命中一个 hint"——歧义只在单 hint 集内检测,
+跨集漏掉,导致 coder 层能绑到 reviewer(真实现 agent 从图里消失)、或
+两层绑到同一 agent(而本仓库的迭代设计明令禁止 coder 复审自己)。修法=
+一次解析全部 worker 层,role 命中多层者是歧义证据,两层都 `ambiguous`;
+另修 validator 未强制的"必然 null"条款与六层覆盖。**剩余需 human**:
+本卡尚无 live 项目验收记录;Round 14 那道框仍在 pane 上等人按;
+下一候选是 user 提的 `/goal` 一句话走开 + 呈现层渐进披露。
+
 **G6 Role Topology 已落地(2026-08-01,北极星最后一相,spec
 `docs/superpowers/specs/2026-08-01-g6-role-topology-design.md`,plan
 `docs/superpowers/plans/2026-08-01-g6-role-topology.md`,3 commits
