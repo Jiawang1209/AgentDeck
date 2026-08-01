@@ -37,9 +37,21 @@ plan 同名,6 commits 0f28d3db→9b8a9391,全量 4860 绿):user 拍板三决策
 `[leader.planner]`/`[leader.orchestrator]`(G2,已 live 验证的功能)、
 `[daemon]` 与新 `[review]`——`policy set-mode` 一次即丢;现改为保留式
 回写。④Leader 精修回炉任务(二期)待排期,G1 frontdesk 增强仍待拍板。
-**review group live 验证待下轮 round**:scratch 配
+整体终审 **APPROVE**(1aa256c6 + 3776857f,全量 4866+):终审复现一个
+**Critical fail-open**——组内一人 verdict 无效时整组塌缩成"无判定",
+另一人的有效 fail 被丢弃且自动合并放行(单 reviewer 下会扣住);根因是
+spec 的 `complete=false` 投影被实现丢掉。修复拆成**两个面**:触发面
+仍要求整组完成(4000 状态差分证明零行为变化),展示/merge-gate 面走
+`latest_group_status()` 对已报到成员聚合并标 `complete=false`,
+`_verdict_merge_blocker` 一律扣住自动合并(人类 `worktree merge-plan
+--confirm` 永不受 gate)。后续硬化:非法 `overall` 夹到 fail、展示面
+不再依赖 approval、配置保留式回写改为"不可表示即报错"并支持 TOML 原生
+日期时间。**review group live 验证待下轮 round**:scratch 配
 `[review] reviewers = ["reviewer", "planner"]`,确认展开、串行执行、
-any-fail 聚合只触发一轮、追加复审组同样成组。
+any-fail 聚合只触发一轮、追加复审组同样成组、组未齐时合并被扣住。
+已知非阻塞 follow-up:`_quote_toml` 对含换行的字符串会生成非法 TOML
+(既有缺陷,`agent assign-role --role-prompt` 可触达);零 verdict 的
+review 组仍沿用"无判定 = 不扣合并"的既有基线(是否收紧待拍板)。
 
 **Review 迭代闭环已落地(2026-07-30 拍板 / 07-31 完成,subagent-driven
 开发,11 commits d50df5ee→,全量绿)**:spec
