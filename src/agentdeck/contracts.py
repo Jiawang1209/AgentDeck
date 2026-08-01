@@ -781,6 +781,17 @@ APPROVAL_DISPATCH_READY_RESULT_FIELDS = (
     "dispatch_command",
 )
 
+APPROVAL_DISPATCH_RESPONSE_FIELDS = (
+    "ok",
+    "approval_id",
+    "message_id",
+    "agent_id",
+    "pane_id",
+    "trace_command",
+    "inbox_card",
+    "blocker",
+)
+
 APPROVAL_APPROVE_PLAN_RESPONSE_FIELDS = (
     "ok",
     "mode",
@@ -8970,11 +8981,13 @@ def approval_contract_payload(contract_path: Path) -> dict[str, object]:
     return {
         "schema_version": PROJECT_VIEW_SCHEMA_VERSION,
         "approvals_command": "agentdeck approval list",
+        "dispatch_command": "agentdeck approval dispatch --approval-id <id>",
         "dispatch_ready_command": "agentdeck approval dispatch-ready --confirm",
         "contract_path": str(contract_path),
         "contract_exists": contract_path.exists(),
         "queue_fields": list(APPROVAL_QUEUE_FIELDS),
         "approval_item_fields": list(APPROVAL_ITEM_FIELDS),
+        "dispatch_response_fields": list(APPROVAL_DISPATCH_RESPONSE_FIELDS),
         "dispatch_ready_response_fields": list(APPROVAL_DISPATCH_READY_RESPONSE_FIELDS),
         "dispatch_ready_result_fields": list(APPROVAL_DISPATCH_READY_RESULT_FIELDS),
         "approve_plan_command": "agentdeck approval approve-plan --plan-id <plan_id> --confirm",
@@ -8993,6 +9006,10 @@ def approval_contract_response(contract_path: Path, include_example: bool = Fals
         payload["example_queue_fields"] = list(example)
         payload["example_approval_item_fields"] = list(example["approvals"][0])
         payload["example_approval_queue"] = example
+        dispatch_example = approval_dispatch_example()
+        payload["example_dispatch_fields"] = list(dispatch_example)
+        payload["example_dispatch"] = dispatch_example
+        payload["example_dispatch_degraded"] = approval_dispatch_degraded_example()
         dispatch_ready_example = approval_dispatch_ready_example()
         payload["example_dispatch_ready_fields"] = list(dispatch_ready_example)
         payload["example_dispatch_ready_result_fields"] = list(dispatch_ready_example["results"][0])
@@ -10926,6 +10943,46 @@ def validate_approval_contract(payload: dict[str, object]) -> dict[str, object]:
                 )
     elif "approvals" in payload:
         errors.append("approvals must be a list")
+    return {"ok": not errors, "errors": errors}
+
+
+def validate_approval_dispatch_contract(payload: dict[str, object]) -> dict[str, object]:
+    """`agentdeck approval dispatch --approval-id <id>` 的成功响应契约。
+
+    这份 payload 描述的是**已经发生的效果**(prompt 已进 pane、approval 已
+    标记 dispatched),因此契约校验只能发生在效果之后。`inbox_card` 是这份
+    成功之上的展示附加物:渲染失败时它可以是 `null`,但必须带 `blocker`
+    说明派发已经成功、只是卡片渲染不出来,并指回 `agentdeck inbox --agent <id>`。
+    校验失败只允许降级展示,绝不允许把成功的派发报成失败。
+    """
+    errors: list[str] = []
+    for field in APPROVAL_DISPATCH_RESPONSE_FIELDS:
+        if field not in payload:
+            errors.append(f"missing approval dispatch field: {field}")
+    if payload.get("ok") is not True:
+        errors.append("approval_dispatch.ok must be true")
+    for field in ("approval_id", "message_id", "agent_id", "pane_id"):
+        value = payload.get(field)
+        if not isinstance(value, str) or not value:
+            errors.append(f"approval_dispatch.{field} must be a non-empty string")
+    message_id = payload.get("message_id")
+    if isinstance(message_id, str) and message_id:
+        if payload.get("trace_command") != f"agentdeck trace --id {message_id}":
+            errors.append("approval_dispatch.trace_command must match message_id")
+    inbox_card = payload.get("inbox_card")
+    blocker = payload.get("blocker")
+    if inbox_card is None:
+        if not isinstance(blocker, str) or not blocker:
+            errors.append("approval_dispatch.blocker is required when inbox_card is null")
+        elif "agentdeck inbox --agent" not in blocker:
+            errors.append("approval_dispatch.blocker must point at agentdeck inbox --agent <id>")
+    elif isinstance(inbox_card, dict):
+        if blocker is not None:
+            errors.append("approval_dispatch.blocker must be null when inbox_card is rendered")
+        nested = validate_inbox_contract(inbox_card)
+        errors.extend(f"inbox_card: {item}" for item in nested["errors"])
+    else:
+        errors.append("approval_dispatch.inbox_card must be an inbox card object or null")
     return {"ok": not errors, "errors": errors}
 
 
@@ -18972,6 +19029,41 @@ def approval_example() -> dict[str, object]:
                 reason=None,
             ),
         ],
+    }
+
+
+def approval_dispatch_example() -> dict[str, object]:
+    return {
+        "ok": True,
+        "approval_id": "apv_ready",
+        "message_id": "msg_ready",
+        "agent_id": "planner",
+        "pane_id": "%42",
+        "trace_command": "agentdeck trace --id msg_ready",
+        "inbox_card": inbox_example(),
+        "blocker": None,
+    }
+
+
+def approval_dispatch_degraded_example() -> dict[str, object]:
+    """派发已经发生、inbox card 渲染不出来时的降级响应形状。
+
+    `inbox_card` 是成功派发之上的展示附加物,它渲染失败绝不能把"已经把
+    prompt 送进 pane"改写成"没有派发",否则调用方会重发同一份 prompt。
+    """
+    return {
+        "ok": True,
+        "approval_id": "apv_ready",
+        "message_id": "msg_ready",
+        "agent_id": "planner",
+        "pane_id": "%42",
+        "trace_command": "agentdeck trace --id msg_ready",
+        "inbox_card": None,
+        "blocker": (
+            "dispatch succeeded but the inbox card could not be rendered "
+            "(missing inbox item field: ack_blocker); "
+            "run agentdeck inbox --agent planner"
+        ),
     }
 
 

@@ -15177,3 +15177,153 @@ def test_assign_role_with_multiline_prompt_keeps_config_loadable(
     # 后续任意命令不再因非法 TOML 而崩
     assert cli.main(["agent", "list"]) == 0
     capsys.readouterr()
+
+
+def _approve_first_step_only(root, monkeypatch, capsys, *, task: str):
+    """派发前置:建 plan、批准第一步、拒掉其余步,返回 (plan_id, approval_id, fake)。"""
+    bind_agent(root, "planner", "%42")
+    fake = FakeTmuxBackend()
+    monkeypatch.setattr(cli, "TmuxBackend", lambda: fake)
+    cli.main(["leader", "plan", "--provider", "fake", "--model", "fake-plan", "--task", task])
+    plan_id = json.loads(capsys.readouterr().out)["plan_id"]
+    cli.main(["approval", "create-from-plan", "--plan-id", plan_id])
+    approvals = json.loads(capsys.readouterr().out)["approvals"]
+    approval_id = approvals[0]["approval_id"]
+    cli.main(["approval", "approve", "--approval-id", approval_id])
+    capsys.readouterr()
+    for approval in approvals[1:]:
+        cli.main(["approval", "reject", "--approval-id", approval["approval_id"], "--reason", "focus"])
+        capsys.readouterr()
+    return plan_id, approval_id, fake
+
+
+def _corrupt_planner_inbox(root) -> None:
+    """遗留/半写入 mailbox:非 dict 行,渲染 inbox card 时必然失败。"""
+    store = StateStore(root)
+    state = store.load()
+    state.setdefault("inbox", {}).setdefault("planner", []).insert(0, "legacy-inbox-row")
+    store.save(state)
+
+
+def _read_events(root) -> list[dict]:
+    path = root / ".agentdeck" / "state" / "events.jsonl"
+    if not path.exists():
+        return []
+    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+
+
+def test_corrupt_mailbox_state_fails_the_inbox_contract(tmp_path, monkeypatch) -> None:
+    from agentdeck.contracts import validate_inbox_contract as _validate
+
+    root = prepare_project(tmp_path, monkeypatch)
+    _corrupt_planner_inbox(root)
+    raw = StateStore(root).inbox_items("planner")
+    card = {"agent_id": "planner", "count": len(raw), "head_inbox_id": None, "items": raw}
+
+    assert _validate(card)["ok"] is False
+
+
+def test_approval_dispatch_payload_matches_the_dispatch_contract(tmp_path, monkeypatch, capsys) -> None:
+    from agentdeck.contracts import APPROVAL_DISPATCH_RESPONSE_FIELDS, validate_approval_dispatch_contract
+
+    root = prepare_project(tmp_path, monkeypatch)
+    _, approval_id, fake = _approve_first_step_only(root, monkeypatch, capsys, task="派发响应契约")
+
+    assert cli.main(["approval", "dispatch", "--approval-id", approval_id]) == 0
+    payload = json.loads(capsys.readouterr().out)
+
+    assert set(payload) == set(APPROVAL_DISPATCH_RESPONSE_FIELDS)
+    assert payload["blocker"] is None
+    assert payload["inbox_card"]["agent_id"] == "planner"
+    assert validate_approval_dispatch_contract(payload) == {"ok": True, "errors": []}
+    assert len(fake.sent) == 1
+
+
+def test_approval_dispatch_survives_unrenderable_inbox_card(tmp_path, monkeypatch, capsys) -> None:
+    from agentdeck.contracts import validate_approval_dispatch_contract
+
+    root = prepare_project(tmp_path, monkeypatch)
+    _, approval_id, fake = _approve_first_step_only(root, monkeypatch, capsys, task="坏 mailbox 不得推翻派发")
+    _corrupt_planner_inbox(root)
+
+    exit_code = cli.main(["approval", "dispatch", "--approval-id", approval_id])
+    payload = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 0
+    assert validate_approval_dispatch_contract(payload) == {"ok": True, "errors": []}
+    assert payload["ok"] is True
+    assert payload["inbox_card"] is None
+    assert "agentdeck inbox --agent planner" in payload["blocker"]
+    assert len(fake.sent) == 1
+    state = StateStore(root).load()
+    approval = next(a for a in state["approvals"] if a["approval_id"] == approval_id)
+    assert approval["status"] == "dispatched"
+    types = [e["event_type"] for e in _read_events(root)]
+    assert "approval_dispatched" in types
+    assert "approval_dispatch_inbox_card_unrenderable" in types
+
+
+def test_approval_dispatch_degrades_when_inbox_card_fails_contract(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    _, approval_id, fake = _approve_first_step_only(root, monkeypatch, capsys, task="inbox 契约失败不得推翻派发")
+
+    monkeypatch.setattr(
+        cli, "validate_inbox_contract", lambda _p: {"ok": False, "errors": ["missing inbox item field: ack_blocker"]}
+    )
+
+    exit_code = cli.main(["approval", "dispatch", "--approval-id", approval_id])
+    payload = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 0
+    assert payload["ok"] is True
+    assert payload["message_id"].startswith("msg_")
+    assert payload["inbox_card"] is None
+    assert "missing inbox item field: ack_blocker" in payload["blocker"]
+    assert len(fake.sent) == 1
+    types = [e["event_type"] for e in _read_events(root)]
+    assert "approval_dispatch_inbox_card_unrenderable" in types
+
+
+def test_dispatch_ready_reports_dispatched_when_inbox_card_fails_contract(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    _, approval_id, fake = _approve_first_step_only(root, monkeypatch, capsys, task="批量派发不得被展示层推翻")
+
+    monkeypatch.setattr(
+        cli, "validate_inbox_contract", lambda _p: {"ok": False, "errors": ["missing inbox item field: ack_blocker"]}
+    )
+
+    exit_code = cli.main(["approval", "dispatch-ready", "--confirm"])
+    payload = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 0
+    assert payload["dispatched_count"] == 1
+    assert payload["results"][0]["status"] == "dispatched"
+    assert payload["results"][0]["approval_id"] == approval_id
+    assert len(fake.sent) == 1
+
+
+def test_run_loop_does_not_record_a_failed_dispatch_for_a_successful_one(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    plan_id, approval_id, fake = _approve_first_step_only(root, monkeypatch, capsys, task="run-loop 不得重复 prompt")
+    cli.main([
+        "policy", "set-mode", "--mode", "autonomous", "--confirm",
+        "--allow-agent", "planner", "--max-approvals", "5",
+    ])
+    capsys.readouterr()
+
+    monkeypatch.setattr(
+        cli, "validate_inbox_contract", lambda _p: {"ok": False, "errors": ["missing inbox item field: ack_blocker"]}
+    )
+
+    assert cli.main(["run-loop", "--plan-id", plan_id, "--confirm"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+
+    assert [d["approval_id"] for d in payload["dispatched"]] == [approval_id]
+    assert payload["stopped_reason"] == "waiting_for_reply"
+    assert len(fake.sent) == 1
+    types = [e["event_type"] for e in _read_events(root)]
+    assert "approval_dispatched" in types
+    assert "run_loop_dispatch_failed" not in types
+    state = StateStore(root).load()
+    approval = next(a for a in state["approvals"] if a["approval_id"] == approval_id)
+    assert approval["status"] == "dispatched"

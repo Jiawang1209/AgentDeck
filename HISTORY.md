@@ -4,6 +4,72 @@
 
 ## 2026-08-01
 
+### Stop a presentational inbox card from reporting a dispatch that happened as failed
+
+- **Type**: fix
+- **Motivation**: `_dispatch_approved_approval` 的顺序是
+  `backend.send_input(...)`(**prompt 已经进了 worker 的 pane**)→
+  `mark_approval_dispatched` + `approval_dispatched` 审计事件 → **然后**才
+  渲染收件方 `inbox_card` 并跑 `validate_inbox_contract()`,失败就
+  `raise ValueError`。于是一个纯展示层的问题会把"已经发生的派发"报成
+  "派发失败":`agentdeck approval dispatch` 退 1 并在 stderr 打
+  "Inbox contract validation failed",而 pane 里那份 prompt 已经在跑;
+  `approval dispatch-ready --confirm` 的批量循环连 try 都没有,异常直接
+  掀翻整批,已派发的那条也不出现在 `results[]` 里;run-loop 的派发循环
+  `except Exception` 把它记成 `run_loop_dispatch_failed`、置 `has_error`,
+  gate 于是报 `error`——**为一次真的发生过的派发记下一条假的失败**,
+  引导人类(或下一轮自主段)把同一个 step 再派一次,同一个 worker 被同一份
+  prompt 敲两次。这是本仓库刚连续修掉的同类缺陷(`run-loop-host start` /
+  `goal start`)在派发路径上的最后一个**live-reachable** 实例:它的 payload
+  是从 live state 重建的,遗留/半写入 `inbox` 集合(非 dict 行)会让渲染
+  直接抛 `AttributeError`,契约字段将来一扩也会真的失败——不是只在测试里
+  能触发的死分支。
+- **What**: `inbox_card` 是**已成功派发之上的展示附加物**,它渲染失败只能
+  降级、绝不能推翻事实。新增纯 helper `_dispatch_inbox_card()`(渲染异常
+  与契约失败同等对待,两者都只回 `(None, blocker, errors)`)和
+  `_unrenderable_inbox_blocker()`(单一来源的 blocker 文案,指回
+  `agentdeck inbox --agent <id>`);`_dispatch_approved_approval` 成功响应
+  新增 `blocker` 字段,渲染不出来时返回 `inbox_card: null` + 解释性
+  `blocker`,并追加一条 `approval_dispatch_inbox_card_unrenderable`
+  审计事件(`approval_id`/`plan_id`/`message_id`/`agent_id`/`errors[]`)
+  ——降级是事实,值得留痕,但它不是失败的派发。响应契约就地注册:
+  `APPROVAL_DISPATCH_RESPONSE_FIELDS`、`approval_dispatch_example()`、
+  `approval_dispatch_degraded_example()`、
+  `validate_approval_dispatch_contract()`(嵌套复用
+  `validate_inbox_contract()`,错误前缀 `inbox_card: `;`inbox_card` 为
+  null 时**必须**有指回 inbox 命令的 `blocker`,渲染成功时 `blocker`
+  必须为 null),并经 `approval_contract_payload/response` 的
+  `dispatch_command` / `dispatch_response_fields` / `example_dispatch` /
+  `example_dispatch_degraded` 暴露给 `agentdeck contract approvals`。
+  live 响应仍过这道校验,但**它只能降级**:效果之后的守门没有第二条出路。
+  同步 `docs/contracts/approvals-schema.md` 新增 Dispatch Shape 节,并把
+  这条通用纪律写进 `CLAUDE.md` 的契约纪律区(紧邻
+  `validate_project_view_contract()` 那条):写 state、spawn 进程、往 pane
+  按键或合并分支的命令必须在效果**之前**校验契约;做不到时(payload 描述
+  的正是那个效果),失败路径必须如实报告已经发生了什么,绝不能表述成
+  "它没有发生"。
+- **Impact**: 派发行为逐字节不变——同样的 tmux 输入、同样的
+  `approval_dispatched` 事件、同样的 state 迁移;正常路径的响应只多一个
+  `blocker: null` 字段。变的只有失败路径:`approval dispatch` 退 0 并给出
+  降级 payload,`dispatch-ready` 该项照常 `status=dispatched` 计入
+  `dispatched_count`,run-loop 不再追加 `run_loop_dispatch_failed`、不再
+  置 `has_error`,gate 回到诚实的 `waiting_for_reply`,重复 prompt 的诱因
+  消失。`inbox_card` 现在可以为 null,GUI 客户端必须按 `blocker` 渲染降级
+  提示(契约与 example 已登记)。
+- **Verification**: TDD 先红:临时取证测试钉住旧行为并全绿——(1) 单条派发
+  退 1、stdout 空、stderr 有 "Inbox contract validation failed",而
+  `fake.sent` 长度为 1、approval 已是 `dispatched`、`approval_dispatched`
+  已落账;(2) run-loop `dispatched == []`、`stopped_reason == "error"`、
+  `run_loop_dispatch_failed` 在事件里,而 pane 确实收到过 prompt;
+  (3) `dispatch-ready --confirm` 直接 `raise ValueError` 掀翻整批;
+  (4) 遗留 mailbox(非 dict 行)让单条派发抛 `AttributeError`。修完删除取证
+  文件,留下 12 条正式测试:6 条 CLI(坏 mailbox / 契约失败下的单条派发、
+  批量派发、run-loop 无 `run_loop_dispatch_failed`、正常路径响应过
+  `validate_approval_dispatch_contract`、"坏 mailbox 确实违反 inbox 契约"
+  的前提取证)+ 6 条契约(两个 example、null 卡缺 blocker 被拒、有卡带
+  blocker 被拒、嵌套 inbox 错误前缀、contract discovery 暴露 dispatch
+  字段)。全量 5138 passed / 3 skipped(基线 5126 + 本次 12 条)。
+
 ### Refuse a negative --interval at all eight entry points that accept it
 
 - **Type**: fix

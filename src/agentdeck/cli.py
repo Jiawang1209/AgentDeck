@@ -112,6 +112,7 @@ from .contracts import (
     workbench_contract_response,
     validate_approval_contract,
     validate_acp_runtime_contract,
+    validate_approval_dispatch_contract,
     validate_approval_dispatch_ready_contract,
     validate_artifacts_contract,
     validate_worktree_list_contract,
@@ -20252,12 +20253,12 @@ def _dispatch_approved_approval(
             },
         )
     )
-    inbox_card = _inbox_queue_payload(agent.agent_id, store)
-    validation = validate_inbox_contract(inbox_card)
-    if not validation["ok"]:
-        error = "; ".join(str(item) for item in validation["errors"])
-        raise ValueError(f"Inbox contract validation failed: {error}")
-    return {
+    # 到这里派发已经**不可逆地发生**:prompt 进了 pane、approval 已标记
+    # dispatched、审计事件已落账。inbox card 只是这份成功之上的展示附加物,
+    # 它渲染失败只能降级展示,绝不能把成功的派发报成失败——那会让调用方
+    # (人类或 run-loop)以为没派发而重发同一份 prompt。
+    inbox_card, inbox_blocker, inbox_errors = _dispatch_inbox_card(agent.agent_id, store)
+    payload: dict[str, object] = {
         "ok": True,
         "approval_id": approval_id,
         "message_id": message["message_id"],
@@ -20265,7 +20266,56 @@ def _dispatch_approved_approval(
         "pane_id": pane_id,
         "trace_command": _trace_command(message["message_id"]),
         "inbox_card": inbox_card,
+        "blocker": inbox_blocker,
     }
+    guard = validate_approval_dispatch_contract(payload)
+    if not guard["ok"]:
+        # 效果之后的契约守门只有降级这一条出路。
+        inbox_errors = [str(item) for item in guard["errors"]]
+        payload["inbox_card"] = None
+        payload["blocker"] = _unrenderable_inbox_blocker(agent.agent_id, inbox_errors)
+    if inbox_errors:
+        store.append_event(
+            EventRecord.create(
+                "approval_dispatch_inbox_card_unrenderable",
+                {
+                    "approval_id": approval_id,
+                    "plan_id": approval.get("plan_id"),
+                    "message_id": message["message_id"],
+                    "agent_id": agent.agent_id,
+                    "errors": inbox_errors,
+                },
+            )
+        )
+    return payload
+
+
+def _unrenderable_inbox_blocker(agent_id: str, errors: list[str]) -> str:
+    return (
+        "dispatch succeeded but the inbox card could not be rendered "
+        f"({'; '.join(errors)}); run agentdeck inbox --agent {agent_id}"
+    )
+
+
+def _dispatch_inbox_card(
+    agent_id: str, store: StateStore
+) -> tuple[dict[str, object] | None, str | None, list[str]]:
+    """派发成功后的 inbox card:渲染得出来就带上,渲染不出来就降级。
+
+    返回 (card, blocker, errors)。遗留/半写入 mailbox 会让渲染直接抛异常,
+    契约不符则由 `validate_inbox_contract` 拦下;两种都只降级展示,不改变
+    派发这件已经发生的事实。
+    """
+    try:
+        card = _inbox_queue_payload(agent_id, store)
+    except Exception as exc:  # noqa: BLE001 - 展示层失败不得推翻已发生的派发
+        errors = [f"{type(exc).__name__}: {exc}"]
+    else:
+        validation = validate_inbox_contract(card)
+        if validation["ok"]:
+            return card, None, []
+        errors = [str(item) for item in validation["errors"]]
+    return None, _unrenderable_inbox_blocker(agent_id, errors), errors
 
 
 def approval_dispatch_command(args: argparse.Namespace) -> int:

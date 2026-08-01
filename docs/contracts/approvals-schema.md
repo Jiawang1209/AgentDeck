@@ -73,6 +73,42 @@ Approvals may be generated from a saved Leader plan or from an explicit natural-
 
 `agentdeck approval dispatch-ready --confirm` is also an explicit runtime command. It batch-dispatches only approved approvals whose target agent has a ready runtime binding, reusing the same single-dispatch lineage path for each dispatched item. Blocked approvals stay approved and are returned as `results[]` items with `status=blocked`, `blocker`, and `dispatch_command`. Without `--confirm`, it must fail without mutating state or sending tmux input.
 
+## Dispatch Shape
+
+`dispatch_response_fields` lets GUI clients discover the single-dispatch success response without parsing CLI help:
+
+```json
+{
+  "ok": true,
+  "approval_id": "apv_ready",
+  "message_id": "msg_ready",
+  "agent_id": "planner",
+  "pane_id": "%42",
+  "trace_command": "agentdeck trace --id msg_ready",
+  "inbox_card": {},
+  "blocker": null
+}
+```
+
+`validate_approval_dispatch_contract()` guards this response. `trace_command` must match `message_id`; when `inbox_card` is rendered it must pass `validate_inbox_contract()` (nested errors are prefixed with `inbox_card: `) and `blocker` must be `null`.
+
+This payload describes an effect that has **already happened**: the prompt is in the pane, the approval is marked `dispatched`, and `approval_dispatched` is in the audit journal. Contract validation therefore runs after the effect and may only degrade the render, never unreport the dispatch. When the mailbox cannot be rendered — a legacy or partially written `inbox` collection, or an inbox card that fails `validate_inbox_contract()` — the command still succeeds with `inbox_card: null` and a `blocker` that says the dispatch succeeded and points back at `agentdeck inbox --agent <id>`:
+
+```json
+{
+  "ok": true,
+  "approval_id": "apv_ready",
+  "message_id": "msg_ready",
+  "agent_id": "planner",
+  "pane_id": "%42",
+  "trace_command": "agentdeck trace --id msg_ready",
+  "inbox_card": null,
+  "blocker": "dispatch succeeded but the inbox card could not be rendered (missing inbox item field: ack_blocker); run agentdeck inbox --agent planner"
+}
+```
+
+The degraded render is audited as `approval_dispatch_inbox_card_unrenderable` (`approval_id`, `plan_id`, `message_id`, `agent_id`, `errors[]`) so the condition stays visible in `agentdeck events` instead of being swallowed. It is a display degradation, not a failed dispatch: `agentdeck approval dispatch` still exits 0, `agentdeck approval dispatch-ready --confirm` still reports the item as `status=dispatched`, and the run-loop must neither append `run_loop_dispatch_failed` nor raise its error gate for it — reporting failure for a prompt the worker already received invites a second dispatch of the same step.
+
 ## Approve-Plan Shape
 
 `agentdeck approval approve-plan --plan-id <plan_id> --confirm` is the whole-plan confirmation-granularity knob: one explicit human action approves every pending approval of one plan. It appends one `approval_decided` audit event per approved item (with `source=approve_plan`) plus a single `approval_plan_approved` summary event, and points `next_command` at `agentdeck approval dispatch-ready --confirm`. It never dispatches, never touches runtime or tmux, and never re-decides non-pending approvals — those are returned in `skipped[]` with their current status. Without `--confirm`, for an unknown plan, or when the plan has no pending approvals, it must fail with a non-zero exit and write nothing.

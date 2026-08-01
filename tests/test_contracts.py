@@ -17,6 +17,7 @@ from agentdeck.contracts import (
     APPROVAL_APPROVE_PLAN_RESPONSE_FIELDS,
     APPROVAL_APPROVE_PLAN_RESULT_FIELDS,
     APPROVAL_DISPATCH_READY_RESPONSE_FIELDS,
+    APPROVAL_DISPATCH_RESPONSE_FIELDS,
     APPROVAL_DISPATCH_READY_RESULT_FIELDS,
     APPROVAL_ITEM_FIELDS,
     APPROVAL_QUEUE_FIELDS,
@@ -111,6 +112,8 @@ from agentdeck.contracts import (
     agent_runtime_contract_payload,
     agent_runtime_contract_response,
     agent_runtime_example,
+    approval_dispatch_degraded_example,
+    approval_dispatch_example,
     approval_dispatch_ready_example,
     artifacts_contract_payload,
     artifacts_contract_response,
@@ -178,6 +181,7 @@ from agentdeck.contracts import (
     workbench_contract_response,
     workbench_example,
     validate_approval_contract,
+    validate_approval_dispatch_contract,
     validate_approval_dispatch_ready_contract,
     validate_artifacts_contract,
     validate_continue_contract,
@@ -4121,6 +4125,74 @@ def test_validate_inbox_contract_checks_every_inbox_item() -> None:
         "ok": False,
         "errors": ["missing inbox item field at index 1: controls"],
     }
+
+
+def test_validate_approval_dispatch_contract_accepts_example() -> None:
+    result = validate_approval_dispatch_contract(approval_dispatch_example())
+
+    assert result == {"ok": True, "errors": []}
+    assert set(approval_dispatch_example()) == set(APPROVAL_DISPATCH_RESPONSE_FIELDS)
+
+
+def test_validate_approval_dispatch_contract_accepts_degraded_render() -> None:
+    example = approval_dispatch_degraded_example()
+
+    result = validate_approval_dispatch_contract(example)
+
+    assert result == {"ok": True, "errors": []}
+    assert example["ok"] is True
+    assert example["inbox_card"] is None
+    assert "agentdeck inbox --agent planner" in example["blocker"]
+    assert set(example) == set(APPROVAL_DISPATCH_RESPONSE_FIELDS)
+
+
+def test_validate_approval_dispatch_contract_requires_blocker_when_card_is_null() -> None:
+    payload = approval_dispatch_example()
+    payload["inbox_card"] = None
+
+    result = validate_approval_dispatch_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": ["approval_dispatch.blocker is required when inbox_card is null"],
+    }
+
+
+def test_validate_approval_dispatch_contract_rejects_blocker_with_rendered_card() -> None:
+    payload = approval_dispatch_example()
+    payload["blocker"] = "inbox card could not be rendered"
+
+    result = validate_approval_dispatch_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": ["approval_dispatch.blocker must be null when inbox_card is rendered"],
+    }
+
+
+def test_validate_approval_dispatch_contract_nests_inbox_errors() -> None:
+    payload = approval_dispatch_example()
+    del payload["inbox_card"]["items"][0]["controls"]
+
+    result = validate_approval_dispatch_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": ["inbox_card: missing inbox item field: controls"],
+    }
+
+
+def test_approval_contract_payload_exposes_dispatch_response_fields(tmp_path: Path) -> None:
+    contract_path = tmp_path / "approvals-schema.md"
+    contract_path.write_text("# Approvals Contract\n", encoding="utf-8")
+
+    payload = approval_contract_response(contract_path, include_example=True)
+
+    assert payload["dispatch_command"] == "agentdeck approval dispatch --approval-id <id>"
+    assert payload["dispatch_response_fields"] == list(APPROVAL_DISPATCH_RESPONSE_FIELDS)
+    assert payload["example_dispatch_fields"] == payload["dispatch_response_fields"]
+    assert payload["example_dispatch"] == approval_dispatch_example()
+    assert payload["example_dispatch_degraded"] == approval_dispatch_degraded_example()
 
 
 def test_leader_action_contract_payload_is_reusable_without_cli(tmp_path: Path) -> None:
