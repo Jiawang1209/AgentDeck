@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -113,3 +114,120 @@ def test_config_writers_preserve_unknown_sections(tmp_path: Path) -> None:
     update_leader_approval_mode(root, "approve")
     raw = tomllib.loads((root / ".agentdeck" / "config.toml").read_text(encoding="utf-8"))
     assert raw["future_thing"] == {"flag": True, "count": 7, "names": ["a", "b"]}
+
+
+from agentdeck.review_group import (
+    REVIEW_GROUP_ORIGIN,
+    aggregate_group_verdicts,
+    expand_review_group,
+    latest_complete_group,
+    review_group_numbers,
+)
+
+
+def _plan(review_agent: str = "reviewer") -> dict:
+    return {
+        "goal": "g",
+        "summary": "s",
+        "steps": [
+            {"step": 1, "agent_id": "coder", "role": "implementation",
+             "task": "build", "risk": "low", "requires_approval": True},
+            {"step": 2, "agent_id": review_agent, "role": "review",
+             "task": "review it", "risk": "low", "requires_approval": True},
+        ],
+    }
+
+
+# (agent_id, role) pairs — the pure module never sees ProjectConfig
+REVIEWERS_2 = (("reviewer", "review"), ("planner", "planning"))
+
+
+def test_expand_is_noop_without_reviewers() -> None:
+    plan = _plan()
+    assert expand_review_group(plan, ()) == plan
+
+
+def test_expand_duplicates_review_step_per_reviewer() -> None:
+    expanded = expand_review_group(_plan(), REVIEWERS_2)
+    steps = expanded["steps"]
+    assert [s["step"] for s in steps] == [1, 2, 3]
+    assert [s["agent_id"] for s in steps] == ["coder", "reviewer", "planner"]
+    assert [s["role"] for s in steps] == ["implementation", "review", "planning"]
+    # 任务文本逐字节复制
+    assert steps[1]["task"] == steps[2]["task"] == "review it"
+    for index, member in enumerate(steps[1:]):
+        assert member["origin"] == REVIEW_GROUP_ORIGIN
+        assert member["review_group"] == 1
+        assert member["review_group_member"] == index
+        assert member["requires_approval"] is True
+
+
+def test_expand_does_not_touch_planning_steps_in_cross_role_group() -> None:
+    """识别谓词只认 reviewers[0] 的 role;跨角色组不得误伤 planning step。"""
+    plan = {
+        "goal": "g", "summary": "s",
+        "steps": [
+            {"step": 1, "agent_id": "planner", "role": "planning",
+             "task": "plan it", "risk": "low", "requires_approval": True},
+            {"step": 2, "agent_id": "coder", "role": "implementation",
+             "task": "build", "risk": "low", "requires_approval": True},
+            {"step": 3, "agent_id": "reviewer", "role": "review",
+             "task": "review it", "risk": "low", "requires_approval": True},
+        ],
+    }
+    steps = expand_review_group(plan, REVIEWERS_2)["steps"]
+    assert [s["agent_id"] for s in steps] == ["planner", "coder", "reviewer", "planner"]
+    assert steps[0].get("origin") is None  # planning step 原样
+    assert steps[3]["review_group"] == 1
+
+
+def test_expand_numbers_multiple_groups() -> None:
+    plan = _plan()
+    plan["steps"].append({"step": 3, "agent_id": "coder", "role": "implementation",
+                          "task": "fix", "risk": "low", "requires_approval": True})
+    plan["steps"].append({"step": 4, "agent_id": "reviewer", "role": "review",
+                          "task": "review again", "risk": "low", "requires_approval": True})
+    steps = expand_review_group(plan, REVIEWERS_2)["steps"]
+    assert [s["step"] for s in steps] == [1, 2, 3, 4, 5, 6]
+    groups = [s.get("review_group") for s in steps]
+    assert groups == [None, 1, 1, None, 2, 2]
+
+
+def test_expand_does_not_mutate_input() -> None:
+    plan = _plan()
+    snapshot = json.loads(json.dumps(plan))
+    expand_review_group(plan, REVIEWERS_2)
+    assert plan == snapshot
+
+
+def test_review_group_numbers_maps_steps() -> None:
+    steps = expand_review_group(_plan(), REVIEWERS_2)["steps"]
+    assert review_group_numbers(steps) == {2: 1, 3: 1}
+
+
+def test_latest_complete_group_requires_every_member() -> None:
+    steps = expand_review_group(_plan(), REVIEWERS_2)["steps"]
+    approvals = [
+        {"plan_id": "p", "step": 2, "agent_id": "reviewer", "message_id": "m2"},
+        {"plan_id": "p", "step": 3, "agent_id": "planner", "message_id": "m3"},
+    ]
+    only_first = [{"reply_id": "r2", "message_id": "m2", "verdict": {"overall": "fail"}}]
+    assert latest_complete_group(steps, approvals, only_first, "p") is None
+    both = only_first + [
+        {"reply_id": "r3", "message_id": "m3", "verdict": {"overall": "pass"}}
+    ]
+    group = latest_complete_group(steps, approvals, both, "p")
+    assert group is not None
+    assert [m["agent_id"] for m in group["members"]] == ["reviewer", "planner"]
+    assert group["last_reply_id"] == "r3"
+
+
+def test_aggregate_any_fail_blocks() -> None:
+    def member(overall):
+        return {"verdict": {"schema_version": "review-verdict/v1", "overall": overall,
+                            "criteria": [{"criterion": "c", "verdict":
+                                          "pass" if overall == "pass" else "fail"}]}}
+
+    assert aggregate_group_verdicts([member("pass"), member("pass")])["overall"] == "pass"
+    assert aggregate_group_verdicts([member("pass"), member("needs_changes")])["overall"] == "needs_changes"
+    assert aggregate_group_verdicts([member("needs_changes"), member("fail")])["overall"] == "fail"

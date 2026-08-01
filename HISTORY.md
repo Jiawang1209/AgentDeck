@@ -4,6 +4,37 @@
 
 ## 2026-08-01
 
+### Add review-group pure module (deterministic expansion + any-fail-blocks aggregation)
+
+- **Type**: feat
+- **Motivation**: Task 1 只落了 `[review]` 配置解析,尚无消费它的逻辑。
+  可选 `reviewers` 需要一个确定性、零 IO 的展开/聚合内核,供后续 Task 3
+  (plan 生成期接线)与 Task 4(verdict 聚合、round_reviewer)复用同一
+  份实现,而不是各自散写。
+- **What**: 新增纯模块 `src/agentdeck/review_group.py`(零 IO,只
+  `import copy`/`typing`,不 import cli/state/config):
+  `expand_review_group(plan, reviewers)` 把每个匹配的 review step
+  按 `(agent_id, role)` 元组顺序展开为 N 个连续 step 并重排 `1..n`
+  编号,识别谓词收紧为"role 等于 `reviewers[0]` 的 role"以避免跨角色
+  组误伤同名 planning step,输入 plan 永不被修改;`review_group_numbers`
+  从展开后的 steps 反查 `{step: group}`;`latest_complete_group` 按
+  plan_id 关联 approvals/replies,只在组内每个成员都有带 verdict 的
+  回复时才返回该组,否则返回 `None`(组未齐绝不触发迭代);
+  `aggregate_group_verdicts` 实现 any-fail-blocks:overall 取最严
+  (`fail` > `needs_changes` > `pass`),criteria 逐条合并,score 取组内
+  最小值。`tests/test_review_group.py` 追加 9 条测试覆盖空 reviewers
+  no-op、多组编号、跨角色识别谓词、输入不可变、组完整性判定与聚合
+  规则。
+- **Impact**: 引擎(线性 plan、step 顺序守卫、worktree 链式检出、
+  文件通道、审批预算)零改动;模块尚未接线进 `cli.py`/`state.py`
+  (Task 3/4),对现有行为无影响。
+- **Verification**: TDD——先 append 测试到既有
+  `tests/test_review_group.py` 得到 RED
+  (`ModuleNotFoundError: No module named 'agentdeck.review_group'`),
+  实现后 `pytest tests/test_review_group.py -q` 21 passed(13 条
+  Task 1 config 测试 + 新增 8 条 review_group 测试);
+  `python -m compileall` 干净。
+
 ### Preserve unknown config sections through config writers (silent data loss fix)
 
 - **Type**: fix
