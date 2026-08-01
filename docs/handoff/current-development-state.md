@@ -52,7 +52,18 @@ provider 把审查意见提炼成回炉任务。user 拍板两点:**只给显式
 `state_changed`。三处 provider 实现(CLI 基类 / API 基类 / fake)覆盖全部
 provider,支持性用 `getattr` 探测(与 `plan_brief` 同模式)。落地 step 带
 `task_source=leader_refined` provenance(模板路径不带该键)。
-**G1 frontdesk 增强仍待拍板**(当前唯一未开工项)。
+**G1 frontdesk 增强已落地**(2026-08-01,user 拍板"多路径分类+独立命令
+与契约",spec `docs/superpowers/specs/2026-08-01-frontdesk-multiroute-design.md`,
+4 commits a59eba37→47e5f2cf,全量 5005 绿):新纯模块 `frontdesk.py`
+(闭合路由 plan/run/status/help/skill/memory,确定性三档置信度,零 IO、
+不调 provider)兑现 roadmap 一直只做了一半的"分类为候选路径"承诺;
+`frontdesk_card` 既有 8 字段**逐字节冻结**、`candidates[]`/`route` 追加在后
+(差分验证 18 条消息零 mismatch);新增**纯只读** `agentdeck frontdesk
+--message <text>`(连 config 都不加载,零写是结构性的)+ 第 43 个契约
+`frontdesk-schema.md` + CLAUDE.md 规则。已知向后兼容瑕疵(已文档化):
+`route` 可与 `next_command` 不一致(旧规则冻结所致),契约示例特意选了
+该场景。**队列已清空**——剩余全部需要 human:Round 14 的 playwright
+授权框、codex 精修的 live 确认、以及新方向拍板。
 
 **CLI provider 失败原因可观测已落地**(2026-08-01,b2ca1635 + 0e799272 +
 6b816c26):新纯模块 `providers/cli_failure.py` 按"解析→分类→丢弃原文"
