@@ -148,6 +148,75 @@ def latest_complete_group(
     return None
 
 
+def latest_group_status(
+    steps: list[dict[str, Any]],
+    approvals: list[dict[str, Any]],
+    replies: list[dict[str, Any]],
+    plan_id: str,
+) -> dict[str, Any] | None:
+    """最新一个**已有至少一份 verdict** 的组,含未报到成员的占位。
+
+    与 `latest_complete_group` 的分工:后者是**触发**面(组未齐绝不开
+    迭代轮),本函数是**展示与 gate** 面——组内一人 verdict 无效/缺失
+    时,另一人的有效 fail 绝不能随整组一起消失,否则启用多 reviewer
+    反而放开了自动合并(2026-08-01 终审 Critical)。返回
+    `{group, members: [{step, agent_id, reply_id|None, verdict|None}],
+    reported, complete, last_reply_id}`;一份 verdict 都没有时返回 None
+    (维持"无判定 = 无 summary"的既有语义)。
+    """
+    groups = review_group_numbers(steps)
+    if not groups:
+        return None
+    steps_by_number = {
+        step.get("step"): step for step in steps if isinstance(step, dict)
+    }
+    approval_by_step = {
+        approval.get("step"): approval
+        for approval in approvals
+        if isinstance(approval, dict) and approval.get("plan_id") == plan_id
+    }
+    reply_by_message = {
+        str(reply.get("message_id")): reply
+        for reply in replies
+        if isinstance(reply, dict) and isinstance(reply.get("verdict"), dict)
+    }
+    by_group: dict[int, list[int]] = {}
+    for number, group in groups.items():
+        by_group.setdefault(group, []).append(number)
+    for group in sorted(by_group, reverse=True):
+        members: list[dict[str, Any]] = []
+        reported = 0
+        last_reply_id: str | None = None
+        for number in sorted(by_group[group]):
+            approval = approval_by_step.get(number)
+            reply = reply_by_message.get(str((approval or {}).get("message_id")))
+            if reply is None:
+                members.append({
+                    "step": number,
+                    "agent_id": (steps_by_number.get(number) or {}).get("agent_id"),
+                    "reply_id": None,
+                    "verdict": None,
+                })
+                continue
+            reported += 1
+            last_reply_id = str(reply.get("reply_id"))
+            members.append({
+                "step": number,
+                "agent_id": (steps_by_number.get(number) or {}).get("agent_id"),
+                "reply_id": reply.get("reply_id"),
+                "verdict": reply["verdict"],
+            })
+        if reported:
+            return {
+                "group": group,
+                "members": members,
+                "reported": reported,
+                "complete": reported == len(members),
+                "last_reply_id": last_reply_id,
+            }
+    return None
+
+
 def aggregate_group_verdicts(members: list[dict[str, Any]]) -> dict[str, Any]:
     """any-fail-blocks:overall 取最严;criteria 逐条合并(任一 fail 即
     fail,否则任一 unknown 即 unknown,全 pass 才 pass)。"""

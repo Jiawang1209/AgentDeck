@@ -116,6 +116,38 @@ def test_config_writers_preserve_unknown_sections(tmp_path: Path) -> None:
     assert raw["future_thing"] == {"flag": True, "count": 7, "names": ["a", "b"]}
 
 
+def test_config_writers_preserve_unknown_value_shapes(tmp_path: Path) -> None:
+    """保留必须覆盖真实 TOML 的全部形态:浮点、unicode/含引号字符串、
+    嵌套子表,以及**数组表**(`[[x]]`——既有 `[[agents]]` 就是这个形态,
+    未知段用它同样不能丢)。"""
+    import tomllib
+
+    root = _root(tmp_path)
+    _config_with(
+        root,
+        "[weird]\n"
+        "ratio = 1.5\n"
+        'name = "unicode 中文 and \\"quoted\\" text"\n'
+        "flag = false\n"
+        "empty_list = []\n"
+        '\n[weird.nested]\ndeep = "yes"\n'
+        '\n[[weird.rows]]\nid = "n1"\n'
+        '\n[[weird_items]]\nid = "a"\n'
+        '\n[[weird_items]]\nid = "b"\ncount = 2\n',
+    )
+    path = root / ".agentdeck" / "config.toml"
+    before = tomllib.loads(path.read_text(encoding="utf-8"))
+
+    update_leader_approval_mode(root, "approve")
+
+    after = tomllib.loads(path.read_text(encoding="utf-8"))
+    assert after["weird"] == before["weird"]
+    assert after["weird_items"] == before["weird_items"] == [
+        {"id": "a"},
+        {"id": "b", "count": 2},
+    ]
+
+
 from agentdeck.review_group import (
     REVIEW_GROUP_ORIGIN,
     aggregate_group_verdicts,
@@ -323,7 +355,9 @@ def _seed_group_store(tmp_path, verdicts: list[str]):
 
 def test_incomplete_group_does_not_trigger_iteration(tmp_path) -> None:
     _root_dir, store = _seed_group_store(tmp_path, ["fail"])  # 只有 reviewer 回了
-    assert store.plan_verdict_summary("pln_g") is None
+    # 触发面以"整组完成"为界:半个组绝不开迭代轮(先 fail 的成员不能在
+    # 其余成员还在审旧代码时开一轮)。展示/gate 面的行为见
+    # test_incomplete_group_still_blocks_merge_with_known_fail。
     result = store.append_review_iteration("pln_g", 2, source="explicit")
     assert result["ok"] is False
     assert result["reason"] == "no_verdict"
@@ -337,6 +371,73 @@ def test_complete_group_aggregates_any_fail_blocks(tmp_path) -> None:
     assert summary["group"]["complete"] is True
     assert summary["group"]["rule"] == "any_fail_blocks"
     assert [m["agent_id"] for m in summary["group"]["members"]] == ["reviewer", "planner"]
+
+
+def test_incomplete_group_still_blocks_merge_with_known_fail(tmp_path) -> None:
+    """终审 Critical:组内一人的 verdict 无效/缺失时,另一人的有效 fail
+    绝不能因此失效——单 reviewer 下这个 fail 会扣住自动合并,配了组之后
+    也必须扣住,否则启用多 reviewer 反而放开了 merge gate。"""
+    from agentdeck import cli
+
+    _root_dir, store = _seed_group_store(tmp_path, ["fail"])  # planner 尚未给出有效 verdict
+    summary = store.plan_verdict_summary("pln_g")
+    assert summary is not None                      # 不再塌缩成"无 verdict"
+    assert summary["overall"] == "fail"             # 已知成员里最严的判定
+    assert summary["group"]["complete"] is False
+    assert [m["overall"] for m in summary["group"]["members"]] == ["fail", None]
+    assert cli._verdict_merge_blocker(store, "pln_g") is not None
+
+    # 但触发器仍以"组完成"为界:绝不因半个组开一轮
+    assert store.append_review_iteration("pln_g", 2, source="explicit")["reason"] == "no_verdict"
+
+
+def test_incomplete_group_without_any_verdict_stays_silent(tmp_path) -> None:
+    """一个 verdict 都还没有时维持既有语义(无判定 = 无 summary)。"""
+    _root_dir, store = _seed_group_store(tmp_path, [])
+    assert store.plan_verdict_summary("pln_g") is None
+
+
+def test_incomplete_group_all_pass_so_far_still_withholds_merge(tmp_path) -> None:
+    """组没审完就不该自动合并:已知全 pass 也因 complete=false 扣住,
+    人类显式 `worktree merge-plan --confirm` 永不受 gate。"""
+    from agentdeck import cli
+
+    _root_dir, store = _seed_group_store(tmp_path, ["pass"])
+    summary = store.plan_verdict_summary("pln_g")
+    assert summary["overall"] == "pass"
+    assert summary["group"]["complete"] is False
+    assert cli._verdict_merge_blocker(store, "pln_g") is not None
+
+
+def test_group_aggregate_merges_criteria_any_fail_wins(tmp_path) -> None:
+    """spec 头条合并规则(终审点名未钉):任一 fail 胜出、unknown 胜 pass。"""
+    def member(*verdicts):
+        return {"verdict": {"overall": "fail", "criteria": [
+            {"criterion": "c", "verdict": v} for v in verdicts]}}
+
+    merged = aggregate_group_verdicts([member("pass"), member("fail")])
+    assert merged["criteria"] == [{"criterion": "c", "verdict": "fail"}]
+    assert aggregate_group_verdicts([member("fail"), member("pass")])["criteria"] == [
+        {"criterion": "c", "verdict": "fail"}
+    ]
+    assert aggregate_group_verdicts([member("pass"), member("unknown")])["criteria"] == [
+        {"criterion": "c", "verdict": "unknown"}
+    ]
+
+
+def test_reviewers_config_beats_round_reviewer(tmp_path) -> None:
+    """spec:两者同时配置时 reviewers 优先(组语义强于单人替换)。"""
+    _root_dir, store = _seed_group_store(tmp_path, ["fail", "pass"])
+    binding = {
+        "round_reviewer": ("coder", "implementation"),
+        "reviewers": (("reviewer", "review"), ("planner", "planning")),
+    }
+    assert store.append_review_iteration(
+        "pln_g", 2, source="explicit", review_binding=binding
+    )["ok"] is True
+    steps = store.load()["plans"][0]["plan"]["steps"]
+    appended = [s for s in steps if s.get("origin") == "review_iteration"]
+    assert [s["agent_id"] for s in appended] == ["coder", "reviewer", "planner"]
 
 
 def test_complete_group_all_pass(tmp_path) -> None:

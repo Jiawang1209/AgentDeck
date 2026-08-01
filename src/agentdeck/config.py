@@ -515,13 +515,44 @@ def _toml_scalar(value: object) -> str | None:
     return None
 
 
+def _is_table_array(value: object) -> bool:
+    """TOML 数组表(`[[x]]`)在解析后就是非空的 list[dict]。"""
+    return (
+        isinstance(value, list)
+        and bool(value)
+        and all(isinstance(item, dict) for item in value)
+    )
+
+
+def _dump_preserved_table_array(name: str, items: list[dict[str, object]]) -> list[str]:
+    lines: list[str] = []
+    for item in items:
+        scalars: list[str] = []
+        nested: list[str] = []
+        for key, value in item.items():
+            if isinstance(value, dict):
+                nested.extend(_dump_preserved_table(f"{name}.{key}", value))
+            elif _is_table_array(value):
+                nested.extend(_dump_preserved_table_array(f"{name}.{key}", value))
+            else:
+                rendered = _toml_scalar(value)
+                if rendered is not None:
+                    scalars.append(f"{key} = {rendered}")
+        lines.extend(["", f"[[{name}]]", *scalars, *nested])
+    return lines
+
+
 def _dump_preserved_table(name: str, table: dict[str, object]) -> list[str]:
-    """把一个未被显式发射的表(含嵌套子表)通用序列化为 TOML 行。"""
+    """把一个未被显式发射的表(含嵌套子表与数组表)通用序列化为 TOML 行。"""
     scalars: list[str] = []
     nested: list[str] = []
     for key, value in table.items():
         if isinstance(value, dict):
             nested.extend(_dump_preserved_table(f"{name}.{key}", value))
+            continue
+        if _is_table_array(value):
+            # 数组表必须整块保留;`_toml_scalar` 认不出它,漏掉即静默丢数据。
+            nested.extend(_dump_preserved_table_array(f"{name}.{key}", value))
             continue
         rendered = _toml_scalar(value)
         if rendered is not None:
@@ -549,9 +580,12 @@ def _dump_preserved_sections(
             if isinstance(value, dict):
                 lines.extend(_dump_preserved_table(f"leader.{key}", value))
     for key, value in raw.items():
-        if key in emitted_top_level or not isinstance(value, dict):
+        if key in emitted_top_level:
             continue
-        lines.extend(_dump_preserved_table(key, value))
+        if isinstance(value, dict):
+            lines.extend(_dump_preserved_table(key, value))
+        elif _is_table_array(value):
+            lines.extend(_dump_preserved_table_array(key, value))
     return lines
 
 

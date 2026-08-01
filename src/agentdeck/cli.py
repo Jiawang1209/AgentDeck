@@ -12144,6 +12144,16 @@ def _verdict_merge_blocker(store: StateStore, plan_id: str) -> str | None:
     if summary is None:
         return None
     overall = summary.get("overall")
+    group = summary.get("group") or {}
+    if group.get("complete") is False:
+        # 组没审完就不自动合并:一人 verdict 无效/缺失时,整组判定不完整,
+        # 委托型自动合并必须扣住(人类 `worktree merge-plan --confirm`
+        # 永不受 gate)。
+        reported = sum(1 for m in group.get("members") or [] if m.get("overall"))
+        return (
+            f"review group incomplete ({reported}/{group.get('size')} members "
+            "reported); auto-merge withheld"
+        )
     if overall == "pass":
         return None
     return f"review verdict overall is {overall}; auto-merge withheld"

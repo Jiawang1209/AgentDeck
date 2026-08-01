@@ -4,6 +4,41 @@
 
 ## 2026-08-01
 
+### Keep a sibling's fail blocking when a review group member reports no verdict
+
+- **Type**: fix
+- **Motivation**: review group 整体终审(整合范围 27ae711e..9b8a9391)复现
+  一个 **Critical fail-open**:组内一人的回复带无效/缺失 verdict 时,
+  `latest_complete_group` 返回 None → `plan_verdict_summary` 塌缩成 None →
+  `_verdict_merge_blocker` 无 blocker → **另一人的有效 `fail` 被静默丢弃、
+  自动合并照常放行**,且不触发任何回炉。单 reviewer 下同一个 fail 会扣住
+  合并——即"启用多 reviewer 反而放开了 merge gate"。根因是 spec 的
+  `complete=false` 投影在实现中被丢掉,`complete` 沦为常量 True。
+  无效 verdict 是 LLM 的常规失败模式,不是边角情形。
+- **What**: 纯模块新增 `latest_group_status()`(最新一个**已有至少一份
+  verdict** 的组,未报到成员以 `verdict=None` 占位,带 `reported`/
+  `complete`);`select_plan_verdict` 增 `require_complete_group` 参数——
+  **触发面**默认 True(组未齐绝不开轮,语义不变),**展示与 gate 面**
+  传 False,对已报到成员聚合并标 `complete=false`;
+  `_verdict_merge_blocker` 在 `complete=false` 时一律扣住自动合并并如实
+  报告 `(reported/size members reported)`,人类
+  `worktree merge-plan --confirm` 永不受 gate;契约允许未报到成员
+  `overall=null`。顺带补齐终审点名的**数组表保留缺口**:
+  `_dump_config` 的保留式回写此前认不出 `[[x]]`(list[dict])而整键丢弃
+  ——正是 8273d70d 要关闭的同一类静默数据丢失,现由
+  `_dump_preserved_table_array` 覆盖(含嵌套)。docs 同步 README/
+  CLAUDE.md 过度承诺的"逐字节不变"(verdict_summary 恒带附加 group
+  投影)与 leader-review-schema 的 `complete` 恒真表述。
+- **Impact**: 多 reviewer 不再削弱 merge gate;组未齐时自动合并 fail-closed
+  而迭代触发仍以整组完成为界;未知配置段的数组表不再丢失。
+- **Verification**: TDD——Critical 两测先 RED(summary 塌缩 None)后
+  GREEN;数组表保留测试先 RED 后 GREEN;并补齐终审点名的缺失 spec 测试点
+  (criteria 逐条合并、merge gate 联动、reviewers 优先于 round_reviewer、
+  无 verdict 静默);review_group+review_iteration+plan_rework+
+  verdict_ingestion 89 passed;全量见提交时数字。
+
+
+
 ### Expose review group provenance in contracts and docs
 
 - **Type**: feat

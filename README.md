@@ -110,8 +110,14 @@ AgentDeck › Mission started. Use /status or open the workbench to inspect it.
   round appends (appended re-review groups are themselves group-aware). The
   resulting `verdict_summary.group` (`size`/`complete`/`rule`/`members[]`) and
   the `review_group`/`review_group_member` markers on `plan status` steps are
-  read-only provenance — never authorization. With no `[review]` section
-  configured, every path is byte-identical to before.
+  read-only provenance — never authorization. When a group member's reply
+  carries no parseable verdict the group reports `complete: false`, keeping a
+  sibling's `fail` visible and the automatic merge withheld while never
+  triggering a partial-group rework round (the explicit human
+  `worktree merge-plan --confirm` is never gated). With no `[review]` section
+  configured every path is byte-identical to before, except that
+  `verdict_summary` always carries the additive `group` projection
+  (`size: 1` for a lone reviewer).
 
 Useful observation commands:
 

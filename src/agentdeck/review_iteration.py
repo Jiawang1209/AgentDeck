@@ -12,6 +12,7 @@ from typing import Any
 from .review_group import (
     aggregate_group_verdicts,
     latest_complete_group,
+    latest_group_status,
     review_group_numbers,
 )
 from .review_verdict import REVIEW_VERDICT_SCHEMA_VERSION
@@ -102,15 +103,22 @@ def _latest_verdict_reply(
 
 
 def select_plan_verdict(
-    state: dict[str, Any], plan_id: str, steps: list[dict[str, Any]]
+    state: dict[str, Any],
+    plan_id: str,
+    steps: list[dict[str, Any]],
+    require_complete_group: bool = True,
 ) -> dict[str, Any] | None:
     """组感知的**单一来源** verdict 选取(plan_verdict_summary 与迭代触发器共用)。
 
-    返回 `{verdict, reply_id, reply_text, approval, members, group}` 或 None:
-    - plan 带 review 组标记时只认**最新完整组**(每个成员 step 都已有带
-      verdict 的回复),按 any-fail-blocks 聚合成一份 schema 合规的合成
-      verdict;组未齐一律返回 None——先 fail 的成员绝不能在其余成员还在
-      审旧代码时开一轮,否则后到的 fail 会再开一轮、预算双烧。
+    返回 `{verdict, reply_id, reply_text, approval, members, group, complete}`
+    或 None:
+    - plan 带 review 组标记时按组聚合(any-fail-blocks)成一份 schema
+      合规的合成 verdict。`require_complete_group=True`(**触发面**默认)
+      只认最新完整组:组未齐一律 None——先 fail 的成员绝不能在其余成员
+      还在审旧代码时开一轮,否则后到的 fail 会再开一轮、预算双烧。
+      `False`(**展示与 merge gate 面**)则对已报到成员聚合并带
+      `complete=False`:组内一人 verdict 无效/缺失时,另一人的有效 fail
+      绝不能随整组一起消失而放开自动合并(2026-08-01 终审 Critical)。
     - 无组标记时逐字节沿用今天的"最后一条有效 verdict reply"路径
       (含 rework 自评排除)。
     `approval` 是该 verdict 所属 review step 的 approval;组路径取**第一个**
@@ -130,6 +138,7 @@ def select_plan_verdict(
             "approval": approval,
             "members": None,
             "group": None,
+            "complete": True,
         }
     approvals = [
         approval
@@ -137,10 +146,16 @@ def select_plan_verdict(
         if isinstance(approval, dict)
     ]
     replies = [reply for reply in state.get("replies", []) if isinstance(reply, dict)]
-    group = latest_complete_group(steps, approvals, replies, plan_id)
+    if require_complete_group:
+        group = latest_complete_group(steps, approvals, replies, plan_id)
+    else:
+        group = latest_group_status(steps, approvals, replies, plan_id)
     if group is None:
         return None
     members = group["members"]
+    reported = [member for member in members if member.get("verdict")]
+    if not reported:
+        return None
     approval = next(
         (
             item
@@ -154,7 +169,7 @@ def select_plan_verdict(
     texts = {
         str(reply.get("reply_id")): str(reply.get("text") or "") for reply in replies
     }
-    aggregate = aggregate_group_verdicts(members)
+    aggregate = aggregate_group_verdicts(reported)
     verdict: dict[str, Any] = {
         "schema_version": REVIEW_VERDICT_SCHEMA_VERSION,
         "criteria": aggregate["criteria"],
@@ -179,6 +194,7 @@ def select_plan_verdict(
             for member in members
         ],
         "group": group["group"],
+        "complete": bool(group.get("complete", True)),
     }
 
 

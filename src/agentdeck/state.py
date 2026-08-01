@@ -9832,8 +9832,15 @@ class StateStore:
         # rework 自评排除照旧(rework_step_numbers),coder 的自评 verdict 绝不
         # 能成为 plan 的 review verdict;plan 带 review 组标记时只认最新
         # **完整**组的 any-fail-blocks 聚合,组未齐返回 None(无 verdict)。
+        # 展示与 merge gate 面用 require_complete_group=False:组内一人
+        # verdict 无效/缺失时,另一人的有效 fail 仍必须出现在 summary 里
+        # (否则启用多 reviewer 反而放开自动合并——2026-08-01 终审 Critical);
+        # 触发面(derive_review_iteration)仍要求整组完成。
         selection = select_plan_verdict(
-            state, plan_id, plan_steps if isinstance(plan_steps, list) else []
+            state,
+            plan_id,
+            plan_steps if isinstance(plan_steps, list) else [],
+            require_complete_group=False,
         )
         if selection is None:
             return None
@@ -9857,7 +9864,7 @@ class StateStore:
             ]
         summary["group"] = {
             "size": len(members),
-            "complete": True,
+            "complete": bool(selection.get("complete", True)),
             "rule": REVIEW_GROUP_RULE,
             "members": [
                 {

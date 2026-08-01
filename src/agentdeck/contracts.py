@@ -10072,7 +10072,13 @@ def _validate_verdict_group(errors: list[str], prefix: str, group: object) -> No
         step = member.get("step")
         if type(step) is not int or step < 1:
             errors.append(f"{where}.members[{index}].step must be an integer >= 1")
-        if member.get("overall") not in {"pass", "fail", "needs_changes"}:
+        # 未报到成员(verdict 缺失/无效)以 overall=null 占位,使
+        # complete=false 的组仍能完整展示"谁还没给判定"。
+        if member.get("overall") is not None and member.get("overall") not in {
+            "pass",
+            "fail",
+            "needs_changes",
+        }:
             errors.append(f"{where}.members[{index}].overall is invalid")
         reply_id = member.get("reply_id")
         if reply_id is not None and (not isinstance(reply_id, str) or not reply_id):
