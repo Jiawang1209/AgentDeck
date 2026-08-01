@@ -4,6 +4,23 @@
 
 ## 2026-08-01
 
+### Correct the delegation premise in the human-gate live record
+
+- **Type**: docs
+- **Motivation**: 那份验收文档写着"项目零活跃委托,所以这道框谁也放行不了"。
+  错的——我当时解析 `delegation list` 时取了不存在的键(该命令返回 `items`,
+  不是 `delegations`),空列表被误读成"没有委托"。真实是 **22 条活跃委托**
+  (三个 agent 各自 grant 的只读前缀与 MCP 只读工具)。
+- **What**: 在 `docs/validation/2026-08-01-host-human-gate-live.md` 就地加
+  更正块,把理由从"没有委托"改为"22 条委托**无一覆盖**该命令"。
+- **Impact**: 纯文档;**结论不变**——那道 `playwright_cli.sh open …` 确实
+  不被任何活跃委托覆盖(逐条 startswith 核过,命中 0 条),human_gate 判定
+  成立。变的是理由的准确性。
+- **Verification**: `delegation list` 真实 payload 逐条核:22 条活跃、
+  分属 coder/planner/reviewer,对该 Playwright 命令的前缀命中数为 0。
+  **教训**:解析别人的 JSON 前先看键名——空列表既可能是"没有",也可能是
+  "我问错了地方",而这两者在安全判断里意思完全相反。
+
 ### Group goal preview delegations by agent so the authorization stays scannable
 
 - **Type**: fix

@@ -9,8 +9,19 @@ Commits: `8774b599` → `5b7f496a`(7 个),全量 5024 passed / 3 skipped
 ## 场景:被验对象自己制造的教科书场景
 
 Round 14 停在一个真实的人类门上——review 组的第二个成员 planner 想用
-Playwright 打开页面亲眼核验方向键行为,弹出授权框;项目**零活跃委托**,
-所以这道框谁也放行不了,只能人按。plan 状态:
+Playwright 打开页面亲眼核验方向键行为,弹出授权框;项目有 22 条活跃委托
+(coder/planner/reviewer 各自 grant 的 `node tests/`、`git *`、
+MCP chrome-devtools/hover|press_key 等只读前缀),但**无一覆盖**
+`playwright_cli.sh open …` 这条命令,所以这道框谁也放行不了,只能人按。
+
+> **更正(2026-08-01)**:本节初稿写的是"项目零活跃委托"。那是错的——
+> 当时我解析 `delegation list` 时取了不存在的键(该命令返回 `items`,
+> 不是 `delegations`),空列表被误读成"没有委托"。真实是 22 条活跃委托,
+> **零条覆盖该命令**。结论不变(框确实未被任何委托覆盖,human_gate 判定
+> 成立),但理由从"没有委托"更正为"没有匹配的委托"——后者才是本功能
+> 真正要区分的东西。
+
+plan 状态:
 
 | step | agent | 状态 |
 | --- | --- | --- |
