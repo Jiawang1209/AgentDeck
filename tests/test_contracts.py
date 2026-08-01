@@ -730,6 +730,7 @@ def test_contract_index_response_is_reusable_without_cli(tmp_path: Path) -> None
         "artifacts-schema.md",
         "worktree-schema.md",
         "delegation-schema.md",
+        "frontdesk-schema.md",
         "daemon-runtime-schema.md",
         "mission-scheduler-schema.md",
         "client-session-schema.md",
@@ -744,7 +745,7 @@ def test_contract_index_response_is_reusable_without_cli(tmp_path: Path) -> None
     assert payload["contract_docs_dir"] == str(tmp_path)
     assert payload["response_fields"] == list(CONTRACT_INDEX_RESPONSE_FIELDS)
     assert payload["contract_item_fields"] == list(CONTRACT_INDEX_ITEM_FIELDS)
-    assert payload["count"] == 42
+    assert payload["count"] == 43
     assert len(payload["contracts"]) == payload["count"]
     assert [item["name"] for item in payload["contracts"]] == [
         "daemon-runtime",
@@ -789,6 +790,7 @@ def test_contract_index_response_is_reusable_without_cli(tmp_path: Path) -> None
         "artifacts",
         "worktree",
         "delegation",
+        "frontdesk",
     ]
     for contract in payload["contracts"]:
         assert set(contract) == set(CONTRACT_INDEX_ITEM_FIELDS)
@@ -7105,3 +7107,178 @@ def test_leader_chat_contract_rejects_status_payload_in_run_card() -> None:
 
     assert result["ok"] is False
     assert any("mission_run_card" in error for error in result["errors"])
+
+
+def test_frontdesk_contract_payload_is_reusable_without_cli(tmp_path) -> None:
+    from agentdeck.contracts import (
+        FRONTDESK_CANDIDATE_FIELDS,
+        FRONTDESK_CLASSIFICATIONS,
+        FRONTDESK_CONTROL_FIELDS,
+        FRONTDESK_RESPONSE_FIELDS,
+        LEADER_CHAT_FRONTDESK_CARD_FIELDS,
+        frontdesk_contract_payload,
+        frontdesk_contract_response,
+    )
+
+    doc = tmp_path / "frontdesk-schema.md"
+    doc.write_text("# frontdesk\n", encoding="utf-8")
+
+    payload = frontdesk_contract_payload(doc)
+
+    assert payload["schema_version"] == PROJECT_VIEW_SCHEMA_VERSION
+    assert payload["contract_path"] == str(doc)
+    assert payload["contract_exists"] is True
+    assert payload["response_fields"] == list(FRONTDESK_RESPONSE_FIELDS)
+    assert payload["candidate_fields"] == list(FRONTDESK_CANDIDATE_FIELDS)
+    assert payload["control_fields"] == list(FRONTDESK_CONTROL_FIELDS)
+    assert payload["card_fields"] == list(LEADER_CHAT_FRONTDESK_CARD_FIELDS)
+    assert payload["classifications"] == list(FRONTDESK_CLASSIFICATIONS)
+    assert payload["safety"] == "inspect"
+    assert payload["requires_explicit_user"] is False
+    assert "example" not in payload
+
+    with_example = frontdesk_contract_response(doc, include_example=True)
+    assert with_example["example"] is True
+    assert list(with_example["example_frontdesk"]) == list(FRONTDESK_RESPONSE_FIELDS)
+
+
+def test_frontdesk_contract_response_fields_extend_the_leader_chat_card() -> None:
+    from agentdeck.contracts import FRONTDESK_RESPONSE_FIELDS, LEADER_CHAT_FRONTDESK_CARD_FIELDS
+
+    assert FRONTDESK_RESPONSE_FIELDS == (
+        "ok",
+        *LEADER_CHAT_FRONTDESK_CARD_FIELDS,
+        "count",
+        "chat_command",
+    )
+
+
+def test_frontdesk_example_passes_its_validator() -> None:
+    from agentdeck.contracts import frontdesk_example, validate_frontdesk_contract
+
+    assert validate_frontdesk_contract(frontdesk_example()) == {"ok": True, "errors": []}
+
+
+def test_frontdesk_contract_rejects_missing_fields() -> None:
+    from agentdeck.contracts import frontdesk_example, validate_frontdesk_contract
+
+    payload = frontdesk_example()
+    del payload["route"]
+
+    result = validate_frontdesk_contract(payload)
+
+    assert result["ok"] is False
+    assert "missing frontdesk field: route" in result["errors"]
+
+
+def test_frontdesk_contract_rejects_wrong_mode() -> None:
+    from agentdeck.contracts import frontdesk_example, validate_frontdesk_contract
+
+    payload = frontdesk_example()
+    payload["mode"] = "leader_chat"
+
+    result = validate_frontdesk_contract(payload)
+
+    assert result["ok"] is False
+    assert any("frontdesk.mode" in error for error in result["errors"])
+
+
+def test_frontdesk_contract_rejects_unknown_route_and_confidence() -> None:
+    from agentdeck.contracts import frontdesk_example, validate_frontdesk_contract
+
+    payload = frontdesk_example()
+    payload["candidates"][0]["route"] = "deploy"
+
+    result = validate_frontdesk_contract(payload)
+    assert result["ok"] is False
+    assert any("candidates[0].route" in error for error in result["errors"])
+
+    payload = frontdesk_example()
+    payload["candidates"][0]["confidence"] = "0.93"
+
+    result = validate_frontdesk_contract(payload)
+    assert result["ok"] is False
+    assert any("candidates[0].confidence" in error for error in result["errors"])
+
+
+def test_frontdesk_contract_rejects_count_drift() -> None:
+    from agentdeck.contracts import frontdesk_example, validate_frontdesk_contract
+
+    payload = frontdesk_example()
+    payload["count"] = payload["count"] + 1
+
+    result = validate_frontdesk_contract(payload)
+
+    assert result["ok"] is False
+    assert "frontdesk.count must match candidates length" in result["errors"]
+
+
+def test_frontdesk_contract_rejects_candidates_out_of_confidence_order() -> None:
+    from agentdeck.contracts import frontdesk_example, validate_frontdesk_contract
+
+    payload = frontdesk_example()
+    payload["candidates"] = list(reversed(payload["candidates"]))
+    payload["route"] = payload["candidates"][0]["route"]
+
+    result = validate_frontdesk_contract(payload)
+
+    assert result["ok"] is False
+    assert "frontdesk.candidates must be ordered by confidence descending" in result["errors"]
+
+
+def test_frontdesk_contract_rejects_route_that_is_not_the_top_candidate() -> None:
+    from agentdeck.contracts import frontdesk_example, validate_frontdesk_contract
+
+    payload = frontdesk_example()
+    payload["route"] = payload["candidates"][-1]["route"]
+
+    result = validate_frontdesk_contract(payload)
+
+    assert result["ok"] is False
+    assert "frontdesk.route must match the top candidate route" in result["errors"]
+
+
+def test_frontdesk_contract_rejects_unknown_classification() -> None:
+    from agentdeck.contracts import frontdesk_example, validate_frontdesk_contract
+
+    payload = frontdesk_example()
+    payload["classification"] = "ready_to_dispatch"
+
+    result = validate_frontdesk_contract(payload)
+
+    assert result["ok"] is False
+    assert any("frontdesk.classification" in error for error in result["errors"])
+
+
+def test_frontdesk_contract_rejects_disabled_control_without_blocker() -> None:
+    from agentdeck.contracts import frontdesk_example, validate_frontdesk_contract
+
+    payload = frontdesk_example()
+    payload["controls"].append(
+        {
+            "kind": "route",
+            "label": "Create Leader plan",
+            "command": "agentdeck leader plan --task <goal>",
+            "safety": "plan_only",
+            "enabled": False,
+            "blocker": None,
+        }
+    )
+
+    result = validate_frontdesk_contract(payload)
+
+    assert result["ok"] is False
+    assert any("controls[" in error and "blocker" in error for error in result["errors"])
+
+
+def test_frontdesk_contract_rejects_empty_candidate_list() -> None:
+    from agentdeck.contracts import frontdesk_example, validate_frontdesk_contract
+
+    payload = frontdesk_example()
+    payload["candidates"] = []
+    payload["count"] = 0
+
+    result = validate_frontdesk_contract(payload)
+
+    assert result["ok"] is False
+    assert "frontdesk.candidates must not be empty" in result["errors"]

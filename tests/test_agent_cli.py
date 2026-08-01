@@ -4734,6 +4734,168 @@ def test_leader_chat_frontdesk_routes_request_without_planning_or_provider_calls
     assert StateStore(root).list_events(limit=1)[0]["event_type"] == "leader_chat_turn"
 
 
+def test_frontdesk_command_classifies_one_message_read_only(tmp_path, monkeypatch, capsys) -> None:
+    prepare_project(tmp_path, monkeypatch)
+
+    exit_code = cli.main(["frontdesk", "--message", "frontdesk 开始运行 冒烟测试"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
+    assert payload["mode"] == "frontdesk"
+    assert payload["user_message"] == "frontdesk 开始运行 冒烟测试"
+    assert payload["intake_summary"] == "开始运行 冒烟测试"
+    assert payload["classification"] == "planning_candidate"
+    assert payload["route"] == "run"
+    assert payload["count"] == 2
+    assert [item["route"] for item in payload["candidates"]] == ["run", "plan"]
+    # backward compatibility: next_command still follows the original goal-text rule,
+    # even when the top candidate route is not `plan`
+    assert payload["next_command"] == "agentdeck leader plan --task '开始运行 冒烟测试'"
+    assert payload["chat_command"] == 'agentdeck leader chat --message "frontdesk <goal>"'
+
+
+def test_frontdesk_command_reuses_the_leader_chat_card_fields(tmp_path, monkeypatch, capsys) -> None:
+    prepare_project(tmp_path, monkeypatch)
+    message = "frontdesk 现在什么状态"
+
+    assert cli.main(["frontdesk", "--message", message]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    card = cli._frontdesk_card(message)
+
+    for field in card:
+        assert payload[field] == card[field], field
+    assert sorted(payload) == sorted([*card, "ok", "count", "chat_command"])
+
+
+def test_frontdesk_command_writes_nothing_at_all(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    # materialize state + an events journal first so there is something to diff
+    assert cli.main(["leader", "chat", "--message", "frontdesk seed the ledger"]) == 0
+    capsys.readouterr()
+
+    state_path = root / ".agentdeck" / "state" / "state.json"
+    events_path = root / ".agentdeck" / "state" / "events.jsonl"
+    assert state_path.exists() and events_path.exists()
+    state_before = state_path.read_bytes()
+    events_before = events_path.read_bytes()
+    tree_before = sorted(p.relative_to(root).as_posix() for p in root.rglob("*"))
+
+    assert cli.main(["frontdesk", "--message", "frontdesk 现在什么状态"]) == 0
+    capsys.readouterr()
+
+    assert state_path.read_bytes() == state_before
+    assert events_path.read_bytes() == events_before
+    assert sorted(p.relative_to(root).as_posix() for p in root.rglob("*")) == tree_before
+
+    store = StateStore(root)
+    state_after = store.load()
+    assert len(state_after["chat_turns"]) == 1
+    assert state_after["plans"] == []
+    assert state_after["approvals"] == []
+    assert state_after["leader_errors"] == []
+
+
+def test_frontdesk_command_needs_no_project_at_all(tmp_path, monkeypatch, capsys) -> None:
+    empty = tmp_path / "not-a-project"
+    empty.mkdir()
+    monkeypatch.chdir(empty)
+
+    exit_code = cli.main(["frontdesk", "--message", "帮助"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["route"] == "help"
+    assert list(empty.iterdir()) == []
+
+
+def test_frontdesk_command_falls_back_to_help_without_goal_text(tmp_path, monkeypatch, capsys) -> None:
+    prepare_project(tmp_path, monkeypatch)
+
+    assert cli.main(["frontdesk", "--message", "梳理需求"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+
+    assert payload["classification"] == "needs_goal"
+    assert payload["route"] == "help"
+    assert payload["count"] == 1
+    assert payload["next_command"] == 'agentdeck leader chat --message "帮助"'
+    plan_control = next(item for item in payload["controls"] if item["kind"] == "plan")
+    assert plan_control["enabled"] is False
+    assert plan_control["blocker"] == "requires goal text"
+
+
+def test_frontdesk_command_output_passes_its_own_contract_validator(tmp_path, monkeypatch, capsys) -> None:
+    from agentdeck.contracts import validate_frontdesk_contract
+
+    prepare_project(tmp_path, monkeypatch)
+    for message in [
+        "frontdesk 帮我规划多 Agent 分层开发",
+        "frontdesk",
+        "梳理需求",
+        "现在什么状态",
+        "我想加个 skill",
+        "记住这个决定",
+        "开始运行 冒烟测试",
+        "帮助",
+    ]:
+        assert cli.main(["frontdesk", "--message", message]) == 0
+        payload = json.loads(capsys.readouterr().out)
+        validation = validate_frontdesk_contract(payload)
+        assert validation["ok"], (message, validation["errors"])
+
+
+def test_contract_frontdesk_discovers_schema_for_gui_clients(capsys) -> None:
+    from agentdeck.contracts import (
+        FRONTDESK_CONTROL_FIELDS,
+        FRONTDESK_RESPONSE_FIELDS,
+        LEADER_CHAT_FRONTDESK_CARD_FIELDS,
+    )
+
+    exit_code = cli.main(["contract", "frontdesk"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["schema_version"] == cli.PROJECT_VIEW_SCHEMA_VERSION
+    assert payload["frontdesk_command_template"] == "agentdeck frontdesk --message <text>"
+    assert payload["chat_command_template"] == 'agentdeck leader chat --message "frontdesk <goal>"'
+    assert payload["contract_path"].endswith("docs/contracts/frontdesk-schema.md")
+    assert payload["contract_exists"] is True
+    assert payload["response_fields"] == list(FRONTDESK_RESPONSE_FIELDS)
+    assert payload["candidate_fields"] == ["route", "label", "command", "confidence", "rationale"]
+    assert payload["control_fields"] == list(FRONTDESK_CONTROL_FIELDS)
+    assert payload["card_fields"] == list(LEADER_CHAT_FRONTDESK_CARD_FIELDS)
+    assert payload["routes"] == ["plan", "run", "status", "help", "skill", "memory"]
+    assert payload["confidences"] == ["high", "medium", "low"]
+    assert payload["classifications"] == ["planning_candidate", "needs_goal"]
+    assert payload["route_safety"] == {
+        "plan": "plan_only",
+        "run": "approval_gated",
+        "status": "inspect",
+        "help": "inspect",
+        "skill": "inspect",
+        "memory": "inspect",
+    }
+    assert payload["safety"] == "inspect"
+    assert payload["requires_explicit_user"] is False
+    assert payload["leader_chat_contract"] == "agentdeck contract leader-chat"
+    assert "example" not in payload
+
+
+def test_contract_frontdesk_example_matches_the_live_command(tmp_path, monkeypatch, capsys) -> None:
+    exit_code = cli.main(["contract", "frontdesk", "--example"])
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["example"] is True
+    example = payload["example_frontdesk"]
+    assert payload["example_response_fields"] == payload["response_fields"]
+    assert payload["example_candidate_fields"] == payload["candidate_fields"]
+
+    prepare_project(tmp_path, monkeypatch)
+    assert cli.main(["frontdesk", "--message", example["user_message"]]) == 0
+    live = json.loads(capsys.readouterr().out)
+    assert live == example
+
+
 def test_leader_chat_contract_example_frontdesk_card_matches_the_live_card() -> None:
     from agentdeck.contracts import leader_chat_example
 
@@ -6422,6 +6584,7 @@ def test_contract_list_discovers_all_gui_contracts(capsys) -> None:
         "artifacts",
         "worktree",
         "delegation",
+        "frontdesk",
     ]
     assert all(item["contract_exists"] for item in payload["contracts"])
     assert payload["contracts"][0]["command"] == "agentdeck contract daemon-runtime"

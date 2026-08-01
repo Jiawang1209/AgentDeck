@@ -53,6 +53,9 @@ from .contracts import (
     artifacts_contract_response,
     worktree_contract_response,
     delegation_contract_response,
+    FRONTDESK_CHAT_COMMAND_TEMPLATE,
+    frontdesk_contract_response,
+    validate_frontdesk_contract,
     contract_index_response,
     control_registry_item_id,
     continue_contract_response,
@@ -6317,6 +6320,42 @@ def controls_command(args: argparse.Namespace) -> int:
         for error in validation["errors"]:
             print(f"- {error}", file=sys.stderr)
         return 1
+    _print_json(payload)
+    return 0
+
+
+def _frontdesk_response(message: str) -> dict[str, object]:
+    card = _frontdesk_card(message)
+    candidates = card["candidates"]
+    return {
+        "ok": True,
+        **card,
+        "count": len(candidates) if isinstance(candidates, list) else 0,
+        "chat_command": FRONTDESK_CHAT_COMMAND_TEMPLATE,
+    }
+
+
+def frontdesk_command(args: argparse.Namespace) -> int:
+    """Read-only intake routing for one message.
+
+    Pure text classification: it loads no project, writes no state, records no
+    chat turn, appends no event, calls no provider, and never touches tmux. The
+    auditable counterpart is `agentdeck leader chat --message "frontdesk ..."`.
+    """
+    payload = _frontdesk_response(args.message)
+    validation = validate_frontdesk_contract(payload)
+    if not validation["ok"]:
+        print("Frontdesk contract validation failed", file=sys.stderr)
+        for error in validation["errors"]:
+            print(f"- {error}", file=sys.stderr)
+        return 1
+    _print_json(payload)
+    return 0
+
+
+def contract_frontdesk_command(args: argparse.Namespace) -> int:
+    contract_path = Path(__file__).resolve().parents[2] / "docs" / "contracts" / "frontdesk-schema.md"
+    payload = frontdesk_contract_response(contract_path, include_example=args.example)
     _print_json(payload)
     return 0
 
@@ -21742,6 +21781,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     tui.set_defaults(func=tui_command)
 
+    frontdesk = subparsers.add_parser(
+        "frontdesk",
+        help="Read-only intake routing: classify one message into explicit next-step candidates",
+    )
+    frontdesk.add_argument("--message", required=True, help="The raw human request to route")
+    frontdesk.set_defaults(func=frontdesk_command)
+
     controls = subparsers.add_parser("controls", help="Show the GUI-ready command palette from the workbench")
     controls.add_argument("--scope", help="Filter command palette controls by scope")
     controls.add_argument("--card", help="Filter command palette controls by source card")
@@ -22162,6 +22208,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     contract_worktree.add_argument("--example", action="store_true", help="Include GUI-ready worktree examples")
     contract_worktree.set_defaults(func=contract_worktree_command)
+    contract_frontdesk = contract_subparsers.add_parser(
+        "frontdesk",
+        help="Discover the read-only frontdesk intake routing contract",
+    )
+    contract_frontdesk.add_argument("--example", action="store_true", help="Include a GUI-ready frontdesk example")
+    contract_frontdesk.set_defaults(func=contract_frontdesk_command)
+
     contract_delegation = contract_subparsers.add_parser(
         "delegation",
         help="Show scoped-authorization-delegation contract discovery metadata",

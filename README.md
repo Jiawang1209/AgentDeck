@@ -129,7 +129,9 @@ Useful observation commands:
 agentdeck status
 agentdeck workbench
 agentdeck controls
+agentdeck frontdesk --message "开始运行 冒烟测试"
 agentdeck events --limit 20
+agentdeck contract frontdesk --example
 agentdeck contract conversation-runtime --example
 agentdeck contract leader-backend --example
 agentdeck contract worker-transport --example

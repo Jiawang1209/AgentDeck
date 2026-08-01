@@ -21,6 +21,12 @@ from .mission import (
     workbench_mission_card,
     validate_mission_plan,
 )
+from .frontdesk import (
+    FRONTDESK_CANDIDATE_FIELDS,
+    FRONTDESK_CONFIDENCES,
+    FRONTDESK_ROUTE_SAFETY,
+    FRONTDESK_ROUTES,
+)
 from .models import (
     MIGRATION_SCHEMA_VERSION,
     PROJECT_VIEW_SCHEMA_VERSION,
@@ -311,6 +317,12 @@ CONTRACT_INDEX_SPECS = (
         "agentdeck contract delegation",
         "agentdeck contract delegation --example",
         "delegation-schema.md",
+    ),
+    (
+        "frontdesk",
+        "agentdeck contract frontdesk",
+        "agentdeck contract frontdesk --example",
+        "frontdesk-schema.md",
     ),
 )
 
@@ -1236,6 +1248,199 @@ LEADER_CHAT_FRONTDESK_CARD_FIELDS = (
     "candidates",
     "route",
 )
+
+# `agentdeck frontdesk --message <text>` returns the same card plus `ok`, the
+# candidate `count`, and the auditable `chat_command` counterpart.
+FRONTDESK_RESPONSE_FIELDS = (
+    "ok",
+    *LEADER_CHAT_FRONTDESK_CARD_FIELDS,
+    "count",
+    "chat_command",
+)
+
+FRONTDESK_CONTROL_FIELDS = ("kind", "label", "command", "safety", "enabled", "blocker")
+
+FRONTDESK_CLASSIFICATIONS = ("planning_candidate", "needs_goal")
+
+FRONTDESK_COMMAND_TEMPLATE = "agentdeck frontdesk --message <text>"
+FRONTDESK_CHAT_COMMAND_TEMPLATE = 'agentdeck leader chat --message "frontdesk <goal>"'
+
+
+def validate_frontdesk_contract(payload: dict[str, object]) -> dict[str, object]:
+    errors: list[str] = []
+    for field in FRONTDESK_RESPONSE_FIELDS:
+        if field not in payload:
+            errors.append(f"missing frontdesk field: {field}")
+    if payload.get("mode") != "frontdesk":
+        errors.append(f"frontdesk.mode must be frontdesk, got {payload.get('mode')}")
+    classification = payload.get("classification")
+    if classification not in FRONTDESK_CLASSIFICATIONS:
+        errors.append(
+            f"frontdesk.classification must be one of {list(FRONTDESK_CLASSIFICATIONS)}, got {classification}"
+        )
+
+    candidates = payload.get("candidates")
+    if not isinstance(candidates, list):
+        errors.append("frontdesk.candidates must be a list")
+    else:
+        if not candidates:
+            errors.append("frontdesk.candidates must not be empty")
+        if payload.get("count") != len(candidates):
+            errors.append("frontdesk.count must match candidates length")
+        ranks: list[int] = []
+        seen_routes: list[str] = []
+        for index, candidate in enumerate(candidates):
+            if not isinstance(candidate, dict):
+                errors.append(f"frontdesk.candidates[{index}] must be an object")
+                continue
+            for field in FRONTDESK_CANDIDATE_FIELDS:
+                if field not in candidate:
+                    errors.append(f"missing frontdesk.candidates[{index}] field: {field}")
+            route = candidate.get("route")
+            if route not in FRONTDESK_ROUTES:
+                errors.append(
+                    f"frontdesk.candidates[{index}].route must be one of {list(FRONTDESK_ROUTES)}, got {route}"
+                )
+            elif route in seen_routes:
+                errors.append(f"frontdesk.candidates[{index}].route is duplicated: {route}")
+            else:
+                seen_routes.append(str(route))
+            confidence = candidate.get("confidence")
+            if confidence not in FRONTDESK_CONFIDENCES:
+                errors.append(
+                    f"frontdesk.candidates[{index}].confidence must be one of "
+                    f"{list(FRONTDESK_CONFIDENCES)}, got {confidence}"
+                )
+            else:
+                ranks.append(FRONTDESK_CONFIDENCES.index(str(confidence)))
+            command = candidate.get("command")
+            if not isinstance(command, str) or not command:
+                errors.append(f"frontdesk.candidates[{index}].command must be a non-empty string")
+        if ranks and ranks != sorted(ranks):
+            errors.append("frontdesk.candidates must be ordered by confidence descending")
+        if candidates and isinstance(candidates[0], dict):
+            if payload.get("route") != candidates[0].get("route"):
+                errors.append("frontdesk.route must match the top candidate route")
+
+    controls = payload.get("controls")
+    if not isinstance(controls, list):
+        errors.append("frontdesk.controls must be a list")
+    else:
+        for index, control in enumerate(controls):
+            if not isinstance(control, dict):
+                errors.append(f"frontdesk.controls[{index}] must be an object")
+                continue
+            for field in FRONTDESK_CONTROL_FIELDS:
+                if field not in control:
+                    errors.append(f"missing frontdesk.controls[{index}] field: {field}")
+            if control.get("enabled") is False and not control.get("blocker"):
+                errors.append(f"frontdesk.controls[{index}] disabled control needs blocker")
+            if control.get("enabled") is True and "<" in str(control.get("command")):
+                errors.append(f"frontdesk.controls[{index}] placeholder command must be disabled")
+    return {"ok": not errors, "errors": errors}
+
+
+def frontdesk_example() -> dict[str, object]:
+    goal_command = "agentdeck leader plan --task '开始运行 冒烟测试'"
+    run_command = "agentdeck run --task '开始运行 冒烟测试'"
+    return {
+        "ok": True,
+        "mode": "frontdesk",
+        "title": "Frontdesk intake",
+        "summary": "Frontdesk routed the request without calling a planning provider.",
+        "user_message": "frontdesk 开始运行 冒烟测试",
+        "intake_summary": "开始运行 冒烟测试",
+        "classification": "planning_candidate",
+        "next_command": goal_command,
+        "controls": [
+            {
+                "kind": "inspect",
+                "label": "Open Leader help",
+                "command": 'agentdeck leader chat --message "帮助"',
+                "safety": "inspect",
+                "enabled": True,
+                "blocker": None,
+            },
+            {
+                "kind": "plan",
+                "label": "Create Leader plan",
+                "command": goal_command,
+                "safety": "plan_only",
+                "enabled": True,
+                "blocker": None,
+            },
+            {
+                "kind": "route",
+                "label": "Start approval-gated run",
+                "command": run_command,
+                "safety": "approval_gated",
+                "enabled": True,
+                "blocker": None,
+            },
+            {
+                "kind": "route",
+                "label": "Create Leader plan",
+                "command": goal_command,
+                "safety": "plan_only",
+                "enabled": True,
+                "blocker": None,
+            },
+        ],
+        "candidates": [
+            {
+                "route": "run",
+                "label": "Start approval-gated run",
+                "command": run_command,
+                "confidence": "high",
+                "rationale": 'matched "开始运行"',
+            },
+            {
+                "route": "plan",
+                "label": "Create Leader plan",
+                "command": goal_command,
+                "confidence": "medium",
+                "rationale": "goal text present without an explicit planning keyword",
+            },
+        ],
+        "route": "run",
+        "count": 2,
+        "chat_command": FRONTDESK_CHAT_COMMAND_TEMPLATE,
+    }
+
+
+def frontdesk_contract_payload(contract_path: Path) -> dict[str, object]:
+    return {
+        "schema_version": PROJECT_VIEW_SCHEMA_VERSION,
+        "frontdesk_command_template": FRONTDESK_COMMAND_TEMPLATE,
+        "chat_command_template": FRONTDESK_CHAT_COMMAND_TEMPLATE,
+        "contract_path": str(contract_path),
+        "contract_exists": contract_path.exists(),
+        "response_fields": list(FRONTDESK_RESPONSE_FIELDS),
+        "candidate_fields": list(FRONTDESK_CANDIDATE_FIELDS),
+        "control_fields": list(FRONTDESK_CONTROL_FIELDS),
+        "card_fields": list(LEADER_CHAT_FRONTDESK_CARD_FIELDS),
+        "routes": list(FRONTDESK_ROUTES),
+        "confidences": list(FRONTDESK_CONFIDENCES),
+        "classifications": list(FRONTDESK_CLASSIFICATIONS),
+        "route_safety": dict(FRONTDESK_ROUTE_SAFETY),
+        "safety": "inspect",
+        "requires_explicit_user": False,
+        "leader_chat_contract": "agentdeck contract leader-chat",
+        "project_view_schema_version": PROJECT_VIEW_SCHEMA_VERSION,
+        "project_view_contract": "agentdeck contract project-view",
+    }
+
+
+def frontdesk_contract_response(contract_path: Path, include_example: bool = False) -> dict[str, object]:
+    payload = frontdesk_contract_payload(contract_path)
+    if include_example:
+        example = frontdesk_example()
+        payload["example"] = True
+        payload["example_frontdesk"] = example
+        payload["example_response_fields"] = list(example)
+        payload["example_candidate_fields"] = list(example["candidates"][0])
+    return payload
+
 
 LEADER_CHAT_SKILL_SUGGESTIONS_CARD_FIELDS = (
     "mode",

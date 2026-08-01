@@ -4,6 +4,38 @@
 
 ## 2026-08-01
 
+### Add the read-only `agentdeck frontdesk` command and contract
+
+- **Type**: feat
+- **Motivation**: 冻结设计 C 节:`frontdesk_card` 此前是**唯一没有契约的
+  卡面**——只能从 `leader chat` 的特定措辞进入,没有 schema 文档,
+  `agentdeck contract list` 里也没有条目,GUI 无法机器发现;而其余 42 个面
+  都可以。同时纯路由预览不该被迫写一条 chat turn。
+- **What**: ①新增 `agentdeck frontdesk --message <text>`:**纯只读**——
+  连项目配置都不加载,因此不可能写 state、记 chat turn、追加事件、调
+  provider 或碰 tmux;响应是 `ok` + 完整 `frontdesk_card` 字段 + `count` +
+  `chat_command`(指回可审计的 `leader chat` 入口),打印前经
+  `validate_frontdesk_contract()` 守门。②新增
+  `docs/contracts/frontdesk-schema.md`,公开双入口分工表、闭合 `routes`
+  与 `confidences` 枚举、每条路由的命令与 safety、向后兼容说明和安全边界。
+  ③新增 `agentdeck contract frontdesk [--example]` 与 `CONTRACT_INDEX_SPECS`
+  第 43 条(42→43),两处索引测试同步。④README 与 leader-chat contract
+  文档补交叉引用。
+- **Impact**: GUI 现在可以像其它 43 个面一样机器发现前台;`leader chat`
+  前台入口行为不变(仍记 chat turn 与审计事件)。新命令零写入,候选命令
+  仍只是建议文本,不是授权,下游命令的 approval / runtime / confirm 门
+  一个不少。
+- **Verification**: TDD——先 RED(contracts 13 failed:validator/example/
+  payload 全缺;agent_cli 9 failed:命令与 contract 子命令不存在、索引
+  少一条),后 GREEN:`frontdesk+leader_cli+contracts+agent_cli` 1203 passed。
+  关键守卫:①`test_frontdesk_command_writes_nothing_at_all` 比对运行前后
+  `.agentdeck/state/state.json` 与 `events.jsonl` 的**字节**以及整棵目录树
+  快照,三者必须完全相同;②`test_frontdesk_command_needs_no_project_at_all`
+  在空目录跑通且不产生任何文件;③contract example 必须逐字段等于 live
+  命令输出;④validator 拒绝 missing field / 错 mode / 未知 route /
+  未知 confidence / count 漂移 / 候选乱序 / route 非 top 候选 /
+  未知 classification / disabled 无 blocker / 空候选列表。
+
 ### Expose frontdesk route candidates on `frontdesk_card`
 
 - **Motivation**: A 节的分类器已就位但没有出口——`leader chat` 的前台卡面
