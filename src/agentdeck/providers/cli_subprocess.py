@@ -771,11 +771,11 @@ class CodexCliProvider(CliLeaderProvider):
                     command,
                     input=prompt,
                     text=True,
-                    # stdout 是交互日志(plan 从 --output-last-message 文件读),
-                    # 继续丢弃;stderr 接管道仅用于失败时的有界分类(读后即弃,
-                    # 只有闭合枚举码会外泄)。
+                    # codex 的 stdout/stderr 在 **OS 边界**即丢弃——这是被
+                    # 对抗性测试加固的不变量(诊断输出永不进入本进程),
+                    # 比"读进来再丢"更强。因此 codex 失败只能报退出码。
                     stdout=subprocess.DEVNULL,
-                    stderr=subprocess.PIPE,
+                    stderr=subprocess.DEVNULL,
                     cwd=request.config.root,
                     timeout=self._remaining_subprocess_timeout(deadline),
                     check=False,
@@ -789,18 +789,11 @@ class CodexCliProvider(CliLeaderProvider):
             if completed is None:
                 raise CliLeaderProviderError("nonzero")
             returncode = completed.returncode
-            stderr_text = completed.stderr if isinstance(completed.stderr, str) else ""
             del completed
             if returncode != 0:
-                # 退出码始终记录;stderr 有内容时做有界分类(认不出即
-                # None,绝不臆测)。原文只用于匹配,不进错误消息与审计。
-                raise CliLeaderProviderError(
-                    "nonzero",
-                    exit_code=returncode,
-                    failure_reason=(
-                        classify_cli_failure("", stderr_text) if stderr_text else None
-                    ),
-                )
+                # codex 诊断在 OS 边界即丢弃(见上),没有可检查的输出——
+                # 只记进程退出码,failure_reason 保持 None(绝不臆测)。
+                raise CliLeaderProviderError("nonzero", exit_code=returncode)
             plan = self._read_native_plan(result_path, request)
         except CliLeaderProviderError as error:
             pending_error = error

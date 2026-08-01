@@ -2834,10 +2834,7 @@ def test_leader_plan_passes_model_to_codex_cli_backend_without_dispatching(
     assert command.index("--output-schema") == 6
     assert command.index("--output-last-message") == 8
     assert seen["kwargs"]["stdout"] is subprocess.DEVNULL
-    # stderr 自 2026-08-01 起接管道:失败时做有界分类(读后即弃,只有闭合
-    # 枚举 failure_reason 会外泄);stdout 仍丢弃(交互日志,plan 从
-    # --output-last-message 私有文件读)。
-    assert seen["kwargs"]["stderr"] is subprocess.PIPE
+    assert seen["kwargs"]["stderr"] is subprocess.DEVNULL
     assert seen["schema"]["required"] == ["goal", "summary", "steps"]
     assert payload["provider"] == "codex-cli"
     assert payload["provider_backend"] == "cli"
