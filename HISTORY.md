@@ -4,6 +4,24 @@
 
 ## 2026-08-01
 
+### Record the G6 implementation-time corrections in the spec
+
+- **Type**: docs
+- **Motivation**: 冻结的 G6 spec 漏查了一件事——workbench 里早就有一个
+  `role_topology_card`;spec 与实现因此在契约名、mode 取值和 `candidates`
+  语义上分叉,留着会误导下一个读 spec 的人。
+- **What**: 在 spec 加"实现期修正"节:两张卡的分工与为什么新卡改名
+  `role_bindings`(旧卡一字不动)、`roles_card` 键与 mode **有意**不同名、
+  顺带修掉的既有 bug(旧卡 planner/orchestrator provider 自 G2 起一直
+  无视 `[leader.*]` 覆盖)、以及 `[review].reviewers` 多成员时 `candidates`
+  保持为空的理由(配好的组是确定性的,塞进"无法择一"字段会稀释
+  fail-closed 信号)。
+- **Impact**: 纯文档;零代码改动。
+- **Verification**: 两处修正在真项目里核过——`role_topology_card.mode=role_topology`
+  与 `roles_card.mode=role_bindings` 并存不再撞名;配了
+  `[leader.planner] provider="codex-cli"` 后旧卡报 `codex-cli`(修复前报
+  `deepseek`);`contract list` 44 个,末条 `role-bindings`。
+
 ### Rename the new role card to role_bindings so GUIs can tell the two apart
 
 - **Type**: refactor

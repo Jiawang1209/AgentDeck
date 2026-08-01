@@ -54,6 +54,38 @@ Phase: G6(北极星最后一相;G1–G5 均已落地)
 `ambiguous` 是 fail-closed 的体现:**绝不挑第一个了事**。三态都不是错误,
 不阻断任何命令——拓扑是观察面,不是 gate。
 
+## 实现期修正(2026-08-01,落地时发现)
+
+**本 spec 写作时漏查了一件事:workbench 里早就有一个 `role_topology_card`。**
+它形状不同(`role_id`/`label`/`kind`/`status`/`by_status`/`blocked_count`),
+由 `_workbench_role_topology_card` 从 ProjectView `leader.coordination_roles`
+派生,回答的是**此刻状态**("每个角色现在在做什么、卡在哪"),而本设计的
+卡回答的是**绑定完整度**("六层各自绑到了什么、缺哪层")。两者都该留下,
+但**两张卡当时都发 `mode == "role_topology"`**——GUI 读 `mode` 分不开,
+这正是本仓库禁止的"同一标识符两个来源"。
+
+因此落地时把**新卡**改名(旧卡一字不动):
+
+| | 落地取值 |
+| --- | --- |
+| `mode` | `role_bindings` |
+| 契约名 / 文档 | `role-bindings` / `docs/contracts/role-bindings-schema.md` |
+| workbench 键 | `roles_card`(**有意**与 mode 不同名) |
+| 命令 | `agentdeck roles`(不变) |
+| 纯模块 | `role_topology.py`(不变——它确实是拓扑骨架) |
+
+顺带发现并修掉一个**既有真 bug**:旧卡的 planner/orchestrator provider
+硬编码取 `config.leader.provider`,自 G2 拆分落地以来一直无视
+`[leader.planner]` / `[leader.orchestrator]` 覆盖——配了
+`provider = "codex-cli"` 它仍报 `deepseek`,在 GUI 可消费的卡片里撒谎。
+已改为走 `resolved_planner_backend` / `resolved_orchestrator_backend`。
+
+另一处偏离:`[review].reviewers` 配了多个成员时,取首位为绑定且
+`candidates` 保持为空。本 spec 正文一度想把其余组员放进 `candidates`,
+但那与"`candidates` 仅 `ambiguous` 时非空"冲突——配好的组是**确定性**的
+(首位即主 reviewer,与 `review_group` 的既有规则同源),把组员塞进一个
+专门表示"无法择一"的字段会稀释 fail-closed 信号。以 validator 为准。
+
 ## 交付面
 
 三处,全部只读:
