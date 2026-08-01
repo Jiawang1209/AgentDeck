@@ -4,6 +4,40 @@
 
 ## 2026-08-01
 
+### Stop the run-loop host on a confirmed human gate
+
+- **Type**: feat
+- **Motivation**: Round 14 实测:846 个 wave 里 834 个完全空转(98%,3h37m),
+  全部消耗在一道没人按的 Playwright 授权框上——`waiting_for_reply` 无法区分
+  "worker 在思考"(会自解)与"worker 停在人类门上"(永不自解),于是把
+  `--max-waves` 这个自主工作量预算喂给了一个人类门,而人类一个信号都没收到。
+- **What**: `run_loop_host_serve_command` 不再把 `_scan_release_delegated_boxes`
+  的 `skipped[]` 丢进 `_`:段首(wave 0)与每个 wave 间隙的扫描结果都过
+  `human_gate_candidate(skipped, 本 plan awaiting agent 集)`(awaiting 集复用
+  `_plan_awaiting`,与文件通道摄入同一份定义),连续两次命中 `same_human_gate`
+  的同一道框才以 `stopped_reason="human_gate"` 停下;证据(agent_id/box_kind/
+  command/mcp_server/mcp_tool/waiting_hint)经 `_run_loop_host_finish` 的新
+  `human_gate=` 参数写进 host.json、host.log(`event=human_gate` + `host_stopped`)
+  和 `run_loop_host_stopped` 审计事件。同批修掉两处一致性问题:
+  `_scan_release_delegated_boxes` 的 pane-capture-failure skip 补齐
+  `box_kind`/`mcp_server`/`mcp_tool`/`waiting_hint` 四个 null 键,使 `boxes watch`
+  逐字打印的 `skipped[]` 两种形状键集一致(消费方不必按 reason 分支);
+  `_HUMAN_GATE_FIELDS` 提升为公开 `HUMAN_GATE_FIELDS`,供后续 status 契约层
+  直接 import,杜绝第二份字段清单。
+- **Impact**: 零新增能力面——检测只在 `--release-boxes` 开启时生效,不带该标志
+  的宿主一次 pane 都不读、行为逐字节不变;单 wave 引擎 `_run_loop_single_wave`
+  一字未改,gate 诚实性只增不减;检测绝不发送 tmux 输入、绝不代按框、绝不放宽
+  任何授权,只让宿主**更早停下**;`human_gate` 不是 `gate_reached`,因此
+  `--merge-on-complete` 的自动合并绝不被它触发。debounce 状态只在 serve 进程
+  内存里,宿主重启后重新计数。status/契约面的 `human_gate` 字段是后续切片。
+- **Verification**: 六个新测试先 FAIL 于 `budget_exhausted != human_gate` /
+  `KeyError: waiting_hint`(同框两次即停并三处证据一致、框在 awaiting 集外不停、
+  两次不同框不停、不开 `--release-boxes` 时扫描零调用、人类门停止零合并、
+  两种 skip 键集一致);`tests/test_run_loop_host.py`
+  `tests/test_run_loop_host_cli.py` `tests/test_run_loop_follow.py`
+  `tests/test_delegation_cli.py` 82 passed;全量 `pytest -q` 5019 passed /
+  3 skipped;`python -m compileall src tests` 干净。
+
 ### Add pure human-gate candidate derivation
 
 - **Type**: feat

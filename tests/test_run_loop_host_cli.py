@@ -179,11 +179,23 @@ def test_status_is_read_only_across_three_record_states(tmp_path, monkeypatch, c
     assert payload["stopped_reason"] == "gate_reached"
 
 
-def _serve_argv(root: Path, plan_id: str, max_waves: int, interval: str = "0") -> list[str]:
-    return [
+def _serve_argv(
+    root: Path,
+    plan_id: str,
+    max_waves: int,
+    interval: str = "0",
+    release_boxes: bool = False,
+    merge_on_complete: bool = False,
+) -> list[str]:
+    argv = [
         "run-loop-host", "serve", "--project", str(root),
         "--plan-id", plan_id, "--max-waves", str(max_waves), "--interval", interval,
     ]
+    if release_boxes:
+        argv.append("--release-boxes")
+    if merge_on_complete:
+        argv.append("--merge-on-complete")
+    return argv
 
 
 def _log_lines(root: Path) -> list[dict]:
@@ -374,6 +386,196 @@ def test_serve_signal_finishes_current_wave_then_exits(tmp_path, monkeypatch, ca
     record = read_host_record(root)
     assert record["wave_count"] == 1  # 当前 wave 完整跑完
     assert record["stopped_reason"] == "signalled"
+
+
+def _seed_dispatched_approval(
+    root: Path, plan_id: str, agent_id: str = "coder", message_id: str = "msg_gate_1"
+) -> None:
+    """本 plan 有一条已派发未回复的审批 → 该 agent 进入 awaiting 集。"""
+    store = StateStore(root)
+    state = store.load()
+    state.setdefault("approvals", []).append({
+        "approval_id": "apv_gate_1", "plan_id": plan_id, "status": "dispatched",
+        "message_id": message_id, "agent_id": agent_id, "step": 1,
+    })
+    store.save(state)
+
+
+def _host_record_for_gate(root: Path, plan_id: str, max_waves: int) -> None:
+    write_host_record(root, {
+        "pid": 1, "plan_id": plan_id, "max_waves": max_waves, "interval": 0.0,
+        "release_boxes": True, "merge_on_complete": False,
+        "log_path": ".agentdeck/run-loop-host/host.log",
+        "wave_count": 0, "last_gate": None, "last_wave_at": None, "stopped_reason": None,
+    })
+
+
+def _waiting_wave(*_args, **_kwargs) -> dict:
+    return {"ok": True, "mode": "run_loop", "plan_id": "pln_host_1",
+            "stopped_reason": "waiting_for_reply",
+            "next_command": "agentdeck capture-reply"}
+
+
+def _undelegated_box(command: str = "playwright open x", agent_id: str = "coder") -> dict:
+    return {
+        "agent_id": agent_id, "command": command, "box_kind": "command",
+        "mcp_server": None, "mcp_tool": None,
+        "waiting_hint": "› 1. Yes, proceed (y)",
+        "reason": "no active delegation", "iteration": 0,
+    }
+
+
+def test_serve_stops_on_the_second_consecutive_sighting_of_the_same_human_gate(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    """第一次命中只记候选;第二次同一道框才停,并带出屏上证据。"""
+    root = prepare_project(tmp_path, monkeypatch)
+    plan_id = seed_plan(root)
+    enable_autonomous(capsys)
+    _seed_dispatched_approval(root, plan_id, agent_id="coder")
+    _host_record_for_gate(root, plan_id, 10)
+
+    scans: list[int] = []
+
+    def fake_scan(_config, _store, _backend, _agent_ids, iteration, source="boxes_watch"):
+        scans.append(iteration)
+        assert source == "run_loop_host"
+        return [], [dict(_undelegated_box(), iteration=iteration)]
+
+    monkeypatch.setattr(cli, "_scan_release_delegated_boxes", fake_scan)
+    monkeypatch.setattr(cli, "TmuxBackend", lambda: object())
+    monkeypatch.setattr(cli, "_run_loop_single_wave", _waiting_wave)
+
+    assert cli.main(_serve_argv(root, plan_id, 10, release_boxes=True)) == 0
+
+    # 段首扫描(wave 0)+ wave1 后扫描 = 两次同一道框 → 停在 wave 1
+    assert scans == [0, 1]
+    record = read_host_record(root)
+    assert record["stopped_reason"] == "human_gate"
+    assert record["wave_count"] == 1
+    assert record["human_gate"] == {
+        "agent_id": "coder", "box_kind": "command", "command": "playwright open x",
+        "mcp_server": None, "mcp_tool": None, "waiting_hint": "› 1. Yes, proceed (y)",
+    }
+    gate_lines = [line for line in _log_lines(root) if line.get("event") == "human_gate"]
+    assert len(gate_lines) == 1
+    assert gate_lines[0]["agent_id"] == "coder"
+    assert gate_lines[0]["waiting_hint"] == "› 1. Yes, proceed (y)"
+    assert gate_lines[0]["wave"] == 1
+    events = (root / ".agentdeck" / "state" / "events.jsonl").read_text(encoding="utf-8")
+    assert '"stopped_reason": "human_gate"' in events
+
+
+def test_serve_ignores_a_box_on_an_agent_outside_the_awaiting_set(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    """框在别的 agent 身上 → 不是本 plan 的人类门,照常烧到预算上限。"""
+    root = prepare_project(tmp_path, monkeypatch)
+    plan_id = seed_plan(root)
+    enable_autonomous(capsys)
+    _seed_dispatched_approval(root, plan_id, agent_id="coder")
+    _host_record_for_gate(root, plan_id, 3)
+
+    monkeypatch.setattr(
+        cli, "_scan_release_delegated_boxes",
+        lambda *_a, **_k: ([], [_undelegated_box(agent_id="reviewer")]),
+    )
+    monkeypatch.setattr(cli, "TmuxBackend", lambda: object())
+    monkeypatch.setattr(cli, "_run_loop_single_wave", _waiting_wave)
+
+    assert cli.main(_serve_argv(root, plan_id, 3, release_boxes=True)) == 0
+    record = read_host_record(root)
+    assert record["stopped_reason"] == "budget_exhausted"
+    assert record["wave_count"] == 3
+    assert record["human_gate"] is None
+
+
+def test_serve_does_not_stop_when_the_box_changes_between_scans(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    """两次命中的是不同的框 → 不判定,重新计数。"""
+    root = prepare_project(tmp_path, monkeypatch)
+    plan_id = seed_plan(root)
+    enable_autonomous(capsys)
+    _seed_dispatched_approval(root, plan_id, agent_id="coder")
+    _host_record_for_gate(root, plan_id, 4)
+
+    commands = ["a", "b", "a", "b", "a", "b"]
+    calls = {"n": 0}
+
+    def alternating_scan(*_a, **_k):
+        command = commands[calls["n"]]
+        calls["n"] += 1
+        return [], [_undelegated_box(command=command)]
+
+    monkeypatch.setattr(cli, "_scan_release_delegated_boxes", alternating_scan)
+    monkeypatch.setattr(cli, "TmuxBackend", lambda: object())
+    monkeypatch.setattr(cli, "_run_loop_single_wave", _waiting_wave)
+
+    assert cli.main(_serve_argv(root, plan_id, 4, release_boxes=True)) == 0
+    record = read_host_record(root)
+    assert record["stopped_reason"] == "budget_exhausted"
+    assert record["wave_count"] == 4
+    assert record["human_gate"] is None
+    assert [line for line in _log_lines(root) if line.get("event") == "human_gate"] == []
+
+
+def test_serve_without_release_boxes_never_detects_a_human_gate(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    """不开 --release-boxes:零 pane 读取,行为逐字节不变。"""
+    root = prepare_project(tmp_path, monkeypatch)
+    plan_id = seed_plan(root)
+    enable_autonomous(capsys)
+    _seed_dispatched_approval(root, plan_id, agent_id="coder")
+    _host_record_for_gate(root, plan_id, 2)
+
+    scanned: list[int] = []
+
+    def never_scan(*_a, **_k):
+        scanned.append(1)
+        return [], [_undelegated_box()]
+
+    monkeypatch.setattr(cli, "_scan_release_delegated_boxes", never_scan)
+    monkeypatch.setattr(cli, "_run_loop_single_wave", _waiting_wave)
+
+    assert cli.main(_serve_argv(root, plan_id, 2, release_boxes=False)) == 0
+    assert scanned == []  # 一次 pane 都没读
+    record = read_host_record(root)
+    assert record["stopped_reason"] == "budget_exhausted"
+    assert record["wave_count"] == 2
+    assert record["human_gate"] is None
+
+
+def test_human_gate_stop_never_triggers_the_automatic_merge(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    """人类门停止不是 complete gate:绝不触发 --merge-on-complete 的自动合并。"""
+    root = prepare_project(tmp_path, monkeypatch)
+    plan_id = seed_plan(root)
+    enable_autonomous(capsys)
+    _seed_dispatched_approval(root, plan_id, agent_id="coder")
+    _host_record_for_gate(root, plan_id, 10)
+
+    merges: list[str] = []
+    monkeypatch.setattr(
+        cli, "_scan_release_delegated_boxes", lambda *_a, **_k: ([], [_undelegated_box()])
+    )
+    monkeypatch.setattr(cli, "TmuxBackend", lambda: object())
+    monkeypatch.setattr(cli, "_run_loop_single_wave", _waiting_wave)
+    monkeypatch.setattr(
+        cli, "_merge_plan_worktrees",
+        lambda _config, _store, merged_plan: merges.append(merged_plan) or {"ok": True},
+    )
+    monkeypatch.setattr(cli, "_verdict_merge_blocker", lambda _store, _plan: None)
+
+    assert cli.main(
+        _serve_argv(root, plan_id, 10, release_boxes=True, merge_on_complete=True)
+    ) == 0
+    record = read_host_record(root)
+    assert record["stopped_reason"] == "human_gate"
+    assert merges == []
+    assert [line for line in _log_lines(root) if line.get("event") == "plan_merge"] == []
 
 
 def test_stop_requires_confirm_and_refuses_without_record(tmp_path, monkeypatch, capsys) -> None:

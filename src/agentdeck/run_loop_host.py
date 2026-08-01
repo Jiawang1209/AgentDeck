@@ -109,7 +109,9 @@ def append_host_log(root: Path, entry: dict[str, Any]) -> None:
 
 # 人类门证据的身份键:同一道框判定用,waiting_hint 是展示文本不参与身份。
 _HUMAN_GATE_IDENTITY = ("agent_id", "box_kind", "command", "mcp_server", "mcp_tool")
-_HUMAN_GATE_FIELDS = (*_HUMAN_GATE_IDENTITY, "waiting_hint")
+# 公开的证据字段清单:host 记录/日志/审计/status 契约共用同一份,
+# 契约层直接 import 本元组,绝不另抄一份。
+HUMAN_GATE_FIELDS = (*_HUMAN_GATE_IDENTITY, "waiting_hint")
 
 
 def human_gate_candidate(
@@ -129,7 +131,7 @@ def human_gate_candidate(
         agent_id = item.get("agent_id")
         if agent_id not in awaiting_agents:
             continue
-        return {field: item.get(field) for field in _HUMAN_GATE_FIELDS}
+        return {field: item.get(field) for field in HUMAN_GATE_FIELDS}
     return None
 
 

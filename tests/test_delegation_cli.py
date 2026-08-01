@@ -385,8 +385,41 @@ def test_boxes_watch_survives_pane_loss_mid_scan(tmp_path, monkeypatch, capsys) 
     assert payload["released_count"] == 0
     assert payload["skipped_count"] == 2
     assert payload["skipped"][0]["reason"] == "pane capture failed"
+    assert payload["skipped"][0]["waiting_hint"] is None
     assert fake.sent == []
     assert '"event_type": "auth_box_released"' not in _events_text(root)
+
+
+def test_boxes_watch_skip_shapes_share_the_same_keys(tmp_path, monkeypatch, capsys) -> None:
+    """`boxes watch` 逐字打印 skipped[];两种 skip 的键集必须一致,
+    否则消费方要按 reason 分支才能读同一个数组。"""
+    import subprocess as _subprocess
+
+    root = prepare_project(tmp_path, monkeypatch)
+    bind_coder(root)
+
+    # 1) 未委托框(带 hint)
+    fake = FakeTmuxBackend()
+    monkeypatch.setattr(cli, "TmuxBackend", lambda: fake)
+    fake.output = CODEX_AUTH_BOX.replace("node tests/focus-carousel-tab-order.mjs", "rm -rf /tmp/x")
+    _enable_autonomous(capsys)
+    assert cli.main(["boxes", "watch", "--agent", "coder", "--confirm", "--iterations", "1", "--interval", "0"]) == 0
+    undelegated = json.loads(capsys.readouterr().out)["skipped"][0]
+
+    # 2) pane capture 失败(无 hint)
+    class VanishingTmuxBackend(FakeTmuxBackend):
+        def capture_output(self, _config, pane_id: str, lines: int = 200) -> str:
+            raise _subprocess.CalledProcessError(1, ["tmux", "capture-pane", "-t", pane_id])
+
+    monkeypatch.setattr(cli, "TmuxBackend", lambda: VanishingTmuxBackend())
+    assert cli.main(["boxes", "watch", "--agent", "coder", "--confirm", "--iterations", "1", "--interval", "0"]) == 0
+    capture_failed = json.loads(capsys.readouterr().out)["skipped"][0]
+
+    assert set(undelegated) == set(capture_failed)
+    assert "waiting_hint" in undelegated and "waiting_hint" in capture_failed
+    assert undelegated["reason"] == "no active delegation"
+    assert capture_failed["reason"] == "pane capture failed"
+    assert capture_failed["waiting_hint"] is None
 
 
 def test_controls_contract_holds_in_all_policy_modes(tmp_path, monkeypatch, capsys) -> None:

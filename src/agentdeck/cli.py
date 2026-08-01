@@ -166,8 +166,10 @@ from .review_iteration import (
 from .run_loop_host import (
     append_host_log,
     host_log_path,
+    human_gate_candidate,
     pid_alive,
     read_host_record,
+    same_human_gate,
     write_host_record,
 )
 from .run_loop_host import host_liveness as _host_liveness
@@ -10247,6 +10249,11 @@ def _scan_release_delegated_boxes(
                 {
                     "agent_id": agent_id,
                     "command": None,
+                    # `boxes watch` 逐字打印 skipped[];两种 skip 的键集必须一致,
+                    # 消费方才不用按 reason 分支读同一个数组。这里全部是 null:
+                    # capture 失败时屏上什么都没读到,更不是人类门。
+                    **_box_fields(None, None),
+                    "waiting_hint": None,
                     "reason": "pane capture failed",
                     "iteration": iteration,
                 }
@@ -21016,6 +21023,7 @@ def _run_loop_host_finish(
     wave_count: int,
     last_gate: str | None,
     stopped_reason: str,
+    human_gate: dict[str, object] | None = None,
 ) -> None:
     record = read_host_record(root) or {}
     record.update({
@@ -21025,6 +21033,8 @@ def _run_loop_host_finish(
         "last_gate": last_gate,
         "stopped_reason": stopped_reason,
         "stopped_at": utc_now(),
+        # 证据字段恒存在(无人类门时为 null),status 读记录时形状稳定。
+        "human_gate": human_gate,
     })
     write_host_record(root, record)
     append_host_log(root, {
@@ -21032,12 +21042,14 @@ def _run_loop_host_finish(
         "event": "host_stopped",
         "wave": wave_count,
         "stopped_reason": stopped_reason,
+        **({"human_gate": human_gate} if human_gate else {}),
         "at": utc_now(),
     })
     store.append_event(EventRecord.create("run_loop_host_stopped", {
         "plan_id": plan_id,
         "wave_count": wave_count,
         "stopped_reason": stopped_reason,
+        **({"human_gate": human_gate} if human_gate else {}),
         "source": "host",
     }))
 
@@ -21063,9 +21075,18 @@ def run_loop_host_serve_command(args: argparse.Namespace) -> int:
     signal.signal(signal.SIGINT, _handle_terminate)
 
     backend = TmuxBackend() if args.release_boxes else None
+    # 人类门检测复用 --release-boxes 已有的只读扫描,零新增 pane 读取面:
+    # 不带该标志的宿主一次 pane 都不读,行为逐字节不变。
+    #
+    # 排序依赖(有意为之):human_gate_candidate 返回**第一条**命中项,
+    # 因此"哪个 agent 胜出"取决于 agent_ids 的迭代顺序;debounce 身份含
+    # agent_id,顺序若不稳定就永远确认不了同一道框。agent_ids 来自
+    # config.agents 的声明顺序(稳定),这条依赖必须保持。
     agent_ids = [agent.agent_id for agent in config.agents]
+    pending_human_gate: dict[str, object] | None = None
+    confirmed_human_gate: dict[str, object] | None = None
     if backend is not None:
-        released, _skipped = _scan_release_delegated_boxes(
+        released, skipped = _scan_release_delegated_boxes(
             config, store, backend, agent_ids, 0, source="run_loop_host"
         )
         for item in released:
@@ -21074,6 +21095,9 @@ def run_loop_host_serve_command(args: argparse.Namespace) -> int:
                 "agent_id": item.get("agent_id"), "match_kind": item.get("match_kind"),
                 "at": utc_now(),
             })
+        pending_human_gate = human_gate_candidate(
+            skipped, {agent for _message, agent in _plan_awaiting(store.load(), plan_id)}
+        )
 
     wave_count = 0
     last_gate: str | None = None
@@ -21136,7 +21160,7 @@ def run_loop_host_serve_command(args: argparse.Namespace) -> int:
             stopped_reason = "budget_exhausted"
             break
         if backend is not None:
-            released, _skipped = _scan_release_delegated_boxes(
+            released, skipped = _scan_release_delegated_boxes(
                 config, store, backend, agent_ids, wave_number, source="run_loop_host"
             )
             for item in released:
@@ -21145,6 +21169,20 @@ def run_loop_host_serve_command(args: argparse.Namespace) -> int:
                     "agent_id": item.get("agent_id"), "match_kind": item.get("match_kind"),
                     "at": utc_now(),
                 })
+            candidate = human_gate_candidate(
+                skipped, {agent for _message, agent in _plan_awaiting(store.load(), plan_id)}
+            )
+            # debounce:同一道框连续两次扫描命中才判定。框可能刚弹出、
+            # 下一轮就被委托放行;要求两次可防误停,代价是最多多转一个 wave。
+            if same_human_gate(pending_human_gate, candidate):
+                confirmed_human_gate = candidate
+                append_host_log(root, {
+                    "plan_id": plan_id, "event": "human_gate", "wave": wave_number,
+                    **candidate, "at": utc_now(),
+                })
+                stopped_reason = "human_gate"
+                break
+            pending_human_gate = candidate
         if args.interval > 0:
             time.sleep(float(args.interval))
 
@@ -21168,6 +21206,7 @@ def run_loop_host_serve_command(args: argparse.Namespace) -> int:
     _run_loop_host_finish(
         root, store, plan_id=plan_id, wave_count=wave_count,
         last_gate=last_gate, stopped_reason=stopped_reason,
+        human_gate=confirmed_human_gate,
     )
     return 0
 
