@@ -4,6 +4,29 @@
 
 ## 2026-08-01
 
+### Freeze the goal one-shot walkaway design and plan
+
+- **Type**: docs
+- **Motivation**: user 提出 AgentDeck 该有 Hermes 那种渐进式披露,完全放任的
+  开发写一句 `/goal` 就好。现状是自主度梯子每一档都已落地,但**没有一处以
+  梯子的形式呈现**——爬到顶格要写四条命令九个标志,其中 plan_id 还得人肉
+  从上一条输出抄到下两条。
+- **What**: 冻结 spec `2026-08-01-goal-one-shot-walkaway-design.md` 与同名
+  plan。原则是 user 定的:**压缩确认,不是去掉确认**——九个标志里"仪式"
+  (plan_id 传递、interval 靠猜、同一件事确认四次)消灭,"安全门"
+  (`--confirm`、`--max-waves` 强制有界、autonomous 白名单)一条不动。
+  形态是 `goal preview` → `goal start --confirm` 两步,因为仓库既有安全边界
+  原文是 "only the exact confirmed preview becomes frozen authority"——不能
+  让人确认一句还没变成计划的话。**最重要的一条边界:`goal` 绝不代人翻
+  `approval_mode`**,那是长期策略,不是一次目标的附属决定。user 拍板两点
+  缺省:`--max-waves` 有缺省 300 但必须在 preview 里显示(数字可以来自缺省,
+  但不能隐形);`--release-boxes` 默认开(否则显式 grant 的委托形同虚设)、
+  `--merge-on-complete` 默认关(合并进 main 应当是一次单独的点头)。
+- **Impact**: 纯文档;零代码改动。`goal` 不新增任何一种动作,只串联三条
+  各自有门的既有命令。
+- **Verification**: 设计对照仓库既有安全边界原文与 run-loop-host 的四道门
+  逐条核;两点缺省经 user 显式拍板;preview 示例已与"合并默认关"对齐。
+
 ### Record the G6 role_bindings live verification
 
 - **Type**: docs

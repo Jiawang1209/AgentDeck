@@ -1,6 +1,6 @@
 # `/goal` 一句话走开设计
 
-Status: DRAFT —— 等 user 过目(本切片是权限的**集中**,不是新增,值得看一眼再动代码)
+Status: frozen(user 拍板 2026-08-01,两点缺省见文末)
 提出者: user(2026-08-01)。原话要点:AgentDeck 该有 Hermes 那种渐进式披露;
 完全放任的开发写一句 `/goal` 就好。
 
@@ -57,9 +57,12 @@ agentdeck run-loop-host start --plan-id pln_xxx --confirm --max-waves 300 \
     2. reviewer  审查 …          ← [review] 两人组,planner 为第二审查员
     3. planner   审查 …
   预算    300 wave / 最多 2 轮返工 / 审批预算 20
-  委托    node tests/*  (2 条活跃委托,均为只读验证前缀)
-  合并    通过复审后自动合并到 main
+          ↑ wave 上限为缺省值,可用 --max-waves 改
+  委托    node tests/*  (2 条活跃委托,均为只读验证前缀,遇到即自动放行)
+  合并    不自动合并——复审通过后停下来等你点头
+          (想要自动合并显式加 --merge-on-complete)
   停下来找你的条件:
+    · 复审通过,待你合并             ← 缺省下的正常终点
     · 遇到未委托的授权框(human_gate)
     · 复审预算耗尽而仍未通过
     · 白名单外的 agent 需要审批
@@ -116,13 +119,16 @@ user 指出的另一面:43 个契约 + workbench 一屏全展开,是为**机器�
 - 改动既有命令的默认输出形态(渐进披露的推广是独立切片)。
 - 用 LLM 决定预算或委托(预算是人给的数,委托是人显式 grant 的)。
 
-## 待 user 拍板的两点
+## 缺省(user 拍板 2026-08-01)
 
-1. **`--max-waves` 的缺省值**。宿主强制有界是冻结不变量,但 `/goal` 是否
-   可以有一个显示在 preview 里的缺省(建议 300,约合 8 小时 @10s 间隔),
-   还是必须每次显式给?建议:有缺省但必须在 preview 里显示。
-2. **`--release-boxes` / `--merge-on-complete` 是否默认开**。二者都已各自
-   有门(委托必须显式 grant;合并受 verdict gate 扣住),但默认开等于
-   把"走开"的含义调到最满。建议:`--release-boxes` 默认开(否则委托形同
-   虚设),`--merge-on-complete` 默认**关**(合并进 main 应当是一次单独的
-   点头)。
+1. **`--max-waves` 有缺省 300,但必须在 preview 里显示。**理由:信息完整的
+   确认不要求你每次手敲数字,只要求数字**不能隐形**。宿主"强制有界、无
+   unbounded 形态"这条冻结不变量不受影响——`/goal` 永远带着一个具体的
+   wave 上限进入宿主,只是这个数可以来自缺省而不是手输。preview 必须把它
+   连同"可用 `--max-waves` 改"一起印出来。
+2. **`--release-boxes` 默认开,`--merge-on-complete` 默认关。**
+   放框默认开的理由:否则你显式 grant 过的委托形同虚设,而它本来就只放行
+   命中活跃委托前缀的框(未命中一律不代按,现在还会以 `human_gate` 诚实
+   停下)。合并默认关的理由:**合并进 main 应当是一次单独的点头**——跑完
+   停在"复审通过,待合并",把 `worktree merge-plan --confirm` 留给人。
+   想要最满的走开,显式加 `--merge-on-complete` 即可。
