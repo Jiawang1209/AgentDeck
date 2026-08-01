@@ -12136,6 +12136,14 @@ def _record_leader_provider_failure(
     }
     if stage is not None:
         payload["stage"] = stage
+    # CLI-backed provider 的诊断:退出码是进程事实,failure_reason 是闭合
+    # 枚举码(解析→分类→丢弃原文);二者都不含 provider 输出片段。
+    exit_code = getattr(error, "exit_code", None)
+    if isinstance(exit_code, int) and not isinstance(exit_code, bool):
+        payload["exit_code"] = exit_code
+    failure_reason = getattr(error, "failure_reason", None)
+    if isinstance(failure_reason, str) and failure_reason:
+        payload["failure_reason"] = failure_reason
     store.append_event(EventRecord.create("leader_provider_failed", payload))
 
 

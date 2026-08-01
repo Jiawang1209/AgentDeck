@@ -38,6 +38,7 @@ from .plan_schema import (
     build_leader_plan_schema,
     leader_plan_authority,
 )
+from .cli_failure import CLI_FAILURE_REASONS, classify_cli_failure
 from .semantic_plan_schema import (
     SemanticPlanSchemaAuthorityError,
     resolve_semantic_leader_plan_context,
@@ -167,6 +168,8 @@ class CliLeaderProviderError(RuntimeError):
             "attempt_count",
             "constraint_mode",
             "retryable",
+            "exit_code",
+            "failure_reason",
         }
     )
 
@@ -178,6 +181,8 @@ class CliLeaderProviderError(RuntimeError):
         attempt_count: int = 0,
         constraint_mode: str | None = None,
         retryable: bool = False,
+        exit_code: int | None = None,
+        failure_reason: str | None = None,
     ) -> None:
         if type(stage) is not str or stage not in CLI_LEADER_FAILURE_STAGES:
             raise ValueError("invalid CLI Leader failure stage")
@@ -223,8 +228,26 @@ class CliLeaderProviderError(RuntimeError):
         object.__setattr__(self, "diagnostic_code", diagnostic_code)
         object.__setattr__(self, "attempt_count", attempt_count)
         object.__setattr__(self, "constraint_mode", constraint_mode)
+        if exit_code is not None and (
+            type(exit_code) is not int or isinstance(exit_code, bool)
+        ):
+            raise ValueError("invalid CLI Leader exit code")
+        if failure_reason is not None and failure_reason not in CLI_FAILURE_REASONS:
+            raise ValueError("invalid CLI Leader failure reason")
         object.__setattr__(self, "retryable", retryable)
-        super().__init__(f"CLI Leader planning failed at stage: {stage}")
+        object.__setattr__(self, "exit_code", exit_code)
+        object.__setattr__(self, "failure_reason", failure_reason)
+        # 诊断后缀只含**我们自己的**闭合枚举码与进程退出码(进程事实),
+        # 绝不含任何 provider 输出片段。
+        detail = ""
+        if exit_code is not None or failure_reason is not None:
+            parts = []
+            if exit_code is not None:
+                parts.append(f"exit={exit_code}")
+            if failure_reason is not None:
+                parts.append(f"reason={failure_reason}")
+            detail = " (" + ", ".join(parts) + ")"
+        super().__init__(f"CLI Leader planning failed at stage: {stage}{detail}")
         object.__setattr__(self, "_metadata_frozen", True)
 
     def __setattr__(self, name: str, value: object) -> None:
@@ -239,6 +262,8 @@ class CliLeaderProviderError(RuntimeError):
             attempt_count=attempt_count,
             constraint_mode=self.constraint_mode,
             retryable=self.retryable,
+            exit_code=self.exit_code,
+            failure_reason=self.failure_reason,
         )
 
     def without_retry(self) -> CliLeaderProviderError:
@@ -248,6 +273,8 @@ class CliLeaderProviderError(RuntimeError):
             attempt_count=self.attempt_count,
             constraint_mode=self.constraint_mode,
             retryable=False,
+            exit_code=self.exit_code,
+            failure_reason=self.failure_reason,
         )
 
 
@@ -319,7 +346,13 @@ class CliLeaderProvider:
         except OSError:
             raise CliLeaderProviderError("nonzero") from None
         if result.returncode != 0:
-            raise CliLeaderProviderError("nonzero")
+            # 诊断:退出码是进程事实;reason 是闭合枚举码(解析→分类→丢弃
+            # 原文),二者都不含 provider 输出片段。
+            raise CliLeaderProviderError(
+                "nonzero",
+                exit_code=result.returncode,
+                failure_reason=classify_cli_failure(result.stdout, result.stderr),
+            )
         if len(result.stdout.encode("utf-8")) > MAX_CLI_LEADER_OUTPUT_BYTES:
             raise CliLeaderProviderError("oversize")
         try:
@@ -354,7 +387,13 @@ class CliLeaderProvider:
         if result is None:
             raise CliLeaderProviderError("nonzero")
         if result.returncode != 0:
-            raise CliLeaderProviderError("nonzero")
+            # 诊断:退出码是进程事实;reason 是闭合枚举码(解析→分类→丢弃
+            # 原文),二者都不含 provider 输出片段。
+            raise CliLeaderProviderError(
+                "nonzero",
+                exit_code=result.returncode,
+                failure_reason=classify_cli_failure(result.stdout, result.stderr),
+            )
         if len(result.stdout.encode("utf-8")) > MAX_CLI_LEADER_OUTPUT_BYTES:
             raise CliLeaderProviderError("oversize")
         return LeaderPlanResult(
@@ -450,6 +489,8 @@ class CliLeaderProvider:
                     error.diagnostic_code,
                     constraint_mode=self.constraint_mode,
                     retryable=error.retryable,
+                    exit_code=error.exit_code,
+                    failure_reason=error.failure_reason,
                 ).with_attempt_count(attempt)
             else:
                 completed_at = time.monotonic()
@@ -747,7 +788,9 @@ class CodexCliProvider(CliLeaderProvider):
             returncode = completed.returncode
             del completed
             if returncode != 0:
-                raise CliLeaderProviderError("nonzero")
+                # 该路径 stdout/stderr 走 DEVNULL(plan 从私有文件读取),
+                # 没有可分类的输出——只记进程退出码,绝不臆测 reason。
+                raise CliLeaderProviderError("nonzero", exit_code=returncode)
             plan = self._read_native_plan(result_path, request)
         except CliLeaderProviderError as error:
             pending_error = error
@@ -1119,7 +1162,11 @@ class ClaudeCliProvider(CliLeaderProvider):
                     and completed is not None
                     and completed.returncode != 0
                 ):
-                    process_error = CliLeaderProviderError("nonzero")
+                    # 该路径 stdout/stderr 走 DEVNULL/私有文件,没有可分类的
+                    # 输出——只记进程退出码,绝不臆测 reason。
+                    process_error = CliLeaderProviderError(
+                        "nonzero", exit_code=completed.returncode
+                    )
                 if process_error is None:
                     try:
                         payload = self._capture_private_output(output)

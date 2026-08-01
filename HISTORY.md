@@ -4,6 +4,37 @@
 
 ## 2026-08-01
 
+### Classify CLI Leader failures into a closed reason enum (round 14 finding)
+
+- **Type**: feat
+- **Motivation**: round 14 live 发现——`[leader.orchestrator] = claude-cli`
+  连续失败,审计里只有 `CLI Leader planning failed at stage: nonzero`,
+  操作者无从判断是额度耗尽、未登录还是模型不存在。实测本地 claude CLI:
+  **exit=1**,原因文本 "You're out of usage credits…" 在 **stdout**。
+  真实原因躺在 provider 输出里,而安全边界禁止留存那些文本。
+- **What**: 新纯模块 `providers/cli_failure.py` 沿用本项目已验证的授权框
+  提取器模式(**解析 → 分类 → 丢弃原文**):闭合枚举
+  `credits_exhausted/auth_required/model_unavailable/rate_limited/unknown`
+  + 小而具体的公开措辞 allowlist + 有界扫描(4096 字符),只返回枚举码,
+  **永不回传任何 provider 文本**。`CliLeaderProviderError` 增
+  `exit_code`(进程事实)与 `failure_reason`(闭合枚举,非法值拒绝),
+  消息后缀只含我们自己的码(`(exit=1, reason=credits_exhausted)`)。
+  接线遵循**能分类才分类**:`plan_brief`(capture_output 路径)带 reason;
+  两个具体 provider 的 planning 路径把 stdout/stderr 丢给 DEVNULL(plan
+  从私有文件读),**没有可分类的输出——只记退出码,绝不臆测 reason**。
+  审计事件 `leader_provider_failed` 同步这两个字段。
+  顺带修掉三处**错误重建时静默丢字段**(`with_attempt_count` /
+  `without_retry` / 重试循环的 `safe_error`)——与今天配置回写那刀同类
+  的"重建即丢信息"缺陷。
+- **Impact**: CLI Leader 失败首次具备可机读原因;安全边界不变(不留存
+  provider 输出、不改重试/回落/gate 行为)。
+- **Verification**: TDD——分类器矩阵(含真实观测的额度措辞)、不泄漏
+  原文、有界扫描、非法 reason 拒绝、brief 路径带 reason、planning 路径
+  只带退出码共 18 passed;cli_failure+leader_cli+agent_cli+contracts
+  1164 passed 零回归;`compileall` 干净;全量见提交时数字。
+
+
+
 ### Round 14 live: review group core invariants confirmed (in progress)
 
 - **Type**: docs
