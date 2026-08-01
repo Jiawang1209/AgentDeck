@@ -30,6 +30,7 @@ def test_stopped_reasons_are_closed_enum() -> None:
         "policy_revoked",
         "signalled",
         "engine_error",
+        "human_gate",
     )
 
 
@@ -81,6 +82,12 @@ def test_append_host_log_is_jsonl_and_appends(tmp_path: Path) -> None:
     lines = host_log_path(tmp_path).read_text(encoding="utf-8").splitlines()
     assert len(lines) == 2
     assert [json.loads(line)["wave"] for line in lines] == [1, 2]
+
+
+def test_human_gate_is_a_closed_stopped_reason() -> None:
+    assert "human_gate" in RUN_LOOP_HOST_STOPPED_REASONS
+    assert len(RUN_LOOP_HOST_STOPPED_REASONS) == 6
+    assert len(set(RUN_LOOP_HOST_STOPPED_REASONS)) == 6
 
 
 def test_plan_awaiting_lists_dispatched_unreplied_approvals_for_this_plan_only() -> None:

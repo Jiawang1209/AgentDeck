@@ -24,6 +24,7 @@ RUN_LOOP_HOST_STOPPED_REASONS = (
     "policy_revoked",  # approval_mode 不再是 autonomous(远程刹车)
     "signalled",  # run-loop-host stop 的 SIGTERM 在本 wave 结束后被接受
     "engine_error",  # wave 引擎抛异常(只记异常类型)
+    "human_gate",  # 被等待的 worker 停在未委托授权框上(等待永不会自解)
 )
 
 

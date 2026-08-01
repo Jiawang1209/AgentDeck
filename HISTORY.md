@@ -4,6 +4,21 @@
 
 ## 2026-08-01
 
+### Add human_gate to the host stopped reason enum
+
+- **Type**: feat
+- **Motivation**: `stopped_reason=waiting_for_reply` 兼职了两种语义——"worker
+  在思考"(回复会自己到来)与"worker 停在人类门上"(回复永远不会自己到来)。
+  宿主需要一个独立的诚实值来表达后者。
+- **What**: `RUN_LOOP_HOST_STOPPED_REASONS`(`src/agentdeck/run_loop_host.py`
+  是单一来源)追加 `human_gate`,闭合枚举由五值变六值;既有硬编码该元组的
+  测试同步为六值(契约扩张,不是测试放宽)。
+- **Impact**: `agentdeck contract run-loop-host` 的 `stopped_reasons` 自动
+  多一个值(它直接投影同一元组),status validator 因此接受 `human_gate`。
+  尚无代码路径产出该值——接线在后续切片,本次纯枚举扩张。
+- **Verification**: 新增闭合枚举断言(先 FAIL 于 `'human_gate' not in ...`);
+  run-loop host + host CLI + contracts 566 passed。
+
 ### Carry the waiting hint on undelegated box skips
 
 - **Type**: feat
