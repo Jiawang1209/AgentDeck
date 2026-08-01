@@ -4,6 +4,23 @@
 
 ## 2026-08-01
 
+### Document the frontdesk contract rule in CLAUDE.md
+
+- **Type**: docs
+- **Motivation**: 实现者如实指出:每个 contract 在 CLAUDE.md 都有一条规则
+  bullet,唯独新增的 frontdesk 没有(它把这条列为"按仓库纪律欠着的")。
+- **What**: CLAUDE.md 补 frontdesk contract 规则:纯分类器位置与闭合路由
+  枚举、`agentdeck frontdesk` **纯只读**边界(连 config 都不加载,零写是
+  结构性的)、既有 8 个卡片字段逐字节冻结而 `candidates[]`/`route` 追加
+  在其后、confidence 三档与排序规则、**`route` 可与 `next_command` 不一致**
+  这一向后兼容既定结果、候选命令不是授权(占位符 control 必须 disabled)、
+  以及修改时必须同步的面。
+- **Impact**: 纯文档;契约面与代码不变。
+- **Verification**: frontdesk+contracts+agent_cli 968 passed;
+  `git diff --check` 干净。
+
+## 2026-08-01
+
 ### Add the read-only `agentdeck frontdesk` command and contract
 
 - **Type**: feat
