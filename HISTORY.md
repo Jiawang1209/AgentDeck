@@ -4,6 +4,25 @@
 
 ## 2026-08-01
 
+### Freeze the G6 role topology design spec
+
+- **Type**: docs
+- **Motivation**: user 授权"按北极星文件持续开发";G1–G5 均已落地,G6
+  Role Topology 是北极星最后一相。
+- **What**: 冻结 `docs/superpowers/specs/2026-08-01-g6-role-topology-design.md`。
+  设计支点是一个关键事实:北极星六个角色由**三种不同绑定方式**承载
+  (`command` / `logical_leader` / `worker_agent`),拍平成一张 agent 表就会
+  撒谎——它同时解释了为什么某些字段必然为 null。绑定全部从现有权威来源
+  推导(复用 `resolved_*_backend` 与 `leader_backend_identity`,不另写一份),
+  本切片不新增配置面;推导结果是闭合三态 `bound/unbound/ambiguous`,
+  歧义如实标注并列全候选,**绝不静默择一**。交付三面:`agentdeck roles`
+  独立只读命令、workbench `role_topology_card`、第 44 个契约。
+- **Impact**: 纯文档;零代码改动。明确了 `role_card`(我配了哪些 agent)与
+  `role_topology_card`(我补全了哪几层)的分工,后者不新增状态源。
+- **Verification**: 设计对照 roadmap G6 验收标准逐条;绑定来源与回退规则
+  对照 `config.py` 的 `resolved_planner_backend` / `_resolved_subrole_backend`
+  / `ReviewConfig` 实际解析核过。
+
 ### Re-verify the human-gate live path after the tightening
 
 - **Type**: docs
