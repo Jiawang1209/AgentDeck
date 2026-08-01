@@ -4,6 +4,23 @@
 
 ## 2026-08-01
 
+### Live-verify the host human-gate stop
+
+- **Type**: docs
+- **Motivation**: 人类门停止的所有验证此前都是单元级;而 Round 14 现场正好
+  留着一个真实的人类门(planner 停在未委托的 Playwright 框上,项目零活跃
+  委托),是这个功能的天然验证场。
+- **What**: 在 scratch 项目对同一个 plan、同一道框重跑一台
+  `--release-boxes` 宿主;证据落
+  `docs/validation/2026-08-01-host-human-gate-live.md`。
+- **Impact**: 纯文档;零代码改动。
+- **Verification**: 同场景对照——旧行为烧满 300 wave / 2h29m /
+  `budget_exhausted` 且人一无所知,新行为 **wave 1 / ~7s /
+  `human_gate`** 并带出 agent、命令原文与屏上提示;status、host.log、
+  `run_loop_host_stopped` 审计三面逐字段一致;安全边界现场核验通过——
+  零 `auth_box_released`(绝不代按,框仍原封不动),wave payload 自身仍
+  如实报 `waiting_for_reply`(引擎未动)。
+
 ### Document the host human-gate stop
 
 - **Type**: docs
