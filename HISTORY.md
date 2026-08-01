@@ -4,6 +4,47 @@
 
 ## 2026-08-01
 
+### Land `agentdeck goal preview` and the goal contract
+
+- **Type**: feat
+- **Motivation**: 自主度梯子(ask → approve → autonomous → run-loop → --follow
+  → run-loop-host)每一档都已落地,但没有一处以梯子的形式呈现:爬到顶格要写
+  四条命令九个标志,`plan_id` 还得人肉从上一条输出抄到下两条。按冻结 spec
+  的原则**压缩确认、不去掉确认**,第一刀先给出"一次信息完整的确认"的前半段。
+- **What**: 新增 `agentdeck goal preview --task <text>`,复用
+  `_generate_leader_plan` + `store.record_plan`(与 `leader plan` 同一条路径,
+  不新增规划面)产出 plan,并把整段将要发生的授权一次性摊开:计划步骤、
+  预算(wave/interval/返工轮次/审批预算)、活跃委托摘要、合并策略与闭合的
+  "停下来找你的条件"。默认输出是人类可读渲染(渐进式披露),`--json` 才给
+  完整 payload,两条路径同一份数据。契约层新增
+  `GOAL_PREVIEW_RESPONSE_FIELDS` / `GOAL_PREVIEW_STEP_FIELDS` /
+  `GOAL_PREVIEW_BUDGET_FIELDS` / `GOAL_PREVIEW_DELEGATION_FIELDS` /
+  `GOAL_PREVIEW_STOP_CONDITION_FIELDS` / `GOAL_STOP_CONDITION_KINDS` /
+  `GOAL_CONTROL_FIELDS`、`validate_goal_preview_contract()`、example 与
+  `agentdeck contract goal` 发现入口,并写入 `docs/contracts/goal-schema.md`。
+  缺省值按 user 拍板:`--max-waves` 缺省 300(单一来源常量
+  `GOAL_DEFAULT_MAX_WAVES`,`max_waves_is_default` 让渲染层打出"↑ 缺省值,
+  可用 --max-waves 改"——数可以来自缺省,但绝不能隐形)、`--release-boxes`
+  默认开、`--merge-on-complete` 默认关。`delegation list` 的数据源抽成
+  `_delegation_list_items()` 单一来源供 preview 复用,不另查一遍。
+- **Impact**: 契约索引 44 → 45(新增 `goal`,追加在 `role-bindings` 之后),
+  两处顺序名单断言同步扩张且保持同样严格。**最重要的边界:`goal preview`
+  绝不代人翻 `approval_mode`**——非 autonomous 项目只返回非空 `blocker`
+  (内含显式 `agentdeck policy set-mode --mode autonomous --confirm
+  --allow-agent <id> --max-approvals <N>`)、`confirm_command` 为 `null`、
+  next control disabled,并且不创建任何 approval、不改配置、不启动宿主;
+  validator 硬拒"blocker 非空却仍给 confirm_command"的 payload。preview 写
+  plan 但不批准、不派发、不读 tmux、不发送输入。`delegations[]` 只是展示,
+  不是授权。既有 `leader plan` / `approval approve-plan` /
+  `run-loop-host start` 行为逐字节未动。
+- **Verification**: 新建 `tests/test_goal_cli.py`(8 项,先红后绿:缺省摊开
+  与零 approval、显式 `--max-waves` 非缺省、`--merge-on-complete` /
+  `--no-release-boxes` 透传与终点切换、非 autonomous 只报 blocker 且配置未变、
+  默认渲染非 JSON 且与 `--json` 同源、委托只读展示、validator 拒绝
+  blocker+confirm_command、contract 发现);
+  `pytest tests/test_goal_cli.py tests/test_contracts.py tests/test_agent_cli.py -q`
+  → 947 passed。
+
 ### Freeze the goal one-shot walkaway design and plan
 
 - **Type**: docs

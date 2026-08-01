@@ -337,6 +337,12 @@ CONTRACT_INDEX_SPECS = (
         "agentdeck contract role-bindings --example",
         "role-bindings-schema.md",
     ),
+    (
+        "goal",
+        "agentdeck contract goal",
+        "agentdeck contract goal --example",
+        "goal-schema.md",
+    ),
 )
 
 
@@ -8158,6 +8164,394 @@ def run_loop_host_contract_response(
             "start": run_loop_host_start_example(),
             "status": run_loop_host_status_example(),
             "stop": run_loop_host_stop_example(),
+        }
+    return payload
+
+
+GOAL_DEFAULT_MAX_WAVES = 300
+"""缺省 wave 上限的单一来源。
+
+宿主"强制有界、无 unbounded 形态"这条冻结不变量不受影响——`goal` 永远带着
+一个具体的 wave 上限进入宿主,只是这个数可以来自缺省而不是手输。缺省值必须
+在 preview 里连同"可用 --max-waves 改"一起印出来:数可以来自缺省,但绝不
+能隐形。
+"""
+
+GOAL_PREVIEW_RESPONSE_FIELDS = (
+    "ok",
+    "mode",
+    "task",
+    "plan_id",
+    "step_count",
+    "steps",
+    "budget",
+    "delegations",
+    "merge_on_complete",
+    "release_boxes",
+    "stop_conditions",
+    "blocker",
+    "confirm_command",
+    "requires_explicit_user",
+    "safety",
+    "controls",
+)
+
+GOAL_PREVIEW_STEP_FIELDS = ("step", "agent_id", "role", "task")
+
+GOAL_PREVIEW_BUDGET_FIELDS = (
+    "max_waves",
+    "max_waves_is_default",
+    "interval",
+    "max_review_rounds",
+    "max_approvals",
+)
+
+GOAL_PREVIEW_DELEGATION_FIELDS = (
+    "delegation_id",
+    "agent_id",
+    "kind",
+    "prefix",
+    "mcp_server",
+    "mcp_tool",
+)
+
+GOAL_PREVIEW_STOP_CONDITION_FIELDS = ("kind", "summary")
+
+GOAL_CONTROL_FIELDS = ("kind", "label", "command", "safety", "enabled", "blocker")
+
+GOAL_STOP_CONDITION_KINDS = (
+    "review_passed_awaiting_merge",
+    "review_passed_merged",
+    "human_gate",
+    "review_budget_exhausted",
+    "approval_outside_allowlist",
+    "wave_budget_exhausted",
+)
+
+# 缺省下的正常终点是"复审通过,待你合并";显式 --merge-on-complete 时它换成
+# "复审通过并已合并"。其余四条无论如何都必须出现在 preview 里。
+GOAL_REQUIRED_STOP_CONDITION_KINDS = (
+    "human_gate",
+    "review_budget_exhausted",
+    "approval_outside_allowlist",
+    "wave_budget_exhausted",
+)
+
+GOAL_START_RESPONSE_FIELDS = (
+    "ok",
+    "mode",
+    "plan_id",
+    "approved_count",
+    "host_pid",
+    "max_waves",
+    "interval",
+    "release_boxes",
+    "merge_on_complete",
+    "status_command",
+    "stop_command",
+    "next_command",
+    "requires_explicit_user",
+    "safety",
+)
+
+
+def _validate_goal_controls(controls: object, label: str) -> list[str]:
+    errors: list[str] = []
+    if not isinstance(controls, list):
+        return [f"{label}.controls must be a list"]
+    for index, control in enumerate(controls):
+        if not isinstance(control, dict):
+            errors.append(f"{label}.controls[{index}] must be an object")
+            continue
+        errors.extend(
+            f"missing {label}.controls[{index}] field: {field}"
+            for field in GOAL_CONTROL_FIELDS
+            if field not in control
+        )
+        if control.get("kind") == "inspect" and control.get("safety") != "inspect":
+            errors.append(f"{label}.controls[{index}] inspect control must be safety=inspect")
+        if control.get("enabled") is False and not control.get("blocker"):
+            errors.append(f"{label}.controls[{index}] disabled control must carry a blocker")
+    return errors
+
+
+def validate_goal_preview_contract(payload: dict[str, object]) -> dict[str, object]:
+    """守门 `agentdeck goal preview` 的响应。
+
+    最重要的一条:`blocker` 非空时 `confirm_command` 必须是 null——preview
+    绝不在缺 autonomous 模式时递出一条可以直接执行的确认命令。
+    """
+    errors = _validate_fields(payload, GOAL_PREVIEW_RESPONSE_FIELDS, "goal_preview")
+    if payload.get("mode") != "goal_preview":
+        errors.append(f"goal_preview.mode must be goal_preview, got {payload.get('mode')}")
+    if payload.get("safety") != "explicit_user":
+        errors.append("goal_preview.safety must be explicit_user")
+    if payload.get("requires_explicit_user") is not True:
+        errors.append("goal_preview.requires_explicit_user must be true")
+    for flag in ("release_boxes", "merge_on_complete"):
+        if not isinstance(payload.get(flag), bool):
+            errors.append(f"goal_preview.{flag} must be a bool")
+
+    steps = payload.get("steps")
+    if not isinstance(steps, list) or not steps:
+        errors.append("goal_preview.steps must be a non-empty list")
+    else:
+        for index, step in enumerate(steps):
+            if not isinstance(step, dict):
+                errors.append(f"goal_preview.steps[{index}] must be an object")
+                continue
+            errors.extend(
+                f"missing goal_preview.steps[{index}] field: {field}"
+                for field in GOAL_PREVIEW_STEP_FIELDS
+                if field not in step
+            )
+        if payload.get("step_count") != len(steps):
+            errors.append("goal_preview.step_count must match len(steps)")
+
+    budget = payload.get("budget")
+    if not isinstance(budget, dict):
+        errors.append("goal_preview.budget must be an object")
+    else:
+        errors.extend(
+            f"missing goal_preview.budget field: {field}"
+            for field in GOAL_PREVIEW_BUDGET_FIELDS
+            if field not in budget
+        )
+        max_waves = budget.get("max_waves")
+        if not isinstance(max_waves, int) or isinstance(max_waves, bool) or max_waves < 1:
+            errors.append("goal_preview.budget.max_waves must be an int >= 1")
+        if not isinstance(budget.get("max_waves_is_default"), bool):
+            errors.append("goal_preview.budget.max_waves_is_default must be a bool")
+
+    delegations = payload.get("delegations")
+    if not isinstance(delegations, list):
+        errors.append("goal_preview.delegations must be a list")
+    else:
+        for index, item in enumerate(delegations):
+            if not isinstance(item, dict):
+                errors.append(f"goal_preview.delegations[{index}] must be an object")
+                continue
+            errors.extend(
+                f"missing goal_preview.delegations[{index}] field: {field}"
+                for field in GOAL_PREVIEW_DELEGATION_FIELDS
+                if field not in item
+            )
+
+    conditions = payload.get("stop_conditions")
+    if not isinstance(conditions, list) or not conditions:
+        errors.append("goal_preview.stop_conditions must be a non-empty list")
+    else:
+        kinds: list[object] = []
+        for index, item in enumerate(conditions):
+            if not isinstance(item, dict):
+                errors.append(f"goal_preview.stop_conditions[{index}] must be an object")
+                continue
+            errors.extend(
+                f"missing goal_preview.stop_conditions[{index}] field: {field}"
+                for field in GOAL_PREVIEW_STOP_CONDITION_FIELDS
+                if field not in item
+            )
+            kind = item.get("kind")
+            kinds.append(kind)
+            if kind not in GOAL_STOP_CONDITION_KINDS:
+                errors.append(
+                    f"goal_preview.stop_conditions[{index}].kind must be one of "
+                    f"{list(GOAL_STOP_CONDITION_KINDS)}"
+                )
+        if len(kinds) != len(set(kinds)):
+            errors.append("goal_preview.stop_conditions kinds must be unique")
+        missing = [kind for kind in GOAL_REQUIRED_STOP_CONDITION_KINDS if kind not in kinds]
+        if missing:
+            errors.append(f"goal_preview.stop_conditions is missing required kinds: {missing}")
+        merged = "review_passed_merged" in kinds
+        awaiting = "review_passed_awaiting_merge" in kinds
+        if merged == awaiting:
+            errors.append(
+                "goal_preview.stop_conditions must carry exactly one review_passed_* terminal"
+            )
+        if payload.get("merge_on_complete") is True and not merged:
+            errors.append(
+                "goal_preview.stop_conditions must use review_passed_merged when "
+                "merge_on_complete is true"
+            )
+        if payload.get("merge_on_complete") is False and not awaiting:
+            errors.append(
+                "goal_preview.stop_conditions must use review_passed_awaiting_merge when "
+                "merge_on_complete is false"
+            )
+
+    blocker = payload.get("blocker")
+    confirm_command = payload.get("confirm_command")
+    if blocker:
+        if confirm_command is not None:
+            errors.append(
+                "goal_preview.confirm_command must be null while a blocker is present"
+            )
+    elif not isinstance(confirm_command, str) or not confirm_command.strip():
+        errors.append("goal_preview.confirm_command must be a non-empty string without a blocker")
+
+    errors.extend(_validate_goal_controls(payload.get("controls"), "goal_preview"))
+    return {"ok": not errors, "errors": errors}
+
+
+def validate_goal_start_contract(payload: dict[str, object]) -> dict[str, object]:
+    errors = _validate_fields(payload, GOAL_START_RESPONSE_FIELDS, "goal_start")
+    if payload.get("mode") != "goal_start":
+        errors.append(f"goal_start.mode must be goal_start, got {payload.get('mode')}")
+    if payload.get("safety") != "delegated":
+        errors.append("goal_start.safety must be delegated")
+    if payload.get("requires_explicit_user") is not True:
+        errors.append("goal_start.requires_explicit_user must be true")
+    max_waves = payload.get("max_waves")
+    if not isinstance(max_waves, int) or isinstance(max_waves, bool) or max_waves < 1:
+        errors.append("goal_start.max_waves must be an int >= 1")
+    approved = payload.get("approved_count")
+    if not isinstance(approved, int) or isinstance(approved, bool) or approved < 0:
+        errors.append("goal_start.approved_count must be an int >= 0")
+    for flag in ("release_boxes", "merge_on_complete"):
+        if not isinstance(payload.get(flag), bool):
+            errors.append(f"goal_start.{flag} must be a bool")
+    return {"ok": not errors, "errors": errors}
+
+
+def goal_preview_example() -> dict[str, object]:
+    """A stable preview example; never live state."""
+    return {
+        "ok": True,
+        "mode": "goal_preview",
+        "task": "把测试跑绿并补上缺失的用例",
+        "plan_id": "pln_example",
+        "step_count": 2,
+        "steps": [
+            {"step": 1, "agent_id": "coder", "role": "implementation", "task": "实现并自测"},
+            {"step": 2, "agent_id": "reviewer", "role": "review", "task": "审查实现与测试"},
+        ],
+        "budget": {
+            "max_waves": GOAL_DEFAULT_MAX_WAVES,
+            "max_waves_is_default": True,
+            "interval": 10.0,
+            "max_review_rounds": 2,
+            "max_approvals": 20,
+        },
+        "delegations": [
+            {
+                "delegation_id": "dlg_example",
+                "agent_id": "coder",
+                "kind": "command_prefix",
+                "prefix": "node tests/",
+                "mcp_server": None,
+                "mcp_tool": None,
+            }
+        ],
+        "merge_on_complete": False,
+        "release_boxes": True,
+        "stop_conditions": [
+            {
+                "kind": "review_passed_awaiting_merge",
+                "summary": "复审通过,停下来等你合并(显式 --merge-on-complete 才自动合并)",
+            },
+            {"kind": "human_gate", "summary": "遇到未委托的授权框,停下来等你按"},
+            {"kind": "review_budget_exhausted", "summary": "复审预算耗尽而仍未通过"},
+            {"kind": "approval_outside_allowlist", "summary": "白名单外的 agent 需要审批"},
+            {"kind": "wave_budget_exhausted", "summary": "wave 上限用尽"},
+        ],
+        "blocker": None,
+        "confirm_command": (
+            "agentdeck goal start --plan-id pln_example --confirm "
+            f"--max-waves {GOAL_DEFAULT_MAX_WAVES}"
+        ),
+        "requires_explicit_user": True,
+        "safety": "explicit_user",
+        "controls": [
+            {
+                "kind": "next",
+                "label": "Start the walk-away run",
+                "command": (
+                    "agentdeck goal start --plan-id pln_example --confirm "
+                    f"--max-waves {GOAL_DEFAULT_MAX_WAVES}"
+                ),
+                "safety": "delegated",
+                "enabled": True,
+                "blocker": None,
+            },
+            {
+                "kind": "inspect",
+                "label": "Inspect plan",
+                "command": "agentdeck plan status --plan-id pln_example",
+                "safety": "inspect",
+                "enabled": True,
+                "blocker": None,
+            },
+        ],
+    }
+
+
+def goal_start_example() -> dict[str, object]:
+    return {
+        "ok": True,
+        "mode": "goal_start",
+        "plan_id": "pln_example",
+        "approved_count": 2,
+        "host_pid": 43121,
+        "max_waves": GOAL_DEFAULT_MAX_WAVES,
+        "interval": 10.0,
+        "release_boxes": True,
+        "merge_on_complete": False,
+        "status_command": "agentdeck run-loop-host status",
+        "stop_command": "agentdeck run-loop-host stop --confirm",
+        "next_command": "agentdeck run-loop-host status",
+        "requires_explicit_user": True,
+        "safety": "delegated",
+    }
+
+
+def goal_contract_payload(contract_path: Path) -> dict[str, object]:
+    return {
+        "schema_version": PROJECT_VIEW_SCHEMA_VERSION,
+        "name": "goal",
+        "preview_command_template": (
+            "agentdeck goal preview --task <text> [--max-waves <n>] [--interval <seconds>]"
+            " [--merge-on-complete] [--no-release-boxes] [--json]"
+        ),
+        "start_command_template": (
+            "agentdeck goal start --plan-id <plan_id> --confirm [--max-waves <n>]"
+            " [--interval <seconds>] [--merge-on-complete] [--no-release-boxes] [--json]"
+        ),
+        "contract_path": str(contract_path),
+        "contract_exists": contract_path.exists(),
+        "preview_response_fields": list(GOAL_PREVIEW_RESPONSE_FIELDS),
+        "preview_step_fields": list(GOAL_PREVIEW_STEP_FIELDS),
+        "preview_budget_fields": list(GOAL_PREVIEW_BUDGET_FIELDS),
+        "preview_delegation_fields": list(GOAL_PREVIEW_DELEGATION_FIELDS),
+        "preview_stop_condition_fields": list(GOAL_PREVIEW_STOP_CONDITION_FIELDS),
+        "stop_condition_kinds": list(GOAL_STOP_CONDITION_KINDS),
+        "required_stop_condition_kinds": list(GOAL_REQUIRED_STOP_CONDITION_KINDS),
+        "start_response_fields": list(GOAL_START_RESPONSE_FIELDS),
+        "control_fields": list(GOAL_CONTROL_FIELDS),
+        "default_max_waves": GOAL_DEFAULT_MAX_WAVES,
+        "default_release_boxes": True,
+        "default_merge_on_complete": False,
+        # `goal` 不新增任何一种动作:它只是这三条既有命令的调用方。
+        "reused_commands": [
+            "agentdeck leader plan --task <text>",
+            "agentdeck approval approve-plan --plan-id <plan_id> --confirm",
+            "agentdeck run-loop-host start --plan-id <plan_id> --confirm --max-waves <n>",
+        ],
+        "run_loop_host_contract": "agentdeck contract run-loop-host",
+        "approvals_contract": "agentdeck contract approvals",
+        "delegation_contract": "agentdeck contract delegation",
+        "project_view_schema_version": PROJECT_VIEW_SCHEMA_VERSION,
+    }
+
+
+def goal_contract_response(
+    contract_path: Path, include_example: bool = False
+) -> dict[str, object]:
+    payload = goal_contract_payload(contract_path)
+    if include_example:
+        payload["example"] = {
+            "preview": goal_preview_example(),
+            "start": goal_start_example(),
         }
     return payload
 

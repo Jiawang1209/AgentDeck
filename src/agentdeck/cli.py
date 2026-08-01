@@ -64,6 +64,10 @@ from .contracts import (
     demo_contract_response,
     doctor_contract_response,
     events_contract_response,
+    goal_contract_response,
+    GOAL_DEFAULT_MAX_WAVES,
+    validate_goal_preview_contract,
+    validate_goal_start_contract,
     inbox_contract_response,
     leader_actions_contract_response,
     leader_backend_contract_response,
@@ -6641,6 +6645,12 @@ def frontdesk_command(args: argparse.Namespace) -> int:
     return 0
 
 
+def contract_goal_command(args: argparse.Namespace) -> int:
+    contract_path = Path(__file__).resolve().parents[2] / "docs" / "contracts" / "goal-schema.md"
+    _print_json(goal_contract_response(contract_path, include_example=args.example))
+    return 0
+
+
 def contract_frontdesk_command(args: argparse.Namespace) -> int:
     contract_path = Path(__file__).resolve().parents[2] / "docs" / "contracts" / "frontdesk-schema.md"
     payload = frontdesk_contract_response(contract_path, include_example=args.example)
@@ -11086,12 +11096,9 @@ def delegation_grant_command(args: argparse.Namespace) -> int:
     return 0
 
 
-def delegation_list_command(_args: argparse.Namespace) -> int:
-    config, store, exit_code = _load_project_or_error()
-    if config is None or store is None:
-        return exit_code
-    state = store.load()
-    items = [
+def _delegation_list_items(store: StateStore) -> list[dict[str, object]]:
+    """`delegation list` 的数据源单一来源;其它只读面复用它,绝不另查一遍。"""
+    return [
         {
             **item,
             "kind": item.get("kind") or "command_prefix",
@@ -11099,9 +11106,16 @@ def delegation_list_command(_args: argparse.Namespace) -> int:
             "mcp_tool": item.get("mcp_tool"),
             "active": not item.get("revoked_at"),
         }
-        for item in state.get("delegations", [])
+        for item in store.load().get("delegations", [])
         if isinstance(item, dict)
     ]
+
+
+def delegation_list_command(_args: argparse.Namespace) -> int:
+    config, store, exit_code = _load_project_or_error()
+    if config is None or store is None:
+        return exit_code
+    items = _delegation_list_items(store)
     payload = {"ok": True, "mode": "delegation_list", "count": len(items), "items": items}
     validation = validate_delegation_list_contract(payload)
     if not validation["ok"]:
@@ -21524,6 +21538,275 @@ def run_loop_host_serve_command(args: argparse.Namespace) -> int:
     return 0
 
 
+# ---------------------------------------------------------------------------
+# `agentdeck goal`:把爬到自主度顶格的四条命令九个标志压成两步。
+#
+# `goal` **不新增任何一种动作**:preview 复用 `leader plan` 的规划路径,
+# start 依次调用 `approval approve-plan --confirm` 与
+# `run-loop-host start --confirm` 的既有实现(调用,不复制)。它不翻
+# `approval_mode`、不改配置、不新增委托、不代按授权框。
+# ---------------------------------------------------------------------------
+
+GOAL_AUTONOMOUS_BLOCKER = (
+    "autonomous mode is not enabled; run: agentdeck policy set-mode --mode autonomous "
+    "--confirm --allow-agent <id> --max-approvals <N>"
+)
+
+GOAL_POLICY_COMMAND_TEMPLATE = (
+    "agentdeck policy set-mode --mode autonomous --confirm "
+    "--allow-agent <id> --max-approvals <N>"
+)
+
+
+def _goal_budget_suffix(args: argparse.Namespace, max_waves: int) -> str:
+    """把本次 preview 的预算/开关原样固化进确认命令,确认绑定看过的那份。"""
+    parts = [f"--max-waves {max_waves}"]
+    if float(args.interval) != 10.0:
+        parts.append(f"--interval {args.interval:g}")
+    if args.merge_on_complete:
+        parts.append("--merge-on-complete")
+    if not args.release_boxes:
+        parts.append("--no-release-boxes")
+    return " ".join(parts)
+
+
+def _goal_stop_conditions(merge_on_complete: bool) -> list[dict[str, str]]:
+    """闭合的"停下来找你"清单;缺省下第一条就是正常终点。"""
+    terminal = (
+        {
+            "kind": "review_passed_merged",
+            "summary": "复审通过,并按 step 顺序合并该 plan 的任务分支",
+        }
+        if merge_on_complete
+        else {
+            "kind": "review_passed_awaiting_merge",
+            "summary": "复审通过,停下来等你合并(想自动合并显式加 --merge-on-complete)",
+        }
+    )
+    return [
+        terminal,
+        {"kind": "human_gate", "summary": "遇到未命中活跃委托的授权框,停下来等你按"},
+        {"kind": "review_budget_exhausted", "summary": "复审预算耗尽而仍未通过"},
+        {"kind": "approval_outside_allowlist", "summary": "白名单外的 agent 需要审批"},
+        {"kind": "wave_budget_exhausted", "summary": "wave 上限用尽"},
+    ]
+
+
+def _goal_active_delegations(store: StateStore) -> list[dict[str, object]]:
+    """当前活跃委托的 compact 摘要——只是展示,不是授权。"""
+    return [
+        {
+            "delegation_id": item.get("delegation_id"),
+            "agent_id": item.get("agent_id"),
+            "kind": item.get("kind"),
+            "prefix": item.get("prefix"),
+            "mcp_server": item.get("mcp_server"),
+            "mcp_tool": item.get("mcp_tool"),
+        }
+        for item in _delegation_list_items(store)
+        if item.get("active")
+    ]
+
+
+def _goal_preview_payload(
+    config: ProjectConfig,
+    store: StateStore,
+    args: argparse.Namespace,
+    record: dict[str, object],
+) -> dict[str, object]:
+    plan_id = str(record["plan_id"])
+    plan = record.get("plan") if isinstance(record.get("plan"), dict) else {}
+    steps = [
+        {
+            "step": step.get("step"),
+            "agent_id": step.get("agent_id"),
+            "role": step.get("role"),
+            "task": step.get("task"),
+        }
+        for step in (plan or {}).get("steps", [])
+        if isinstance(step, dict)
+    ]
+    max_waves_is_default = args.max_waves is None
+    max_waves = GOAL_DEFAULT_MAX_WAVES if max_waves_is_default else int(args.max_waves)
+    merge_on_complete = bool(args.merge_on_complete)
+    release_boxes = bool(args.release_boxes)
+    # `goal` 绝不代人翻 approval_mode:它是长期策略,不是一次目标的附属决定。
+    blocker = None if config.leader.approval_mode == "autonomous" else GOAL_AUTONOMOUS_BLOCKER
+    confirm_command = (
+        None
+        if blocker
+        else f"agentdeck goal start --plan-id {plan_id} --confirm "
+        + _goal_budget_suffix(args, max_waves)
+    )
+    controls: list[dict[str, object]] = [
+        {
+            "kind": "next",
+            "label": "Start the walk-away run",
+            "command": confirm_command,
+            "safety": "delegated",
+            "enabled": blocker is None,
+            "blocker": blocker,
+        },
+        {
+            "kind": "inspect",
+            "label": "Inspect plan",
+            "command": f"agentdeck plan status --plan-id {plan_id}",
+            "safety": "inspect",
+            "enabled": True,
+            "blocker": None,
+        },
+    ]
+    if blocker:
+        controls.append(
+            {
+                "kind": "set_mode",
+                "label": "Enable autonomous mode",
+                "command": GOAL_POLICY_COMMAND_TEMPLATE,
+                "safety": "explicit_user",
+                "enabled": False,
+                "blocker": "requires --allow-agent and --max-approvals",
+            }
+        )
+    return {
+        "ok": True,
+        "mode": "goal_preview",
+        "task": str(args.task),
+        "plan_id": plan_id,
+        "step_count": len(steps),
+        "steps": steps,
+        "budget": {
+            "max_waves": max_waves,
+            "max_waves_is_default": max_waves_is_default,
+            "interval": float(args.interval),
+            "max_review_rounds": int(config.autonomous.max_review_rounds),
+            "max_approvals": int(config.autonomous.max_approvals),
+        },
+        "delegations": _goal_active_delegations(store),
+        "merge_on_complete": merge_on_complete,
+        "release_boxes": release_boxes,
+        "stop_conditions": _goal_stop_conditions(merge_on_complete),
+        "blocker": blocker,
+        "confirm_command": confirm_command,
+        "requires_explicit_user": True,
+        "safety": "explicit_user",
+        "controls": controls,
+    }
+
+
+def _goal_truncate(text: object, limit: int = 46) -> str:
+    value = " ".join(str(text or "").split())
+    return value if len(value) <= limit else value[: limit - 1] + "…"
+
+
+def _render_goal_preview(payload: dict[str, object]) -> str:
+    """渐进式披露:默认给一句话 + 一个下一步,而不是 JSON 倾泻。
+
+    与 `--json` 同一份数据——本函数只读 payload,不另查任何来源。
+    """
+    steps = payload["steps"]
+    budget = payload["budget"]
+    width = max((len(str(step["agent_id"])) for step in steps), default=0)
+    lines = [
+        "将要授权:",
+        f"  计划    {payload['plan_id']}  ({payload['step_count']} 步)",
+    ]
+    for step in steps:
+        agent = str(step["agent_id"]).ljust(width)
+        lines.append(f"    {step['step']}. {agent}  {_goal_truncate(step['task'])}")
+    lines.append(
+        f"  预算    {budget['max_waves']} wave / 每 {budget['interval']:g}s 一轮 / "
+        f"最多 {budget['max_review_rounds']} 轮返工 / 审批预算 {budget['max_approvals']}"
+    )
+    if budget["max_waves_is_default"]:
+        lines.append("          ↑ wave 上限为缺省值,可用 --max-waves 改")
+    delegations = payload["delegations"]
+    if delegations:
+        shown = ", ".join(
+            str(item["prefix"])
+            if item.get("kind") != "mcp_tool"
+            else f"MCP {item.get('mcp_server')}/{item.get('mcp_tool')}"
+            for item in delegations
+        )
+        released = "遇到即自动放行" if payload["release_boxes"] else "本次不自动放行(--no-release-boxes)"
+        lines.append(f"  委托    {shown}  ({len(delegations)} 条活跃委托,{released})")
+    else:
+        lines.append("  委托    无活跃委托——遇到授权框一律停下来找你")
+    if payload["merge_on_complete"]:
+        lines.append("  合并    复审通过后自动合并该 plan 的任务分支")
+    else:
+        lines.append("  合并    不自动合并——复审通过后停下来等你点头")
+        lines.append("          (想要自动合并显式加 --merge-on-complete)")
+    lines.append("  停下来找你的条件:")
+    lines.extend(f"    · {item['summary']}" for item in payload["stop_conditions"])
+    lines.append("")
+    if payload["confirm_command"]:
+        lines.append("确认后执行:")
+        lines.append(f"  {payload['confirm_command']}")
+    else:
+        lines.append("暂时无法确认:")
+        lines.append(f"  {payload['blocker']}")
+    return "\n".join(lines)
+
+
+def goal_preview_command(args: argparse.Namespace) -> int:
+    """规划一次走开式运行并摊开整段将要发生的授权(写 plan,不执行)。"""
+    config, store, exit_code = _load_project_or_error()
+    if config is None or store is None:
+        return exit_code
+    if args.max_waves is not None and args.max_waves < 1:
+        print("goal preview requires --max-waves >= 1", file=sys.stderr)
+        return 1
+    skill_context = _leader_skill_context(config, store)
+    try:
+        plan, record_provider, record_model, split_provenance = _generate_leader_plan(
+            config,
+            store,
+            task=args.task,
+            provider_override=None,
+            model_override=None,
+            skill_context=skill_context,
+            source="goal_preview",
+        )
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    except RuntimeError as exc:
+        print(f"leader provider failed: {exc}", file=sys.stderr)
+        return 1
+    record = store.record_plan(
+        args.task,
+        record_provider,
+        record_model,
+        plan,
+        skill_context=skill_context,
+        split_provenance=split_provenance,
+    )
+    store.append_event(
+        EventRecord.create(
+            "leader_plan_created",
+            {
+                "plan_id": record["plan_id"],
+                "provider": record["provider"],
+                "model": record["model"],
+                "task_length": len(args.task),
+                "source": "goal_preview",
+            },
+        )
+    )
+    payload = _goal_preview_payload(config, store, args, record)
+    validation = validate_goal_preview_contract(payload)
+    if not validation["ok"]:
+        print("goal preview contract validation failed", file=sys.stderr)
+        for error in validation["errors"]:
+            print(f"- {error}", file=sys.stderr)
+        return 1
+    if args.json:
+        _print_json(payload)
+    else:
+        print(_render_goal_preview(payload))
+    return 0
+
+
 def run_loop_command(args: argparse.Namespace) -> int:
     config, store, exit_code = _load_project_or_error()
     if config is None or store is None:
@@ -21967,6 +22250,39 @@ def build_parser() -> argparse.ArgumentParser:
         help="Override [autonomous] max_review_rounds for this run (0 disables iteration)",
     )
     run_loop.set_defaults(func=run_loop_command)
+
+    goal = subparsers.add_parser(
+        "goal",
+        help="Preview and confirm one walk-away run (plan → approve → background host)",
+    )
+    goal_subparsers = goal.add_subparsers(dest="goal_command", required=True)
+    goal_preview = goal_subparsers.add_parser(
+        "preview", help="Plan one goal and lay out the whole authorization (writes a plan only)"
+    )
+    goal_preview.add_argument("--task", required=True, help="What you want done, in one sentence")
+    goal_preview.add_argument(
+        "--max-waves",
+        type=int,
+        default=None,
+        help=f"Bounded wave budget (default {GOAL_DEFAULT_MAX_WAVES}, always shown in the preview)",
+    )
+    goal_preview.add_argument("--interval", type=float, default=10.0, help="Seconds between waves")
+    goal_preview.add_argument(
+        "--merge-on-complete",
+        dest="merge_on_complete",
+        action="store_true",
+        help="Merge the plan's task branches when the final gate is complete (default off)",
+    )
+    goal_preview.add_argument(
+        "--no-release-boxes",
+        dest="release_boxes",
+        action="store_false",
+        help="Do not release delegation-covered authorization boxes (default is to release them)",
+    )
+    goal_preview.set_defaults(release_boxes=True, json=False, func=goal_preview_command)
+    goal_preview.add_argument(
+        "--json", action="store_true", help="Print the full contract payload instead of the render"
+    )
 
     run_loop_host = subparsers.add_parser(
         "run-loop-host",
@@ -22594,6 +22910,15 @@ def build_parser() -> argparse.ArgumentParser:
         "--example", action="store_true", help="Include a GUI-ready role bindings example"
     )
     contract_role_bindings.set_defaults(func=contract_role_bindings_command)
+
+    contract_goal = contract_subparsers.add_parser(
+        "goal",
+        help="Discover the two-step goal (preview → confirmed start) contract",
+    )
+    contract_goal.add_argument(
+        "--example", action="store_true", help="Include GUI-ready goal preview/start examples"
+    )
+    contract_goal.set_defaults(func=contract_goal_command)
 
     contract_delegation = contract_subparsers.add_parser(
         "delegation",
