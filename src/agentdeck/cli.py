@@ -12160,6 +12160,20 @@ def _review_group_reviewers(config: ProjectConfig) -> tuple[tuple[str, str], ...
     return tuple(pairs)
 
 
+def _review_binding(config: ProjectConfig) -> dict[str, object]:
+    """`[review]` 段 → `append_review_iteration` 的纯数据 binding。
+
+    空 binding(缺省配置)让写入路径退化为今天逐字节相同的克隆行为;
+    它只描述"复审步该派给谁",不是执行授权——追加的 step 照常生成
+    pending 审批走既有 allowlist/预算/顺序守卫。"""
+    roles = {agent.agent_id: agent.role for agent in config.agents}
+    name = config.review.round_reviewer
+    return {
+        "round_reviewer": (name, roles[name]) if name in roles else None,
+        "reviewers": _review_group_reviewers(config),
+    }
+
+
 def _generate_leader_plan(
     config: ProjectConfig,
     store: StateStore,
@@ -19295,7 +19309,10 @@ def plan_rework_command(args: argparse.Namespace) -> int:
         print("plan rework requires --confirm", file=sys.stderr)
         return 1
     result = store.append_review_iteration(
-        str(args.plan_id), config.autonomous.max_review_rounds, source="explicit"
+        str(args.plan_id),
+        config.autonomous.max_review_rounds,
+        source="explicit",
+        review_binding=_review_binding(config),
     )
     if not result.get("ok"):
         print(f"plan rework refused: {result.get('reason')}", file=sys.stderr)
@@ -20384,7 +20401,10 @@ def _run_loop_all(
             if plan_effective_rounds <= 0:
                 continue
             pre_gate_appended = store.append_review_iteration(
-                plan_id, plan_effective_rounds, source="run_loop"
+                plan_id,
+                plan_effective_rounds,
+                source="run_loop",
+                review_binding=_review_binding(config),
             )
             if not pre_gate_appended.get("ok"):
                 continue
@@ -20417,7 +20437,10 @@ def _run_loop_all(
         # it for this plan in this same wave (never run twice per wave).
         if not hook_already_run and plan_effective_rounds > 0:
             plan_appended = store.append_review_iteration(
-                plan_id, plan_effective_rounds, source="run_loop"
+                plan_id,
+                plan_effective_rounds,
+                source="run_loop",
+                review_binding=_review_binding(config),
             )
             if plan_appended.get("ok"):
                 plan_review_iterations.append({
@@ -21021,7 +21044,10 @@ def _run_loop_single_wave(
     review_iterations: list[dict[str, object]] = []
     if effective_rounds > 0:
         appended = store.append_review_iteration(
-            plan_id, effective_rounds, source="run_loop"
+            plan_id,
+            effective_rounds,
+            source="run_loop",
+            review_binding=_review_binding(config),
         )
         if appended.get("ok"):
             review_iterations.append({

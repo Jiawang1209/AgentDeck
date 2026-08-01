@@ -9,6 +9,13 @@ from __future__ import annotations
 
 from typing import Any
 
+from .review_group import (
+    aggregate_group_verdicts,
+    latest_complete_group,
+    review_group_numbers,
+)
+from .review_verdict import REVIEW_VERDICT_SCHEMA_VERSION
+
 REVIEW_ITERATION_ORIGIN = "review_iteration"
 REWORK_TRIGGER_OVERALLS = frozenset({"fail", "needs_changes"})
 MAX_REWORK_TASK_CHARS = 4000
@@ -94,6 +101,87 @@ def _latest_verdict_reply(
     return latest
 
 
+def select_plan_verdict(
+    state: dict[str, Any], plan_id: str, steps: list[dict[str, Any]]
+) -> dict[str, Any] | None:
+    """组感知的**单一来源** verdict 选取(plan_verdict_summary 与迭代触发器共用)。
+
+    返回 `{verdict, reply_id, reply_text, approval, members, group}` 或 None:
+    - plan 带 review 组标记时只认**最新完整组**(每个成员 step 都已有带
+      verdict 的回复),按 any-fail-blocks 聚合成一份 schema 合规的合成
+      verdict;组未齐一律返回 None——先 fail 的成员绝不能在其余成员还在
+      审旧代码时开一轮,否则后到的 fail 会再开一轮、预算双烧。
+    - 无组标记时逐字节沿用今天的"最后一条有效 verdict reply"路径
+      (含 rework 自评排除)。
+    `approval` 是该 verdict 所属 review step 的 approval;组路径取**第一个**
+    成员的 approval,使 `_implementation_approval` 的"review step 之前"边界
+    仍落在被审查的实现 step 上,而不是同组的另一个 reviewer。
+    """
+    steps = steps if isinstance(steps, list) else []
+    if not review_group_numbers(steps):
+        latest = _latest_verdict_reply(state, plan_id, steps)
+        if latest is None:
+            return None
+        reply, approval = latest
+        return {
+            "verdict": reply["verdict"],
+            "reply_id": str(reply.get("reply_id")),
+            "reply_text": str(reply.get("text") or ""),
+            "approval": approval,
+            "members": None,
+            "group": None,
+        }
+    approvals = [
+        approval
+        for approval in state.get("approvals", [])
+        if isinstance(approval, dict)
+    ]
+    replies = [reply for reply in state.get("replies", []) if isinstance(reply, dict)]
+    group = latest_complete_group(steps, approvals, replies, plan_id)
+    if group is None:
+        return None
+    members = group["members"]
+    approval = next(
+        (
+            item
+            for item in approvals
+            if item.get("plan_id") == plan_id and item.get("step") == members[0]["step"]
+        ),
+        None,
+    )
+    if approval is None:
+        return None
+    texts = {
+        str(reply.get("reply_id")): str(reply.get("text") or "") for reply in replies
+    }
+    aggregate = aggregate_group_verdicts(members)
+    verdict: dict[str, Any] = {
+        "schema_version": REVIEW_VERDICT_SCHEMA_VERSION,
+        "criteria": aggregate["criteria"],
+        "overall": aggregate["overall"],
+    }
+    score = aggregate.get("score")
+    if isinstance(score, int) and not isinstance(score, bool):
+        verdict["score"] = score
+    return {
+        "verdict": verdict,
+        "reply_id": str(group["last_reply_id"]),
+        "reply_text": "",
+        "approval": approval,
+        "members": [
+            {
+                "agent_id": member.get("agent_id"),
+                "step": member.get("step"),
+                "reply_id": member.get("reply_id"),
+                "verdict": member.get("verdict") or {},
+                "text": texts.get(str(member.get("reply_id")), ""),
+            }
+            for member in members
+        ],
+        "group": group["group"],
+    }
+
+
 def _implementation_approval(
     state: dict[str, Any], plan_id: str, review_step: int
 ) -> dict[str, Any] | None:
@@ -126,6 +214,38 @@ def _implementation_approval(
     return chosen[1] if chosen else None
 
 
+def build_group_review_text(members: list[dict[str, Any]]) -> str:
+    """逐 reviewer 署名分段合并组内**非 pass** 成员的 fail 标准与回复原文。
+
+    只是把已有事实重排成 `### reviewer <agent_id>` 小节喂给既有截断预算,
+    不调用 provider、不读产物文件;全 pass 组不会走到这里(不触发迭代)。
+    """
+    blocks: list[str] = []
+    for member in members:
+        verdict = member.get("verdict") or {}
+        overall = str(verdict.get("overall"))
+        if overall == "pass":
+            continue
+        block = [f"### reviewer {member.get('agent_id')}", f"判定: {overall}"]
+        failed = [
+            item
+            for item in verdict.get("criteria", [])
+            if isinstance(item, dict) and item.get("verdict") == "fail"
+        ]
+        if failed:
+            block.append("未通过的验收标准:")
+            for item in failed:
+                entry = f"- {item.get('criterion')}"
+                if item.get("evidence"):
+                    entry += f" (证据: {item['evidence']})"
+                block.append(entry)
+        text = str(member.get("text") or "")
+        if text:
+            block.append(text)
+        blocks.append("\n".join(block))
+    return "\n\n".join(blocks)
+
+
 def build_rework_task(
     *,
     round_number: int,
@@ -133,6 +253,7 @@ def build_rework_task(
     verdict: dict[str, Any],
     reply_id: str,
     reply_text: str,
+    trace_ids: list[str] | None = None,
 ) -> str:
     """确定性模板:fail 标准原文 + reviewer 回复原文,超长截断并附 trace
     指引;绝不调用 provider、不读产物文件。"""
@@ -158,17 +279,73 @@ def build_rework_task(
     footer = "修复后 commit 到任务分支。"
     text = "\n".join([*header, "审查意见原文:", reply_text, footer])
     if len(text) > MAX_REWORK_TASK_CHARS:
-        marker = (
-            f"\n[审查意见已截断,全文见 agentdeck trace --id {reply_id}]\n{footer}"
+        pointers = " / ".join(
+            f"agentdeck trace --id {trace_id}" for trace_id in (trace_ids or [reply_id])
         )
+        marker = f"\n[审查意见已截断,全文见 {pointers}]\n{footer}"
         text = text[: MAX_REWORK_TASK_CHARS - len(marker)] + marker
     return text
 
 
-def derive_review_iteration(
-    state: dict[str, Any], plan_id: str, max_review_rounds: int
+def _review_binding_pairs(
+    review_binding: dict[str, Any] | None,
+) -> tuple[tuple[tuple[str, str], ...], tuple[str, str] | None]:
+    """`{round_reviewer: (id, role)|None, reviewers: ((id, role), …)}` → 纯数据。
+
+    None / 空 / 半坏输入一律退化为"今天的克隆行为"(fail-safe:配置从不
+    扩大授权面,解析不了就不换人)。"""
+    binding = review_binding if isinstance(review_binding, dict) else {}
+
+    def _pair(value: object) -> tuple[str, str] | None:
+        if isinstance(value, (tuple, list)) and len(value) == 2 and all(value):
+            return (str(value[0]), str(value[1]))
+        return None
+
+    reviewers = tuple(
+        pair
+        for pair in (_pair(item) for item in (binding.get("reviewers") or ()))
+        if pair is not None
+    )
+    return reviewers, _pair(binding.get("round_reviewer"))
+
+
+def _review_step(
+    *,
+    step: int,
+    agent_id: Any,
+    role: Any,
+    task: str,
+    risk: Any,
+    provenance: dict[str, Any],
+    group: int | None = None,
+    member: int | None = None,
 ) -> dict[str, Any]:
-    """纯触发判定 + step 对推导;任何条件不满足都返回 {ok: False, reason}。"""
+    item = {
+        "iteration_kind": "review",
+        "step": step,
+        "agent_id": agent_id,
+        "role": role,
+        "task": task,
+        "risk": risk,
+        "requires_approval": True,
+        **provenance,
+    }
+    if group is not None:
+        item["review_group"] = group
+        item["review_group_member"] = member
+    return item
+
+
+def derive_review_iteration(
+    state: dict[str, Any],
+    plan_id: str,
+    max_review_rounds: int,
+    review_binding: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """纯触发判定 + step 推导;任何条件不满足都返回 {ok: False, reason}。
+
+    `review_binding` 为 None(或空)时行为与配置 `[review]` 段缺省时逐字节
+    一致:复审步克隆原 review step 的 agent/role。"""
     plan = next(
         (
             item
@@ -181,13 +358,16 @@ def derive_review_iteration(
         return _refuse("no_plan")
     body = plan.get("plan")
     steps = body.get("steps", []) if isinstance(body, dict) else []
-    latest = _latest_verdict_reply(state, plan_id, steps)
-    if latest is None:
+    selection = select_plan_verdict(state, plan_id, steps)
+    if selection is None:
         return _refuse("no_verdict")
-    reply, review_approval = latest
-    if reply["verdict"].get("overall") not in REWORK_TRIGGER_OVERALLS:
+    verdict = selection["verdict"]
+    review_approval = selection["approval"]
+    if verdict.get("overall") not in REWORK_TRIGGER_OVERALLS:
         return _refuse("verdict_pass")
-    reply_id = str(reply.get("reply_id"))
+    # 组级幂等:组路径的 reply_id 是组内**最后一个**成员的回复(组完成的
+    # 标志),因此同一组绝不会触发第二轮。
+    reply_id = selection["reply_id"]
     if reply_id in _consumed_reply_ids(steps):
         return _refuse("already_triggered")
     rounds = plan_review_rounds(steps)
@@ -208,6 +388,17 @@ def derive_review_iteration(
         "round": round_number,
         "triggered_by_reply": reply_id,
     }
+    members = selection["members"]
+    if members:
+        reply_text = build_group_review_text(members)
+        trace_ids = [
+            str(member["reply_id"])
+            for member in members
+            if (member.get("verdict") or {}).get("overall") != "pass"
+        ] or [reply_id]
+    else:
+        reply_text = selection["reply_text"]
+        trace_ids = None
     rework_step = {
         "iteration_kind": "rework",
         "step": next_number,
@@ -216,28 +407,62 @@ def derive_review_iteration(
         "task": build_rework_task(
             round_number=round_number,
             original_task=str(implementation.get("task") or ""),
-            verdict=reply["verdict"],
+            verdict=verdict,
             reply_id=reply_id,
-            reply_text=str(reply.get("text") or ""),
+            reply_text=reply_text,
+            trace_ids=trace_ids,
         ),
         "risk": implementation.get("risk") or "low",
         "requires_approval": True,
         **provenance,
     }
-    review_step = {
-        "iteration_kind": "review",
-        "step": next_number + 1,
-        "agent_id": review_approval.get("agent_id"),
-        "role": review_approval.get("role"),
-        "task": str(review_approval.get("task") or ""),
-        "risk": review_approval.get("risk") or "low",
-        "requires_approval": True,
-        **provenance,
-    }
+    reviewers, round_reviewer = _review_binding_pairs(review_binding)
+    review_task = str(review_approval.get("task") or "")
+    review_risk = review_approval.get("risk") or "low"
+    if reviewers:
+        # 追加的复审组自身也带组标记,使组感知选取同样覆盖它——否则下一轮
+        # 只要有一个成员先回就会被当成完整 verdict。
+        next_group = max(review_group_numbers(steps).values(), default=0) + 1
+        review_steps = [
+            _review_step(
+                step=next_number + 1 + index,
+                agent_id=agent_id,
+                role=role,
+                task=review_task,
+                risk=review_risk,
+                provenance=provenance,
+                group=next_group,
+                member=index,
+            )
+            for index, (agent_id, role) in enumerate(reviewers)
+        ]
+    elif round_reviewer is not None:
+        review_steps = [
+            _review_step(
+                step=next_number + 1,
+                agent_id=round_reviewer[0],
+                role=round_reviewer[1],
+                task=review_task,
+                risk=review_risk,
+                provenance=provenance,
+            )
+        ]
+    else:
+        review_steps = [
+            _review_step(
+                step=next_number + 1,
+                agent_id=review_approval.get("agent_id"),
+                role=review_approval.get("role"),
+                task=review_task,
+                risk=review_risk,
+                provenance=provenance,
+            )
+        ]
     return {
         "ok": True,
         "round": round_number,
         "triggered_by_reply": reply_id,
         "rework_step": rework_step,
-        "review_step": review_step,
+        "review_step": review_steps[0],
+        "review_steps": review_steps,
     }

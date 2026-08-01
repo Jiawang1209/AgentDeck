@@ -4,6 +4,75 @@
 
 ## 2026-08-01
 
+### Aggregate review groups any-fail-blocks and honor round_reviewer
+
+- **Type**: feat
+- **Motivation**: Task 3 让 plan 生成路径确定性展开出 N 个串行 review
+  step,但聚合面还是单 reviewer 的"最后一条 verdict reply":组内 A 先
+  fail 就会立刻开一轮回炉,而 B 还在审旧代码——B 随后 fail 会再开一轮,
+  迭代预算双烧。同时迭代复审步仍逐字节克隆原 reviewer,`round_reviewer`
+  配置无处生效。本切片落地 spec 的"组完成才判定"护栏与复审换人。
+- **What**:
+  - `src/agentdeck/review_group.py`:`review_group_numbers` 的谓词从
+    `origin == "review_group"` 放宽为"带整数 `review_group` 标记",使
+    迭代追加的复审组(`origin="review_iteration"` + 同一套组标记)同样被
+    组感知选取覆盖;rework 成员从不带 `review_group`,仍被结构性排除。
+  - `src/agentdeck/review_iteration.py`:新增 `select_plan_verdict(state,
+    plan_id, steps)` 作为 `plan_verdict_summary` 与迭代触发器的**单一来源**
+    组感知选取——plan 带组标记时经 `latest_complete_group` +
+    `aggregate_group_verdicts` 只认最新**完整**组(any-fail-blocks 聚合成
+    一份 schema 合规的合成 verdict,`reply_id` 取组内最后一个成员的回复,
+    approval 取第一个成员的,使 `_implementation_approval` 的边界仍落在被
+    审查的实现 step 上),组未齐返回 None;无组标记时逐字节沿用今天的
+    `_latest_verdict_reply` 路径(含 rework 自评排除)。新增
+    `build_group_review_text(members)` 把组内非 pass 成员的 fail 标准与
+    回复原文合并成 `### reviewer <agent_id>` 署名分段;`build_rework_task`
+    新增可选 `trace_ids`,截断标记列出各成员 trace 指引(缺省 `[reply_id]`
+    时与今天逐字节相同)。`derive_review_iteration` 新增可选
+    `review_binding` 形参并改为返回 `review_steps`(仍保留
+    `review_step`=首项):`reviewers` 非空 → 逐 reviewer 追加复审步并带
+    `review_group`(下一组号)/`review_group_member`;否则 `round_reviewer`
+    非空 → 单步换人;都没有 → 今天的克隆。
+  - `src/agentdeck/state.py`:`plan_verdict_summary` 改用
+    `select_plan_verdict`,并在结果上挂 `group`
+    (`size`/`complete`/`rule`/`members[]`),单 reviewer 隐式组也填
+    (`size=1`),让 GUI 单双路径同构;`append_review_iteration` 新增可选
+    `review_binding`(为 None 时由 `_config_review_binding()` fail-safe 地
+    从本项目 `[review]` 段读取,任何异常一律退化为 None),并按
+    `review_steps` 追加 1 + N 个 step 与对应 pending 审批。
+  - `src/agentdeck/cli.py`:新增 `_review_binding(config)` 纯 helper,
+    在 `plan_rework_command` 与三处 run-loop hook(单计划、`--all` 的
+    pre-gate 与常规分支)显式传入。
+- **Impact**: 配置 `[review].reviewers` 后,一个 review 环节必须**整组**
+  回完 verdict 才判定;任一成员非 pass 即整体非 pass(最严:fail >
+  needs_changes > pass),criteria 逐条合并;组未齐时 `plan_verdict_summary`
+  返回 None、迭代触发器返回 `no_verdict`、merge gate 按"无 verdict"处理,
+  gate 照常停在 `waiting_for_reply`。迭代幂等升级为组级(`triggered_by_reply`
+  记组内最后一个成员的 reply id),同组绝不重复触发。配置
+  `[review].round_reviewer` 后迭代复审步换成该 agent(reviewers 优先)。
+  **无 `[review]` 配置时全路径不变**:plan 无组标记 → 选取走原
+  `_latest_verdict_reply`;binding 为空 → 复审步仍克隆原 reviewer 且
+  dict 键序不变;截断标记仍是单条 `agentdeck trace --id <reply_id>`。
+  唯一可见差异是 `verdict_summary` 多出 `group` 字段(GUI 同构所需),
+  契约 key set 同步是 Task 5。执行引擎、审批预算、顺序守卫、worktree
+  链式检出零改动;`[review]` 只影响"复审派给谁/何时判定",不是执行授权。
+- **Verification**: TDD——append 5 条测试到 `tests/test_review_group.py`
+  (`test_incomplete_group_does_not_trigger_iteration`、
+  `test_complete_group_aggregates_any_fail_blocks`、
+  `test_complete_group_all_pass`、
+  `test_complete_failing_group_triggers_one_iteration`、
+  `test_round_reviewer_replaces_single_rereview`),先确认 RED
+  (`pytest tests/test_review_group.py -k "group or round_reviewer"` →
+  4 failed, 24 passed);实现后同一条命令 28 passed,
+  `pytest tests/test_review_group.py tests/test_review_iteration.py
+  tests/test_plan_rework_cli.py tests/test_review_verdict_ingestion.py -q`
+  → 79 passed, 2 failed,两条 red 均且仅因 `_validate_verdict_summary`
+  的精确 key set 拒绝新增的 `group` 字段
+  (`test_leader_review_and_run_progress_expose_verdict_summary`、
+  `test_leader_summary_exposes_verdict_summary`,stderr 只有
+  `verdict_summary must be null or a verdict summary object` 一行),
+  留给 Task 5 的契约同步,断言未被削弱。
+
 ### Expand review groups at plan generation
 
 - **Type**: feat

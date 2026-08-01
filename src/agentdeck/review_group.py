@@ -65,10 +65,15 @@ def expand_review_group(
 
 
 def review_group_numbers(steps: list[dict[str, Any]]) -> dict[int, int]:
-    """{step 编号: 组号};非组成员不出现(单 reviewer plan 返回空 dict)。"""
+    """{step 编号: 组号};非组成员不出现(单 reviewer plan 返回空 dict)。
+
+    谓词是 `review_group` 标记本身,不是 `origin`——迭代追加的复审组带
+    `origin="review_iteration"` + 同一套组标记,必须同样被组感知选取覆盖。
+    rework 成员从不带 `review_group`,因此仍被结构性排除(自评不是 verdict)。
+    """
     mapping: dict[int, int] = {}
     for step in steps:
-        if not isinstance(step, dict) or step.get("origin") != REVIEW_GROUP_ORIGIN:
+        if not isinstance(step, dict):
             continue
         number = step.get("step")
         group = step.get("review_group")

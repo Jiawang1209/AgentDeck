@@ -54,7 +54,12 @@ from .mission import (
     mission_commands,
     mission_status_transition_allowed,
 )
-from .review_iteration import derive_review_iteration, plan_review_rounds, rework_step_numbers
+from .review_group import REVIEW_GROUP_RULE
+from .review_iteration import (
+    derive_review_iteration,
+    plan_review_rounds,
+    select_plan_verdict,
+)
 from .review_verdict import align_verdict_with_criteria, parse_verdict_line
 from .mission_authority import (
     SEMANTIC_MISSION_COMPACT_FIELDS,
@@ -9819,32 +9824,48 @@ class StateStore:
         )
         plan_body = (plan or {}).get("plan")
         plan_steps = plan_body.get("steps", []) if isinstance(plan_body, dict) else []
-        # rework 自评排除:与迭代触发器同源(rework_step_numbers),coder 的
-        # 自评 verdict 绝不能成为 plan 的 review verdict。
-        excluded_steps = rework_step_numbers(
-            plan_steps if isinstance(plan_steps, list) else []
+        # 组感知的单一来源选取(与迭代触发器共用 select_plan_verdict):
+        # rework 自评排除照旧(rework_step_numbers),coder 的自评 verdict 绝不
+        # 能成为 plan 的 review verdict;plan 带 review 组标记时只认最新
+        # **完整**组的 any-fail-blocks 聚合,组未齐返回 None(无 verdict)。
+        selection = select_plan_verdict(
+            state, plan_id, plan_steps if isinstance(plan_steps, list) else []
         )
-        message_ids = {
-            approval.get("message_id")
-            for approval in state.get("approvals", [])
-            if approval.get("plan_id") == plan_id
-            and approval.get("message_id")
-            and approval.get("step") not in excluded_steps
-        }
-        latest_verdict: dict[str, Any] | None = None
-        for reply in state.get("replies", []):
-            if reply.get("message_id") in message_ids and isinstance(
-                reply.get("verdict"), dict
-            ):
-                latest_verdict = reply["verdict"]
-        if latest_verdict is None:
+        if selection is None:
             return None
         try:
-            return align_verdict_with_criteria(
-                latest_verdict, self._plan_acceptance_criteria(plan_id)
+            summary = align_verdict_with_criteria(
+                selection["verdict"], self._plan_acceptance_criteria(plan_id)
             )
         except ValueError:
             return None
+        members = selection["members"]
+        if members is None:
+            # 单 reviewer 隐式组(size=1),让 GUI 单双路径同构。
+            approval = selection["approval"]
+            members = [
+                {
+                    "agent_id": approval.get("agent_id"),
+                    "step": approval.get("step"),
+                    "verdict": selection["verdict"],
+                    "reply_id": selection["reply_id"],
+                }
+            ]
+        summary["group"] = {
+            "size": len(members),
+            "complete": True,
+            "rule": REVIEW_GROUP_RULE,
+            "members": [
+                {
+                    "agent_id": member.get("agent_id"),
+                    "step": member.get("step"),
+                    "overall": (member.get("verdict") or {}).get("overall"),
+                    "reply_id": member.get("reply_id"),
+                }
+                for member in members
+            ],
+        }
+        return summary
 
     def leader_review(self, plan_id: str) -> dict[str, Any]:
         review = self._leader_review_core(plan_id)
@@ -10147,14 +10168,46 @@ class StateStore:
         self.save(state)
         return approvals
 
+    def _config_review_binding(self) -> dict[str, Any] | None:
+        """`[review]` 段 → 纯数据 binding;缺省/无配置/坏配置一律 None
+        (fail-safe:退化成今天的克隆行为,绝不扩大授权面)。"""
+        try:
+            config = load_config(self.root)
+        except Exception:
+            return None
+        roles = {agent.agent_id: agent.role for agent in config.agents}
+        reviewers = tuple(
+            (agent_id, roles[agent_id])
+            for agent_id in config.review.reviewers
+            if agent_id in roles
+        )
+        name = config.review.round_reviewer
+        round_reviewer = (name, roles[name]) if name in roles else None
+        if not reviewers and round_reviewer is None:
+            return None
+        return {"round_reviewer": round_reviewer, "reviewers": reviewers}
+
     def append_review_iteration(
-        self, plan_id: str, max_review_rounds: int, source: str
+        self,
+        plan_id: str,
+        max_review_rounds: int,
+        source: str,
+        review_binding: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Sole write path of the review iteration loop: append the derived
-        rework/re-review step pair to the plan, create their pending
-        approvals, and audit. Refusals are zero-write and returned as-is."""
+        rework + re-review step(s) to the plan, create their pending
+        approvals, and audit. Refusals are zero-write and returned as-is.
+
+        `review_binding` carries the pure `[review]` config data (the store
+        never takes a ProjectConfig); callers that already hold the config
+        pass it in, otherwise it is read from this project's config. Absent
+        or empty binding == today's byte-identical clone behavior."""
         state = self.load()
-        derived = derive_review_iteration(state, plan_id, max_review_rounds)
+        if review_binding is None:
+            review_binding = self._config_review_binding()
+        derived = derive_review_iteration(
+            state, plan_id, max_review_rounds, review_binding
+        )
         if not derived.get("ok"):
             return derived
         plan_record = next(
@@ -10165,7 +10218,10 @@ class StateStore:
             plan_body.get("steps"), list
         ):
             return {"ok": False, "reason": "no_plan"}
-        new_steps = [derived["rework_step"], derived["review_step"]]
+        new_steps = [
+            derived["rework_step"],
+            *(derived.get("review_steps") or [derived["review_step"]]),
+        ]
         plan_body["steps"].extend(new_steps)
         approvals = []
         for step in new_steps:

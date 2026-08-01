@@ -269,3 +269,105 @@ def test_generated_plan_is_unchanged_without_review_config(tmp_path, monkeypatch
     capsys.readouterr()
     plan = StateStore(root).load()["plans"][-1]["plan"]
     assert all(s.get("origin") is None for s in plan["steps"])
+
+
+def _seed_group_store(tmp_path, verdicts: list[str]):
+    """plan pln_g: step1 coder(replied) + 组(reviewer, planner);
+    verdicts 为组成员的 overall(长度 1 = 只有第一个成员回复)。"""
+    from agentdeck.state import StateStore
+
+    root = _root(tmp_path)
+    _config_with(root, '[review]\nreviewers = ["reviewer", "planner"]\n')
+    store = StateStore(root)
+    state = store.load()
+    steps = expand_review_group(_plan(), REVIEWERS_2)["steps"]
+    state["plans"] = [{
+        "plan_id": "pln_g", "task": "t", "status": "planned",
+        "provider": "fake", "model": "fake-plan",
+        "plan": {"goal": "g", "summary": "s", "steps": steps},
+    }]
+    state["approvals"] = [
+        {"approval_id": "apv_1", "plan_id": "pln_g", "step": 1, "agent_id": "coder",
+         "role": "implementation", "task": "build", "risk": "low",
+         "status": "dispatched", "message_id": "m1"},
+        {"approval_id": "apv_2", "plan_id": "pln_g", "step": 2, "agent_id": "reviewer",
+         "role": "review", "task": "review it", "risk": "low",
+         "status": "dispatched", "message_id": "m2"},
+        {"approval_id": "apv_3", "plan_id": "pln_g", "step": 3, "agent_id": "planner",
+         "role": "planning", "task": "review it", "risk": "low",
+         "status": "dispatched", "message_id": "m3"},
+    ]
+    state["messages"] = [
+        {"message_id": "m1", "worktree_branch": "agentdeck/m1"},
+        {"message_id": "m2", "worktree_branch": None},
+        {"message_id": "m3", "worktree_branch": None},
+    ]
+
+    def verdict(overall):
+        return {"schema_version": "review-verdict/v1", "overall": overall,
+                "criteria": [{"criterion": "c1",
+                              "verdict": "pass" if overall == "pass" else "fail"}]}
+
+    replies = [{"reply_id": "r1", "message_id": "m1", "from_agent": "coder",
+                "text": "done"}]
+    for index, overall in enumerate(verdicts):
+        replies.append({
+            "reply_id": f"rg{index}", "message_id": f"m{index + 2}",
+            "from_agent": ["reviewer", "planner"][index],
+            "text": "review", "verdict": verdict(overall),
+        })
+    state["replies"] = replies
+    store.save(state)
+    return root, store
+
+
+def test_incomplete_group_does_not_trigger_iteration(tmp_path) -> None:
+    _root_dir, store = _seed_group_store(tmp_path, ["fail"])  # 只有 reviewer 回了
+    assert store.plan_verdict_summary("pln_g") is None
+    result = store.append_review_iteration("pln_g", 2, source="explicit")
+    assert result["ok"] is False
+    assert result["reason"] == "no_verdict"
+
+
+def test_complete_group_aggregates_any_fail_blocks(tmp_path) -> None:
+    _root_dir, store = _seed_group_store(tmp_path, ["pass", "fail"])
+    summary = store.plan_verdict_summary("pln_g")
+    assert summary["overall"] == "fail"
+    assert summary["group"]["size"] == 2
+    assert summary["group"]["complete"] is True
+    assert summary["group"]["rule"] == "any_fail_blocks"
+    assert [m["agent_id"] for m in summary["group"]["members"]] == ["reviewer", "planner"]
+
+
+def test_complete_group_all_pass(tmp_path) -> None:
+    _root_dir, store = _seed_group_store(tmp_path, ["pass", "pass"])
+    assert store.plan_verdict_summary("pln_g")["overall"] == "pass"
+
+
+def test_complete_failing_group_triggers_one_iteration(tmp_path) -> None:
+    _root_dir, store = _seed_group_store(tmp_path, ["fail", "pass"])
+    first = store.append_review_iteration("pln_g", 2, source="explicit")
+    assert first["ok"] is True
+    # 组级幂等:同一组绝不重复触发
+    second = store.append_review_iteration("pln_g", 2, source="explicit")
+    assert second["ok"] is False and second["reason"] == "already_triggered"
+    steps = store.load()["plans"][0]["plan"]["steps"]
+    appended = [s for s in steps if s.get("origin") == "review_iteration"]
+    # 回炉 1 步 + 复审组 2 步
+    assert [s["agent_id"] for s in appended] == ["coder", "reviewer", "planner"]
+    # 回炉模板合并了失败成员的意见
+    assert "reviewer" in appended[0]["task"]
+
+
+def test_round_reviewer_replaces_single_rereview(tmp_path) -> None:
+    """无 reviewers 组、只配 round_reviewer 时,迭代复审步换人。"""
+    from test_review_iteration import _seed_store
+
+    root, store = _seed_store(tmp_path, "fail")
+    path = root / ".agentdeck" / "config.toml"
+    path.write_text(path.read_text(encoding="utf-8") + '\n[review]\nround_reviewer = "planner"\n',
+                    encoding="utf-8")
+    assert store.append_review_iteration("pln_1", 2, source="explicit")["ok"] is True
+    steps = store.load()["plans"][0]["plan"]["steps"]
+    appended = [s for s in steps if s.get("origin") == "review_iteration"]
+    assert [s["agent_id"] for s in appended] == ["coder", "planner"]
