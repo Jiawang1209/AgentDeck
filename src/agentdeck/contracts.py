@@ -34,6 +34,12 @@ from .models import (
 )
 from .providers.plan_schema import LEADER_PLAN_SCHEMA_VERSION
 from .review_group import REVIEW_GROUP_RULE
+from .role_topology import (
+    ROLE_BINDING_KINDS,
+    ROLE_BINDING_STATUSES,
+    ROLE_LIFECYCLES,
+    ROLE_TOPOLOGY_LAYERS,
+)
 from .review_iteration import (
     REFINE_SKIP_REASONS,
     REVIEW_ITERATION_SKIP_REASONS,
@@ -323,6 +329,12 @@ CONTRACT_INDEX_SPECS = (
         "agentdeck contract frontdesk",
         "agentdeck contract frontdesk --example",
         "frontdesk-schema.md",
+    ),
+    (
+        "role-topology",
+        "agentdeck contract role-topology",
+        "agentdeck contract role-topology --example",
+        "role-topology-schema.md",
     ),
 )
 
@@ -1439,6 +1451,364 @@ def frontdesk_contract_response(contract_path: Path, include_example: bool = Fal
         payload["example_frontdesk"] = example
         payload["example_response_fields"] = list(example)
         payload["example_candidate_fields"] = list(example["candidates"][0])
+    return payload
+
+
+# --- Role topology (north-star six-layer binding map) -----------------------
+#
+# `agentdeck roles` and the workbench `roles_card` are the same builder and the
+# same validator. The card answers "which of the six north-star layers has this
+# project actually filled in", which is a different question from the existing
+# `role_card` ("which agents did I configure") and the existing
+# `role_topology_card` ("what is each coordination role / worker doing right
+# now"). It adds no state source and authorizes nothing.
+
+ROLE_TOPOLOGY_CARD_FIELDS = (
+    "mode",
+    "source_command",
+    "layer_count",
+    "bound_count",
+    "unbound_count",
+    "ambiguous_count",
+    "split_enabled",
+    "roles",
+    "controls",
+)
+
+ROLE_TOPOLOGY_ROLE_FIELDS = (
+    "role",
+    "layer",
+    "binding_kind",
+    "binding_status",
+    "agent_id",
+    "provider",
+    "model",
+    "backend",
+    "transport",
+    "lifecycle",
+    "runtime_status",
+    "pane_id",
+    "blocker",
+    "candidates",
+    "controls",
+)
+
+ROLE_TOPOLOGY_CONTROL_FIELDS = ("kind", "label", "command", "safety", "enabled", "blocker")
+
+ROLE_TOPOLOGY_COMMAND = "agentdeck roles"
+ROLE_TOPOLOGY_WORKBENCH_CARD = "roles_card"
+
+
+def _validate_role_topology_role(errors: list[str], index: int, role: object) -> str | None:
+    prefix = f"roles[{index}]"
+    if not isinstance(role, dict):
+        errors.append(f"{prefix} must be an object")
+        return None
+    for field in ROLE_TOPOLOGY_ROLE_FIELDS:
+        if field not in role:
+            errors.append(f"missing {prefix} field: {field}")
+    if role.get("layer") not in ROLE_TOPOLOGY_LAYERS:
+        errors.append(f"{prefix}.layer must be one of {list(ROLE_TOPOLOGY_LAYERS)}")
+    binding_kind = role.get("binding_kind")
+    if binding_kind not in ROLE_BINDING_KINDS:
+        errors.append(f"{prefix}.binding_kind must be one of {list(ROLE_BINDING_KINDS)}")
+    binding_status = role.get("binding_status")
+    if binding_status not in ROLE_BINDING_STATUSES:
+        errors.append(f"{prefix}.binding_status must be one of {list(ROLE_BINDING_STATUSES)}")
+    if role.get("lifecycle") not in ROLE_LIFECYCLES:
+        errors.append(f"{prefix}.lifecycle must be one of {list(ROLE_LIFECYCLES)}")
+
+    # Necessity clauses: a layer that is not pane-backed can never carry pane
+    # provenance, and the command layer has no provider at all.
+    if binding_kind != "worker_agent":
+        if role.get("runtime_status") is not None:
+            errors.append(f"{prefix}.runtime_status must be null outside worker_agent bindings")
+        if role.get("pane_id") is not None:
+            errors.append(f"{prefix}.pane_id must be null outside worker_agent bindings")
+        if role.get("agent_id") is not None:
+            errors.append(f"{prefix}.agent_id must be null outside worker_agent bindings")
+    if binding_kind == "command":
+        for field in ("provider", "model", "backend", "transport"):
+            if role.get(field) is not None:
+                errors.append(f"{prefix}.{field} must be null for a command binding")
+
+    if binding_status == "bound":
+        if role.get("blocker"):
+            errors.append(f"{prefix}.blocker must be null when bound")
+        if binding_kind == "worker_agent" and not role.get("agent_id"):
+            errors.append(f"{prefix}.agent_id must name the bound worker agent")
+    elif binding_status in {"unbound", "ambiguous"}:
+        if not role.get("blocker"):
+            errors.append(f"{prefix}.blocker must explain what is missing")
+        if role.get("agent_id") is not None:
+            errors.append(f"{prefix}.agent_id must be null unless the layer is bound")
+
+    candidates = role.get("candidates")
+    if not isinstance(candidates, list):
+        errors.append(f"{prefix}.candidates must be a list")
+    elif binding_status == "ambiguous":
+        if not candidates:
+            errors.append(f"{prefix}.candidates must list every ambiguous candidate")
+    elif candidates:
+        errors.append(f"{prefix}.candidates must be empty unless the binding is ambiguous")
+
+    _validate_role_topology_controls(errors, prefix, role.get("controls"), require_any=True)
+    return binding_status if isinstance(binding_status, str) else None
+
+
+def _validate_role_topology_controls(
+    errors: list[str], prefix: str, controls: object, *, require_any: bool
+) -> None:
+    if not isinstance(controls, list):
+        errors.append(f"{prefix}.controls must be a list")
+        return
+    if require_any and not controls:
+        errors.append(f"{prefix}.controls must expose at least one inspect control")
+    for index, control in enumerate(controls):
+        if not isinstance(control, dict):
+            errors.append(f"{prefix}.controls[{index}] must be an object")
+            continue
+        for field in ROLE_TOPOLOGY_CONTROL_FIELDS:
+            if field not in control:
+                errors.append(f"missing {prefix}.controls[{index}] field: {field}")
+        if control.get("safety") != "inspect":
+            errors.append(f"{prefix}.controls[{index}].safety must be inspect")
+        if control.get("enabled") is False and not control.get("blocker"):
+            errors.append(f"{prefix}.controls[{index}] disabled control needs blocker")
+        if control.get("enabled") is True and "<" in str(control.get("command")):
+            errors.append(f"{prefix}.controls[{index}] placeholder command must be disabled")
+
+
+def validate_role_topology_contract(payload: object) -> dict[str, object]:
+    errors: list[str] = []
+    if not isinstance(payload, dict):
+        return {"ok": False, "errors": ["role topology card must be an object"]}
+    for field in ROLE_TOPOLOGY_CARD_FIELDS:
+        if field not in payload:
+            errors.append(f"missing role topology field: {field}")
+    if payload.get("mode") != "role_topology":
+        errors.append(f"role topology mode must be role_topology, got {payload.get('mode')}")
+    if payload.get("source_command") != ROLE_TOPOLOGY_COMMAND:
+        errors.append(f"role topology source_command must be {ROLE_TOPOLOGY_COMMAND}")
+    if not isinstance(payload.get("split_enabled"), bool):
+        errors.append("role topology split_enabled must be a boolean")
+
+    roles = payload.get("roles")
+    if not isinstance(roles, list):
+        errors.append("role topology roles must be a list")
+    else:
+        counts = {status: 0 for status in ROLE_BINDING_STATUSES}
+        for index, role in enumerate(roles):
+            status = _validate_role_topology_role(errors, index, role)
+            if status in counts:
+                counts[status] += 1
+        for field, status in (
+            ("bound_count", "bound"),
+            ("unbound_count", "unbound"),
+            ("ambiguous_count", "ambiguous"),
+        ):
+            if payload.get(field) != counts[status]:
+                errors.append(f"role topology {field} must match the roles it counts")
+        if payload.get("layer_count") != len(roles):
+            errors.append("role topology layer_count must match the roles it lists")
+        elif sum(counts.values()) != len(roles):
+            errors.append("role topology binding counts must add up to layer_count")
+
+    _validate_role_topology_controls(errors, "role_topology", payload.get("controls"), require_any=True)
+    return {"ok": not errors, "errors": errors}
+
+
+def role_topology_example() -> dict[str, object]:
+    """A stable default-project shaped example; never live state."""
+
+    def inspect(label: str, command: object, *, enabled: bool = True, blocker: object = None) -> dict[str, object]:
+        return {
+            "kind": "inspect",
+            "label": label,
+            "command": command,
+            "safety": "inspect",
+            "enabled": enabled,
+            "blocker": blocker,
+        }
+
+    return {
+        "mode": "role_topology",
+        "source_command": ROLE_TOPOLOGY_COMMAND,
+        "layer_count": 6,
+        "bound_count": 5,
+        "unbound_count": 1,
+        "ambiguous_count": 0,
+        "split_enabled": False,
+        "roles": [
+            {
+                "role": "frontdesk",
+                "layer": "intake",
+                "binding_kind": "command",
+                "binding_status": "bound",
+                "agent_id": None,
+                "provider": None,
+                "model": None,
+                "backend": None,
+                "transport": None,
+                "lifecycle": "persistent",
+                "runtime_status": None,
+                "pane_id": None,
+                "blocker": None,
+                "candidates": [],
+                "controls": [
+                    inspect(
+                        "Route one request",
+                        "agentdeck frontdesk --message <text>",
+                        enabled=False,
+                        blocker="requires --message <text>",
+                    )
+                ],
+            },
+            {
+                "role": "planner",
+                "layer": "orchestration",
+                "binding_kind": "logical_leader",
+                "binding_status": "bound",
+                "agent_id": None,
+                "provider": "deepseek",
+                "model": "deepseek-chat",
+                "backend": "api",
+                "transport": "http",
+                "lifecycle": "persistent",
+                "runtime_status": None,
+                "pane_id": None,
+                "blocker": None,
+                "candidates": [],
+                "controls": [inspect("Inspect plans", "agentdeck plan list")],
+            },
+            {
+                "role": "orchestrator",
+                "layer": "orchestration",
+                "binding_kind": "logical_leader",
+                "binding_status": "bound",
+                "agent_id": None,
+                "provider": "deepseek",
+                "model": "deepseek-chat",
+                "backend": "api",
+                "transport": "http",
+                "lifecycle": "persistent",
+                "runtime_status": None,
+                "pane_id": None,
+                "blocker": None,
+                "candidates": [],
+                "controls": [inspect("Inspect Leader actions", "agentdeck leader actions")],
+            },
+            {
+                "role": "coder",
+                "layer": "work",
+                "binding_kind": "worker_agent",
+                "binding_status": "bound",
+                "agent_id": "coder",
+                "provider": "codex",
+                "model": None,
+                "backend": None,
+                "transport": None,
+                "lifecycle": "task_scoped",
+                "runtime_status": "configured",
+                "pane_id": None,
+                "blocker": None,
+                "candidates": [],
+                "controls": [
+                    inspect("Inspect mailbox", "agentdeck inbox --agent coder"),
+                    {
+                        "kind": "terminal",
+                        "label": "Open terminal",
+                        "command": None,
+                        "safety": "inspect",
+                        "enabled": False,
+                        "blocker": "agent is not running",
+                    },
+                ],
+            },
+            {
+                "role": "code_reviewer",
+                "layer": "work",
+                "binding_kind": "worker_agent",
+                "binding_status": "bound",
+                "agent_id": "reviewer",
+                "provider": "claude",
+                "model": None,
+                "backend": None,
+                "transport": None,
+                "lifecycle": "task_scoped",
+                "runtime_status": "running",
+                "pane_id": "%2",
+                "blocker": None,
+                "candidates": [],
+                "controls": [
+                    inspect("Inspect mailbox", "agentdeck inbox --agent reviewer"),
+                    {
+                        "kind": "terminal",
+                        "label": "Open terminal",
+                        "command": "agentdeck agent terminal --agent reviewer",
+                        "safety": "inspect",
+                        "enabled": True,
+                        "blocker": None,
+                    },
+                ],
+            },
+            {
+                "role": "round_reviewer",
+                "layer": "acceptance",
+                "binding_kind": "worker_agent",
+                "binding_status": "unbound",
+                "agent_id": None,
+                "provider": None,
+                "model": None,
+                "backend": None,
+                "transport": None,
+                "lifecycle": "on_demand",
+                "runtime_status": None,
+                "pane_id": None,
+                "blocker": "set [review] round_reviewer to enable a dedicated acceptance reviewer",
+                "candidates": [],
+                "controls": [inspect("Inspect agents", "agentdeck agent list")],
+            },
+        ],
+        "controls": [
+            inspect("Inspect role topology", ROLE_TOPOLOGY_COMMAND),
+            inspect("Open workbench", "agentdeck workbench"),
+        ],
+    }
+
+
+def role_topology_contract_payload(contract_path: Path) -> dict[str, object]:
+    return {
+        "schema_version": PROJECT_VIEW_SCHEMA_VERSION,
+        "name": "role-topology",
+        "roles_command": ROLE_TOPOLOGY_COMMAND,
+        "workbench_command": "agentdeck workbench",
+        "workbench_card": ROLE_TOPOLOGY_WORKBENCH_CARD,
+        "contract_path": str(contract_path),
+        "contract_exists": contract_path.exists(),
+        "card_fields": list(ROLE_TOPOLOGY_CARD_FIELDS),
+        "role_fields": list(ROLE_TOPOLOGY_ROLE_FIELDS),
+        "control_fields": list(ROLE_TOPOLOGY_CONTROL_FIELDS),
+        "layers": list(ROLE_TOPOLOGY_LAYERS),
+        "binding_kinds": list(ROLE_BINDING_KINDS),
+        "binding_statuses": list(ROLE_BINDING_STATUSES),
+        "lifecycles": list(ROLE_LIFECYCLES),
+        "safety": "inspect",
+        "requires_explicit_user": False,
+        "workbench_contract": "agentdeck contract workbench",
+        "project_view_schema_version": PROJECT_VIEW_SCHEMA_VERSION,
+        "project_view_contract": "agentdeck contract project-view",
+    }
+
+
+def role_topology_contract_response(contract_path: Path, include_example: bool = False) -> dict[str, object]:
+    payload = role_topology_contract_payload(contract_path)
+    if include_example:
+        example = role_topology_example()
+        payload["example"] = True
+        payload["example_role_topology"] = example
+        payload["example_card_fields"] = list(example)
+        payload["example_role_fields"] = list(example["roles"][0])
     return payload
 
 

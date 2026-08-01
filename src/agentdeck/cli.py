@@ -134,6 +134,9 @@ from .contracts import (
     validate_release_contract,
     validate_project_view_contract,
     validate_protocol_runtime_contract,
+    validate_role_topology_contract,
+    role_topology_contract_response,
+    ROLE_TOPOLOGY_COMMAND,
     validate_run_loop_contract,
     validate_run_loop_follow_contract,
     validate_run_start_contract,
@@ -156,6 +159,12 @@ from .autonomy import run_loop_gate, select_auto_approvals
 from .delegation_match import is_composite_command, normalize_match
 from .frontdesk import FRONTDESK_ROUTE_SAFETY, classify_frontdesk, frontdesk_goal
 from .review_group import expand_review_group
+from .role_topology import (
+    IMPLEMENTATION_ROLE_HINTS,
+    REVIEW_ROLE_HINTS,
+    ROLE_SPECS,
+    resolve_worker_role,
+)
 from .review_iteration import (
     build_refine_prompt,
     derive_review_iteration,
@@ -5251,6 +5260,173 @@ def _workbench_role_topology_card(
     }
 
 
+def _role_topology_inspect(label: str, command: object, *, enabled: bool = True, blocker: object = None) -> dict[str, object]:
+    return _control(
+        kind="inspect", label=label, command=command, safety="inspect", enabled=enabled, blocker=blocker
+    )
+
+
+def _role_topology_worker_controls(
+    agent_id: str | None, runtime_status: str | None
+) -> list[dict[str, object]]:
+    if not agent_id:
+        return [_role_topology_inspect("Inspect agents", "agentdeck agent list")]
+    running = runtime_status == "running"
+    return [
+        _role_topology_inspect("Inspect mailbox", f"agentdeck inbox --agent {agent_id}"),
+        _control(
+            kind="terminal",
+            label="Open terminal",
+            command=f"agentdeck agent terminal --agent {agent_id}" if running else None,
+            safety="inspect",
+            enabled=running,
+            blocker=None if running else "agent is not running",
+        ),
+    ]
+
+
+def _role_topology_card(config: ProjectConfig, project_view: dict[str, object]) -> dict[str, object]:
+    """Derive the north-star six-layer binding map.
+
+    Read-only: it reuses the ProjectView `agents[]` runtime projection (never
+    tmux), the already-normalized Leader backend provenance
+    (`leader_backend_identity`) and the existing `[leader]` fallback rules
+    (`resolved_planner_backend` / `resolved_orchestrator_backend`). It adds no
+    state source, calls no provider, writes nothing. The topology is an
+    observation surface, not an authorization: it changes no gate.
+    """
+    raw_agents = project_view.get("agents")
+    agents = [agent for agent in raw_agents if isinstance(agent, dict)] if isinstance(raw_agents, list) else []
+    agent_rows = [
+        {"agent_id": str(agent.get("agent_id")), "role": str(agent.get("role") or "")}
+        for agent in agents
+        if agent.get("agent_id")
+    ]
+    by_agent = {str(agent.get("agent_id")): agent for agent in agents if agent.get("agent_id")}
+
+    planner_provider, planner_model = resolved_planner_backend(config.leader)
+    orchestrator_provider, orchestrator_model = resolved_orchestrator_backend(config.leader)
+    logical_backends = {
+        "planner": (planner_provider, planner_model),
+        "orchestrator": (orchestrator_provider, orchestrator_model),
+    }
+    logical_controls = {
+        "planner": ("Inspect plans", "agentdeck plan list"),
+        "orchestrator": ("Inspect Leader actions", "agentdeck leader actions"),
+    }
+
+    reviewers = tuple(config.review.reviewers)
+    round_reviewer = config.review.round_reviewer
+
+    roles: list[dict[str, object]] = []
+    for spec in ROLE_SPECS:
+        role_name = spec["role"]
+        binding_kind = spec["binding_kind"]
+        agent_id: str | None = None
+        provider: object = None
+        model: object = None
+        backend: object = None
+        transport: object = None
+        runtime_status: object = None
+        pane_id: object = None
+        blocker: object = None
+        candidates: list[str] = []
+        status = "bound"
+
+        if binding_kind == "command":
+            controls = [
+                _role_topology_inspect(
+                    "Route one request",
+                    "agentdeck frontdesk --message <text>",
+                    enabled=False,
+                    blocker="requires --message <text>",
+                )
+            ]
+        elif binding_kind == "logical_leader":
+            provider, model = logical_backends[role_name]
+            identity = leader_backend_identity(provider, model)
+            backend = identity["provider_backend"]
+            transport = identity["provider_transport"]
+            label, command = logical_controls[role_name]
+            controls = [_role_topology_inspect(label, command)]
+        else:
+            if role_name == "coder":
+                agent_id, status, candidates = resolve_worker_role(agent_rows, IMPLEMENTATION_ROLE_HINTS)
+                if status == "unbound":
+                    blocker = "no configured agent has an implementation role; add one to [[agents]]"
+                elif status == "ambiguous":
+                    blocker = (
+                        "several agents share an implementation role: "
+                        f"{', '.join(candidates)}; give exactly one the implementation role"
+                    )
+            elif role_name == "code_reviewer":
+                if reviewers:
+                    agent_id, status, candidates = reviewers[0], "bound", []
+                else:
+                    agent_id, status, candidates = resolve_worker_role(agent_rows, REVIEW_ROLE_HINTS)
+                    if status == "unbound":
+                        blocker = (
+                            "no configured agent has a review role; add one to [[agents]] "
+                            "or set [review] reviewers"
+                        )
+                    elif status == "ambiguous":
+                        blocker = (
+                            "several agents share a review role: "
+                            f"{', '.join(candidates)}; set [review] reviewers to choose"
+                        )
+            else:
+                if round_reviewer:
+                    agent_id, status = round_reviewer, "bound"
+                else:
+                    status = "unbound"
+                    blocker = "set [review] round_reviewer to enable a dedicated acceptance reviewer"
+            if agent_id:
+                agent = by_agent.get(agent_id, {})
+                provider = agent.get("provider")
+                runtime = agent.get("runtime") if isinstance(agent.get("runtime"), dict) else {}
+                runtime_status = runtime.get("status")
+                pane_id = runtime.get("pane_id")
+            controls = _role_topology_worker_controls(agent_id, runtime_status if isinstance(runtime_status, str) else None)
+
+        roles.append(
+            {
+                "role": role_name,
+                "layer": spec["layer"],
+                "binding_kind": binding_kind,
+                "binding_status": status,
+                "agent_id": agent_id,
+                "provider": provider,
+                "model": model,
+                "backend": backend,
+                "transport": transport,
+                "lifecycle": spec["lifecycle"],
+                "runtime_status": runtime_status,
+                "pane_id": pane_id,
+                "blocker": blocker,
+                "candidates": list(candidates),
+                "controls": controls,
+            }
+        )
+
+    def count(status: str) -> int:
+        return sum(1 for role in roles if role["binding_status"] == status)
+
+    return {
+        "mode": "role_topology",
+        "source_command": ROLE_TOPOLOGY_COMMAND,
+        "layer_count": len(roles),
+        "bound_count": count("bound"),
+        "unbound_count": count("unbound"),
+        "ambiguous_count": count("ambiguous"),
+        "split_enabled": leader_split_enabled(config.leader),
+        "roles": roles,
+        "controls": [
+            _role_topology_inspect("Inspect role topology", ROLE_TOPOLOGY_COMMAND),
+            _role_topology_inspect("Open workbench", "agentdeck workbench"),
+        ],
+    }
+
+
 def _role_agent_controls(agent_id: str) -> list[dict[str, object]]:
     return [
         _control(
@@ -6322,6 +6498,37 @@ def controls_command(args: argparse.Namespace) -> int:
         for error in validation["errors"]:
             print(f"- {error}", file=sys.stderr)
         return 1
+    _print_json(payload)
+    return 0
+
+
+def roles_command(args: argparse.Namespace) -> int:
+    """Read-only north-star role topology.
+
+    It derives every binding from existing authoritative sources, writes no
+    state, appends no event, records no chat turn, calls no provider and never
+    reads or writes tmux.
+    """
+    config, store, exit_code = _load_project_or_error()
+    if config is None or store is None:
+        return exit_code
+    project_view = _project_view_payload_or_error(config, store)
+    if project_view is None:
+        return 1
+    payload = _role_topology_card(config, project_view)
+    validation = validate_role_topology_contract(payload)
+    if not validation["ok"]:
+        print("Role topology contract validation failed", file=sys.stderr)
+        for error in validation["errors"]:
+            print(f"- {error}", file=sys.stderr)
+        return 1
+    _print_json(payload)
+    return 0
+
+
+def contract_role_topology_command(args: argparse.Namespace) -> int:
+    contract_path = Path(__file__).resolve().parents[2] / "docs" / "contracts" / "role-topology-schema.md"
+    payload = role_topology_contract_response(contract_path, include_example=args.example)
     _print_json(payload)
     return 0
 
@@ -21867,6 +22074,12 @@ def build_parser() -> argparse.ArgumentParser:
     frontdesk.add_argument("--message", required=True, help="The raw human request to route")
     frontdesk.set_defaults(func=frontdesk_command)
 
+    roles = subparsers.add_parser(
+        "roles",
+        help="Show the read-only north-star role topology (which layers this project bound)",
+    )
+    roles.set_defaults(func=roles_command)
+
     controls = subparsers.add_parser("controls", help="Show the GUI-ready command palette from the workbench")
     controls.add_argument("--scope", help="Filter command palette controls by scope")
     controls.add_argument("--card", help="Filter command palette controls by source card")
@@ -22293,6 +22506,15 @@ def build_parser() -> argparse.ArgumentParser:
     )
     contract_frontdesk.add_argument("--example", action="store_true", help="Include a GUI-ready frontdesk example")
     contract_frontdesk.set_defaults(func=contract_frontdesk_command)
+
+    contract_role_topology = contract_subparsers.add_parser(
+        "role-topology",
+        help="Discover the read-only north-star role topology contract",
+    )
+    contract_role_topology.add_argument(
+        "--example", action="store_true", help="Include a GUI-ready role topology example"
+    )
+    contract_role_topology.set_defaults(func=contract_role_topology_command)
 
     contract_delegation = contract_subparsers.add_parser(
         "delegation",

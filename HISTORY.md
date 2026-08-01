@@ -4,6 +4,40 @@
 
 ## 2026-08-01
 
+### Add the role topology card and agentdeck roles command
+
+- **Type**: feat
+- **Motivation**: G6 第二刀。有了纯推导模块之后,需要一个人类和 GUI 都能一眼
+  读懂的面:北极星六层各自绑到了什么、provider 是谁、此刻什么状态、缺什么。
+- **What**: 新增只读命令 `agentdeck roles` 和第 44 个契约 `role-topology`
+  (`agentdeck contract role-topology [--example]` +
+  `docs/contracts/role-topology-schema.md`)。builder
+  `_role_topology_card(config, project_view)` 从**现有权威来源**推导:
+  planner/orchestrator 的 provider/model 取
+  `resolved_planner_backend` / `resolved_orchestrator_backend`(含 `[leader]`
+  回退),normalized `backend`/`transport` 复用 `leader_backend_identity`
+  (不另写一份),worker 的 `runtime_status`/`pane_id` 取 ProjectView
+  `agents[]` runtime 投影(**不读 tmux**),`code_reviewer` 取
+  `[review].reviewers` 首位否则回退 role 语义,`round_reviewer` 取
+  `[review].round_reviewer` 否则 `unbound`。`validate_role_topology_contract()`
+  守门:闭合枚举、`binding_kind != worker_agent` 时 pane 字段必然为 null、
+  `command` 层无 provider、非 `bound` 必须带 blocker、`ambiguous` 必须列全
+  candidates 且 `agent_id` 为 null、三个计数与 `roles[]` 一致且相加等于
+  `layer_count`、controls 一律 `safety=inspect`。
+- **Impact**: 纯新增只读面。契约索引从 43 增到 44(`CONTRACT_INDEX_SPECS`
+  与 `tests/test_contracts.py` / `tests/test_agent_cli.py` 的数量与名单断言
+  同步收紧,不是放宽);`docs/contracts/contract-index-schema.md` 的名单补齐
+  遗漏的 run-loop-host / plan-rework / frontdesk 并加入 role-topology。
+  全路径只读:不写 state、不追加事件、不记 chat turn、不调 provider、
+  不读写 tmux;拓扑是观察面不是授权,不改变任何 gate。
+- **Verification**: 已先确认红测失败(`ImportError: cannot import name
+  'ROLE_TOPOLOGY_CARD_FIELDS'`);实现后
+  `conda run -n agentdeck pytest tests/test_role_topology_cli.py
+  tests/test_role_topology.py tests/test_contracts.py tests/test_agent_cli.py -q`
+  964 项通过,其中包含"命令前后 `StateStore(root).load()` 与 events.jsonl
+  逐字节相同"的只读回归钉和 validator 拒绝 pane/blocker/candidates/计数漂移
+  的四条钉。
+
 ### Add the pure role topology derivation module
 
 - **Type**: feat
