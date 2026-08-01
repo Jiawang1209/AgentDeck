@@ -4,6 +4,32 @@
 
 ## 2026-08-01
 
+### Round 14 live: review group core invariants confirmed (in progress)
+
+- **Type**: docs
+- **Motivation**: review group + round_reviewer 落地并经终审 APPROVE 后,
+  user 拍板"先跑 live 验证";本条记录已确证部分,链路收尾待一处人工
+  授权框放行后自动完成。
+- **What**: 证据文档
+  `docs/validation/2026-08-01-copilot-line1-round14-review-group-live.md`。
+  已 live 确证:①确定性展开(Leader 产出的单 review step 展开为
+  reviewer+planner 两步,组标记完整、编号连续、coder 实现步未误伤,
+  证实识别谓词 = `reviewers[0]` 的 role);②组内同批准但绝不并行
+  (顺序守卫持留);③严格串行派发(coder→reviewer→planner 各自独立
+  wave);④**终审 Critical 修复真实复现**——组未齐窗口 `leader review`
+  给出 `group.complete=false` + 未报到成员 `overall:null` 占位,且
+  merge blocker 为 `review group incomplete (1/2 members reported)`,
+  正是"唯一报到者给 pass 也不放行"的关键场景;⑤预算耗尽/干净三态/
+  显式重启接力;⑥**委托对通用浏览器 CLI 保持 fail-closed**(planner
+  的 `playwright_cli.sh` 请求未被代按,留人眼);⑦shadow-diff 与
+  events-diff 双 ok。
+- **Impact**: review group 的核心不变量(展开、串行、组完成才判定、
+  不完整组不放行合并)已有真实运行证据。
+- **Verification**: 见证据文档逐条 JSON;主仓库全量基线 4877 passed
+  (本条为 docs-only)。
+
+
+
 ### Withhold auto-merge when a dispatched review step produced no verdict
 
 - **Type**: fix
