@@ -164,7 +164,10 @@ def select_plan_verdict(
         ),
         None,
     )
-    if approval is None:
+    if approval is None and require_complete_group:
+        # 触发面必须有 review approval 才能推导 step;展示面不需要它,
+        # 缺失时绝不让 summary 塌缩(那是回到 merge fail-open 的最后一条
+        # 结构性路径)。
         return None
     texts = {
         str(reply.get("reply_id")): str(reply.get("text") or "") for reply in replies

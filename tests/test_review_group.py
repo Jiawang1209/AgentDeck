@@ -409,6 +409,110 @@ def test_incomplete_group_all_pass_so_far_still_withholds_merge(tmp_path) -> Non
     assert cli._verdict_merge_blocker(store, "pln_g") is not None
 
 
+def test_config_writers_preserve_native_datetimes(tmp_path: Path) -> None:
+    """TOML 原生日期/时间也必须保留(此前会被当成不可表示而丢弃)。"""
+    import tomllib
+
+    root = _root(tmp_path)
+    _config_with(
+        root,
+        "[stamps]\nday = 2026-08-01\nmoment = 2026-08-01T10:20:30\nclock = 10:20:30\n",
+    )
+    before = tomllib.loads((root / ".agentdeck" / "config.toml").read_text(encoding="utf-8"))
+    update_leader_approval_mode(root, "approve")
+    after = tomllib.loads((root / ".agentdeck" / "config.toml").read_text(encoding="utf-8"))
+    assert after["stamps"] == before["stamps"]
+
+
+def test_config_writer_refuses_unrepresentable_value(tmp_path: Path) -> None:
+    """不可表示的值必须**报错**而不是静默消失——白名单回写永远不该
+    成为数据丢失面(2026-08-01 终审 follow-up)。"""
+    import pytest as _pytest
+
+    from agentdeck.config import _dump_config
+
+    with _pytest.raises(ValueError, match="cannot be preserved"):
+        _dump_config({"project": {"name": "x"}, "odd": {"mixed": [{"a": 1}, "str"]}})
+
+
+def test_single_element_reviewers_replaces_review_agent(tmp_path) -> None:
+    """spec 测试要点:单元素 reviewers 等价于替换 review agent(组=1)。
+    识别谓词是 reviewers[0] 的 **role**,所以替换者必须与 plan 的 review
+    step 同角色;跨角色的单元素列表是文档化的 no-op(见下一断言)。"""
+    steps = expand_review_group(_plan(), (("auditor", "review"),))["steps"]
+    assert [s["agent_id"] for s in steps] == ["coder", "auditor"]
+    assert steps[1]["review_group"] == 1
+    assert steps[1]["review_group_member"] == 0
+    assert review_group_numbers(steps) == {2: 1}
+
+    # 跨角色单元素:谓词不匹配任何 step,plan 原样不动(不是缺陷,是
+    # reviewers[0] 角色签名谓词的既定锐边,CLAUDE.md 已记录)。
+    untouched = expand_review_group(_plan(), (("planner", "planning"),))["steps"]
+    assert [s["agent_id"] for s in untouched] == ["coder", "reviewer"]
+    assert review_group_numbers(untouched) == {}
+
+
+def test_rework_template_merges_and_truncates_multi_reviewer(tmp_path) -> None:
+    """spec 测试要点:多 reviewer 回炉模板署名合并 + 截断附各成员 trace。"""
+    from agentdeck.review_iteration import (
+        MAX_REWORK_TASK_CHARS,
+        build_group_review_text,
+        build_rework_task,
+    )
+
+    members = [
+        {"agent_id": "reviewer", "verdict": {"overall": "fail", "criteria": [
+            {"criterion": "tests pass", "verdict": "fail", "evidence": "2 failing"}]},
+         "text": "R1 " + "x" * 3000},
+        {"agent_id": "planner", "verdict": {"overall": "needs_changes", "criteria": [
+            {"criterion": "docs synced", "verdict": "fail"}]},
+         "text": "R2 " + "y" * 3000},
+    ]
+    merged = build_group_review_text(members)
+    assert "### reviewer reviewer" in merged and "### reviewer planner" in merged
+    assert "tests pass" in merged and "docs synced" in merged
+
+    text = build_rework_task(
+        round_number=1,
+        original_task="build the widget",
+        verdict={"overall": "fail", "criteria": []},
+        reply_id="rep_last",
+        reply_text=merged,
+        trace_ids=["rep_a", "rep_b"],
+    )
+    assert len(text) <= MAX_REWORK_TASK_CHARS
+    # 截断标记逐个成员给出 trace 指引(单成员时退化为原单条形态)
+    assert "agentdeck trace --id rep_a / agentdeck trace --id rep_b" in text
+    assert text.rstrip().endswith("修复后 commit 到任务分支。")
+
+
+def test_aggregate_clamps_unrecognized_overall_to_fail() -> None:
+    """损坏/手改 state 里的非法 overall 必须 fail-closed 夹到 fail,
+    而不是原样外泄成契约非法值。"""
+    merged = aggregate_group_verdicts([
+        {"verdict": {"overall": "bogus", "criteria": []}},
+        {"verdict": {"overall": "pass", "criteria": []}},
+    ])
+    assert merged["overall"] == "fail"
+
+
+def test_display_face_survives_missing_first_member_approval(tmp_path) -> None:
+    """展示面不依赖 approval:首个成员的 approval 记录缺失时,summary
+    绝不能塌缩(那是回到 Critical 形态的最后一条结构性路径)。"""
+    from agentdeck import cli
+
+    _root_dir, store = _seed_group_store(tmp_path, ["fail", "pass"])
+    state = store.load()
+    state["approvals"] = [a for a in state["approvals"] if a.get("step") != 2]
+    store.save(state)
+    summary = store.plan_verdict_summary("pln_g")
+    # 首成员 approval 缺失 → 它的回复无从关联,该成员降级为"未报到",
+    # 但 summary 绝不塌缩:组标 complete=false,自动合并照样扣住。
+    assert summary is not None
+    assert summary["group"]["complete"] is False
+    assert cli._verdict_merge_blocker(store, "pln_g") is not None
+
+
 def test_group_aggregate_merges_criteria_any_fail_wins(tmp_path) -> None:
     """spec 头条合并规则(终审点名未钉):任一 fail 胜出、unknown 胜 pass。"""
     def member(*verdicts):

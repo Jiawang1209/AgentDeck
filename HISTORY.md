@@ -4,6 +4,32 @@
 
 ## 2026-08-01
 
+### Harden review-group edges and make config preservation fail loudly
+
+- **Type**: fix
+- **Motivation**: review group 终审复核 **APPROVE** 后列出的非阻塞
+  follow-up:两个未覆盖的 spec 测试点、非法 `overall` 原样外泄、展示面
+  仍依赖 approval(回到 merge fail-open 的最后一条结构性路径),以及
+  "不可表示的配置值静默消失"这一残留数据丢失面。
+- **What**: ①`aggregate_group_verdicts` 把不认识的 `overall` **夹到
+  `fail`**(fail-closed;此前原样外泄成契约非法值);②`select_plan_verdict`
+  的 approval 缺失只在**触发面**拒绝——展示面不需要它,缺失时 summary
+  绝不塌缩(组仍标 `complete=false`、合并仍扣住);③配置保留式回写
+  改为**失败即报错**:新增 `_preserved_scalar_or_error`,不可表示的值
+  抛 `ValueError` 而不是静默丢键,并补齐 TOML 原生 `date`/`datetime`/
+  `time` 支持(此前会被当作不可表示而丢弃);④补齐终审点名的两个 spec
+  测试点(单元素 reviewers 替换语义 + 跨角色单元素是文档化 no-op、
+  多 reviewer 回炉模板署名合并与截断的逐成员 trace 指引)。
+- **Impact**: 配置写入面不再有任何静默丢弃路径(不可表示即报错);
+  组判定在损坏 state 与缺失 approval 下均 fail-closed。
+- **Verification**: TDD——六测先 RED 后 GREEN(其中两条 RED 暴露的是我
+  的断言过强而非产品缺陷,已按真实语义改准:跨角色单元素展开是 no-op、
+  截断标记逐成员给出 trace 命令);review_group 42 passed;
+  review_group+iteration+verdict_ingestion+plan_rework+contracts+
+  agent_cli+autonomy 1012 passed;`compileall` 干净;全量见提交时数字。
+
+
+
 ### Keep a sibling's fail blocking when a review group member reports no verdict
 
 - **Type**: fix

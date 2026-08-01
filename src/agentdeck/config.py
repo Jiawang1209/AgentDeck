@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import datetime
+
 import os
 from pathlib import Path
 import stat
@@ -500,19 +502,35 @@ def _quote_toml(value: str) -> str:
 
 
 def _toml_scalar(value: object) -> str | None:
-    """标量/数组的通用 TOML 表示;不可表示的返回 None(由调用方跳过)。"""
+    """标量/数组的通用 TOML 表示;真正不可表示的返回 None。
+
+    调用方(`_dump_preserved_*`)必须把 None 当**错误**而不是"跳过"——
+    静默丢弃正是这套保留式回写要根除的数据丢失面。
+    """
     if isinstance(value, bool):
         return "true" if value else "false"
     if isinstance(value, int) or isinstance(value, float):
         return repr(value)
     if isinstance(value, str):
         return _quote_toml(value)
+    if isinstance(value, (datetime.datetime, datetime.date, datetime.time)):
+        # TOML 原生日期/时间字面量,不加引号。
+        return value.isoformat()
     if isinstance(value, list):
         rendered = [_toml_scalar(item) for item in value]
         if any(item is None for item in rendered):
             return None
         return "[" + ", ".join(item for item in rendered if item is not None) + "]"
     return None
+
+
+def _preserved_scalar_or_error(path: str, value: object) -> str:
+    rendered = _toml_scalar(value)
+    if rendered is None:
+        raise ValueError(
+            f"config value at {path} cannot be preserved as TOML: {type(value).__name__}"
+        )
+    return rendered
 
 
 def _is_table_array(value: object) -> bool:
@@ -535,9 +553,9 @@ def _dump_preserved_table_array(name: str, items: list[dict[str, object]]) -> li
             elif _is_table_array(value):
                 nested.extend(_dump_preserved_table_array(f"{name}.{key}", value))
             else:
-                rendered = _toml_scalar(value)
-                if rendered is not None:
-                    scalars.append(f"{key} = {rendered}")
+                scalars.append(
+                    f"{key} = {_preserved_scalar_or_error(f'{name}.{key}', value)}"
+                )
         lines.extend(["", f"[[{name}]]", *scalars, *nested])
     return lines
 
@@ -554,9 +572,7 @@ def _dump_preserved_table(name: str, table: dict[str, object]) -> list[str]:
             # 数组表必须整块保留;`_toml_scalar` 认不出它,漏掉即静默丢数据。
             nested.extend(_dump_preserved_table_array(f"{name}.{key}", value))
             continue
-        rendered = _toml_scalar(value)
-        if rendered is not None:
-            scalars.append(f"{key} = {rendered}")
+        scalars.append(f"{key} = {_preserved_scalar_or_error(f'{name}.{key}', value)}")
     lines: list[str] = []
     if scalars or not nested:
         lines.extend(["", f"[{name}]", *scalars])

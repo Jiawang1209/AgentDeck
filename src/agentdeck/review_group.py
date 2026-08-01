@@ -227,7 +227,11 @@ def aggregate_group_verdicts(members: list[dict[str, Any]]) -> dict[str, Any]:
     for member in members:
         verdict = member.get("verdict") or {}
         value = str(verdict.get("overall"))
-        if _SEVERITY.get(value, 2) > _SEVERITY.get(overall, 0):
+        if value not in _SEVERITY:
+            # 损坏/手改 state 里的非法 overall 夹到最严一档,绝不原样外泄
+            # 成契约非法值(fail-closed:未知判定按未通过处理)。
+            value = "fail"
+        if _SEVERITY[value] > _SEVERITY.get(overall, 0):
             overall = value
         score = verdict.get("score")
         if isinstance(score, int) and not isinstance(score, bool):
