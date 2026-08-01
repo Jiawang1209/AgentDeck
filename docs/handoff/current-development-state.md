@@ -2,6 +2,29 @@
 
 Updated: 2026-08-01
 
+**宿主人类门诚实停止已落地(2026-08-01)**:spec
+`docs/superpowers/specs/2026-08-01-host-human-gate-design.md`,plan
+`docs/superpowers/plans/2026-08-01-host-human-gate.md`,7 commits
+`8774b599`→`03374af1`(+ 本条 docs commit),全量 5024 passed / 3 skipped。
+动机是 Round 14 宿主日志的硬数据:**846 个 wave 里 834 个完全空转
+(98%,3h37m),run 6 与 run 7 是 100% 空转**——全部消耗在一道没人按的
+Playwright 授权框上,而 `waiting_for_reply` 无法区分"worker 在思考"
+(会自解)与"worker 停在人类门上"(永不自解),于是把 `--max-waves`
+这个自主工作量预算喂给了一个人类门,人类那边一个信号都没收到。做法是
+**零新增能力面**:`--release-boxes` 的扫描 `_scan_release_delegated_boxes`
+本来就返回带全部证据的 `skipped[]`,宿主此前把它丢进 `_`;本切片只是
+不再丢弃——awaiting 集限定(复用与文件通道摄入同一份 `_plan_awaiting`)
++ 同一道框连续两次 debounce → 新的第六个 `stopped_reason=human_gate`,
+证据(六字段,单一来源 `HUMAN_GATE_FIELDS`)进 host.json / host.log /
+`run_loop_host_stopped` 审计 / `run-loop-host status` / 契约五个面。单
+wave 引擎 `_run_loop_single_wave` 一字未改;不开 `--release-boxes` 的宿主
+一次 pane 都不读、行为逐字节不变;证据是 provenance 不是授权,AgentDeck
+永不代按。**live 验证待办**:下一轮 round 应带 `--release-boxes` 重启一台
+宿主,在 Playwright 框场景下确认看到 `human_gate` + 屏上证据而非烧满预算
+(user 也可直接去那道框按回车放行,两条路径都能验证)。非目标(记为
+follow-up):`run-loop --follow` 的对称实现、空转退避/动态间隔、把人类门
+通过推送通知发给人。
+
 **Round 13 live PASS(2026-08-01,user 拍板"先 1 再 2")**:review 迭代
 闭环与 run-loop 背景宿主双目标全链验证,证据
 `docs/validation/2026-08-01-copilot-line1-round13-iteration-host-live.md`。

@@ -4,6 +4,29 @@
 
 ## 2026-08-01
 
+### Document the host human-gate stop
+
+- **Type**: docs
+- **Motivation**: 人类门切片的代码/契约已全部落地,但 README、CLAUDE.md 和 handoff
+  三处主线文档还只描述五个 stopped_reason;新读者(人或 agent)看不到"未委托
+  授权框会让宿主诚实停下"这条行为,也看不到它的边界。
+- **What**: README 的 run-loop background host 条目补 `human_gate`(含 834/846
+  wave 的实测动机、证据字段、只在 `--release-boxes` 下生效);CLAUDE.md 的
+  run-loop-host 规则把闭合枚举改为六值并写全检测规则(awaiting 集限定、连续两次
+  debounce、fail-open、纯函数与 `HUMAN_GATE_FIELDS` 单一来源、五个上报面、
+  `human_gate` 不是 `gate_reached` 故绝不触发自动合并);
+  `docs/handoff/current-development-state.md` 顶部记录本切片落地(spec/plan 路径、
+  846-wave 动机、零新增能力面的做法、live 验证待办与 follow-up 非目标)。
+- **Impact**: 纯文档,零行为变化。三处都明写:证据是 **provenance,不是授权**——
+  AgentDeck 永不代按那道框,按下它始终是人类在对应 pane 里的动作;检测只在
+  `--release-boxes` 开启时生效,不带该标志的宿主一次 pane 都不读。契约是既有
+  run-loop-host 条目的扩张,contract index 条目数不变。
+- **Verification**: 全量 `conda run -n agentdeck pytest -q` 5024 passed /
+  3 skipped(基线 5019 + 本轮 5 个新测试);
+  `python -m compileall src tests -q` 干净;
+  `agentdeck contract run-loop-host` 输出 `stopped_reasons` 六值、
+  `status_response_fields` 含 `human_gate`、`human_gate_fields` 六字段。
+
 ### Surface human-gate evidence in host status and contract
 
 - **Type**: feat

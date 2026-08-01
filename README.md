@@ -84,7 +84,17 @@ AgentDeck › Mission started. Use /status or open the workbench to inspect it.
   run-loop-host status` is read-only; `agentdeck run-loop-host stop --confirm`
   sends SIGTERM, the child finishes its current wave, and there is no SIGKILL
   escalation — flipping `approval_mode` away from `autonomous` also stops the
-  host at the next wave (`stopped_reason=policy_revoked`); discovery:
+  host at the next wave (`stopped_reason=policy_revoked`); with
+  `--release-boxes`, if the worker the host is waiting on is sitting behind an
+  **undelegated** authorization box — a reply that will never arrive on its own
+  — the host stops with `stopped_reason=human_gate` and carries the on-screen
+  box evidence (agent, box kind, command / MCP server+tool, waiting hint) into
+  `host.json`, `host.log`, the `run_loop_host_stopped` audit event and
+  `run-loop-host status`, instead of burning the whole wave budget polling (a
+  live run spent 834 of 846 waves, 3h37m, doing exactly that); the evidence is
+  **provenance, not authorization** — AgentDeck never presses the box, a human
+  does — and detection reuses only the scan `--release-boxes` already performs,
+  so a host started without that flag still reads no pane at all; discovery:
   `agentdeck contract run-loop-host`;
 - review iteration loop: a review reply whose verdict `overall` is `fail` or
   `needs_changes` appends a deterministic rework + re-review step pair to the
