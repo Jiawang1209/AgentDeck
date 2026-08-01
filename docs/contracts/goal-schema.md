@@ -62,7 +62,7 @@ The repository's standing boundary is *only the exact confirmed preview becomes
 frozen authority*. So `goal start` binds to a `--plan-id` the human has seen in
 a preview — never to a raw sentence. `goal preview` writes a plan (equivalent
 to `leader plan`) but approves nothing, dispatches nothing and starts no host.
-That binding is **enforced** by start gate 6 below, not merely asserted here.
+That binding is **enforced** by start gate 7 below, not merely asserted here.
 
 ## Preview response (`mode=goal_preview`)
 
@@ -166,24 +166,33 @@ confirmation (see the section above).
 | `requires_explicit_user` | always `true` |
 | `safety` | always `delegated` |
 
-### Start gates (all six required; any failure ⇒ refuse, zero writes, zero spawn)
+### Start gates (all seven required; any failure ⇒ refuse, zero writes, zero spawn)
 
 1. `--confirm` present.
 2. `config.leader.approval_mode == "autonomous"` — and `goal` never flips it.
 3. `--plan-id` names a known plan.
 4. `--max-waves >= 1` (the 300 default must clear this gate too).
-5. This project has **no live run-loop host**. The reused `run-loop-host start`
+5. `--interval >= 0` (2026-08-01). Zero is legal and means "no sleep between
+   waves"; **negative is refused**. Consumers guard the sleep with
+   `if interval > 0`, so a negative value silently means "never sleep",
+   collapsing the bounded authorization the human just confirmed — the preview
+   screen's `每 Ns 一轮` line would be a displayed fact that does not hold, and
+   `--max-waves 300 --interval -5` would burn the whole budget in under a
+   minute. `goal preview` carries the same gate and applies it **before the
+   Leader provider call**, so a bad flag never costs an API round trip. One
+   shared helper (`_reject_negative_interval`) serves all eight entry points.
+6. This project has **no live run-loop host**. The reused `run-loop-host start`
    refuses a second host on its own, but that refusal happens *after* the
    approve stage — which would leave the approvals approved and no host
    running. So the same liveness probe (`_host_liveness_or_none`, one source,
-   not a second rule) runs up front with the other four, and a refusal is never
+   not a second rule) runs up front with the other five, and a refusal is never
    preceded by a mutation. The stderr line names the running host's `plan_id`
    and `pid` and points at `agentdeck run-loop-host status` /
    `agentdeck run-loop-host stop --confirm`.
    **A stale record does not block.** A record whose pid is dead is exactly the
    case a fresh `goal start` should be allowed through, matching how
    `run-loop-host start` itself treats stale records; only `running` blocks.
-6. **The plan came from a `goal preview`** (enforced 2026-08-01). "Two steps,
+7. **The plan came from a `goal preview`** (enforced 2026-08-01). "Two steps,
    not one" above is only real if the code checks it. Until this gate existed,
    the check was merely that the plan **exists** — so a `plan_id` from
    `leader plan` or `run --task`, whose authorization screen was never shown,

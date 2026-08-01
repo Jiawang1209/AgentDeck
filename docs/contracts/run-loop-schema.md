@@ -101,7 +101,15 @@ follow's continue-vs-stop decision differs, and it remains strictly bounded
 by `--max-waves` as always (a round-appending wave still counts against the
 budget like any other). `--follow` supports `--plan-id` only (`--all
 --follow` is refused), inherits the same `--confirm` +
-`approval_mode=autonomous` double gate, and refuses `--max-waves < 1`. Each
+`approval_mode=autonomous` double gate, refuses `--max-waves < 1`, and refuses
+a **negative `--interval`** (2026-08-01; zero is legal and means "no sleep
+between waves"). The interval gate is checked at the `run-loop` entry point —
+before any auto-approve or dispatch, so a refusal is zero-write — and is shared
+with the other seven `--interval` entry points via one helper
+(`_reject_negative_interval`). It is a safety gate, not input hygiene: the
+sleep is guarded by `if interval > 0`, so a negative value silently means
+"never sleep" and would collapse `--max-waves <n>` from a wall-clock bound the
+human authorized into "n waves as fast as the machine allows". Each
 wave is the unchanged single-wave engine (same
 auto-approve/ingest/dispatch/review-iteration semantics, same audit events);
 between waves,

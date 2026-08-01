@@ -202,8 +202,16 @@ Commands:
 - `agentdeck boxes watch --confirm --iterations <n> --interval <seconds>
   [--agent <id>]` is the bounded delegated-automation loop: it requires
   `--confirm` **and** `config.leader.approval_mode == "autonomous"` (the same
-  gate class as `run-loop`/`approval auto`), scans running agents each
-  iteration, releases only delegation-covered boxes (each release audited as
+  gate class as `run-loop`/`approval auto`), refuses `--iterations < 1`, and
+  refuses a **negative `--interval`** (2026-08-01; zero is legal and means "no
+  sleep between iterations"). The interval refusal happens before the first
+  scan, so it releases nothing and writes nothing; it is the same shared helper
+  (`_reject_negative_interval`) used by the other seven `--interval` entry
+  points, and it exists because the sleep is guarded by `if interval > 0` — a
+  negative value silently means "never sleep", turning a bounded, paced
+  delegated-release loop into an unpaced burst against live panes. It scans
+  running agents each iteration, releases only delegation-covered boxes (each
+  release audited as
   `auth_box_released` with `source=boxes_watch`), records non-covered boxes in
   `skipped[]` with `reason=no active delegation`, and always stops at the
   iteration bound. `released[]` and `skipped[]` items (and the shared

@@ -4,6 +4,52 @@
 
 ## 2026-08-01
 
+### Refuse a negative --interval at all eight entry points that accept it
+
+- **Type**: fix
+- **Motivation**: `--interval` 在 `cli.py` 里有八处定义(`run-loop --follow`、
+  `goal preview`、`goal start`、`run-loop-host start`、`run-loop-host serve`、
+  `workbench --watch`、`dashboard --watch`、`boxes watch`),全是
+  `type=float` 带缺省,**一处都没有校验**。而每个消费点都写成
+  `if interval > 0: time.sleep(...)`——于是负值不报错,只是静默地变成
+  "永不睡"。这不是输入卫生问题,是安全边界问题:wave 预算是**有界授权**,
+  人类读 `run-loop-host start --confirm --max-waves 300 --interval -5` 时
+  读到的是"300 wave 跑一整夜",实际拿到的是"300 wave 在一分钟内烧完",
+  把一次走开式授权悄悄塌缩成对 provider 和 tmux 的连续猛敲。同一个值现在
+  还印在 `goal preview` 的确认屏上("每 10s 一轮"),负值就让确认屏上写着一句
+  不成立的事实——正是那条命令刚连续修掉三次的同类缺陷。
+- **What**: 新增单一来源纯 helper `_reject_negative_interval(args, command)`
+  (放在 `_project_view_payload_or_error` 旁的通用报错 helper 区),规则是
+  `interval >= 0`,越界打印 `<command> requires --interval >= 0` 到 stderr
+  并让调用方退 1;八个入口各接一行,**绝不复制八份检查**。**零仍然合法**:
+  它表示"wave 之间不睡",是显式的、在预览里可见的,既有测试也依赖它
+  (host serve 测试传 `interval="0"`);只有负值是静默当零用的无意义值。
+  每处都放在该命令**任何写入或 spawn 之前**:`goal preview` 的那道门在
+  provider 调用之前(一个坏标志不该花掉一次 Leader API 往返),
+  `goal start` 从六道门变七道门,`run-loop-host start` 从四道门变五道门。
+  同步 `docs/contracts/run-loop-host-schema.md`、`goal-schema.md`
+  (含 gate 6→7 的交叉引用)、`run-loop-schema.md` 和 `delegation-schema.md`
+  中枚举拒绝条件的段落,并把 `CLAUDE.md` 里被本次改动证伪的门数断言
+  (run-loop-host start "四道 gate"、goal start "六道门" 及其序数交叉引用)
+  一并改正——顺带修掉一处既有漂移:同一条 `goal` 规则的结尾原本写着
+  "五道门",与它自己开头的"六道门"就已经不一致,现在统一为"七道门"。
+- **Impact**: 零和正 interval 逐字节不变——只有此前静默接受的负值现在被拒。
+  拒绝路径与各命令既有门同标准:`state.json` 逐字节相同、事件序列相同、
+  `spawn.calls == []`、无 host 记录。无契约字段变化,无 response 形状变化。
+- **Verification**: TDD 先红:新建 `tests/test_interval_validation.py`,
+  11 条先失败(参数化的八入口各一条 + 两条零写零 spawn 取证 + 一条
+  provider-未被调用取证),其中 `goal start` 的红态直接打印出
+  `宿主 pid 999101 / 300 wave / 每 -5s 一轮` 并真的 spawn 了宿主,
+  正是本条要修的现象。修完 13 绿(另两条是入口清单守卫与零值仍合法)。
+  取证:`run-loop-host start` 与 `goal start` 拒绝后 `state.json` 逐字节相同、
+  `events.jsonl` 事件序列相同、`spawn.calls == []`、`read_host_record()`
+  为 None;`goal preview` 以注入必炸的 `_generate_leader_plan` 证明拒绝
+  发生在 provider 调用之前;`--interval 0` 在 workbench / dashboard /
+  goal preview 上仍退 0。另加一条清单守卫,断言 `cli.py` 里
+  `add_argument("--interval"` 的出现次数恒等于被覆盖的入口数,
+  防止将来长出第九个未设门的入口。全量 5126 passed / 3 skipped
+  (基线 5113 + 本次 13 条)。
+
 ### Stop goal start from asserting the host did not start when it may have
 
 - **Type**: fix

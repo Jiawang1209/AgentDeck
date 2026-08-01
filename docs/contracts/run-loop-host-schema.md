@@ -35,12 +35,20 @@ Design spec: `docs/superpowers/specs/2026-07-30-run-loop-host-design.md`.
 | `requires_explicit_user` | always `true` |
 | `safety` | always `delegated` |
 
-### Start gates (all four required, refusal is zero-write, exit non-0)
+### Start gates (all five required, refusal is zero-write / zero-spawn, exit non-0)
 
 1. `--confirm` present.
 2. `config.leader.approval_mode == "autonomous"` (same gate as `run-loop`).
 3. Explicit `--max-waves >= 1` (no unbounded host).
-4. `--plan-id` names a known plan.
+4. `--interval >= 0` (2026-08-01). Zero is legal and means "no sleep between
+   waves"; **negative is refused**. Every consumer guards the sleep with
+   `if interval > 0`, so a negative value silently means "never sleep" — it
+   would turn `--max-waves 300 --interval -5`, which a human reads as ~8 hours
+   of walk-away, into 300 waves burned as fast as the machine allows. The wave
+   budget is a safety bound, so the interval that paces it is one too. Shared
+   with the other seven `--interval` entry points via one helper
+   (`_reject_negative_interval`); `serve` carries the same gate.
+5. `--plan-id` names a known plan.
 
 A second `start` while a live host is running is refused (single instance per
 project); a stale record (dead pid) does not block a new start.

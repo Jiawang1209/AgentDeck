@@ -820,6 +820,38 @@ def _leader_chat_intent_card_blocker(embedded_card: object, payload: dict[str, o
     return None
 
 
+def _reject_negative_interval(args: argparse.Namespace, command: str) -> bool:
+    """Refuse a negative `--interval`; return True when the refusal was printed.
+
+    Single source for all eight entry points that accept `--interval`
+    (`run-loop --follow`, `goal preview`, `goal start`, `run-loop-host start`,
+    `run-loop-host serve`, `workbench --watch`, `dashboard --watch`,
+    `boxes watch`).
+
+    Why this is a safety gate and not merely input hygiene: every consumer
+    guards the sleep with `if interval > 0: time.sleep(...)`, so a negative
+    interval silently means "never sleep". The wave budget is a *bound* the
+    human reads as wall-clock walk-away time --
+    `run-loop-host start --confirm --max-waves 300 --interval -5` looks like
+    "300 waves over ~8 hours" and would actually burn all 300 waves as fast as
+    the machine allows, hammering providers and tmux. `goal preview` also
+    prints the interval on its confirmation screen ("每 10s 一轮"), so a
+    nonsense value there is a displayed fact that does not hold.
+
+    Zero stays legal: it means "no sleep between waves", it is explicit, and it
+    is visible in the preview. Only negative is nonsense that silently behaves
+    like zero. Callers must invoke this before any mutation or spawn, so a
+    refusal is zero-write / zero-spawn.
+    """
+    interval = getattr(args, "interval", None)
+    if interval is None:
+        return False
+    if interval < 0:
+        print(f"{command} requires --interval >= 0", file=sys.stderr)
+        return True
+    return False
+
+
 def _project_view_payload_or_error(config: ProjectConfig, store: StateStore) -> dict[str, object] | None:
     payload = asdict(store.project_view(config))
     validation = validate_project_view_contract(payload)
@@ -6433,6 +6465,8 @@ def workbench_command(args: argparse.Namespace) -> int:
     if args.iterations is not None and args.iterations < 1:
         print("--iterations must be greater than 0", file=sys.stderr)
         return 1
+    if _reject_negative_interval(args, "workbench"):
+        return 1
 
     iteration = 0
     while True:
@@ -6471,6 +6505,8 @@ def dashboard_command(args: argparse.Namespace) -> int:
     iterations = getattr(args, "iterations", None)
     if iterations is not None and iterations < 1:
         print("--iterations must be greater than 0", file=sys.stderr)
+        return 1
+    if _reject_negative_interval(args, "dashboard"):
         return 1
     rendered = 0
     while True:
@@ -10647,6 +10683,8 @@ def boxes_watch_command(args: argparse.Namespace) -> int:
         return 1
     if args.iterations < 1:
         print("boxes watch requires --iterations >= 1", file=sys.stderr)
+        return 1
+    if _reject_negative_interval(args, "boxes watch"):
         return 1
     agent_ids = [args.agent] if args.agent else [agent.agent_id for agent in config.agents]
     backend = TmuxBackend()
@@ -21165,6 +21203,8 @@ def run_loop_host_start_command(args: argparse.Namespace) -> int:
     if max_review_rounds is not None and max_review_rounds < 0:
         print("run-loop-host start requires --max-review-rounds >= 0", file=sys.stderr)
         return 1
+    if _reject_negative_interval(args, "run-loop-host start"):
+        return 1
     root = Path(config.root)
     known = any(
         isinstance(plan, dict) and plan.get("plan_id") == args.plan_id
@@ -21385,6 +21425,8 @@ def _run_loop_host_finish(
 def run_loop_host_serve_command(args: argparse.Namespace) -> int:
     """The detached child. stdout is DEVNULL in production; all output is the
     JSONL log plus audit events. The wave engine is reused unchanged."""
+    if _reject_negative_interval(args, "run-loop-host serve"):
+        return 1
     root = Path(args.project).expanduser().resolve()
     try:
         config = load_config(root)
@@ -21559,7 +21601,7 @@ GOAL_POLICY_COMMAND_TEMPLATE = (
 )
 
 GOAL_PLAN_SOURCE = "goal_preview"
-"""写在 `goal preview` 产出的 plan 记录上的 provenance,是第六道门的凭据。
+"""写在 `goal preview` 产出的 plan 记录上的 provenance,是第七道门的凭据。
 
 它只说明这份 plan 出自哪条路线(也就是人类看过哪一屏),不授予任何权限。
 """
@@ -21835,6 +21877,9 @@ def goal_preview_command(args: argparse.Namespace) -> int:
     if args.max_waves is not None and args.max_waves < 1:
         print("goal preview requires --max-waves >= 1", file=sys.stderr)
         return 1
+    # 在 provider 调用之前:一个坏标志不该花掉一次 Leader API 往返。
+    if _reject_negative_interval(args, "goal preview"):
+        return 1
     skill_context = _leader_skill_context(config, store)
     try:
         plan, record_provider, record_model, split_provenance = _generate_leader_plan(
@@ -21860,7 +21905,7 @@ def goal_preview_command(args: argparse.Namespace) -> int:
         skill_context=skill_context,
         split_provenance=split_provenance,
         # 这份 provenance 必须落在 **plan 记录** 上,不能只落在事件里:
-        # `goal start` 的第六道门要读它,而门不该去翻事件账本。
+        # `goal start` 的第七道门要读它,而门不该去翻事件账本。
         source=GOAL_PLAN_SOURCE,
     )
     store.append_event(
@@ -21934,9 +21979,10 @@ def _render_goal_start(payload: dict[str, object]) -> str:
 def goal_start_command(args: argparse.Namespace) -> int:
     """确认一次走开式运行:批准该 plan 的审批,再把它交给后台宿主。
 
-    六道门(任一不满足拒绝且零写零 spawn):`--confirm`、
+    七道门(任一不满足拒绝且零写零 spawn):`--confirm`、
     `approval_mode == "autonomous"`、已知 `--plan-id`、`--max-waves >= 1`、
-    本项目没有活着的 run-loop 宿主、该 plan 出自一次 `goal preview`。
+    `--interval >= 0`、本项目没有活着的 run-loop 宿主、
+    该 plan 出自一次 `goal preview`。
     两个阶段都调用既有实现:
     `approval approve-plan --confirm` 与 `run-loop-host start --confirm`;
     approve 阶段失败绝不启动宿主。
@@ -21966,7 +22012,11 @@ def goal_start_command(args: argparse.Namespace) -> int:
     if max_waves < 1:
         print("goal start requires --max-waves >= 1", file=sys.stderr)
         return 1
-    # 第五道门:宿主单例互斥要在**任何写之前**判定。既有 `run-loop-host start`
+    # 负 interval 会让 `if interval > 0: sleep` 静默塌成"不睡",把人类读作
+    # "N wave 跑一整夜"的有界授权变成"N wave 一分钟内烧完"。零仍合法。
+    if _reject_negative_interval(args, "goal start"):
+        return 1
+    # 第六道门:宿主单例互斥要在**任何写之前**判定。既有 `run-loop-host start`
     # 自己也拒绝第二个宿主,但那一步发生在批准之后——真让它去拒,就会留下
     # "审批已批、宿主没起"的半应用状态,违背"拒绝之前绝不发生变更"。
     # 复用同一个存活探测器(不另写一套规则):stale 记录(死 pid)不挡,
@@ -21982,7 +22032,7 @@ def goal_start_command(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
         return 1
-    # 第六道门:这份 plan 必须真的出自一次 `goal preview`。仓库承重教条是
+    # 第七道门:这份 plan 必须真的出自一次 `goal preview`。仓库承重教条是
     # "only the exact confirmed preview becomes frozen authority",而在此之前
     # 代码只检查该 plan **存在**——一份从 `leader plan` / `run --task` 出来、
     # 授权屏从未展示过的计划,同样能被 `goal start` 一口气批完并交给宿主走开
@@ -22104,6 +22154,8 @@ def run_loop_command(args: argparse.Namespace) -> int:
     max_review_rounds = getattr(args, "max_review_rounds", None)
     if max_review_rounds is not None and max_review_rounds < 0:
         print("run-loop requires --max-review-rounds >= 0", file=sys.stderr)
+        return 1
+    if _reject_negative_interval(args, "run-loop"):
         return 1
     if getattr(args, "all", False) and args.plan_id:
         print("run-loop takes either --plan-id or --all, not both", file=sys.stderr)
