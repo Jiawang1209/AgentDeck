@@ -216,3 +216,44 @@ def test_run_loop_all_iteration_is_isolated_per_plan(tmp_path, monkeypatch, caps
     assert len(plan_b["plan"]["steps"]) == 1  # plan B 零追加
     plan_a = next(p for p in after["plans"] if p["plan_id"] == "pln_1")
     assert len(plan_a["plan"]["steps"]) == 4
+
+
+def test_rework_contract_failure_names_the_steps_that_already_landed(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    """Pins a latent path: `append_review_iteration` writes two steps and two
+    approvals before the contract gate, and a retry is then refused as
+    `already_triggered`. A failure there must therefore name what landed, not
+    read as "plan rework refused".
+
+    `validate_plan_rework_contract` is tautological on the literal payload
+    today, so the failing path is reached by injecting a failing validator --
+    the correct way to pin a latent defect.
+    """
+    root = prepare_seeded_project(tmp_path, monkeypatch, "fail")
+    monkeypatch.setattr(
+        cli,
+        "validate_plan_rework_contract",
+        lambda _payload: {"ok": False, "errors": ["injected contract failure"]},
+    )
+
+    assert cli.main(["plan", "rework", "--plan-id", "pln_1", "--confirm"]) == 1
+    err = capsys.readouterr().err
+
+    # 两个 step 和两条审批真的写进去了
+    state = StateStore(root).load()
+    assert len(state["plans"][0]["plan"]["steps"]) == 4
+    assert "already happened" in err
+    assert "round 1" in err
+    assert "3, 4" in err
+    assert "agentdeck plan status --plan-id pln_1" in err
+    assert "already_triggered" in err
+
+    events = [e["event_type"] for e in StateStore(root).list_events(limit=50)]
+    assert "plan_rework_contract_failed" in events
+
+    # 重试确实会被拒成 already_triggered——stderr 里那句话不是修辞
+    monkeypatch.undo()
+    monkeypatch.chdir(root)
+    assert cli.main(["plan", "rework", "--plan-id", "pln_1", "--confirm"]) == 1
+    assert "already_triggered" in capsys.readouterr().err

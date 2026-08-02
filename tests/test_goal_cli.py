@@ -861,3 +861,42 @@ def test_goal_start_records_the_ledger_entry_before_the_contract_gate(
     assert "did not start" not in err
     assert "agentdeck run-loop-host status" in err
     assert "999601" in err
+
+
+def test_goal_preview_contract_failure_names_the_plan_it_recorded(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    """Pins a latent path: `record_plan` + `leader_plan_created` land before
+    the contract gate, so a failed preview still leaves a plan carrying the
+    `goal_preview` provenance -- exactly what `goal start`'s provenance gate
+    accepts. The failure must name that plan rather than read as "preview
+    failed".
+
+    `validate_goal_preview_contract` is tautological on today's payload, so
+    the failing path is reached by injecting a failing validator -- the
+    correct way to pin a latent defect.
+    """
+    root = prepare_project(tmp_path, monkeypatch)
+    enable_autonomous(capsys)
+    monkeypatch.setattr(
+        cli,
+        "validate_goal_preview_contract",
+        lambda _payload: {"ok": False, "errors": ["injected contract failure"]},
+    )
+
+    assert cli.main(["goal", "preview", "--task", "让测试全绿", "--json"]) == 1
+    err = capsys.readouterr().err
+
+    plans = StateStore(root).load()["plans"]
+    assert len(plans) == 1
+    plan_id = plans[0]["plan_id"]
+    assert "already happened" in err
+    assert plan_id in err
+    assert "agentdeck plan show --plan-id" in err
+    assert "goal_preview_contract_failed" in event_types(root)
+
+    # 这份 plan 真的能被 `goal start` 的 provenance 门接受——那句话不是修辞
+    monkeypatch.undo()
+    monkeypatch.chdir(root)
+    monkeypatch.setattr(cli, "_spawn_host_process", RecordingSpawn(pid=999_701))
+    assert cli.main(["goal", "start", "--plan-id", plan_id, "--confirm", "--json"]) == 0

@@ -4,6 +4,36 @@
 
 ## 2026-08-02
 
+### Make the state-only late-validation tail report what already landed instead of reading as a refusal
+
+- **Type**: fix
+- **Motivation**: 审计余账最后一组(`plan rework --confirm`、`skills lock`、
+  `goal preview`)。三者的 payload **描述的正是那次写入**,无法把校验前置,
+  于是只能应用规则的后半句。当时的措辞会造成具体的错误信念:
+  `plan rework` 读作"回炉被拒",而两个 step 和两条审批已经写进 plan,重试
+  还会被拒成 `already_triggered`;`skills lock` 读作"加锁失败",而 lockfile
+  已落盘、`lock-verify` 现在报 `locked=true`;`goal preview` 读作"预览失败",
+  而一份带 `goal_preview` provenance 的 plan 已经存在——正是 `goal start`
+  第六道门会接受的那一种。三处同为**潜伏**:校验器今天是恒真式。
+- **What**: 三处保留非 0 退出,stderr 追加一句点名已落地的事实与查证命令
+  (round/step/approval id + `plan status`;lockfile 路径 + `lock-verify`;
+  plan id + provenance + `plan show`),并各自新增一条 `*_contract_failed`
+  审计事件:`plan_rework_contract_failed`、`skill_lock_contract_failed`、
+  `goal_preview_contract_failed`。**新增事件是有理由的**:写已经发生了,
+  账本必须留下"为什么这次没打印出来"——与 `leader chat` 这个仓库内最好的
+  失败路径范本同源(`history.py` 对未登记事件类型静默跳过,`agentdeck
+  history` 渲染不受影响)。同步更新
+  `docs/roadmap/2026-08-01-late-validation-audit.md`:前三处移入"已修:潜伏
+  加固"节,余账表从 10 处缩到 7 处并重排编号。
+- **Impact**: 成功路径逐字节不变(同样的写入、同样的事件、同样的 payload、
+  同样的退出码)。只有失败路径改变。至此审计 12 处站点中 5 处已处理,
+  剩 7 处潜伏留账。
+- **Verification**: 三条红测先行(docstring 均声明其 pin 的是潜伏路径,以注入
+  失败校验器抵达),每条都**实测那句话不是修辞**:rework 测试在注入撤销后
+  重跑并断言 `already_triggered`;lock 测试断言 `lock-verify` 报
+  `locked=true`;preview 测试断言那份 plan 真的被 `goal start` 放行。
+  全量 5152 passed / 3 skipped(基线 5144 + 本轮 8 条新测)。
+
 ### Gate run-loop-host start before the spawn, and put goal start's ledger entry before its print gate
 
 - **Type**: fix

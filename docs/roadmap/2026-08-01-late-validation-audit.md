@@ -1,6 +1,6 @@
 # 审计:契约校验发生在不可逆副作用之后(2026-08-01)
 
-Status: 已修 2 处(当下可达的全部),剩 10 处潜伏,本文是余账
+Status: 已修 5 处(当下可达的 2 处 + 加固潜伏的前 3 处),剩 7 处潜伏,本文是余账
 起因: `/goal` 终审 Finding 3 —— `run-loop-host start` 在 spawn 之后才校验契约,
 失败时命令退非 0 而宿主**真的在跑**,调用方于是谎称"宿主没起"。终审的收尾
 一句是本次审计的理由:"根因是个模式,不是一次性问题。"
@@ -72,7 +72,39 @@ Status: 已修 2 处(当下可达的全部),剩 10 处潜伏,本文是余账
 "**可能**已部分完成"——因为 `send_input` 之后、`mark_approval_dispatched`
 之前抛出时,worker 确实已经拿到提示;说"没发生"就又犯了本缺陷类。
 
-## 余账:10 处潜伏站点(按 效果等级 × 可达性 排序)
+## 已修:潜伏加固(前三处,2026-08-02)
+
+这三处是**潜伏加固**,不是现行 bug 修复:它们的校验器今天仍是恒真式,
+下面的改动是让"以后加一个字段或一个枚举值"不再能把它们静默变成谎言。
+
+### 3. `run-loop --follow` —— tmux × N + git merge —— 已加固 `b5cd3a89`
+
+merge 是这里唯一可以简单重排的效果:`validate_run_loop_follow_contract`
+提到 `_merge_plan_worktrees` **之前**(`plan_merge` 本就不在 follow contract
+字段里,所以对每条通过路径逐字节等价)。wave 效果无法重排,失败路径改为
+如实报告 wave 数、已派 message id 列表、放框数与 `plan_merge: not attempted`,
+同时打到 stderr 并带进它本来就会追加的 `run_loop_contract_failed` 事件。
+
+### 4. `run-loop-host start` —— process —— 已加固 `4424f92b`
+
+payload 构造抽成 `_start_payload(pid)`,在 `_spawn_host_process` **之前**用
+pid 占位投影过一次校验;占位用 `os.getpid()`——真实存活 pid,任何 pid 形状的
+约束都被如实检验,而不是被 sentinel 蒙混过去。前置失败是**零写零 spawn**
+的拒绝,与该命令既有五道门同标准。spawn 后保留第二道门(只有 pid 相关违规
+能活到那里),其失败分支如实报告"宿主**正在跑**,pid N,日志 …,未被停止",
+绝不重新引入 `543f86e6` 修掉的那句"没起来"。
+
+### 5. `goal start` / `goal preview` / `plan rework` / `skills lock` —— 已加固 `4424f92b` `5a3c4433`
+
+`goal start` 把 `goal_started` 追加移到契约门**之前**——否则一次失败的打印会
+抹掉账本里唯一解释"这个宿主为何存在"的证据。其余三处的 payload 描述的正是
+那次写入,无法重排,于是一律应用规则的后半句:失败仍退非 0,但 stderr 点名
+已落地的东西与查证命令,并各自新增一条 `*_contract_failed` 审计事件
+(`plan_rework_contract_failed` / `skill_lock_contract_failed` /
+`goal_preview_contract_failed`)——理由与 `leader chat` 范本相同:写已经发生了,
+账本必须留下"为什么这次没打印出来"。
+
+## 余账:7 处潜伏站点(按 效果等级 × 可达性 排序)
 
 全部 (b) UNREACHABLE-today,即校验器目前是恒真式;它们是**脆弱性**而非
 现行谎言。改动这些 payload(加字段、加枚举值、嵌活状态卡)时必须同时
@@ -80,27 +112,13 @@ Status: 已修 2 处(当下可达的全部),剩 10 处潜伏,本文是余账
 
 | # | 站点 | 效果等级 | 若失败,人会错误地相信 |
 | --- | --- | --- | --- |
-| 1 | `run-loop --follow` | tmux × N + **git merge** | "follow 跑失败了"——而任务分支**已经合并**,且 N 个 worker 被提示、N 道框被按 |
-| 2 | `run-loop-host start` | process | "宿主没起"(终审原发现;调用方措辞已修,站点未动) |
-| 3 | `goal start` | process + state | "什么都没批准"——而审批全批了、宿主在跑,且 `goal_started` **没被追加**,账本缺了解释宿主为何存在的那条 |
-| 4 | `run-loop --plan-id --confirm` | tmux + state | "这一 wave 没推进"——而预算已消耗、worker 在跑(此处**部分诚实**:它确实追加了 `run_loop_contract_failed`) |
-| 5 | `run-loop --all --confirm` | tmux + state | "并行 wave 失败了"——而每个活跃计划都已派出 worker |
-| 6 | `run-loop-host stop --confirm` | process(SIGTERM) | "停止失败"——而信号已发,某条路径上宿主已退出且记录已清 |
-| 7 | `workflow run\|resume --confirm` | tmux + state |(b) **PLAUSIBLE**:校验 `turns[]` 来自解析 worker 回复,活状态派生 |
-| 8 | `mission run\|resume --confirm` | tmux + state |(b) **PLAUSIBLE**:mission 已 claim、worker 已 spawn、workflow 已跑 |
-| 9 | `plan rework --confirm` / `skills lock` / `release` / `goal preview` / `run --task` / `reply` / `capture-reply` | state | 各自"失败了"——而 step 已追加 / lockfile 已落盘 / 轮次已推进 / plan 已带 `goal_preview` provenance 存在 / reply 已入账 |
-| 10 | `leader chat` | state |(b) **CONFIRMED 可达**,但它是**全仓库最好的失败路径**:退出前把失败写进 `leader_errors[]` 与 `leader_chat_contract_failed`。它是"让失败路径说真话"的范本 |
-
-### 建议的最小修法(前三)
-
-- **`run-loop --follow`**:merge 是这里**唯一可以简单重排**的效果——先校验
-  不含 `plan_merge` 的 payload,再合并,再挂上 `plan_merge` 打印。wave 效果
-  无法重排,失败路径改为把 wave 数、已派 message id、放框数、合并结果打到
-  stderr,并带进它本来就会追加的 `run_loop_contract_failed` 事件。
-- **`run-loop-host start` / `goal start`**:除 `pid` 外 payload 在 spawn 前
-  已完全已知——先校验一份 pid 占位的前置投影,spawn 后只填 pid 再打印。
-  `goal start` 另需把 `goal_started` 移到校验**之前**追加,否则一次失败的
-  打印会抹掉宿主为何存在的唯一账本证据。
+| 1 | `run-loop --plan-id --confirm` | tmux + state | "这一 wave 没推进"——而预算已消耗、worker 在跑(此处**部分诚实**:它确实追加了 `run_loop_contract_failed`) |
+| 2 | `run-loop --all --confirm` | tmux + state | "并行 wave 失败了"——而每个活跃计划都已派出 worker |
+| 3 | `run-loop-host stop --confirm` | process(SIGTERM) | "停止失败"——而信号已发,某条路径上宿主已退出且记录已清 |
+| 4 | `workflow run\|resume --confirm` | tmux + state |(b) **PLAUSIBLE**:校验 `turns[]` 来自解析 worker 回复,活状态派生 |
+| 5 | `mission run\|resume --confirm` | tmux + state |(b) **PLAUSIBLE**:mission 已 claim、worker 已 spawn、workflow 已跑 |
+| 6 | `release` / `run --task` / `reply` / `capture-reply` | state | 各自"失败了"——而轮次已推进 / plan 已存在 / reply 已入账 |
+| 7 | `leader chat` | state |(b) **CONFIRMED 可达**,但它是**全仓库最好的失败路径**:退出前把失败写进 `leader_errors[]` 与 `leader_chat_contract_failed`。它是"让失败路径说真话"的范本 |
 
 ## 覆盖(已检查且干净)
 

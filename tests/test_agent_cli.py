@@ -15427,3 +15427,40 @@ def test_run_loop_does_not_record_a_failed_dispatch_for_a_successful_one(tmp_pat
     state = StateStore(root).load()
     approval = next(a for a in state["approvals"] if a["approval_id"] == approval_id)
     assert approval["status"] == "dispatched"
+
+
+def test_skills_lock_contract_failure_names_the_lockfile_it_wrote(tmp_path, monkeypatch, capsys):
+    """Pins a latent path: the lockfile is written and `skill_locked` appended
+    before the contract gate, so `lock-verify` reports `locked=true` even when
+    `skills lock` exited non-zero. The failure must name the lockfile instead
+    of reading as "lock failed".
+
+    `validate_skill_lock_contract` is tautological on the literal payload
+    today, so the failing path is reached by injecting a failing validator --
+    the correct way to pin a latent defect.
+    """
+    root = prepare_project(tmp_path, monkeypatch)
+    _put_skill(root, "b", version="1.0.0"); _put_skill(root, "a", ["b"])
+    monkeypatch.setattr(
+        cli,
+        "validate_skill_lock_contract",
+        lambda _payload: {"ok": False, "errors": ["injected contract failure"]},
+    )
+
+    assert cli.main(["skills", "lock", "--name", "a"]) == 1
+    err = capsys.readouterr().err
+
+    lock = root / ".agentdeck" / "skill-locks" / "a.json"
+    assert lock.exists()
+    assert "already happened" in err
+    assert str(lock) in err
+    assert "agentdeck skills lock-verify --name a" in err
+    events = [e["event_type"] for e in StateStore(root).list_events(limit=20)]
+    assert "skill_locked" in events
+    assert "skill_lock_contract_failed" in events
+
+    # lock-verify 确实报 locked=true——stderr 里那句话不是修辞
+    monkeypatch.undo()
+    monkeypatch.chdir(root)
+    assert cli.main(["skills", "lock-verify", "--name", "a"]) == 0
+    assert json.loads(capsys.readouterr().out)["locked"] is True

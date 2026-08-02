@@ -8785,9 +8785,25 @@ def skills_lock_command(args: argparse.Namespace) -> int:
                "lock_path": str(lock_path), "dependencies": record["dependencies"]}
     validation = validate_skill_lock_contract(payload)
     if not validation["ok"]:
+        # The payload describes a write that already happened: the lockfile is
+        # on disk and `skill_locked` is in the ledger, so `lock-verify` now
+        # reports locked=true. "lock failed" would be a lie.
         print("skill lock contract validation failed", file=sys.stderr)
         for error in validation["errors"]:
             print(f"- {error}", file=sys.stderr)
+        print(
+            f"this already happened and was not undone: the lockfile was written to "
+            f"{lock_path} ({len(record['dependencies'])} dependency/ies) and "
+            f"skill_locked is in the ledger. Inspect with "
+            f"agentdeck skills lock-verify --name {args.name}, which now reports locked=true",
+            file=sys.stderr,
+        )
+        store.append_event(EventRecord.create("skill_lock_contract_failed", {
+            "name": args.name,
+            "lock_path": str(lock_path),
+            "dependency_count": len(record["dependencies"]),
+            "errors": validation["errors"],
+        }))
         return 1
     _print_json(payload)
     return 0
@@ -19904,9 +19920,30 @@ def plan_rework_command(args: argparse.Namespace) -> int:
         payload["refine_skipped_reason"] = str(skipped_reason)
     validation = validate_plan_rework_contract(payload)
     if not validation["ok"]:
+        # The payload describes a write that already happened: two steps and
+        # their approvals are in the plan, and the same reply is now consumed,
+        # so a retry is refused as `already_triggered`. Say so -- "plan rework
+        # refused" would be the exact lie this rule exists to prevent.
+        steps = ", ".join(str(step) for step in payload["steps"])
+        approvals = ", ".join(str(a) for a in payload["approval_ids"])
         print("plan rework contract validation failed", file=sys.stderr)
         for error in validation["errors"]:
             print(f"- {error}", file=sys.stderr)
+        print(
+            f"this already happened and was not undone: round {payload['round']} "
+            f"appended step(s) {steps} to {plan_id} with approval(s) {approvals}. "
+            f"Inspect with agentdeck plan status --plan-id {plan_id}; "
+            "retrying will be refused as already_triggered",
+            file=sys.stderr,
+        )
+        store.append_event(EventRecord.create("plan_rework_contract_failed", {
+            "plan_id": plan_id,
+            "round": payload["round"],
+            "steps": payload["steps"],
+            "approval_ids": payload["approval_ids"],
+            "triggered_by_reply": payload["triggered_by_reply"],
+            "errors": validation["errors"],
+        }))
         return 1
     _print_json(payload)
     return 0
@@ -22047,9 +22084,25 @@ def goal_preview_command(args: argparse.Namespace) -> int:
     payload = _goal_preview_payload(config, store, args, record)
     validation = validate_goal_preview_contract(payload)
     if not validation["ok"]:
+        # The payload describes a write that already happened: the plan is
+        # recorded and carries the `goal_preview` provenance, which is exactly
+        # what `goal start`'s provenance gate accepts. "preview failed" would
+        # leave the user believing no such plan exists.
+        plan_id = str(record["plan_id"])
         print("goal preview contract validation failed", file=sys.stderr)
         for error in validation["errors"]:
             print(f"- {error}", file=sys.stderr)
+        print(
+            f"this already happened and was not undone: plan {plan_id} was recorded "
+            f"with the {GOAL_PLAN_SOURCE} provenance, so agentdeck goal start would "
+            f"accept it. Inspect with agentdeck plan show --plan-id {plan_id}",
+            file=sys.stderr,
+        )
+        store.append_event(EventRecord.create("goal_preview_contract_failed", {
+            "plan_id": plan_id,
+            "source": GOAL_PLAN_SOURCE,
+            "errors": validation["errors"],
+        }))
         return 1
     if args.json:
         _print_json(payload)
