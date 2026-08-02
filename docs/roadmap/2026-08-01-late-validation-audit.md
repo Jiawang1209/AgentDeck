@@ -94,7 +94,7 @@ pid 占位投影过一次校验;占位用 `os.getpid()`——真实存活 pid,�
 能活到那里),其失败分支如实报告"宿主**正在跑**,pid N,日志 …,未被停止",
 绝不重新引入 `543f86e6` 修掉的那句"没起来"。
 
-### 5. `goal start` / `goal preview` / `plan rework` / `skills lock` —— 已加固 `4424f92b` `5a3c4433`
+### 5. `goal start` / `goal preview` / `plan rework` / `skills lock` —— 已加固 `4424f92b` `d6ead179`
 
 `goal start` 把 `goal_started` 追加移到契约门**之前**——否则一次失败的打印会
 抹掉账本里唯一解释"这个宿主为何存在"的证据。其余三处的 payload 描述的正是
