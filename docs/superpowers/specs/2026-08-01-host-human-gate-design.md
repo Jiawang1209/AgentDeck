@@ -150,7 +150,8 @@ def _plan_awaiting(state, plan_id) -> list[tuple[str, str]]:
 
 ## 非目标
 
-- `run-loop --follow` 的对称实现(前台有人看着;记为 follow-up)。
+- ~~`run-loop --follow` 的对称实现(前台有人看着;记为 follow-up)。~~
+  **已于 2026-08-02 取消该非目标并实现,理由见下。**
 - 空转退避 / 动态间隔(user 拍板时明确未选)。
 - 空转不计入预算(会失去墙钟上界)。
 - 把人类门通过推送通知发给人(独立切片)。
@@ -167,3 +168,34 @@ def _plan_awaiting(state, plan_id) -> list[tuple[str, str]]:
 - 单 wave 引擎 payload 在人类门场景下逐字节不变(引擎零改动的回归钉)。
 - 契约:`docs/contracts/run-loop-host-schema.md` 的 stopped_reason 枚举与
   status 字段表同步;`agentdeck contract run-loop-host` 输出一致。
+
+
+## 实现期修正(二):`--follow` 的对称性(2026-08-02)
+
+本 spec 把 `run-loop --follow` 的人类门检测列为非目标,理由是"前台有人
+看着"。**那个理由站不住。**`--follow --max-waves 300 --interval 10` 在终端
+里同样是几小时的无人值守轮询——人不会盯着每一秒。而在宿主已经会诚实停下
+之后,这个不对称本身变成了缺陷:**同一个走开命令,后台会指名道姓地停下来
+找你,前台仍然闷头把预算烧光。**
+
+因此对称实现:`--follow` 复用完全相同的四条判据与 debounce(同一批纯函数
+`human_gate_candidate` / `same_human_gate`、同一份 `_plan_awaiting` awaiting
+集、同一个 `box_pending` 正证明),同样**只在 `--release-boxes` 开启时生效**
+——零新增 pane 读取面这条边界原样保留。
+
+**一处刻意的形状差异**:宿主有自己的闭合枚举 `RUN_LOOP_HOST_STOPPED_REASONS`,
+所以那里 `stopped_reason=human_gate` 是干净的。但 follow payload 的
+`stopped_reason` 是**最后一个 wave 的 gate**(`waiting_for_reply` /
+`complete` / …),把 `human_gate` 塞进去会污染 wave gate 枚举。所以 follow
+改为:
+
+- `stopped_reason` **保持**最后一个 wave 的真实 gate(它确实是
+  `waiting_for_reply` —— 那个 wave 真的在等一个回复);
+- 新增 `human_gate` 证据字段(无门时为 `null`),复用与宿主同一份
+  `HUMAN_GATE_FIELDS`;
+- 提前退出体现为 `wave_count < max_waves`。
+
+这与宿主的诚实性属性同源:那边 wave payload 自身也仍然报
+`waiting_for_reply`,人类门是**循环层**的判断,不是 wave 引擎的判断。
+
+`--merge-on-complete` 不会被人类门触发(gate 不是 `complete`),与宿主一致。
