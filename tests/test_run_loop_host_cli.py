@@ -203,6 +203,9 @@ def test_status_surfaces_the_human_gate_evidence(tmp_path, monkeypatch, capsys) 
         "command": "playwright open x", "mcp_server": None,
         "mcp_tool": None, "waiting_hint": _REAL_WAITING_HINT,
     }
+    # 证据之外还得说明去哪:人类门下唯一成立的动作是去那个 pane 按。
+    # 指针是只读卡片,渲染 attach/select-pane 文本,自己不 attach 不代按。
+    assert payload["human_gate_command"] == "agentdeck agent terminal --agent planner"
     assert StateStore(root).load() == before  # 只读
 
 
@@ -220,11 +223,15 @@ def test_status_human_gate_is_null_without_one(tmp_path, monkeypatch, capsys) ->
     payload = json.loads(capsys.readouterr().out)
     assert "human_gate" in payload
     assert payload["human_gate"] is None
+    # 别的停止原因都有既有后续路径,不该冒出一条没有依据的 pane 指针。
+    assert payload["human_gate_command"] is None
 
     # 完全无记录时同样是 null,不是缺失
     host_record_path(root).unlink()
     assert cli.main(["run-loop-host", "status"]) == 0
-    assert json.loads(capsys.readouterr().out)["human_gate"] is None
+    empty = json.loads(capsys.readouterr().out)
+    assert empty["human_gate"] is None
+    assert empty["human_gate_command"] is None
 
 
 def _serve_argv(

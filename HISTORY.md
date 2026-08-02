@@ -4,6 +4,60 @@
 
 ## 2026-08-02
 
+### Point both walk-away surfaces at the pane a human gate is waiting in
+
+- **Type**: fix
+- **Motivation**: `run-loop --follow` 与 `run-loop-host` 现在都会在被等待的
+  worker 停在一道**未委托**授权框上时诚实停下,并带出指名道姓的框证据。
+  但两面都不告诉人**去哪**。更糟的是 follow:人类门停止时它仍照抄最后一个
+  wave 的 `next_command`,也就是
+  `agentdeck capture-reply --agent coder --message-id msg_...`——那条命令
+  **在人按下那道框之前永远不可能成功**。按契约("最后一个 wave 的
+  next_command")它是正确的,按事实它是一条**印在屏幕上却不成立的指令**,
+  正是本项目连续几个切片一直在消灭的那一类缺陷。宿主那边则是把证据渲染出来
+  就完了,没有任何机器可读的字段说明唯一需要做的那个动作。诚实停止的全部
+  意义是给人一个**可执行**的信号,而不是一个静默烧光的预算。
+- **What**: 新增纯函数 `human_gate_next_command(gate)`(`run_loop_host.py`,
+  与 `human_gate_candidate` / `same_human_gate` 同处一模块),把证据里的
+  `agent_id` 映射成**既有**只读卡片命令
+  `agentdeck agent terminal --agent <id>`——不发明新命令,不新增能力面。
+  两个消费面都只调用它,绝不各自拼字符串:
+  (1) `--follow` 的 `human_gate` 非 null 时 `next_command` 换成该指针,其余
+  每种情况逐字节保持最后一个 wave 的 `next_command`;
+  (2) `run-loop-host status` 新增顶层 `human_gate_command`,仅
+  `stopped_reason=human_gate` 时非 null,其余(含无记录)为 `null`。
+  **顶层而非 `human_gate` 对象内**:命令在这份 payload 里一向住在顶层
+  (`start_command_template` / `stop_command`),而 `HUMAN_GATE_FIELDS` 是
+  host.json / host.log / `run_loop_host_stopped` 审计事件 / follow payload
+  四面共用的**持久化屏上证据**元组,一条按当前 payload 派生的命令不属于它。
+  同步注册 `RUN_LOOP_HOST_STATUS_RESPONSE_FIELDS`、两个 validator(host 侧
+  拒绝指向证据之外 agent 的指针、也拒绝非人类门停止上出现的非 null 值;
+  follow 侧拒绝 `human_gate` 非 null 却指向别处的 payload,期望值同样取自
+  那个纯函数,两面无从漂移)、两份 example fixture(`run_loop_follow_example`
+  本身就是一次人类门停止,过去印的正是那条不成立的 `capture-reply`)、
+  `docs/contracts/run-loop-schema.md`(其中"`next_command` 恒来自最后一个
+  wave"这句话被本次改动变成假的,已改写而非留旧)、
+  `docs/contracts/run-loop-host-schema.md`、README 和 CLAUDE.md。
+- **Impact**: **`stopped_reason` 语义两面都不动**——follow 仍报最后一个 wave
+  的真实 gate,宿主仍是那个闭合枚举;替换只作用于**建议**,每个 `waves[]`
+  item 自身的 `next_command` 逐字节不变,gate 诚实性不受影响。无人类门的
+  path 全部零变化(follow 的 `next_command` 仍是最后一个 wave 的那条,
+  host status 的新字段为 `null`)。`_run_loop_single_wave` 未被触碰。指针是
+  **只读卡片入口**:它渲染 tmux attach / select-pane 文本,自己不 attach、
+  不 select、不 capture、不 send、不写 state。诚实性不变量原样保留——
+  **AgentDeck 依然永不代按那道框**,按它始终是人类在那个 pane 里的动作;
+  委托匹配没有放宽,没有新增 pane 读取面,没有新命令。
+- **Verification**: TDD 红先行,红的理由与缺陷逐字对应
+  (`assert 'agentdeck capture-reply --agent coder --message-id msg_gate_1'
+  == 'agentdeck agent terminal --agent coder'`,以及 host 两处 `KeyError:
+  'human_gate_command'`)。新增/更新测试:follow 人类门指针 + 无门时逐字节
+  保持最后一个 wave 的命令 + published example 与 validator 互钉;host
+  `human_gate_command` 只在人类门出现、指错 agent 必拒、非人类门带值必拒,
+  字段顺序 pin 扩一位。既有断言无一被削弱(两处既有 host 测试按扩展后的
+  契约补齐 fixture 字段,断言原样保留)。全量
+  `conda run --no-capture-output -n agentdeck python -m pytest -q`:
+  5162 passed / 3 skipped(基线 5158 + 4 条新测试)。
+
 ### Stop `run-loop --follow` on a confirmed human gate, symmetric with the host
 
 - **Type**: feat

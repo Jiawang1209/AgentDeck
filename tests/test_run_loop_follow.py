@@ -490,6 +490,93 @@ def test_follow_stops_on_the_second_consecutive_sighting_of_the_same_human_gate(
     }
 
 
+def test_follow_human_gate_points_at_the_pane_the_human_must_press(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    """人类门停止时 `next_command` 必须指向那道框所在的 pane。
+
+    缺陷:停在人类门上时,follow 仍照抄最后一个 wave 的
+    `agentdeck capture-reply ...`——那条命令**在人按下那道框之前永远不可能
+    成功**。契约上正确、事实上无用:一条印在屏幕上却不成立的指令。
+    人类门下唯一成立的动作是"去那个 pane 看一眼",指针就是既有的只读
+    `agentdeck agent terminal --agent <id>` 卡片。
+    """
+    root = prepare_project(tmp_path, monkeypatch)
+    bind_agent(root, "coder", "%50")
+    enable_autonomous(capsys, ["coder"], 3)
+    plan_id = seed_plan(root, ["coder"])
+    _seed_dispatched_approval(root, plan_id)
+
+    monkeypatch.setattr(
+        cli, "_scan_release_delegated_boxes", lambda *_a, **_k: ([], [_undelegated_box()])
+    )
+    monkeypatch.setattr(cli, "TmuxBackend", lambda: object())
+    monkeypatch.setattr(cli, "_run_loop_single_wave", _waiting_wave)
+
+    assert cli.main(_follow_argv(plan_id, 10, "--release-boxes")) == 0
+    payload = json.loads(capsys.readouterr().out)
+
+    assert payload["human_gate"]["agent_id"] == "coder"
+    assert payload["next_command"] == "agentdeck agent terminal --agent coder"
+    # gate 语义不动:最后一个 wave 的真实 gate 原样保留。
+    assert payload["stopped_reason"] == "waiting_for_reply"
+    # 被顶掉的那条命令仍留在 wave 里(wave 自身的报告逐字节不变)。
+    assert payload["waves"][-1]["next_command"] == (
+        "agentdeck capture-reply --agent coder --message-id msg_gate_1"
+    )
+
+
+def test_follow_contract_refuses_a_human_gate_payload_pointing_elsewhere() -> None:
+    """契约自守:人类门下 `next_command` 必须指向那道框所在的 pane。
+
+    published example 本身就是一次人类门停止,它印的命令会被 GUI 当成范本,
+    所以 fixture 与 validator 一起钉死同一个来源函数。
+    """
+    from agentdeck.contracts import (
+        run_loop_follow_example,
+        validate_run_loop_follow_contract,
+    )
+
+    example = run_loop_follow_example()
+    assert example["human_gate"]["agent_id"] == "planner"
+    assert example["next_command"] == "agentdeck agent terminal --agent planner"
+    assert validate_run_loop_follow_contract(example)["ok"] is True
+
+    # 旧行为(照抄最后一个 wave 的 capture-reply)现在必须被契约挡下。
+    stale = {
+        **example,
+        "next_command": "agentdeck capture-reply --agent planner --message-id msg_example",
+    }
+    result = validate_run_loop_follow_contract(stale)
+    assert result["ok"] is False
+    assert any("next_command" in error for error in result["errors"])
+
+    # 无人类门时 validator 不管 `next_command`(它就是最后一个 wave 的那条)。
+    no_gate = {**stale, "human_gate": None}
+    assert validate_run_loop_follow_contract(no_gate)["ok"] is True
+
+
+def test_follow_without_a_human_gate_keeps_the_last_waves_next_command(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    """无人类门时 `next_command` 必须逐字节仍是最后一个 wave 的那条。"""
+    root = prepare_project(tmp_path, monkeypatch)
+    bind_agent(root, "coder", "%50")
+    enable_autonomous(capsys, ["coder"], 3)
+    plan_id = seed_plan(root, ["coder"])
+    _seed_dispatched_approval(root, plan_id)
+
+    monkeypatch.setattr(cli, "_run_loop_single_wave", _waiting_wave)
+
+    assert cli.main(_follow_argv(plan_id, 2)) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["human_gate"] is None
+    assert payload["next_command"] == (
+        "agentdeck capture-reply --agent coder --message-id msg_gate_1"
+    )
+    assert payload["next_command"] == payload["waves"][-1]["next_command"]
+
+
 def test_follow_ignores_a_box_on_an_agent_outside_the_awaiting_set(
     tmp_path, monkeypatch, capsys
 ) -> None:

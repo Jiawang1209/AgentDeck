@@ -105,7 +105,14 @@ AgentDeck › Mission started. Use /status or open the workbench to inspect it.
   really was waiting) and the evidence lands in a separate `human_gate` object
   (`null` when there is none) with the early exit visible as
   `wave_count < max_waves` — `--merge-on-complete` therefore never fires on it,
-  same as the host;
+  same as the host; on a human-gate stop **both surfaces point at the pane the
+  human has to walk to** (2026-08-02): follow's `next_command` becomes
+  `agentdeck agent terminal --agent <id>` instead of the last wave's
+  `capture-reply` (which cannot succeed until someone presses that box — a
+  displayed instruction that does not hold), and `run-loop-host status` carries
+  the same string as top-level `human_gate_command` (`null` on every other
+  stop); it is the existing read-only card, so it renders attach/select-pane
+  text and nothing more — AgentDeck still never presses the box;
 - review iteration loop: a review reply whose verdict `overall` is `fail` or
   `needs_changes` appends a deterministic rework + re-review step pair to the
   same plan (rework task = failed criteria + the reviewer's reply verbatim,

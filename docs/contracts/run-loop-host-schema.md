@@ -73,6 +73,7 @@ project); a stale record (dead pid) does not block a new start.
 | `start_command_template` | explicit start template |
 | `stop_command` | explicit stop command |
 | `human_gate` | box evidence object, or `null` — non-null only when `stopped_reason=human_gate` |
+| `human_gate_command` | `agentdeck agent terminal --agent <human_gate.agent_id>`, or `null` — non-null only when `stopped_reason=human_gate` |
 
 Record states: no record (never hosted / cleaned), running (`running=true`),
 stale (`stale=true`), clean stop (`pid=null`, neither running nor stale).
@@ -124,6 +125,35 @@ validator refuses a payload whose `stopped_reason` is `human_gate` while
 `human_gate` is `null`, and refuses an object missing any of the six fields, so
 a half-broken status payload never prints.
 
+### `human_gate_command` — where to go (2026-08-02)
+
+Evidence naming the box is not yet an action. `human_gate` is the one stop
+whose only route forward is a human walking to a pane, so the status payload
+also carries the command that opens it:
+`agentdeck agent terminal --agent <human_gate.agent_id>` — the existing
+read-only card that renders that agent's tmux attach and select-pane commands.
+No new command was invented for this.
+
+It is **top-level**, alongside `start_command_template` and `stop_command`,
+not a seventh key inside `human_gate`. Two reasons: commands already live at
+the top level of this payload; and `human_gate`'s field list is single-sourced
+from `run_loop_host.HUMAN_GATE_FIELDS`, shared verbatim by `host.json`,
+`host.log`, the `run_loop_host_stopped` audit event and the `--follow` payload
+— that tuple is *persisted on-screen evidence*, and a command derived from the
+current payload does not belong in it.
+
+The pointer is **inspect-only**: the card it names renders command text and
+nothing else — it does not attach, select a pane, capture output, send input
+or write state. AgentDeck still never presses the box.
+
+It is `null` for every other `stopped_reason` (each of those has an existing
+follow-up route) and `null` when there is no record. The validator refuses a
+`human_gate_command` that does not name the agent in the evidence object —
+a pointer to the wrong pane is worse than none — and refuses a non-null one on
+any other stop. The expected string comes from the same pure function
+`human_gate_next_command()` that both CLI surfaces call, so the validator, the
+host and `--follow` can never drift apart.
+
 ## Stop response
 
 `stop --confirm` sends SIGTERM once; the child finishes the **current wave**
@@ -157,7 +187,7 @@ Stop `mode` enum:
 | `policy_revoked` | `approval_mode` left `autonomous` (remote brake — the child re-reads config each wave) | `agentdeck policy set-mode …` then explicit restart |
 | `signalled` | `stop --confirm` SIGTERM accepted after the current wave | `agentdeck run-loop-host status` |
 | `engine_error` | wave engine raised; only the exception type is logged, never provider output | inspect `host.log`, `agentdeck events` |
-| `human_gate` | the awaited worker is sitting behind an **undelegated** authorization box; the reply will never arrive on its own | go to that pane, read the box, press it yourself, then explicit restart |
+| `human_gate` | the awaited worker is sitting behind an **undelegated** authorization box; the reply will never arrive on its own | `human_gate_command` (`agentdeck agent terminal --agent <id>`) opens that pane — read the box, press it yourself, then explicit restart |
 
 ### `human_gate` detection
 

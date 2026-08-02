@@ -46,7 +46,11 @@ from .review_iteration import (
     REVIEW_ITERATION_SKIP_REASONS,
     REWORK_TRIGGER_OVERALLS,
 )
-from .run_loop_host import HUMAN_GATE_FIELDS, RUN_LOOP_HOST_STOPPED_REASONS
+from .run_loop_host import (
+    HUMAN_GATE_FIELDS,
+    RUN_LOOP_HOST_STOPPED_REASONS,
+    human_gate_next_command,
+)
 from .providers.semantic_plan_schema import SEMANTIC_LEADER_PLAN_SCHEMA_VERSION
 from .semantic_authority import SEMANTIC_AUTHORITY_SCHEMA_VERSION
 from .daemon.scheduler import DECISION_KINDS
@@ -3957,6 +3961,15 @@ def validate_run_loop_follow_contract(payload: dict[str, object]) -> dict[str, o
                 for field in HUMAN_GATE_FIELDS
                 if field not in gate
             )
+    # 人类门下 `next_command` 是唯一不来自最后一个 wave 的字段:那个 wave
+    # 建议的 `capture-reply` 在人按下那道框之前永远不可能成功,印它就是印
+    # 一条不成立的指令。期望值来自与宿主共用的同一个纯函数,防两面漂移。
+    expected_command = human_gate_next_command(gate)
+    if expected_command is not None and payload.get("next_command") != expected_command:
+        errors.append(
+            "run_loop_follow.next_command must be "
+            f"{expected_command!r} when human_gate is set"
+        )
     return {"ok": not errors, "errors": errors}
 
 RUN_LOOP_ALL_RESPONSE_FIELDS = (
@@ -6598,7 +6611,10 @@ def run_loop_follow_example() -> dict[str, object]:
         "released_boxes": [],
         "released_box_count": 0,
         "stopped_reason": "waiting_for_reply",
-        "next_command": "agentdeck capture-reply --agent planner --message-id msg_example",
+        # 人类门下 `next_command` 是唯一不来自最后一个 wave 的字段:那个 wave
+        # 建议的 `capture-reply` 在人按下那道框之前永远不可能成功。指针指向
+        # 那道框所在的 pane(只读卡片,不 attach 不代按)。
+        "next_command": "agentdeck agent terminal --agent planner",
         "human_gate": {
             "agent_id": "planner",
             "box_kind": "command",
@@ -8062,6 +8078,13 @@ RUN_LOOP_HOST_STATUS_RESPONSE_FIELDS = (
     "start_command_template",
     "stop_command",
     "human_gate",
+    # 人类门下唯一成立的后续动作(2026-08-02)。放在**顶层**而非 `human_gate`
+    # 对象里,有两个理由:命令在这份 payload 里一向住在顶层
+    # (`start_command_template` / `stop_command`);而 `human_gate` 的字段清单
+    # 单一来源是 `run_loop_host.HUMAN_GATE_FIELDS`,被 host 记录、host.log、
+    # 审计事件和 follow payload 共用——那是**持久化的屏上证据**,一条按当前
+    # payload 派生出来的命令不属于它。null 除非 stopped_reason=human_gate。
+    "human_gate_command",
 )
 
 RUN_LOOP_HOST_STOP_RESPONSE_FIELDS = (
@@ -8135,6 +8158,22 @@ def validate_run_loop_host_status_contract(payload: dict[str, object]) -> dict[s
         errors.append(
             "run_loop_host_status.human_gate is required when stopped_reason is human_gate"
         )
+    # 人类门指针:错的指针比没有指针更糟,所以逐字校验它指向证据里的那个
+    # agent(期望值来自与两个 CLI 面共用的同一个纯函数),并且只在人类门
+    # 停止时出现——别的 stopped_reason 都有既有后续路径。
+    command = payload.get("human_gate_command")
+    if payload.get("stopped_reason") == "human_gate":
+        expected = human_gate_next_command(gate)
+        if expected is not None and command != expected:
+            errors.append(
+                "run_loop_host_status.human_gate_command must be "
+                f"{expected!r} when stopped_reason is human_gate"
+            )
+    elif command is not None:
+        errors.append(
+            "run_loop_host_status.human_gate_command must be null "
+            "unless stopped_reason is human_gate"
+        )
     return {"ok": not errors, "errors": errors}
 
 
@@ -8188,6 +8227,7 @@ def run_loop_host_status_example() -> dict[str, object]:
         ),
         "stop_command": "agentdeck run-loop-host stop --confirm",
         "human_gate": None,
+        "human_gate_command": None,
     }
 
 

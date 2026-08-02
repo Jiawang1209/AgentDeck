@@ -169,12 +169,35 @@ stop — same as the host. The evidence is also copied into the
 (the host's equivalents are `host.json` and `host.log`). It is provenance,
 never authorization.
 
+**`next_command` on a human-gate stop (2026-08-02).** `stopped_reason` is the
+last wave's gate, and that wave's own `next_command` is
+`agentdeck capture-reply --agent <id> --message-id <id>` — a command that
+**cannot succeed until a human presses that box**. Contract-correct and
+factually useless: a displayed instruction that does not hold. So the human
+gate is the one case where the follow payload's `next_command` is *not* the
+last wave's: it becomes
+`agentdeck agent terminal --agent <human_gate.agent_id>`, the existing
+read-only card that renders the tmux attach and select-pane commands for that
+pane. Every other case keeps the last wave's `next_command` byte-identically,
+and the substitution is confined to the *suggestion*: `stopped_reason` and
+each `waves[]` item's own `next_command` are untouched, so the gate stays
+honest. The pointer is **inspect-only** — the card renders command text; it
+does not attach, select, capture or send, and AgentDeck still never presses
+the box. Both surfaces derive the string from one pure function
+(`human_gate_next_command` in `src/agentdeck/run_loop_host.py`), never from a
+locally spelled-out template, and `validate_run_loop_follow_contract()`
+refuses a payload whose `human_gate` is set while `next_command` points
+somewhere else — a pointer to the wrong pane is worse than none. The published
+example (`example_run_loop_follow` in `agentdeck contract run-loop --example`)
+is itself a human-gate stop and shows the pointer.
+
 The response (`RUN_LOOP_FOLLOW_RESPONSE_FIELDS`) is `mode=run_loop_follow`
 with `max_waves`, `interval`, `release_boxes`, `merge_on_complete`, `waves[]`
 (each item is a full single-wave `run_loop` payload plus its 1-based `wave`
 number, revalidated by `validate_run_loop_contract()`), `wave_count`,
-`released_boxes[]` / `released_box_count`, the final wave's
-`stopped_reason` / `next_command`, and `human_gate` (the evidence object above
+`released_boxes[]` / `released_box_count`, `stopped_reason` (always the final
+wave's), `next_command` (the final wave's, except on a human-gate stop — see
+above), and `human_gate` (the evidence object above
 or `null`; `validate_run_loop_follow_contract()` requires all six fields when
 it is non-null). With `--merge-on-complete`, when the final
 gate is `complete` the response also carries the optional `plan_merge` object

@@ -151,6 +151,27 @@ def human_gate_candidate(
     return None
 
 
+def human_gate_next_command(gate: dict[str, Any] | None) -> str | None:
+    """人类门下唯一成立的后续动作:去那道框所在的 pane 看一眼。
+
+    这是 `--follow` 与 `run-loop-host status` 共用的**单一来源**:两面都
+    只调用本函数,绝不各自拼一遍字符串。
+
+    指针复用既有的只读卡片 `agentdeck agent terminal --agent <id>`——它只
+    渲染 tmux attach / select-pane 命令文本,自己不 attach、不 select、
+    不 capture、不 send、不写 state。AgentDeck 依然永不代按那道框:按它
+    始终是人类在那个 pane 里的动作。
+
+    无门、身份解析不出 `agent_id` 时返回 None(调用方保持原有 next_command)。
+    """
+    if not isinstance(gate, dict):
+        return None
+    agent_id = gate.get("agent_id")
+    if not isinstance(agent_id, str) or not agent_id:
+        return None
+    return f"agentdeck agent terminal --agent {agent_id}"
+
+
 def same_human_gate(
     left: dict[str, Any] | None, right: dict[str, Any] | None
 ) -> bool:

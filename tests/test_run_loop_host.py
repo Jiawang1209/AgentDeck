@@ -265,7 +265,59 @@ def test_status_contract_pins_the_full_field_list_in_order() -> None:
         "start_command_template",
         "stop_command",
         "human_gate",
+        # 2026-08-02:人类门下唯一成立的动作。与 start/stop 命令同处顶层——
+        # 命令在这份 payload 里一向住在顶层,而 `human_gate` 是被 host 记录/
+        # 日志/审计/follow payload 四面共用的**冻结证据元组**(单一来源
+        # `HUMAN_GATE_FIELDS`),派生命令不属于持久证据。
+        "human_gate_command",
     )
+
+
+def test_status_exposes_the_pane_pointer_only_on_a_human_gate_stop() -> None:
+    """人类门是唯一"只有人能推进"的停止;它必须指出去哪按。
+
+    指针复用既有只读卡片 `agentdeck agent terminal --agent <id>`:它只渲染
+    attach / select-pane 文本,不 attach、不 select、不 capture、不 send。
+    AgentDeck 依然永不代按那道框。
+    """
+    from agentdeck.contracts import (
+        run_loop_host_status_example,
+        validate_run_loop_host_status_contract,
+    )
+    from agentdeck.run_loop_host import HUMAN_GATE_FIELDS, human_gate_next_command
+
+    example = run_loop_host_status_example()
+    assert example["human_gate_command"] is None  # 无门时为 null,不是缺失
+    assert validate_run_loop_host_status_contract(example)["ok"] is True
+
+    gate = {**{field: "x" for field in HUMAN_GATE_FIELDS}, "agent_id": "planner"}
+    assert human_gate_next_command(gate) == "agentdeck agent terminal --agent planner"
+    assert human_gate_next_command(None) is None
+    assert human_gate_next_command({**gate, "agent_id": None}) is None
+
+    stopped = {
+        **example,
+        "running": False,
+        "stopped_reason": "human_gate",
+        "human_gate": gate,
+        "human_gate_command": "agentdeck agent terminal --agent planner",
+    }
+    assert validate_run_loop_host_status_contract(stopped)["ok"] is True
+
+    # 指向别的 agent(或缺失)→ 必须拒:错的指针比没有指针更糟。
+    for wrong in (None, "agentdeck agent terminal --agent coder"):
+        result = validate_run_loop_host_status_contract(
+            {**stopped, "human_gate_command": wrong}
+        )
+        assert result["ok"] is False
+        assert any("human_gate_command" in error for error in result["errors"])
+
+    # 非人类门停止却带命令 → 必须拒:那条命令没有依据。
+    result = validate_run_loop_host_status_contract(
+        {**example, "human_gate_command": "agentdeck agent terminal --agent planner"}
+    )
+    assert result["ok"] is False
+    assert any("human_gate_command" in error for error in result["errors"])
 
 
 def test_status_validator_guards_the_human_gate_evidence() -> None:
@@ -273,7 +325,7 @@ def test_status_validator_guards_the_human_gate_evidence() -> None:
         run_loop_host_status_example,
         validate_run_loop_host_status_contract,
     )
-    from agentdeck.run_loop_host import HUMAN_GATE_FIELDS
+    from agentdeck.run_loop_host import HUMAN_GATE_FIELDS, human_gate_next_command
 
     example = run_loop_host_status_example()
     # 无人类门时 null 合法
@@ -286,6 +338,8 @@ def test_status_validator_guards_the_human_gate_evidence() -> None:
         "running": False,
         "stopped_reason": "human_gate",
         "human_gate": gate,
+        # 人类门停止必带同源 pane 指针(见上一条测试)。
+        "human_gate_command": human_gate_next_command(gate),
     }
     assert validate_run_loop_host_status_contract(stopped)["ok"] is True
 

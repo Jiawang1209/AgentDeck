@@ -180,6 +180,7 @@ from .run_loop_host import (
     append_host_log,
     host_log_path,
     human_gate_candidate,
+    human_gate_next_command,
     pid_alive,
     read_host_record,
     same_human_gate,
@@ -21306,6 +21307,15 @@ def _run_loop_host_status_payload(root: Path) -> dict[str, object]:
         # 人类门证据:仅 stopped_reason=human_gate 时非 null。它是屏上框的
         # provenance,不是授权——按下那个框永远是人类的动作。
         "human_gate": record.get("human_gate"),
+        # …而证据之外还得说明**去哪**。人类门是唯一"只有人能推进"的停止,
+        # 其它 stopped_reason 都有既有后续路径,所以指针只在这一种情况下
+        # 出现(其余为 null,而不是一条没有依据的命令)。它是只读卡片入口
+        # (渲染 attach/select-pane 文本),不是代按授权。
+        "human_gate_command": (
+            human_gate_next_command(record.get("human_gate"))
+            if record.get("stopped_reason") == "human_gate"
+            else None
+        ),
     }
 
 
@@ -22681,7 +22691,16 @@ def _run_loop_follow(
         # (宿主同理:那边 wave payload 自身也仍然报 waiting_for_reply),
         # 所以它以独立证据字段呈现,提前退出体现为 wave_count < max_waves。
         "stopped_reason": (final or {}).get("stopped_reason"),
-        "next_command": (final or {}).get("next_command"),
+        # 缺省是最后一个 wave 的 next_command——**唯一**的例外是人类门:
+        # 那个 wave 建议的 `capture-reply` 在人按下那道框之前永远不可能
+        # 成功,印它等于印一条不成立的指令。人类门下唯一成立的动作是去那
+        # 个 pane,所以指针换成既有只读卡片(同一来源函数,与宿主共用)。
+        # 注意这只换**建议**:`stopped_reason` 与每个 wave 自身的报告都
+        # 逐字节不变,gate 诚实性不受影响。
+        "next_command": (
+            human_gate_next_command(confirmed_human_gate)
+            or (final or {}).get("next_command")
+        ),
         "human_gate": confirmed_human_gate,
     }
     # Validate **before** the merge. The merge is the one effect in this
