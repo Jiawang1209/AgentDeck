@@ -1,6 +1,23 @@
 # AgentDeck Current Development State
 
-Updated: 2026-08-01
+Updated: 2026-08-02
+
+**人类门对称性与可执行指示(2026-08-02,`0f4028b6`→`b72f664d`,全量 5162 绿,
+live 复验)**:①`run-loop --follow` 补上与宿主完全相同的人类门检测(同一批
+纯函数、同一份 `_plan_awaiting`、同一个 `box_pending` 正证明,同样只在
+`--release-boxes` 时生效)。原 spec 的非目标理由"前台有人看着"已撤销——
+`--follow --max-waves 300` 同样是几小时无人值守,而**不对称本身**才是缺陷。
+刻意的形状差异:follow 的 `stopped_reason` 是最后一个 wave 的 gate,塞
+`human_gate` 会污染 wave gate 枚举,故保留真实 gate + 新增 `human_gate`
+证据字段,提前退出体现为 `wave_count < max_waves`。②**指示从"不可能执行"
+改为"真的通向某处"**:人类门停下时 follow 原本仍推荐 `capture-reply`
+(在人按框之前永不可能成功),宿主 status 则没有机器可读的下一步;两边
+现在都指向 `agentdeck agent terminal --agent <id>`(inspect-only,渲染
+attach/select-pane 文本,**绝不代按**),并由两侧 validator 互钉。落地时
+另发现 published example **把缺陷固化了**——`run_loop_follow_example()`
+本身就是人类门样例却印着那条不可能的命令,而它正是 GUI 照抄的参考 payload。
+live 复验:同一现场 `human_gate_command` 解析出 `select-pane -t %4`,正是
+那道框所在的 pane,链路闭合。
 
 **契约晚校验审计与两处修复(2026-08-01,`39c540b7`→`c02c6b35`,全量 5144 绿)**:
 `/goal` 终审 Finding 3 的收尾一句"根因是个模式"引出的系统性审计,余账在
