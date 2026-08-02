@@ -841,3 +841,86 @@ def test_serve_does_not_stop_on_a_stale_command_line_above_an_answered_box(
     assert record["stopped_reason"] == "budget_exhausted"
     assert record["human_gate"] is None
     assert backend.sent == []
+
+
+def _event_types(root: Path) -> list[str]:
+    path = root / ".agentdeck" / "state" / "events.jsonl"
+    if not path.exists():
+        return []
+    return [
+        json.loads(line)["event_type"]
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+
+
+def test_start_validates_before_spawning_with_zero_writes(tmp_path, monkeypatch, capsys) -> None:
+    """Pins a latent path: the start contract is checked *before* the detached
+    child is spawned, so a contract failure is a refusal with zero writes and
+    zero spawn -- the same standard as the command's five existing gates.
+
+    Everything in the payload is known before the spawn except `pid`, so the
+    gate runs on a pre-spawn projection. The validator is tautological on the
+    real payload today (literal dict, closed enum, int bound), so reaching the
+    failing path requires injecting a failing validator; that is the correct
+    way to pin a latent defect.
+    """
+    root = prepare_project(tmp_path, monkeypatch)
+    plan_id = seed_plan(root)
+    enable_autonomous(capsys)
+    spawn = RecordingSpawn()
+    monkeypatch.setattr(cli, "_spawn_host_process", spawn)
+    monkeypatch.setattr(
+        cli,
+        "validate_run_loop_host_start_contract",
+        lambda _payload: {"ok": False, "errors": ["injected contract failure"]},
+    )
+    before_events = _event_types(root)
+
+    assert cli.main([
+        "run-loop-host", "start", "--plan-id", plan_id, "--confirm", "--max-waves", "5",
+    ]) == 1
+    err = capsys.readouterr().err
+    assert "contract validation failed" in err
+    # zero spawn, zero writes
+    assert spawn.calls == []
+    assert read_host_record(root) is None
+    assert not host_record_path(root).exists()
+    assert _event_types(root) == before_events
+    assert "run_loop_host_started" not in _event_types(root)
+
+
+def test_start_post_spawn_failure_never_claims_the_host_did_not_start(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    """Pins a latent path: a contract failure that can only be seen once the
+    real pid is filled in must report the host as running, never as not
+    started (543f86e6 corrected that wording in the caller; the site itself
+    must not reintroduce it)."""
+    root = prepare_project(tmp_path, monkeypatch)
+    plan_id = seed_plan(root)
+    enable_autonomous(capsys)
+    spawn = RecordingSpawn(pid=999_501)
+    monkeypatch.setattr(cli, "_spawn_host_process", spawn)
+    # Fails only on the post-spawn payload: the pre-spawn projection passes.
+    monkeypatch.setattr(
+        cli,
+        "validate_run_loop_host_start_contract",
+        lambda payload: (
+            {"ok": False, "errors": ["injected post-spawn failure"]}
+            if payload.get("pid") == 999_501
+            else {"ok": True, "errors": []}
+        ),
+    )
+
+    assert cli.main([
+        "run-loop-host", "start", "--plan-id", plan_id, "--confirm", "--max-waves", "5",
+    ]) == 1
+    err = capsys.readouterr().err
+    assert spawn.calls != []
+    assert read_host_record(root)["pid"] == 999_501
+    assert "run_loop_host_started" in _event_types(root)
+    assert "did not start" not in err
+    assert "999501" in err
+    assert "agentdeck run-loop-host status" in err
+    assert "agentdeck run-loop-host stop --confirm" in err

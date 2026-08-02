@@ -21326,8 +21326,43 @@ def run_loop_host_start_command(args: argparse.Namespace) -> int:
         argv.append("--merge-on-complete")
     if max_review_rounds is not None:
         argv += ["--max-review-rounds", str(max_review_rounds)]
-    pid = _spawn_host_process(argv, root)
     log_relative = str(host_log_path(root).relative_to(root))
+
+    def _start_payload(pid: int) -> dict[str, object]:
+        return {
+            "ok": True,
+            "mode": "run_loop_host_started",
+            "plan_id": str(args.plan_id),
+            "pid": pid,
+            "max_waves": int(args.max_waves),
+            "interval": float(args.interval),
+            "release_boxes": bool(args.release_boxes),
+            "merge_on_complete": bool(getattr(args, "merge_on_complete", False)),
+            "log_path": log_relative,
+            "status_command": "agentdeck run-loop-host status",
+            "stop_command": "agentdeck run-loop-host stop --confirm",
+            "requires_explicit_user": True,
+            "safety": "delegated",
+        }
+
+    # Gate **before** the spawn. Everything in this payload is known ahead of
+    # time except `pid`, so the pre-spawn projection stands in our own live pid
+    # -- a real, valid pid, so any pid-shaped constraint is exercised truthfully
+    # rather than waved through by a sentinel. A failure here is a refusal that
+    # meets the same standard as the five gates above it: zero writes, zero
+    # spawn, nothing to explain afterwards.
+    pre_validation = validate_run_loop_host_start_contract(_start_payload(os.getpid()))
+    if not pre_validation["ok"]:
+        print("run-loop-host start contract validation failed", file=sys.stderr)
+        for error in pre_validation["errors"]:
+            print(f"- {error}", file=sys.stderr)
+        print(
+            "refused before spawning: no host process was started, no host record "
+            "was written and no event was appended",
+            file=sys.stderr,
+        )
+        return 1
+    pid = _spawn_host_process(argv, root)
     write_host_record(root, {
         "pid": pid,
         "plan_id": str(args.plan_id),
@@ -21350,26 +21385,22 @@ def run_loop_host_start_command(args: argparse.Namespace) -> int:
         "release_boxes": bool(args.release_boxes),
         "merge_on_complete": bool(getattr(args, "merge_on_complete", False)),
     }))
-    payload = {
-        "ok": True,
-        "mode": "run_loop_host_started",
-        "plan_id": str(args.plan_id),
-        "pid": pid,
-        "max_waves": int(args.max_waves),
-        "interval": float(args.interval),
-        "release_boxes": bool(args.release_boxes),
-        "merge_on_complete": bool(getattr(args, "merge_on_complete", False)),
-        "log_path": log_relative,
-        "status_command": "agentdeck run-loop-host status",
-        "stop_command": "agentdeck run-loop-host stop --confirm",
-        "requires_explicit_user": True,
-        "safety": "delegated",
-    }
+    payload = _start_payload(pid)
+    # Kept as a second gate: only a pid-specific violation can survive the
+    # pre-spawn projection. Its failure branch must never say the host did not
+    # start -- it did (543f86e6 corrected that same wording in `goal start`).
     validation = validate_run_loop_host_start_contract(payload)
     if not validation["ok"]:
         print("run-loop-host start contract validation failed", file=sys.stderr)
         for error in validation["errors"]:
             print(f"- {error}", file=sys.stderr)
+        print(
+            f"the host IS running: pid {pid} for plan {args.plan_id}, logging to "
+            f"{log_relative}; it was not stopped. Inspect with "
+            "agentdeck run-loop-host status; stop it with "
+            "agentdeck run-loop-host stop --confirm",
+            file=sys.stderr,
+        )
         return 1
     _print_json(payload)
     return 0
@@ -22204,12 +22235,10 @@ def goal_start_command(args: argparse.Namespace) -> int:
         "requires_explicit_user": True,
         "safety": "delegated",
     }
-    validation = validate_goal_start_contract(payload)
-    if not validation["ok"]:
-        print("goal start contract validation failed", file=sys.stderr)
-        for error in validation["errors"]:
-            print(f"- {error}", file=sys.stderr)
-        return 1
+    # The ledger entry goes in **before** the contract gate: by this point the
+    # approvals are approved and the host is running, and `goal_started` is the
+    # only ledger evidence explaining why that host exists. A failed print must
+    # never be able to erase it.
     store.append_event(
         EventRecord.create(
             "goal_started",
@@ -22223,6 +22252,20 @@ def goal_start_command(args: argparse.Namespace) -> int:
             },
         )
     )
+    validation = validate_goal_start_contract(payload)
+    if not validation["ok"]:
+        print("goal start contract validation failed", file=sys.stderr)
+        for error in validation["errors"]:
+            print(f"- {error}", file=sys.stderr)
+        print(
+            f"this already happened and was not undone: {approved_count} approval(s) "
+            f"for {plan_id} are approved and the run-loop host is running "
+            f"(pid {payload['host_pid']}); `goal_started` is in the ledger. "
+            "Inspect with agentdeck run-loop-host status; stop it with "
+            "agentdeck run-loop-host stop --confirm",
+            file=sys.stderr,
+        )
+        return 1
     if args.json:
         _print_json(payload)
     else:

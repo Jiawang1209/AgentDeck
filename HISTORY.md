@@ -4,6 +4,41 @@
 
 ## 2026-08-02
 
+### Gate run-loop-host start before the spawn, and put goal start's ledger entry before its print gate
+
+- **Type**: fix
+- **Motivation**: 审计余账第 2、3 处。`run_loop_host_start_command` 先 spawn
+  detached 子进程、写 host 记录、追加 `run_loop_host_started`,**之后**才校验
+  契约:失败时命令退非 0 而宿主**真的在跑**(这正是 `/goal` 终审 Finding 3 的
+  原发现,`543f86e6` 只修了调用方的措辞,站点未动)。`goal start` 则把
+  `goal_started` 追加在契约门**之后**:一次失败的打印会抹掉账本里唯一解释
+  "这个宿主为何存在"的那一条。两处都是**潜伏**缺陷:校验器今天作用在字面量
+  payload 上,是恒真式。
+- **What**: (1) `run-loop-host start` 把 payload 构造抽成 `_start_payload(pid)`,
+  在 `_spawn_host_process` **之前**用一份 pid 占位投影过一次校验——占位用
+  `os.getpid()`(真实存活 pid,任何 pid 形状的约束都被如实检验,而不是被
+  sentinel 蒙混过去);前置失败是一次**零写零 spawn** 的拒绝,达到该命令既有
+  五道门同样的标准。spawn 后保留第二道门(只有 pid 相关的违规能活到那里),
+  其失败分支如实报告"宿主 **正在跑**,pid N,日志 …,未被停止",并给出
+  status/stop 入口——绝不重新引入 `543f86e6` 修掉的那句"没起来"。
+  (2) `goal start` 把 `goal_started` 追加移到 `validate_goal_start_contract`
+  **之前**,并让失败分支点名已批准审批数、宿主 pid 和账本已留证据。
+- **Impact**: 成功路径逐字节不变(同样的 spawn、host 记录、事件、payload、
+  退出码;`run_loop_host_started` 仍在 `goal_started` 之前)。失败路径:契约
+  违规现在在 spawn 之前被挡下,不再可能"报告失败而宿主在跑";真到了 spawn
+  之后才发现的违规,措辞与账本都如实。
+- **Verification**: 三条红测先行(docstring 声明其 pin 的是潜伏路径):
+  `test_start_validates_before_spawning_with_zero_writes` 断言 spawn 零调用、
+  `read_host_record` 为 None、`host.json` 不存在、事件账本逐条不变;
+  `test_start_post_spawn_failure_never_claims_the_host_did_not_start` 用只在
+  真实 pid 上失败的注入抵达第二道门,断言 stderr 无 "did not start"、含 pid
+  与 status/stop 命令;`test_goal_start_records_the_ledger_entry_before_the_contract_gate`
+  断言失败后 `goal_started` 仍在账本里。既有
+  `test_goal_start_never_claims_the_host_did_not_start_when_it_may_have` 的注入
+  改为只在真实子进程 pid 上失败(否则它会被新的前置门挡在 spawn 之前,抵达
+  不了它要 pin 的那条路径),**其全部断言逐字节保留**。
+  `-k "host or goal or run_loop"` 239 passed。
+
 ### Validate the run-loop follow payload before merging, and make its failure path name the effects that already landed
 
 - **Type**: fix

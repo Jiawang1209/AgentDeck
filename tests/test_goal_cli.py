@@ -756,11 +756,18 @@ def test_goal_start_never_claims_the_host_did_not_start_when_it_may_have(
     spawn = RecordingSpawn(pid=999_401)
     monkeypatch.setattr(cli, "_spawn_host_process", spawn)
     plan_id = preview_json(capsys)["plan_id"]
-    # 让宿主命令在 spawn 之后的契约校验上失败——正是终审点名的那条路径
+    # 让宿主命令在 spawn **之后**的契约校验上失败——正是终审点名的那条路径。
+    # 该命令现在还有一道 spawn **之前**的前置投影门(pid 用本进程 pid 占位),
+    # 所以注入必须只在真实子进程 pid 上失败,才能仍然抵达同一条路径;下面
+    # 每一条断言与本切片落地时逐字节相同。
     monkeypatch.setattr(
         cli,
         "validate_run_loop_host_start_contract",
-        lambda _payload: {"ok": False, "errors": ["injected contract failure"]},
+        lambda payload: (
+            {"ok": False, "errors": ["injected contract failure"]}
+            if payload.get("pid") == 999_401
+            else {"ok": True, "errors": []}
+        ),
     )
 
     assert cli.main(["goal", "start", "--plan-id", plan_id, "--confirm"]) == 1
@@ -818,3 +825,39 @@ def test_goal_contract_is_discoverable_for_gui_clients(capsys) -> None:
     assert cli.main(["contract", "list"]) == 0
     names = [item["name"] for item in json.loads(capsys.readouterr().out)["contracts"]]
     assert "goal" in names
+
+
+def test_goal_start_records_the_ledger_entry_before_the_contract_gate(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    """Pins a latent path: `goal_started` is appended *before* the contract
+    gate, so a failed print can never erase the only ledger evidence that
+    explains why a host is running.
+
+    `validate_goal_start_contract` is tautological on the literal payload
+    today, so the failing path is reached by injecting a failing validator --
+    the correct way to pin a latent defect.
+    """
+    from agentdeck.run_loop_host import read_host_record
+
+    root = prepare_project(tmp_path, monkeypatch)
+    enable_autonomous(capsys)
+    spawn = RecordingSpawn(pid=999_601)
+    monkeypatch.setattr(cli, "_spawn_host_process", spawn)
+    plan_id = preview_json(capsys)["plan_id"]
+    monkeypatch.setattr(
+        cli,
+        "validate_goal_start_contract",
+        lambda _payload: {"ok": False, "errors": ["injected contract failure"]},
+    )
+
+    assert cli.main(["goal", "start", "--plan-id", plan_id, "--confirm"]) == 1
+    err = capsys.readouterr().err
+
+    # 宿主真的在跑,审批真的批了——账本必须留下解释宿主为何存在的那一条
+    assert read_host_record(root)["pid"] == 999_601
+    assert "goal_started" in event_types(root)
+    # 失败路径必须点名已经发生的事,并给出查证入口
+    assert "did not start" not in err
+    assert "agentdeck run-loop-host status" in err
+    assert "999601" in err
