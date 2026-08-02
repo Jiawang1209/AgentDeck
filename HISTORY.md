@@ -2,6 +2,30 @@
 
 本文件记录 AgentDeck 每一次开发内容。约束：每次新增功能、文档规则、项目骨架、运行环境或用户可见行为变化，都必须同步更新本文件，并在同一次 commit 中提交。
 
+## 2026-08-03
+
+### Freeze the delegation gate-preview design
+
+- **Type**: docs
+- **Motivation**: 北极星 G1–G6 收官后 user 在四个候选中选定的下一步方向。
+  依据是本项目自己的运行记录:**授权框是被实测证明的头号瓶颈**(Round 3
+  六个框、Round 5 七个框、**Round 14 一道 Playwright 框卡了两天**,846 wave
+  里 834 个空转在它上面)。human_gate 解决了"停得诚实",但停下之后人还是
+  得手抄命令、自己想前缀、手敲 grant、再手动放行,而且下次同类命令还会
+  再停一次。宿主已握有完整框证据,`delegation grant` 也早已存在——缺的只是桥。
+- **What**: 冻结 `docs/superpowers/specs/2026-08-03-delegation-gate-preview-design.md`。
+  设计支点是**宽度必须由人选**:同一道框不同前缀的授权宽度差数量级
+  (`playwright_cli.sh` vs `playwright_cli.sh open`),所以给一梯确定性候选、
+  每条标注连带授权什么,**绝不推荐任何一条**;MCP 框精确无梯子。输出摊开
+  完整两步闭环(grant → release-box)但只是文本。证据两条只读来源:缺省读
+  宿主记录(零 pane 读取),`--agent` 走实时只读扫描(`--follow` 用户只能走这条)。
+- **Impact**: 纯文档;零代码改动。契约**不新增第 46 个**,扩展既有 delegation
+  契约(同族)。
+- **Verification**: 设计对照既有 `human_gate` 证据字段与 `agent boxes`
+  响应形状核过。**一条刻意的拒绝已写入非目标**:不做危险命令模式警告——
+  一个只认 `push|install|curl` 的部分检测器会让"没有警告"被读成"安全",
+  而那正是本 session 反复在修的"显示了不成立的事实"那一类。
+
 ## 2026-08-02
 
 ### Record the human-gate symmetry and pointer live verification
