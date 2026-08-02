@@ -2,6 +2,36 @@
 
 本文件记录 AgentDeck 每一次开发内容。约束：每次新增功能、文档规则、项目骨架、运行环境或用户可见行为变化，都必须同步更新本文件，并在同一次 commit 中提交。
 
+## 2026-08-02
+
+### Validate the run-loop follow payload before merging, and make its failure path name the effects that already landed
+
+- **Type**: fix
+- **Motivation**: 审计余账第 1 处(`docs/roadmap/2026-08-01-late-validation-audit.md`)。
+  `_run_loop_follow` 先 `_merge_plan_worktrees` 合并任务分支,**下一行**才校验
+  follow payload:校验失败时命令退非 0,而分支**已经合并进 base**。这是**潜伏**
+  缺陷而非现行 bug——该校验器今天作用在字面量字典 + 闭合枚举 + 从 `waves`
+  自己算出的计数上,是个恒真式;但离变成谎言只差给这份 payload 加一个字段
+  或一个枚举值。
+- **What**: 把 `validate_run_loop_follow_contract` 提到 merge **之前**
+  (`plan_merge` 本就不在 follow contract 字段里,所以对每条通过路径逐字节
+  等价);wave 效果(tmux 派发、放框)无法重排,失败路径改为如实报告已发生
+  的效果——wave 数、已派 message id 列表、放框数、合并结果 `not attempted`
+  ——同时打到 stderr 并带进它本来就会追加的 `run_loop_contract_failed` 事件
+  (新增 `plan_id`/`wave_count`/`dispatched_message_ids`/`released_box_count`/
+  `plan_merge` 五个 payload 键)。
+- **Impact**: 成功路径逐字节不变:同样的效果、同样的事件顺序(merge 事件仍在
+  `run_loop_follow_completed` 之前)、同样的 payload、同样的退出码。只有失败
+  路径改变:不再可能"报告失败而分支已合并",且失败时人和调用方能看到到底
+  发生了什么、该查哪里。
+- **Verification**: 两条红测先行(均在 docstring 中声明其 pin 的是潜伏路径,
+  以注入失败校验器抵达):`test_run_loop_follow_validates_before_merging`
+  断言 `_merge_plan_worktrees` **零调用**;
+  `test_run_loop_follow_failure_reports_the_effects_that_already_happened`
+  断言 stderr 与事件 payload 同时携带 wave 数/message id/放框数/合并结果。
+  `tests/test_run_loop_follow.py` 9 passed;`-k "run_loop or goal or rework or lock"`
+  461 passed。
+
 ## 2026-08-01
 
 ### Catalogue the late-validation audit and its 10 remaining latent sites

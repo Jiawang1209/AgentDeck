@@ -22558,6 +22558,49 @@ def _run_loop_follow(
         "stopped_reason": (final or {}).get("stopped_reason"),
         "next_command": (final or {}).get("next_command"),
     }
+    # Validate **before** the merge. The merge is the one effect in this
+    # command that can simply be reordered behind the gate, and it is the
+    # heaviest: a contract failure must never leave task branches already
+    # merged into the base branch while the command reports failure.
+    # `plan_merge` is not part of the follow contract, so gating on the
+    # payload without it is equivalent for every passing case.
+    validation = validate_run_loop_follow_contract(follow_payload)
+    if not validation["ok"]:
+        # The wave effects cannot be undone or reordered: workers were
+        # prompted and authorization boxes were released before we got here.
+        # Say what landed instead of letting this read as "nothing happened".
+        dispatched_message_ids = [
+            str(item.get("message_id"))
+            for wave in waves
+            for item in (wave.get("dispatched") or [])
+            if isinstance(item, dict) and item.get("message_id")
+        ]
+        print("run-loop follow contract validation failed", file=sys.stderr)
+        for error in validation["errors"]:
+            print(f"- {error}", file=sys.stderr)
+        print(
+            "these effects already happened and were not undone: "
+            f"{len(waves)} wave(s) ran; "
+            + (
+                f"{len(dispatched_message_ids)} dispatch(es) reached workers "
+                f"({', '.join(dispatched_message_ids)})"
+                if dispatched_message_ids
+                else "0 dispatches reached workers"
+            )
+            + f"; {len(released_boxes)} authorization box(es) released; "
+            "plan merge not attempted (refused before merging). "
+            f"Inspect with agentdeck plan status --plan-id {plan_id}",
+            file=sys.stderr,
+        )
+        store.append_event(EventRecord.create("run_loop_contract_failed", {
+            "errors": validation["errors"],
+            "plan_id": plan_id,
+            "wave_count": len(waves),
+            "dispatched_message_ids": dispatched_message_ids,
+            "released_box_count": len(released_boxes),
+            "plan_merge": "not attempted",
+        }))
+        return 1
     if follow_payload["merge_on_complete"] and follow_payload["stopped_reason"] == "complete":
         verdict_blocker = _verdict_merge_blocker(store, plan_id)
         if verdict_blocker:
@@ -22573,13 +22616,6 @@ def _run_loop_follow(
             }
         else:
             follow_payload["plan_merge"] = _merge_plan_worktrees(config, store, plan_id)
-    validation = validate_run_loop_follow_contract(follow_payload)
-    if not validation["ok"]:
-        print("run-loop follow contract validation failed", file=sys.stderr)
-        for error in validation["errors"]:
-            print(f"- {error}", file=sys.stderr)
-        store.append_event(EventRecord.create("run_loop_contract_failed", {"errors": validation["errors"]}))
-        return 1
     store.append_event(
         EventRecord.create(
             "run_loop_follow_completed",

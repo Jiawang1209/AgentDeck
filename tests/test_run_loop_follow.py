@@ -298,3 +298,88 @@ def test_run_loop_follow_release_boxes_releases_delegated_box(tmp_path, monkeypa
     assert ("%50", "") in fake.sent
     events = (root / ".agentdeck" / "state" / "events.jsonl").read_text(encoding="utf-8")
     assert '"event_type": "auth_box_released"' in events
+
+
+def _failing_validator(_payload):
+    return {"ok": False, "errors": ["injected: follow contract violated"]}
+
+
+def test_run_loop_follow_validates_before_merging(tmp_path, monkeypatch, capsys) -> None:
+    """Pins a latent path: the follow payload's contract is validated *before*
+    the plan merge, so a validation failure can never leave task branches
+    already merged into the base branch.
+
+    The validator is tautological on today's literal payload, so the failing
+    path is only reachable by injecting a failing validator. That is the
+    correct way to pin a latent defect: adding one field or one enum value
+    later would make it live.
+    """
+    root = prepare_project(tmp_path, monkeypatch)
+    bind_agent(root, "coder", "%50")
+    fake = FakeTmuxBackend()
+    monkeypatch.setattr(cli, "TmuxBackend", lambda: fake)
+    enable_autonomous(capsys, ["coder"], 5)
+    plan_id = seed_plan(root, ["coder"])
+    monkeypatch.setattr(cli.time, "sleep", lambda _s: _write_pending_reply_files(root))
+
+    merge_calls: list[str] = []
+    monkeypatch.setattr(
+        cli,
+        "_merge_plan_worktrees",
+        lambda _config, _store, pid: merge_calls.append(pid) or {"mode": "worktree_merge_plan"},
+    )
+    monkeypatch.setattr(cli, "validate_run_loop_follow_contract", _failing_validator)
+
+    exit_code = cli.main([
+        "run-loop", "--plan-id", plan_id, "--confirm", "--follow",
+        "--max-waves", "4", "--interval", "1", "--merge-on-complete",
+    ])
+    assert exit_code == 1
+    assert merge_calls == []
+
+
+def test_run_loop_follow_failure_reports_the_effects_that_already_happened(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    """Pins a latent path: when the follow contract fails, the wave effects
+    (tmux dispatches, released boxes) cannot be undone, so the failure must
+    name them instead of reading as 'the follow did not run'."""
+    root = prepare_project(tmp_path, monkeypatch)
+    bind_agent(root, "coder", "%50")
+    fake = FakeTmuxBackend()
+    monkeypatch.setattr(cli, "TmuxBackend", lambda: fake)
+    enable_autonomous(capsys, ["coder"], 5)
+    cli.main(["delegation", "grant", "--agent", "coder", "--prefix", "node tests/", "--confirm"])
+    capsys.readouterr()
+    plan_id = seed_plan(root, ["coder"])
+    fake.output = CODEX_AUTH_BOX
+    monkeypatch.setattr(cli, "validate_run_loop_follow_contract", _failing_validator)
+
+    exit_code = cli.main([
+        "run-loop", "--plan-id", plan_id, "--confirm", "--follow",
+        "--max-waves", "1", "--interval", "0", "--release-boxes",
+    ])
+    assert exit_code == 1
+    err = capsys.readouterr().err
+    state = StateStore(root).load()
+    message_id = state["messages"][0]["message_id"]
+    assert "already happened" in err
+    assert "1 wave" in err
+    assert message_id in err
+    assert "1 authorization box" in err
+    assert "not attempted" in err
+
+    events = [
+        json.loads(line)
+        for line in (root / ".agentdeck" / "state" / "events.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+        if line.strip()
+    ]
+    failed = [e for e in events if e["event_type"] == "run_loop_contract_failed"]
+    assert failed, "the failure must stay in the ledger"
+    payload = failed[-1]["payload"]
+    assert payload["wave_count"] == 1
+    assert payload["dispatched_message_ids"] == [message_id]
+    assert payload["released_box_count"] == 1
+    assert payload["plan_merge"] == "not attempted"
