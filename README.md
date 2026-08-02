@@ -95,7 +95,17 @@ AgentDeck › Mission started. Use /status or open the workbench to inspect it.
   **provenance, not authorization** — AgentDeck never presses the box, a human
   does — and detection reuses only the scan `--release-boxes` already performs,
   so a host started without that flag still reads no pane at all; discovery:
-  `agentdeck contract run-loop-host`;
+  `agentdeck contract run-loop-host`; **`run-loop --follow` runs the identical
+  detection** (2026-08-02 — same pure functions, same awaiting set, same four
+  conditions, same two-sighting debounce, same `--release-boxes`-only
+  boundary), because `--follow --max-waves 300 --interval 10` is hours of
+  unattended polling too and the asymmetry was itself the defect; the one
+  deliberate shape difference: a follow payload's `stopped_reason` is the
+  *last wave's* gate, so it keeps reporting `waiting_for_reply` (that wave
+  really was waiting) and the evidence lands in a separate `human_gate` object
+  (`null` when there is none) with the early exit visible as
+  `wave_count < max_waves` — `--merge-on-complete` therefore never fires on it,
+  same as the host;
 - review iteration loop: a review reply whose verdict `overall` is `fail` or
   `needs_changes` appends a deterministic rework + re-review step pair to the
   same plan (rework task = failed criteria + the reviewer's reply verbatim,

@@ -3906,6 +3906,11 @@ RUN_LOOP_FOLLOW_RESPONSE_FIELDS = (
     "released_box_count",
     "stopped_reason",
     "next_command",
+    # 人类门证据(2026-08-02,与 run-loop-host 对称)。刻意**不**进
+    # `stopped_reason`:后者是最后一个 wave 的真实 gate,把 `human_gate`
+    # 塞进去会污染 RUN_LOOP_STOP_REASONS 这个 wave gate 枚举。提前退出
+    # 体现为 wave_count < max_waves。无门时为 null。
+    "human_gate",
 )
 
 
@@ -3939,6 +3944,19 @@ def validate_run_loop_follow_contract(payload: dict[str, object]) -> dict[str, o
         errors.append("run_loop_follow.released_boxes must be a list")
     elif payload.get("released_box_count") != len(released):
         errors.append("run_loop_follow.released_box_count must match released_boxes length")
+    # 人类门证据:只是屏上框的 provenance,不是授权——AgentDeck 永不代按。
+    # 字段清单单一来源自 run_loop_host.HUMAN_GATE_FIELDS(与 host status
+    # validator 同一份),绝不在此另抄一份。
+    gate = payload.get("human_gate")
+    if gate is not None:
+        if not isinstance(gate, dict):
+            errors.append("run_loop_follow.human_gate must be null or an object")
+        else:
+            errors.extend(
+                f"missing run_loop_follow.human_gate field: {field}"
+                for field in HUMAN_GATE_FIELDS
+                if field not in gate
+            )
     return {"ok": not errors, "errors": errors}
 
 RUN_LOOP_ALL_RESPONSE_FIELDS = (
@@ -6555,6 +6573,43 @@ def run_loop_example() -> dict[str, object]:
     }
 
 
+def run_loop_follow_example() -> dict[str, object]:
+    """A bounded follow segment that stopped early on a human gate.
+
+    Note the deliberate shape: `stopped_reason` is the **last wave's** real
+    gate (that wave genuinely was waiting for a reply), the human gate is
+    separate evidence, and the early exit shows up as
+    `wave_count < max_waves`. The evidence is provenance for a box on screen,
+    never authorization — AgentDeck never presses it.
+    """
+    wave = {**run_loop_example(), "wave": 1}
+    return {
+        "ok": True,
+        "mode": "run_loop_follow",
+        "plan_id": "pln_example",
+        "requires_explicit_user": True,
+        "safety": "delegated",
+        "max_waves": 40,
+        "interval": 10,
+        "release_boxes": True,
+        "merge_on_complete": False,
+        "waves": [wave],
+        "wave_count": 1,
+        "released_boxes": [],
+        "released_box_count": 0,
+        "stopped_reason": "waiting_for_reply",
+        "next_command": "agentdeck capture-reply --agent planner --message-id msg_example",
+        "human_gate": {
+            "agent_id": "planner",
+            "box_kind": "command",
+            "command": "./scripts/deploy.sh",
+            "mcp_server": None,
+            "mcp_tool": None,
+            "waiting_hint": "Press enter to confirm or esc to cancel",
+        },
+    }
+
+
 def run_loop_contract_payload(contract_path: Path) -> dict[str, object]:
     return {
         "schema_version": PROJECT_VIEW_SCHEMA_VERSION,
@@ -6578,6 +6633,9 @@ def run_loop_contract_response(contract_path: Path, include_example: bool = Fals
         payload["example"] = True
         payload["example_run_loop_response_fields"] = list(example)
         payload["example_run_loop"] = example
+        follow_example = run_loop_follow_example()
+        payload["example_run_loop_follow_response_fields"] = list(follow_example)
+        payload["example_run_loop_follow"] = follow_example
     return payload
 
 

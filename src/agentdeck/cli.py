@@ -22597,19 +22597,35 @@ def _run_loop_follow(
     waves: list[dict[str, object]] = []
     released_boxes: list[dict[str, object]] = []
     final: dict[str, object] | None = None
+    # 人类门检测(2026-08-02,与 run-loop-host 完全对称):被等待的 worker
+    # 停在一道未委托授权框上时,回复永远不会自己到来,再轮询一万次也一样。
+    # 复用 --release-boxes 已有的只读扫描结果——过去这份 skipped[] 被丢进
+    # `_`,检测只是不再丢弃它,零新增 pane 读取面:不带该标志的 follow 一次
+    # pane 都不读,行为逐字节不变。
+    #
+    # 排序依赖(有意为之,与宿主同):human_gate_candidate 返回**第一条**命中
+    # 项,因此"哪个 agent 胜出"取决于 agent_ids 的迭代顺序;debounce 身份含
+    # agent_id,顺序若不稳定就永远确认不了同一道框。agent_ids 来自
+    # config.agents 的声明顺序(稳定),这条依赖必须保持。
+    agent_ids = [agent.agent_id for agent in config.agents]
+    pending_human_gate: dict[str, object] | None = None
+    confirmed_human_gate: dict[str, object] | None = None
     if backend is not None:
         # Round 11 live 发现 #4：委托框可能在两段 follow 之间弹出——只在
         # wave 间隙扫描会整段错过,段首(wave 0)也扫一次。语义不变:仍
         # 只放行命中活跃委托前缀的框,逐次审计。
-        released, _skipped = _scan_release_delegated_boxes(
+        released, skipped = _scan_release_delegated_boxes(
             config,
             store,
             backend,
-            [agent.agent_id for agent in config.agents],
+            agent_ids,
             0,
             source="run_loop_follow",
         )
         released_boxes.extend(released)
+        pending_human_gate = human_gate_candidate(
+            skipped, {agent for _message, agent in _plan_awaiting(store.load(), plan_id)}
+        )
     for wave_number in range(1, args.max_waves + 1):
         payload = _run_loop_single_wave(
             config, store, plan_id, max_review_rounds=args.max_review_rounds
@@ -22626,15 +22642,24 @@ def _run_loop_follow(
         if wave_number >= args.max_waves:
             break
         if backend is not None:
-            released, _skipped = _scan_release_delegated_boxes(
+            released, skipped = _scan_release_delegated_boxes(
                 config,
                 store,
                 backend,
-                [agent.agent_id for agent in config.agents],
+                agent_ids,
                 wave_number,
                 source="run_loop_follow",
             )
             released_boxes.extend(released)
+            candidate = human_gate_candidate(
+                skipped, {agent for _message, agent in _plan_awaiting(store.load(), plan_id)}
+            )
+            # debounce:同一道框连续两次扫描命中才判定。框可能刚弹出、
+            # 下一轮就被委托放行;要求两次可防误停,代价是最多多转一个 wave。
+            if same_human_gate(pending_human_gate, candidate):
+                confirmed_human_gate = candidate
+                break
+            pending_human_gate = candidate
         if args.interval > 0:
             time.sleep(args.interval)
     follow_payload = {
@@ -22651,8 +22676,13 @@ def _run_loop_follow(
         "wave_count": len(waves),
         "released_boxes": released_boxes,
         "released_box_count": len(released_boxes),
+        # `stopped_reason` 保持最后一个 wave 的**真实 gate**——那个 wave 确实
+        # 在等一个回复。人类门是**循环层**的判断,不是 wave 引擎的判断
+        # (宿主同理:那边 wave payload 自身也仍然报 waiting_for_reply),
+        # 所以它以独立证据字段呈现,提前退出体现为 wave_count < max_waves。
         "stopped_reason": (final or {}).get("stopped_reason"),
         "next_command": (final or {}).get("next_command"),
+        "human_gate": confirmed_human_gate,
     }
     # Validate **before** the merge. The merge is the one effect in this
     # command that can simply be reordered behind the gate, and it is the
@@ -22720,6 +22750,10 @@ def _run_loop_follow(
                 "wave_count": len(waves),
                 "released_boxes": len(released_boxes),
                 "stopped_reason": follow_payload["stopped_reason"],
+                # follow 的 payload 只进 stdout(转瞬即逝);审计事件是这份
+                # 证据唯一的持久落点,宿主那边由 host.json/host.log 承担。
+                # 只是 provenance,不是授权——放行仍只走精确委托匹配。
+                **({"human_gate": confirmed_human_gate} if confirmed_human_gate else {}),
             },
         )
     )

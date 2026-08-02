@@ -119,12 +119,64 @@ authorization boxes — every release audited as `auth_box_released` with
 `source=run_loop_follow`, non-covered boxes never touched (see
 `docs/contracts/delegation-schema.md`).
 
+### The human gate (2026-08-02 — symmetric with `run-loop-host`)
+
+`--follow` runs the same human-gate detection as the background host, using
+the same pure functions (`human_gate_candidate` / `same_human_gate` in
+`src/agentdeck/run_loop_host.py`), the same awaiting set (`_plan_awaiting` —
+one definition, shared with file-channel ingest), the same four conditions and
+the same two-consecutive-sightings debounce. The original host spec listed
+this symmetry as a non-goal ("someone is watching in the foreground"); that
+reason was withdrawn — `--follow --max-waves 300 --interval 10` is hours of
+unattended polling too, and the asymmetry was itself the defect: the same
+walk-away command stopped and named the box in the background while burning
+its whole budget in the foreground.
+
+A wave-gap scan result is a human-gate candidate only when **all four** hold:
+the skipped item's `reason` is `no active delegation` (a pane-capture failure
+is runtime jitter, not a human gate); its `agent_id` is in **this plan's**
+awaiting set (a box on another plan's or an idle agent must not stop this
+segment); `box_pending` is true (positive proof that an *active* selector
+glyph is on screen — an already-answered collapsed box still matches the
+waiting marker, and without this proof its all-`None` identity would equal
+itself and the debounce would always confirm); and `box_kind` is non-null
+(an unparseable box is never adjudicated — fail-open to the existing polling
+behaviour). Any parse failure or scan exception means *no* decision: better to
+poll one more wave than to falsely stop a healthy walk-away segment.
+
+**Detection only runs with `--release-boxes`.** This is a boundary, not a
+shortcut: the flag's existing read-only scan already returned this `skipped[]`
+and follow simply stopped discarding it, so a `--follow` run without the flag
+reads no pane at all and behaves byte-identically to before. Detection never
+sends tmux input; the delegated release path is untouched, and AgentDeck never
+presses a box for you.
+
+**The one deliberate shape difference from the host.** The host has its own
+closed enum (`RUN_LOOP_HOST_STOPPED_REASONS`), so `stopped_reason=human_gate`
+is clean there. A follow payload's `stopped_reason` is the **last wave's
+gate**, so putting `human_gate` in it would corrupt `RUN_LOOP_STOP_REASONS`.
+Instead: `stopped_reason` keeps the real gate (it genuinely is
+`waiting_for_reply` — that wave really was waiting for a reply), the evidence
+lands in a separate `human_gate` object (`null` when there is no gate; the
+same six `HUMAN_GATE_FIELDS` the host records — `agent_id`, `box_kind`,
+`command`, `mcp_server`, `mcp_tool`, `waiting_hint`), and the early exit shows
+up as `wave_count < max_waves`. This mirrors the host's honesty property:
+there too the wave payload still reports `waiting_for_reply`, because the
+human gate is a judgement of the **loop layer**, not of the wave engine. Since
+the gate is not `complete`, `--merge-on-complete` never fires on a human-gate
+stop — same as the host. The evidence is also copied into the
+`run_loop_follow_completed` audit event, which is its only durable record
+(the host's equivalents are `host.json` and `host.log`). It is provenance,
+never authorization.
+
 The response (`RUN_LOOP_FOLLOW_RESPONSE_FIELDS`) is `mode=run_loop_follow`
 with `max_waves`, `interval`, `release_boxes`, `merge_on_complete`, `waves[]`
 (each item is a full single-wave `run_loop` payload plus its 1-based `wave`
 number, revalidated by `validate_run_loop_contract()`), `wave_count`,
-`released_boxes[]` / `released_box_count`, and the final wave's
-`stopped_reason` / `next_command`. With `--merge-on-complete`, when the final
+`released_boxes[]` / `released_box_count`, the final wave's
+`stopped_reason` / `next_command`, and `human_gate` (the evidence object above
+or `null`; `validate_run_loop_follow_contract()` requires all six fields when
+it is non-null). With `--merge-on-complete`, when the final
 gate is `complete` the response also carries the optional `plan_merge` object
 — the `worktree merge-plan` result for this plan (see
 `docs/contracts/worktree-schema.md`); on any other gate no merge is attempted.

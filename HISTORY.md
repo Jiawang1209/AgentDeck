@@ -4,6 +4,58 @@
 
 ## 2026-08-02
 
+### Stop `run-loop --follow` on a confirmed human gate, symmetric with the host
+
+- **Type**: feat
+- **Motivation**: `run-loop-host` 已经会在被等待的 worker 停在一道**未委托**
+  授权框上时诚实停下(live 数据:同一场景从 834/846 个 wave、3h37m 空转,
+  变成 wave 1、约 7 秒停,并指名 agent 与那条命令)。原 spec 把 `--follow`
+  的对称实现列为非目标,理由是"前台有人看着"——**那个理由站不住**:
+  `--follow --max-waves 300 --interval 10` 在终端里同样是几小时无人值守轮询,
+  人不会盯着每一秒。而在宿主已经会诚实停下之后,这个不对称本身变成了缺陷:
+  同一个走开命令,后台会指名道姓地停下来找你,前台仍闷头把预算烧光。
+- **What**: `_run_loop_follow` 不再把框扫描的 `skipped[]` 丢进 `_`。复用
+  **完全相同**的一批零件:纯函数 `human_gate_candidate` / `same_human_gate`
+  (`run_loop_host.py`,单一来源)、同一份 `_plan_awaiting` awaiting 集
+  (与文件通道摄入共用,绝无第二套定义)、同样四条判据(`reason=no active
+  delegation` + 在本 plan awaiting 集内 + `box_pending` 正证明 + `box_kind`
+  非空)和同样的连续两次 debounce。段首(wave 0)与每个 wave 间隙的扫描各
+  过一次判定。**一处刻意的形状差异**:宿主有自己的闭合枚举
+  `RUN_LOOP_HOST_STOPPED_REASONS`,而 follow payload 的 `stopped_reason` 是
+  **最后一个 wave 的 gate**,把 `human_gate` 塞进去会污染
+  `RUN_LOOP_STOP_REASONS`。所以 follow 保持真实 gate(它确实是
+  `waiting_for_reply`——那个 wave 真的在等一个回复),人类门以新增的
+  `human_gate` 证据字段呈现(无门时 `null`,复用**同一份**从
+  `run_loop_host` import 的 `HUMAN_GATE_FIELDS`,不重打那六个名字),提前
+  退出体现为 `wave_count < max_waves`。这与宿主的诚实性属性同源:那边 wave
+  payload 自身也仍然报 `waiting_for_reply`,人类门是**循环层**的判断,不是
+  wave 引擎的判断。同步注册 `RUN_LOOP_FOLLOW_RESPONSE_FIELDS`、
+  `validate_run_loop_follow_contract()`(非 null 时逐字段要求那六个键)、
+  新的 `run_loop_follow_example()` fixture(`contract run-loop --example` 暴露
+  为 `example_run_loop_follow`)、`docs/contracts/run-loop-schema.md` 与
+  README;证据也复制进 `run_loop_follow_completed` 审计事件——follow 的
+  payload 只进 stdout,该事件是这份证据唯一的持久落点(宿主那边由
+  `host.json` / `host.log` 承担)。
+- **Impact**: **零新增能力面**:检测只在 `--release-boxes` 开启时生效——
+  那份 `skipped[]` 本来就已经拿到手,只是不再丢弃;不带该标志的 `--follow`
+  一次 pane 都不读,行为逐字节不变。单 wave 引擎 `_run_loop_single_wave`
+  一字未动(与宿主切片同一条纪律)。检测绝不发送 tmux 输入,放行仍只走既有
+  的精确委托匹配路径。人类门只会让 follow **更早停下**,不会让它多做任何事;
+  `human_gate` 是 provenance,不是授权——AgentDeck 永不代按。`stopped_reason`
+  枚举未变(仍是六值 wave gate),`human_gate` 是**新增**字段,既有消费方读
+  旧字段的行为不变。
+- **Verification**: 六条红测先行(全部先确认失败原因:一条是"扫满 10 个
+  wave 没提前停",五条是 `KeyError: human_gate`),镜像宿主自己的回归集:
+  同一道框两次 → 提前停且带证据、`stopped_reason` 仍是 wave gate;框在
+  awaiting 集之外的 agent 上 → 不停、烧完预算;交替不同框 → 不停(重新
+  计数);不开 `--release-boxes` → 扫描器被调用**零次**(recording
+  monkeypatch 断言)且行为不变;人类门停止 + `--merge-on-complete` → 无合并、
+  无 `plan_merge` 键;以及一条走**未 mock** 的 `_scan_release_delegated_boxes`
+  的端到端测试——喂真实"已答复折叠框" pane 文本,断言不误停且一个按键都
+  没发。最后一条是有针对性的:宿主切片正是因为每个 serve 级测试都 mock 了
+  扫描器,让"已答复的折叠框误停一个健康走开段"活过了七个 commit 和一次
+  live PASS。全量 5158 passed / 3 skipped(基线 5152 + 本轮 6 条新测)。
+
 ### Make the state-only late-validation tail report what already landed instead of reading as a refusal
 
 - **Type**: fix
