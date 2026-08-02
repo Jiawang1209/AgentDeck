@@ -107,3 +107,46 @@ human_gate     = ('planner', 'command', '/Users/liuyue/.codex/skills/playwright/
 而是"7 秒内停下,并指名道姓告诉人该去按哪一个"。
 
 Round 14 本身仍待人工按下该框后收尾——本次验证有意**没有**代按。
+
+
+## 对称性与可执行指示复验(2026-08-02,`0f4028b6`→`054f4cbe`)
+
+两件事在本轮补齐,同一现场复验:
+
+**一、`run-loop --follow` 补上对称检测。**原 spec 把它列为非目标,理由是
+"前台有人看着";该理由已撤销——`--follow --max-waves 300 --interval 10`
+同样是几小时无人值守,而宿主会诚实停下、前台闷头烧完预算,这个**不对称
+本身**就是缺陷。follow 复用同一批纯函数与同一份 awaiting 集,同样只在
+`--release-boxes` 时生效。一处刻意的形状差异:follow 的 `stopped_reason`
+是**最后一个 wave 的 gate**,塞 `human_gate` 会污染 wave gate 枚举,所以
+改为保留真实 gate + 新增 `human_gate` 证据字段,提前退出体现为
+`wave_count < max_waves`。
+
+**二、指示从"不可能执行"改为"真的通向某处"。**人类门停下时,follow 的
+`next_command` 原本仍是 `agentdeck capture-reply …` —— 一条在人按下那道框
+之前**永远不可能成功**的命令;宿主 `status` 则根本没有机器可读的下一步。
+这正是本 session 反复在修的那类"屏幕上显示一个不成立的事实"。两边现在
+都指向既有只读卡 `agentdeck agent terminal --agent <id>`。
+
+同一现场复验(Round 14 的 planner Playwright 框):
+
+```
+stopped_reason      = human_gate
+wave_count          = 1 / 20
+human_gate.agent_id = planner
+human_gate_command  = agentdeck agent terminal --agent planner
+
+$ agentdeck agent terminal --agent planner
+attach_command      = tmux -L agentdeck-agentdeck-live-scratch attach -t agentdeck
+select_pane_command = tmux -L agentdeck-agentdeck-live-scratch select-pane -t %4
+```
+
+`%4` 正是那道框所在的 pane —— 链路闭合。该指针是 **inspect-only**:它渲染
+attach/select-pane 文本,不 attach、不 select、不 capture、不发送。
+**AgentDeck 仍然绝不代按那道框。**
+
+落地时另发现一处:**published example 把缺陷固化了**——
+`run_loop_follow_example()` 本身就是一个人类门停止样例,却印着那条不可能
+执行的 `capture-reply` 命令,而它正是 GUI 会照抄的参考 payload。已一并修正,
+并由两侧 validator 互钉(follow 拒绝"有 human_gate 却指向别处"的 payload,
+host 拒绝指向另一个 agent 的 `human_gate_command`)。

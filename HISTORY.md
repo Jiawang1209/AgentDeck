@@ -4,6 +4,19 @@
 
 ## 2026-08-02
 
+### Record the human-gate symmetry and pointer live verification
+
+- **Type**: docs
+- **Motivation**: `--follow` 的对称检测与"可执行指示"两处改动都需要在真实
+  现场确认——尤其是后者:一条指示是否真的通向那道框,只有真项目能证明。
+- **What**: 证据追加进 `docs/validation/2026-08-01-host-human-gate-live.md`。
+- **Impact**: 纯文档;零代码改动。
+- **Verification**: 同一现场(Round 14 的 planner Playwright 框)复验——
+  `stopped_reason=human_gate` / `wave_count=1/20` /
+  `human_gate_command=agentdeck agent terminal --agent planner`,而该命令
+  解析出 `select-pane -t %4`,**正是那道框所在的 pane**,链路闭合。
+  指针是 inspect-only,AgentDeck 仍绝不代按。
+
 ### Point both walk-away surfaces at the pane a human gate is waiting in
 
 - **Type**: fix
