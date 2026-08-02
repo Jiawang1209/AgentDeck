@@ -4,6 +4,32 @@
 
 ## 2026-08-03
 
+### Derive the authorization-box grant ladder as a pure function
+
+- **Type**: feat
+- **Motivation**: 冻结设计的支点是**宽度必须由人选**。同一道框,
+  `.../playwright_cli.sh open file:///…` 只授权一个文件,而
+  `.../playwright_cli.sh` 连带授权 navigate / fill / evaluate 全家——差着
+  数量级。要让人真的能挑,得先有一梯**确定性**候选,而这份推导不该埋在
+  CLI 里靠端到端测试隔着一层验证。
+- **What**: 新增纯模块 `src/agentdeck/gate_preview.py`(零 IO、零 LLM、
+  不 import cli/state/config,沿用 `role_topology.py` / `review_iteration.py`
+  的既有纪律)。`prefix_ladder()` 按空白 token **原文切片**产生逐级变宽的
+  前缀(最长=最窄在前,上限 5 条,首尾必在,级数只由 token 数决定、与命令
+  内容无关),每条附 `prefix` / `unpinned_tail`(该前缀没钉住的那段)/
+  `is_widest`(是否裸单 token)/ `grant_command`。`derive_gate_preview()`
+  摊开完整两步闭环(grant → release-box);MCP 框无梯子,一条 grant 精确
+  覆盖一个 `(server, tool)`。`render_gate_preview()` 是人类可读渲染。
+- **Impact**: 纯新增模块,未接线到任何命令,既有行为零改动。
+- **Verification**: `tests/test_gate_preview.py` 10 项全绿——梯子矩阵
+  (递减序列、cap 5 首尾必在、原文多重空格保留、单 token 只出一条且
+  `is_widest`、空命令无梯子)、MCP 无梯子且 grant 精确、未知 source 抛错,
+  以及**绝不推荐的回归钉**:渲染文本不含"建议/推荐/recommend/safe",
+  候选项不带任何 selected/preferred 标记,含占位符的 grant control 必须
+  disabled。**一条刻意的拒绝已写进模块 docstring**:不做危险命令模式
+  警告——只认 `push|install|curl` 的部分检测器会让"没有警告"被读成
+  "安全";改为 `VERIFICATION_NOTICE` 一次说清 AgentDeck 无法核验命令性质。
+
 ### Freeze the delegation gate-preview design
 
 - **Type**: docs
