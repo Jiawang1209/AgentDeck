@@ -136,8 +136,12 @@ agentdeck delegation gate-preview --agent <human_gate.agent_id>
 
 ## 6. 测量结果
 
-（待填）
-
 | 轮次 | 日期 | wave_count | stopped_reason | 证据 | 有效 |
 |---|---|---|---|---|---|
-| — | — | — | — | — | — |
+| 1 | 2026-08-03 | **11** / 60（100.3s） | `human_gate` | [round-1](2026-08-03-walkaway-round-1.md) — planner / command 框 / `curl` 取原站 | ✅ |
+
+Round 1 备注：零委托基线轮，预测命中。产出 4 个 finding，其中 F2
+（gate-preview 梯子第 1 级的宽度陈述与 startswith 匹配语义不符）是
+安全相关的显示缺陷，**修复前第 1 级不可信**。另外记下一个此前无人统计的
+数字：从 `spawn-ready` 到走开段能开跑，中间隔着 **3 次人类按键**（目录
+trust 框），而 AgentDeck 对这三个框报告 `waiting_for_input: False`。

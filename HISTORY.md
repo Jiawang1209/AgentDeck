@@ -4,6 +4,44 @@
 
 ## 2026-08-03
 
+### Measure a walk-away segment for the first time: 11 waves, stopped honestly
+
+- **Type**: docs
+- **Motivation**: 14 个 live round 之后，"一次 `goal start` 能自己走多远"这个
+  数字仍然不存在。按当日冻结的 runbook 在一个真实项目上跑第一轮基线测量。
+- **What**: 新增 `docs/validation/2026-08-03-walkaway-round-1.md`，并回填
+  runbook 的测量结果表。现场：全新 git 仓库、Leader=`codex-cli`/`gpt-5.6-sol`
+  （DeepSeek key 未设）、autonomous 白名单 `coder,reviewer`、预算 20、
+  **零委托**（基线）、不自动合并；任务是复刻一个真实大学主页的布局结构，
+  文字图片一律占位自撰。
+- **Impact**: **走开段长度 = 11 wave / 100.3 秒，`stopped_reason=human_gate`，
+  11/60 未烧光预算**——对照 Round 13/14 那次偶然观测的 846 wave 里 834 空转，
+  human_gate 四条判据 + 两次 debounce + `human_gate_command` 指针首次在真实
+  走开段里端到端走通。跑前预测（human_gate @ step 1 网络框）命中。四个
+  finding：**F1** CLI agent 内建工具（codex web search）完全在授权模型之外
+  ——不弹框、不需委托、不成为人类门，AgentDeck 既没授权也没观察到（与
+  shell 路径并存，同一 planner 随后跑 `curl` 就**确实**产生了被正确捕获的
+  命令框，故同日写入 delegation-schema 的 known gap 需修订）；**F2**
+  `gate_preview.py:263` 在 `unpinned_tail` 为空时渲染"仅此一条命令"，而
+  `delegation_match.py:240` 是 `rest.startswith(prefix)` 无等值特例——
+  **梯子第 1 级低报授权宽度**，且那正是谨慎的人最可能选的一级，而该模块
+  docstring 自陈存在理由就是消除"显示了不成立的事实"；**F3** worker 的
+  cwd 即项目根，planner 实跑了 3 次 `agentdeck agent capture --agent coder`，
+  拦住它的是 **codex 自己的授权框而非 AgentDeck**——审批门的设计前提是
+  "CLI 前面只有人类"；**F4** 目录 trust 框报告 `waiting_for_input: False`。
+  段外由人类手动驱动至任务完成，提交弧 `feat → fix: address review blockers
+  → fix: restore video cover` 证明 **implement → review → 返工闭环在真实
+  任务上跑通**（此前只有单测）。结论：机器是通的，不通的只有无人值守越过
+  授权框——而那是刻意做不到的。
+- **Verification**: 数据取自 `.agentdeck/run-loop-host/host.log`（13 行：
+  11 wave + human_gate + host_stopped）、`run-loop-host status` 与
+  `agentdeck events`，非从屏幕文字推断。F2 逐行核对两处源码后才断言。
+  F3 的**写命令部分明确标为未确立**——200 行 scrollback 中无
+  `capture-reply`/`approval dispatch`/`agent send`，段外三笔写由人类执行
+  并已确认；中途一度据"内建 web search 不弹框"判定预测被证伪，该判断
+  错误并已在记录中订正。零代码改动。
+
+
 ### Name network reads as their own delegation category, and record the gap they expose
 
 - **Type**: docs
