@@ -196,6 +196,7 @@ from .models import PROJECT_VIEW_SCHEMA_VERSION, AgentRuntimeBinding, AgentSpec,
 from .mission import daemon_mission_authority_state, mission_intent, workbench_mission_card
 from .mission_orchestration import (
     MissionPreviewError,
+    MissionContractError,
     MissionRunError,
     create_mission_preview,
     confirm_mission_for_daemon,
@@ -21231,6 +21232,34 @@ def _mission_execution_recovery_payload(
         return None
 
 
+def _print_mission_already_ran(store: StateStore, mission_id: str, action: str) -> None:
+    """Say what landed when a run/resume response fails its own contract.
+
+    Every line is derived from stored state -- never from the exception, never
+    from the mission goal. Mission failures are deliberately sanitized (a guard
+    test asserts no exception text reaches stderr), and being honest about what
+    happened must not become a way to leak it. `status` is the same value
+    `agentdeck mission status` already prints.
+    """
+    try:
+        status = str(store.mission_by_id(mission_id).get("status", "unknown"))
+    except KeyError:
+        status = "unknown"
+    print(f"mission {action} response contract validation failed", file=sys.stderr)
+    print(
+        f"the mission already ran: mission {mission_id}, status={status}",
+        file=sys.stderr,
+    )
+    print(
+        f"inspect it with: agentdeck mission status --mission-id {mission_id}",
+        file=sys.stderr,
+    )
+    print(
+        "workers may already have been spawned and prompted -- re-running repeats that",
+        file=sys.stderr,
+    )
+
+
 def _mission_execution_command(args: argparse.Namespace, *, resume: bool) -> int:
     action = "resume" if resume else "run"
     if not args.confirm:
@@ -21247,6 +21276,9 @@ def _mission_execution_command(args: argparse.Namespace, *, resume: bool) -> int
             )
         except KeyError:
             print(f"unknown mission: {args.mission_id}", file=sys.stderr)
+            return 1
+        except MissionContractError:
+            _print_mission_already_ran(store, str(args.mission_id), action)
             return 1
         except (MissionRunError, ValueError):
             print("mission run failed", file=sys.stderr)
@@ -21276,6 +21308,9 @@ def _mission_execution_command(args: argparse.Namespace, *, resume: bool) -> int
             return 1
     except KeyError:
         print(f"unknown mission: {args.mission_id}", file=sys.stderr)
+        return 1
+    except MissionContractError:
+        _print_mission_already_ran(store, str(args.mission_id), action)
         return 1
     except (MissionRunError, ValueError):
         print(f"mission {action} failed", file=sys.stderr)

@@ -71,6 +71,7 @@ from agentdeck.contracts import (
     validate_project_view_contract,
     WORKBENCH_PROVIDER_HEALTH_FIELDS,
 )
+from agentdeck.mission_orchestration import MissionContractError, MissionRunError
 from agentdeck.state import StateStore
 from agentdeck.runtime.protocol import TransportCapabilities
 
@@ -1670,6 +1671,79 @@ def test_workflow_resume_contract_failure_reports_that_the_workflow_already_ran(
     assert "already ran" in error
     assert str(run["run_id"]) in error
     assert f"agentdeck workflow status --run-id {run['run_id']}" in error
+
+
+def _seed_minimal_mission(
+    store: StateStore, user_message: str, status: str = "confirmed"
+) -> str:
+    """A mission record just complete enough for `mission run` to look it up."""
+    state = store.load()
+    mission_id = "msn_latevalidation01"
+    state.setdefault("missions", []).append(
+        {
+            "mission_id": mission_id,
+            "status": status,
+            "user_message": user_message,
+            "authority_state": "legacy",
+        }
+    )
+    store.save(state)
+    return mission_id
+
+
+def test_mission_run_contract_failure_reports_state_without_leaking_detail(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    """Late-validation audit site #5.
+
+    Two properties that pull in opposite directions and must both hold: the
+    failure has to say the mission already ran (otherwise a re-run repeats the
+    spawn and the prompting), and it must stay sanitized -- mission failures are
+    deliberately flat so exception text never reaches stderr. The honest lines
+    are therefore derived from state only, never from the exception.
+    """
+    root = prepare_project(tmp_path, monkeypatch)
+    store = StateStore(root)
+    mission_id = _seed_minimal_mission(store, "SECRET mission goal", status="running")
+
+    def exploding_admit(config, store, mission):
+        raise MissionContractError("mission response contract validation failed")
+
+    monkeypatch.setattr(cli, "_admit_mission_card", exploding_admit)
+
+    exit_code = cli.main(["mission", "run", "--mission-id", mission_id, "--confirm"])
+
+    assert exit_code == 1
+    error = capsys.readouterr().err
+    assert "already ran" in error
+    assert mission_id in error
+    assert f"agentdeck mission status --mission-id {mission_id}" in error
+    assert "status=running" in error
+    # sanitization invariant: no goal text, no exception payload
+    assert "SECRET" not in error
+
+
+def test_mission_run_refusal_still_reports_a_plain_failure(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    """The other half: a refusal that happened BEFORE any effect must not start
+    claiming the mission ran. Only the contract-failure subclass is honest-ified.
+    """
+    root = prepare_project(tmp_path, monkeypatch)
+    store = StateStore(root)
+    mission_id = _seed_minimal_mission(store, "plain goal")
+    monkeypatch.setattr(
+        cli,
+        "_admit_mission_card",
+        lambda config, store, mission: (_ for _ in ()).throw(
+            MissionRunError("mission is not awaiting daemon admission")
+        ),
+    )
+
+    exit_code = cli.main(["mission", "run", "--mission-id", mission_id, "--confirm"])
+
+    assert exit_code == 1
+    assert capsys.readouterr().err.strip() == "mission run failed"
 
 
 def test_workflow_resume_rejects_plan_drift_before_runtime_access(

@@ -4,6 +4,29 @@
 
 ## 2026-08-03
 
+### Tell the truth when a mission that already ran fails its own contract
+
+- **Type**: fix
+- **Motivation**: 晚校验审计余账站点 #5，两处 PLAUSIBLE 中的第二处。原本
+  `except (MissionRunError, ValueError)` 把两种完全不同的情形写成同一句
+  “mission run failed”：**前置拒绝**（如 “mission is not awaiting daemon
+  admission”，什么都没发生，这句是真话）与**契约失败**（mission 已 claim、
+  worker 可能已 spawn 并被提示，这句是谎）。
+- **What**: 新增 `MissionContractError`（`MissionRunError` 子类，故所有既有
+  `except MissionRunError` 处理器逐字节不变），**只在 run/resume 模式**抛出
+  ——只读 `mission status` 校验失败时确实什么都没发生，仍走原路。失败路径
+  报告 mission id、status、`agentdeck mission status --mission-id <id>`
+  查证命令，以及“workers 可能已被 spawn 并提示，重跑会重复”。
+- **Impact**: **诚实不得成为泄漏通道**——所有行只从 state 取值，绝不含异常
+  文本；mission 失败消息的 sanitized 属性有既有守卫测试（断言 `SECRET`
+  不出现），本改动后该测试仍绿。前置拒绝行为逐字节不变。
+- **Verification**: 两条测试（契约失败要诚实且不泄漏 / 前置拒绝仍是原句）；
+  **变异验证**去掉诚实分支后前者报红。**过程记一笔**：首版测试用
+  `update_mission(confirmed → running)` 造现场，而那是非法状态转移，
+  `MissionContractError` **根本没被抛出**——测试红是红对了行为、错了原因，
+  debug 打印异常类型才看清。全量 5237 passed / 3 skipped。
+
+
 ### Tell the truth when a finished workflow fails its own contract
 
 - **Type**: fix

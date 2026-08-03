@@ -81,6 +81,18 @@ class MissionRunError(ValueError):
     pass
 
 
+class MissionContractError(MissionRunError):
+    """A run/resume response failed its own contract, after the effects landed.
+
+    Distinct from an ordinary `MissionRunError`, which is usually a refusal
+    raised *before* anything happened ("mission is not awaiting daemon
+    admission"). For a refusal, "mission run failed" is the truth; for this one
+    it is not — the mission was claimed, workers may have been spawned and
+    prompted, and a caller who reads "failed" will re-run and repeat all of it.
+    Subclassing keeps every existing `except MissionRunError` handler intact.
+    """
+
+
 def canonical_hash(value: object) -> str:
     """Return the bounded canonical hash used by frozen daemon execution facts."""
     try:
@@ -1190,6 +1202,10 @@ def mission_status_payload(
     else:
         validation = validate_mission_status_contract(payload)
     if not validation["ok"]:
+        # Only the run/resume modes describe effects that already landed; the
+        # read-only status mode failing really does mean nothing happened.
+        if mode != "mission_status":
+            raise MissionContractError("mission response contract validation failed")
         raise MissionRunError("mission response contract validation failed")
     return payload
 
