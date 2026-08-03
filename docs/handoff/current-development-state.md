@@ -1,6 +1,26 @@
 # AgentDeck Current Development State
 
-Updated: 2026-08-02
+Updated: 2026-08-03
+
+**从人类门一键决策已落地(2026-08-03,user 在四个候选中选定的方向,
+spec `docs/superpowers/specs/2026-08-03-delegation-gate-preview-design.md`,
+4 commits `c9a99c12`→`ca04d713`,全量 5180 绿,live 实测)**:
+`agentdeck delegation gate-preview [--agent <id>]`,**纯只读**。方向依据是
+项目自己的运行记录——**授权框是被实测证明的头号瓶颈**(Round 3 六框、
+Round 5 七框、**Round 14 一道 Playwright 框卡两天**、846 wave 里 834 空转)。
+human_gate 让走开段停得诚实,但停下之后仍是死路:人得手抄命令、自己想前缀、
+手敲 grant、再手动放行,下次同类命令还会再停。宿主已握证据、`grant` 早已
+存在,缺的只是桥。**设计支点=宽度必须由人选**:`playwright_cli.sh` 与
+`playwright_cli.sh open` 的授权宽度差数量级,所以给确定性前缀梯子
+(纯模块 `gate_preview.py`,最窄在前、上限 5、首尾必在),每条标 `unpinned_tail`
+与 `is_widest`,**绝不推荐/排序/预选**(有回归钉断言渲染无"建议/recommended/
+safe"字样);MCP 框无梯子。两步闭环(grant → release-box)只作文本输出。
+证据两条只读来源:缺省读宿主记录(**零 pane 读取**),`--agent` 走
+`agent boxes` 实时只读扫描(`--follow` 用户唯一路径)。**刻意不做危险命令
+模式检测**——部分检测器会让"没有警告"被读成"安全"。契约扩展 delegation 族,
+索引仍 45。live 实测 Round 14 真框:三级梯子正确、state+events 逐字节不变。
+**剩余需 human**:Round 14 那道框仍在 pane 上等按(现在有了 gate-preview,
+可先看梯子再决定是否 grant);完整走开段 live 仍未验。
 
 **人类门对称性与可执行指示(2026-08-02,`0f4028b6`→`b72f664d`,全量 5162 绿,
 live 复验)**:①`run-loop --follow` 补上与宿主完全相同的人类门检测(同一批
