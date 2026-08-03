@@ -108,9 +108,17 @@ def _prepare(tmp_path: Path, monkeypatch, review_section: str | None = None) -> 
     root = tmp_path / "repo"
     root.mkdir()
     write_default_config(root)
+    path = root / ".agentdeck" / "config.toml"
+    # The default config makes only `coder` worktree-mode; a shared-mode agent
+    # gets no branch at all, so the sibling-base bug cannot even arise. Real
+    # review setups put reviewers in worktree mode (see the round 6 handoff
+    # note: "scratch reviewer 需改 workspace_mode=worktree").
+    text = path.read_text(encoding="utf-8").replace(
+        'workspace_mode = "shared"', 'workspace_mode = "worktree"'
+    )
     if review_section:
-        path = root / ".agentdeck" / "config.toml"
-        path.write_text(path.read_text(encoding="utf-8") + review_section, encoding="utf-8")
+        text += review_section
+    path.write_text(text, encoding="utf-8")
     monkeypatch.chdir(root)
     monkeypatch.setattr(cli, "TmuxBackend", _Fake)
     return root

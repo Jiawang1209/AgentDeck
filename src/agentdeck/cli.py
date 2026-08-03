@@ -165,7 +165,7 @@ from .contracts import (
 from .autonomy import run_loop_gate, select_auto_approvals
 from .delegation_match import is_composite_command, normalize_match
 from .frontdesk import FRONTDESK_ROUTE_SAFETY, classify_frontdesk, frontdesk_goal
-from .review_group import expand_review_group
+from .review_group import expand_review_group, review_group_numbers
 from .role_topology import (
     ROLE_SPECS,
     resolve_worker_roles,
@@ -11027,13 +11027,30 @@ def _plan_base_worktree_branch(store: StateStore, plan_id: object, step: object)
     """Latest earlier-step worktree branch of the same plan (decision D).
 
     Lets a review-step worktree check out the implementing step's branch so the
-    reviewer can run the real artifact without touching the coder's directory."""
+    reviewer can run the real artifact without touching the coder's directory.
+
+    A review-group member skips its own siblings: every member reviews the same
+    finished implementation. Since the DAG guard fans a group out inside one
+    wave, member 1's brand-new branch would otherwise be the newest earlier step
+    when member 2's base is computed moments later -- which both leaks member 1's
+    review into member 2's tree (`any_fail_blocks` aggregation is only meaningful
+    over independent judgements) and, once a digest is bound to that base, makes
+    member 1's own commit read as the reviewed code drifting. Plans without
+    `[review].reviewers` carry no group markers, so this is the old behaviour
+    byte for byte."""
     if not plan_id:
         return None
     try:
         current_step = int(step or 0)
     except (TypeError, ValueError):
         return None
+    groups = review_group_numbers(_plan_body_steps(store, str(plan_id)))
+    current_group = groups.get(current_step)
+    siblings = (
+        {number for number, group in groups.items() if group == current_group}
+        if current_group is not None
+        else set()
+    )
     state = store.load()
     messages_by_id = {
         str(message.get("message_id")): message
@@ -11048,7 +11065,7 @@ def _plan_base_worktree_branch(store: StateStore, plan_id: object, step: object)
             approval_step = int(approval.get("step") or 0)
         except (TypeError, ValueError):
             continue
-        if approval_step >= current_step:
+        if approval_step >= current_step or approval_step in siblings:
             continue
         message = messages_by_id.get(str(approval.get("message_id")))
         branch = (message or {}).get("worktree_branch")

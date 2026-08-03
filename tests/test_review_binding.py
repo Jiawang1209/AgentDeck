@@ -1,0 +1,168 @@
+"""Review-step worktree bases and the digest bound to them.
+
+Group members must all review the SAME finished implementation: basing member 2
+on member 1's branch leaks member 1's review into member 2's tree (any-fail-blocks
+aggregation assumes independent judgements) and would make member 1's own commit
+look like the reviewed code drifting once a digest is bound to that base.
+
+See docs/superpowers/specs/2026-08-03-review-digest-binding-design.md.
+"""
+from __future__ import annotations
+
+import contextlib
+import io
+import json
+from pathlib import Path
+
+from agentdeck import cli
+from agentdeck.config import write_default_config
+from agentdeck.state import StateStore
+
+
+class _Fake:
+    def create_session(self, _config) -> None: ...
+
+    def spawn_agent(self, _config, agent, cwd: str) -> str:
+        return "%42"
+
+    def apply_visible_layout(self, _config, panes) -> None: ...
+
+    def capture_output(self, _config, pane_id: str, lines: int = 200) -> str:
+        return "output\n"
+
+    def send_input(self, _config, pane_id: str, text: str) -> None: ...
+
+    def kill_pane(self, _config, pane_id: str) -> None: ...
+
+    def pane_exists(self, _config, pane_id: str) -> bool:
+        return True
+
+    def list_panes(self, _config):
+        return []
+
+
+def _run(argv: list[str]):
+    buffer = io.StringIO()
+    with contextlib.redirect_stdout(buffer):
+        code = cli.main(argv)
+    text = buffer.getvalue().strip()
+    return code, (json.loads(text) if text else None)
+
+
+def _prepare(tmp_path: Path, monkeypatch, review_section: str | None = None) -> Path:
+    root = tmp_path / "repo"
+    root.mkdir()
+    write_default_config(root)
+    path = root / ".agentdeck" / "config.toml"
+    # The default config makes only `coder` worktree-mode; a shared-mode agent
+    # gets no branch at all, so the sibling-base bug cannot even arise. Real
+    # review setups put reviewers in worktree mode (round 6 handoff note:
+    # "scratch reviewer 需改 workspace_mode=worktree").
+    text = path.read_text(encoding="utf-8").replace(
+        'workspace_mode = "shared"', 'workspace_mode = "worktree"'
+    )
+    if review_section:
+        text += review_section
+    path.write_text(text, encoding="utf-8")
+    monkeypatch.chdir(root)
+    monkeypatch.setattr(cli, "TmuxBackend", _Fake)
+    return root
+
+
+def _git_repo(root: Path) -> None:
+    cli.subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+    cli.subprocess.run(
+        ["git", "-c", "user.email=t@t", "-c", "user.name=t",
+         "commit", "-q", "--allow-empty", "-m", "base"],
+        cwd=root, check=True,
+    )
+
+
+def _running(root: Path, *agent_ids: str) -> None:
+    store = StateStore(root)
+    state = store.load()
+    for index, agent_id in enumerate(agent_ids):
+        state["agents"][agent_id] = {
+            "agent_id": agent_id, "pane_id": f"%4{index}", "session_name": "agentdeck",
+            "cwd": str(root), "status": "running",
+        }
+    store.save(state)
+
+
+def _seed(root: Path, task: str) -> str:
+    _, plan = _run(["leader", "plan", "--provider", "fake", "--model", "fake-plan", "--task", task])
+    plan_id = plan["plan_id"]
+    _run(["approval", "create-from-plan", "--plan-id", plan_id])
+    return plan_id
+
+
+def _approve_all(root: Path, plan_id: str) -> None:
+    store = StateStore(root)
+    state = store.load()
+    for approval in state["approvals"]:
+        if approval.get("plan_id") == plan_id:
+            approval["status"] = "approved"
+    store.save(state)
+
+
+def _dispatch_step(root: Path, plan_id: str, step: int) -> str:
+    approval_id = next(
+        a["approval_id"] for a in StateStore(root).load()["approvals"]
+        if a.get("plan_id") == plan_id and a.get("step") == step
+    )
+    _run(["approval", "dispatch", "--approval-id", approval_id])
+    return next(
+        str(a["message_id"]) for a in StateStore(root).load()["approvals"]
+        if a.get("approval_id") == approval_id
+    )
+
+
+def _message_for_step(root: Path, plan_id: str, step: int) -> dict:
+    state = StateStore(root).load()
+    approval = next(
+        a for a in state["approvals"] if a.get("plan_id") == plan_id and a.get("step") == step
+    )
+    return next(
+        m for m in state["messages"] if m.get("message_id") == approval.get("message_id")
+    )
+
+
+def _branch_for_step(root: Path, plan_id: str, step: int) -> str | None:
+    return _message_for_step(root, plan_id, step).get("worktree_branch")
+
+
+# --------------------------------------------------------------------------
+# Task 1: a review group shares one base, and it is the implementation branch.
+# --------------------------------------------------------------------------
+
+
+def test_dispatched_group_members_share_the_implementation_base(
+    tmp_path: Path, monkeypatch
+) -> None:
+    root = _prepare(tmp_path, monkeypatch, '\n[review]\nreviewers = ["reviewer", "planner"]\n')
+    _git_repo(root)
+    _running(root, "planner", "coder", "reviewer")
+    plan_id = _seed(root, "group base dispatch")
+    _approve_all(root, plan_id)
+    for step in (1, 2):
+        _dispatch_step(root, plan_id, step)
+
+    implementation = _branch_for_step(root, plan_id, 2)
+    assert implementation is not None
+
+    store = StateStore(root)
+    first = cli._plan_base_worktree_branch(store, plan_id, 3)
+    assert first == implementation
+
+    # Member 1 goes out FIRST -- which is what actually happens now that the
+    # DAG guard fans the group out inside one wave. Only then does member 2's
+    # base get computed, and the sibling's brand-new branch is sitting there
+    # looking like the newest earlier step. Computing member 2's base before
+    # member 1 is dispatched would pass under the old rule too, proving nothing.
+    _dispatch_step(root, plan_id, 3)
+    sibling = _branch_for_step(root, plan_id, 3)
+    assert sibling is not None and sibling != implementation
+
+    second = cli._plan_base_worktree_branch(StateStore(root), plan_id, 4)
+
+    assert second == implementation, "member 2 must not be based on member 1's branch"

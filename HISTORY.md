@@ -4,6 +4,29 @@
 
 ## 2026-08-03
 
+### Base review-group members on the implementation branch
+
+- **Type**: fix
+- **Motivation**: digest 绑定的前置。DAG 一刀让组成员**同 wave 扇出**之后，
+  成员 1 的崭新分支正好是成员 2 计算 base 时“最近的更早 step”——一旦把
+  digest 绑到 base，成员 1 提交自己的审查文档就会被读成“被审代码漂移”，
+  每个并行组 plan 都会被扣住自动合并。
+- **What**: `_plan_base_worktree_branch` 跳过**同组兄弟**，取组前最近的
+  非组成员 step 分支。无 `[review]` 的项目没有组标记，逐字节不变。
+- **Impact**: **顺带修掉一个既有缺陷**——成员 2 原本基于成员 1 的分支，
+  看得见成员 1 的审查意见，而 `any_fail_blocks` 聚合正以独立判断为前提。
+  并行让这件事碰巧不发生（两个 worktree 几乎同时创建），本改动让它
+  **结构性**不发生，而不是靠时序运气。
+- **Verification**: 新测试先按“组未派发”写过一版，**它在修复前就是绿的**
+  ——因为成员 1 那时还没有分支，根本不构成误选；改成**先派发成员 1**
+  才如实报红（`agentdeck/reviewer/...` != `agentdeck/coder/...`），修复后
+  转绿。DAG 差分金样 11 绿、worktree 回归 19 绿、全量 5205 passed。
+  另记：`test_m2c_strict_preflight_attributes_probe_write_without_leakage`
+  在一次全量里偶发失败、重跑与单跑均过——`_probe_wrote_files` 检测在
+  bounded probe 自身报 blocker 时会多追加一条，属既有 F5 计时竞态类
+  （F5 的既有修复未覆盖此测试），与本改动无关。
+
+
 ### Plan the verdict digest-binding implementation
 
 - **Type**: docs
