@@ -4,6 +4,21 @@
 
 ## 2026-08-03
 
+### Record the commit a review worktree was created from
+
+- **Type**: feat
+- **Motivation**: verdict 与被判定物之间今天没有任何绑定——merge gate 只问
+  “判定说了什么”，从不问“判定说的是不是我要合的这份代码”。
+- **What**: dispatch 建完 worktree 后 `git rev-parse <base_branch>`，把
+  `worktree_base_commit` 记在 message 上，与既有三个 worktree 字段并列。
+  新 helper `_resolve_git_commit` 解析失败一律返回 None。
+- **Impact**: 纯 provenance，本片不设门、不改任何 gate。捕获点是**派发时**
+  ——worktree 正是从该 ref 检出的，所以这是 reviewer 目光所及那棵树的可证
+  指纹；收 verdict 时再解析会把他从未看过的提交当成“他审过的”。
+- **Verification**: 记录值等于 base 分支当时的 tip；无 base 的步记 null。
+  全量 5207 passed / 3 skipped。
+
+
 ### Base review-group members on the implementation branch
 
 - **Type**: fix

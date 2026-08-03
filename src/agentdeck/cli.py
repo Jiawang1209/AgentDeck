@@ -11074,6 +11074,26 @@ def _plan_base_worktree_branch(store: StateStore, plan_id: object, step: object)
     return best[1] if best else None
 
 
+def _resolve_git_commit(root: object, ref: str | None) -> str | None:
+    """`git rev-parse <ref>` in the project root, or None when it cannot be read.
+
+    None means "could not resolve", never "unchanged". Callers must keep those
+    two apart -- collapsing them is how a gate ends up reporting that something
+    was verified when it was only unreadable.
+    """
+    if not ref:
+        return None
+    done = subprocess.run(
+        ["git", "rev-parse", str(ref)],
+        cwd=str(root),
+        capture_output=True,
+        text=True,
+    )
+    if done.returncode != 0:
+        return None
+    return done.stdout.strip() or None
+
+
 def _create_task_worktree(
     config: ProjectConfig, agent: AgentSpec, message_id: str, base_branch: str | None = None
 ) -> tuple[dict[str, str] | None, str | None]:
@@ -20386,6 +20406,9 @@ def _dispatch_approved_approval(
         worktree_path=(worktree_info or {}).get("path"),
         worktree_branch=(worktree_info or {}).get("branch"),
         worktree_base_branch=base_branch if worktree_info else None,
+        worktree_base_commit=(
+            _resolve_git_commit(config.root, base_branch) if worktree_info else None
+        ),
     )
     _record_worktree_provenance(store, agent, message_id, worktree_info, worktree_skip)
     message = records["message"]

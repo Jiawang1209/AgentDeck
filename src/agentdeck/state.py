@@ -10448,6 +10448,7 @@ class StateStore:
         worktree_path: str | None = None,
         worktree_branch: str | None = None,
         worktree_base_branch: str | None = None,
+        worktree_base_commit: str | None = None,
     ) -> dict[str, dict[str, Any]]:
         state = self.load()
         message = {
@@ -10461,6 +10462,11 @@ class StateStore:
             "worktree_path": worktree_path,
             "worktree_branch": worktree_branch,
             "worktree_base_branch": worktree_base_branch,
+            # The commit the worktree was created from. Provably what the
+            # reviewer's tree contains -- `git worktree add` checks out this
+            # ref -- so a verdict can be bound to it. Provenance only: it
+            # authorizes nothing and gates nothing on its own.
+            "worktree_base_commit": worktree_base_commit,
         }
         if prompt_skill_context is not None:
             message["prompt_skill_context"] = self._plan_skill_context(prompt_skill_context)

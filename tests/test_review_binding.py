@@ -166,3 +166,47 @@ def test_dispatched_group_members_share_the_implementation_base(
     second = cli._plan_base_worktree_branch(StateStore(root), plan_id, 4)
 
     assert second == implementation, "member 2 must not be based on member 1's branch"
+
+
+# --------------------------------------------------------------------------
+# Task 2: the commit a review worktree was created from is recorded.
+# --------------------------------------------------------------------------
+
+
+def _head_commit(cwd: Path, ref: str = "HEAD") -> str:
+    done = cli.subprocess.run(
+        ["git", "rev-parse", ref], cwd=cwd, capture_output=True, text=True, check=True
+    )
+    return done.stdout.strip()
+
+
+def test_dispatch_records_the_commit_the_worktree_was_created_from(
+    tmp_path: Path, monkeypatch
+) -> None:
+    root = _prepare(tmp_path, monkeypatch)
+    _git_repo(root)
+    _running(root, "planner", "coder", "reviewer")
+    plan_id = _seed(root, "record base commit")
+    _approve_all(root, plan_id)
+    for step in (1, 2):
+        _dispatch_step(root, plan_id, step)
+
+    message = _message_for_step(root, plan_id, 2)
+    base_branch = message["worktree_base_branch"]
+    assert base_branch, "step 2 should be based on step 1's branch"
+    # The recorded commit is exactly what that base branch pointed at.
+    assert message["worktree_base_commit"] == _head_commit(root, base_branch)
+
+
+def test_a_step_without_a_base_records_no_commit(tmp_path: Path, monkeypatch) -> None:
+    root = _prepare(tmp_path, monkeypatch)
+    _git_repo(root)
+    _running(root, "planner")
+    plan_id = _seed(root, "no base")
+    _approve_all(root, plan_id)
+    _dispatch_step(root, plan_id, 1)
+
+    message = _message_for_step(root, plan_id, 1)
+
+    assert message["worktree_base_branch"] is None
+    assert message["worktree_base_commit"] is None
