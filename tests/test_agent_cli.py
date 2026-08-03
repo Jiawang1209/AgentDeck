@@ -13340,7 +13340,25 @@ def test_agent_spawn_applies_visible_layout(tmp_path, monkeypatch, capsys) -> No
 
     assert exit_code == 0
     capsys.readouterr()
-    assert fake.layouts == [[("%42", "planner")]]
+    assert fake.layouts == [[("%42", "planner · planning · codex")]]
+
+
+def test_agent_spawn_labels_pane_with_role_so_humans_can_tell_panes_apart(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    # 光有 agent_id 不够:人在 tmux 里看到三个 pane,要一眼分得出哪个是
+    # 实现、哪个是复审。标签必须带上角色。
+    prepare_project(tmp_path, monkeypatch)
+    fake = FakeTmuxBackend()
+    monkeypatch.setattr(cli, "TmuxBackend", lambda: fake)
+
+    exit_code = cli.main(["agent", "spawn", "--agent", "planner"])
+
+    assert exit_code == 0
+    capsys.readouterr()
+    (_pane_id, label), = fake.layouts[0]
+    assert "planning" in label
+    assert label.startswith("planner")
 
 
 def test_agent_spawn_ready_applies_visible_layout_once_for_new_panes(tmp_path, monkeypatch, capsys) -> None:
@@ -13354,7 +13372,10 @@ def test_agent_spawn_ready_applies_visible_layout_once_for_new_panes(tmp_path, m
     payload = json.loads(capsys.readouterr().out)
     spawned_ids = [item["agent_id"] for item in payload["results"] if item["status"] == "spawned"]
     assert len(fake.layouts) == 1
-    assert [title for _pane, title in fake.layouts[0]] == spawned_ids
+    labels = [label for _pane, label in fake.layouts[0]]
+    assert [label.split(" · ")[0] for label in labels] == spawned_ids
+    # 每条标签都必须带上角色,否则 tmux 里三个 pane 仍然分不清谁是谁。
+    assert all(" · " in label for label in labels)
 
 
 def test_agent_spawn_ready_requires_confirm_without_mutating_state(tmp_path, monkeypatch, capsys) -> None:

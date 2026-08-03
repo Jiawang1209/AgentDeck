@@ -211,6 +211,7 @@ from .providers import DeepSeekProvider, OpenAICompatibleProvider, leader_provid
 from .dashboard import render_workbench_dashboard
 from .history import render_history_markdown
 from .runtime import TmuxBackend
+from .runtime.tmux import pane_label
 from .runtime.acp import AcpAmbiguousOutcome, AcpRequestTimeout, AcpTransport, AcpTransportError
 from .runtime.acp_client import AgentDeckAcpClient, PermissionDecision
 from .runtime.acp_mapping import (
@@ -10103,7 +10104,10 @@ def agent_spawn_command(args: argparse.Namespace) -> int:
     backend = TmuxBackend()
     backend.create_session(config.runtime)
     pane_id = backend.spawn_agent(config.runtime, agent, config.root)
-    backend.apply_visible_layout(config.runtime, [(pane_id, agent.agent_id)])
+    backend.apply_visible_layout(
+        config.runtime,
+        [(pane_id, pane_label(agent.agent_id, agent.role, agent.provider))],
+    )
     binding = AgentRuntimeBinding(
         agent_id=agent.agent_id,
         pane_id=pane_id,
@@ -10196,8 +10200,16 @@ def agent_spawn_ready_command(args: argparse.Namespace) -> int:
                 "blocker": None,
             }
         )
+    agents_by_id = {agent.agent_id: agent for agent in config.agents}
     spawned_panes = [
-        (str(item["pane_id"]), str(item["agent_id"]))
+        (
+            str(item["pane_id"]),
+            pane_label(
+                str(item["agent_id"]),
+                getattr(agents_by_id.get(str(item["agent_id"])), "role", None),
+                getattr(agents_by_id.get(str(item["agent_id"])), "provider", None),
+            ),
+        )
         for item in results
         if item["status"] == "spawned"
     ]

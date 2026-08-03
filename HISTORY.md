@@ -2,6 +2,34 @@
 
 本文件记录 AgentDeck 每一次开发内容。约束：每次新增功能、文档规则、项目骨架、运行环境或用户可见行为变化，都必须同步更新本文件，并在同一次 commit 中提交。
 
+## 2026-08-04
+
+### Put the agent's role on the tmux pane border, where the program cannot erase it
+
+- **Type**: fix
+- **Motivation**: Round 1 live 反馈第 3 条(user 原话):"tmux 查看活动动态的时候,
+  我其实不知道哪个是 worker、哪个是 leader、哪个是 reviewer"。代码**本来就有**
+  标签(`432c4414` 起 `select-pane -T` + `pane-border-status top`),但它设的是
+  `pane_title`——而 codex / Claude Code 一启动就用 OSC 转义序列把终端标题改成
+  自己的状态行(`✳ Working (13s · esc to interrupt)`),标签当场被覆盖,且**没有
+  任何东西会把它设回来**。标签存在与标签可见是两件事。
+- **What**: 标签改落在 pane 级用户选项 `@agentdeck_label`(程序碰不到 `@` 用户
+  选项),由新的 `pane-border-format` 渲染,缺该选项时回退 `pane_title`——不是
+  AgentDeck 起的 pane 不会变成空边框。内容从裸 `agent_id` 扩为纯函数
+  `pane_label(agent_id, role, provider)` 的 `coder · implementation · codex`;
+  空 role/provider 直接省略而非渲染成 `coder ·  · `,标签只陈述已知的事实。
+  `select-pane -T` 保留作初值与回退源。两个调用点(`agent spawn` /
+  `agent spawn-ready`)同时接线。
+- **Impact**: 纯可见性,零 gate 改动:不碰审批、委托、放行不变量、human_gate
+  判据或任何 contract 字段。布局命令仍全部 `check=False`——装饰失败绝不能破坏
+  已成功的 spawn,该边界不变。
+- **Verification**: TDD,4 条新测试先红后绿(2 条纯函数、1 条命令形状、1 条调用
+  点),另修 2 条锁旧命令列表/旧标签的既有测试。**真实 tmux 端到端复现**:设好
+  标签后手动把 `pane_title` 改成 `✳ Working (13s · esc to interrupt)` 模拟 TUI
+  覆盖——`pane_title` 确实被冲掉,`@agentdeck_label` 与边框渲染结果原样存活,
+  根因与修复同时被证。全量 5243 passed / 3 skipped(原 5239 + 4)。
+
+
 ## 2026-08-03
 
 ### Measure a walk-away segment for the first time: 11 waves, stopped honestly

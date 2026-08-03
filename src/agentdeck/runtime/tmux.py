@@ -15,6 +15,31 @@ DETACHED_SESSION_WIDTH = 160
 DETACHED_SESSION_HEIGHT = 60
 TMUX_COMMAND_TIMEOUT_SECONDS = 5.0
 
+# pane 级用户选项:程序(codex / Claude Code 等)用 OSC 转义序列改的是
+# `pane_title`,碰不到 `@` 用户选项。标签必须落在这里,否则 TUI 一启动就把
+# `select-pane -T` 设的角色标签覆盖掉,而且没有任何东西会把它设回来——
+# 人在 tmux 里于是分不清哪个 pane 是哪个角色。
+PANE_LABEL_OPTION = "@agentdeck_label"
+PANE_LABEL_SEPARATOR = " · "
+# 用户选项优先,缺失时回退 pane_title:不是 AgentDeck 起的 pane 不该变成空边框。
+PANE_BORDER_FORMAT = (
+    f" #{{?{PANE_LABEL_OPTION},#{{{PANE_LABEL_OPTION}}},#{{pane_title}}}} "
+)
+
+
+def pane_label(
+    agent_id: str, role: str | None = None, provider: str | None = None
+) -> str:
+    """把 agent 身份压成一行可见标签。纯函数:零 IO、不碰 tmux。
+
+    空的 role/provider 直接省略,退化为裸 agent_id——标签只陈述已知的事实,
+    不留 `coder ·  · ` 这种把"不知道"渲染成分隔符的空档。
+    """
+    parts = [
+        part.strip() for part in (agent_id, role, provider) if part and part.strip()
+    ]
+    return PANE_LABEL_SEPARATOR.join(parts)
+
 
 class TmuxBackend:
     def capabilities(self) -> TransportCapabilities:
@@ -91,7 +116,22 @@ class TmuxBackend:
         base = ["tmux", "-L", config.socket_name]
         commands = [
             [*base, "select-layout", "-t", config.session_name, "tiled"],
-            *([*base, "select-pane", "-t", pane_id, "-T", title] for pane_id, title in panes),
+            *(
+                [*base, "select-pane", "-t", pane_id, "-T", label]
+                for pane_id, label in panes
+            ),
+            *(
+                [*base, "set-option", "-p", "-t", pane_id, PANE_LABEL_OPTION, label]
+                for pane_id, label in panes
+            ),
+            [
+                *base,
+                "set-option",
+                "-t",
+                config.session_name,
+                "pane-border-format",
+                PANE_BORDER_FORMAT,
+            ],
             [*base, "set-option", "-t", config.session_name, "pane-border-status", "top"],
         ]
         for command in commands:

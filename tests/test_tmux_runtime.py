@@ -85,10 +85,54 @@ def test_apply_visible_layout_tiles_labels_and_sets_border_status(monkeypatch) -
         ["tmux", "-L", "demo", "select-layout", "-t", "demo", "tiled"],
         ["tmux", "-L", "demo", "select-pane", "-t", "%1", "-T", "planner"],
         ["tmux", "-L", "demo", "select-pane", "-t", "%2", "-T", "coder"],
+        ["tmux", "-L", "demo", "set-option", "-p", "-t", "%1",
+         tmux.PANE_LABEL_OPTION, "planner"],
+        ["tmux", "-L", "demo", "set-option", "-p", "-t", "%2",
+         tmux.PANE_LABEL_OPTION, "coder"],
+        ["tmux", "-L", "demo", "set-option", "-t", "demo",
+         "pane-border-format", tmux.PANE_BORDER_FORMAT],
         ["tmux", "-L", "demo", "set-option", "-t", "demo", "pane-border-status", "top"],
     ]
     assert {kwargs.get("timeout") for _command, kwargs in calls} == {5.0}
     assert all(kwargs.get("check") is False for _command, kwargs in calls)
+
+
+def test_pane_label_carries_agent_role_and_provider() -> None:
+    assert tmux.pane_label("coder", "implementation", "codex") == (
+        "coder · implementation · codex"
+    )
+
+
+def test_pane_label_falls_back_to_agent_id_when_role_and_provider_missing() -> None:
+    assert tmux.pane_label("coder", "", None) == "coder"
+
+
+def test_apply_visible_layout_labels_survive_program_title_changes(monkeypatch) -> None:
+    # codex / Claude Code 会用 OSC 转义序列改自己的终端标题,那会覆盖掉
+    # `select-pane -T` 设的 pane_title——标签消失且无人察觉。标签必须落在
+    # 程序碰不到的 pane 级用户选项上,再由 pane-border-format 渲染出来。
+    calls: list[tuple[list[str], dict[str, object]]] = []
+
+    def fake_run(command, **kwargs):
+        calls.append((command, kwargs))
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(tmux.subprocess, "run", fake_run)
+    config = RuntimeConfig(backend="tmux", session_name="demo", socket_name="demo")
+
+    tmux.TmuxBackend().apply_visible_layout(
+        config, [("%1", "planner · planning · codex")]
+    )
+
+    commands = [command for command, _kwargs in calls]
+    assert ["tmux", "-L", "demo", "set-option", "-p", "-t", "%1",
+            "@agentdeck_label", "planner · planning · codex"] in commands
+    border_format = next(
+        command for command in commands if "pane-border-format" in command
+    )
+    assert "@agentdeck_label" in border_format[-1]
+    # 非 AgentDeck 的 pane 没有该用户选项,必须回退到 pane_title 而不是空白。
+    assert "pane_title" in border_format[-1]
 
 
 def test_create_session_sets_detached_terminal_size(monkeypatch) -> None:
