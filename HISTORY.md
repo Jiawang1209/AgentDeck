@@ -4,6 +4,22 @@
 
 ## 2026-08-03
 
+### Plan the verdict digest-binding implementation
+
+- **Type**: docs
+- **Motivation**: 把冻结的 spec 拆成可逐条执行、逐条提交的 7 个切片。
+- **What**: `docs/superpowers/plans/2026-08-03-review-digest-binding.md`。
+  每片 TDD 步骤含完整测试与实现代码、精确文件行号、期望输出。
+- **Impact**: 纯计划文档，零代码改动。
+- **Verification**: 自审时逐条核实了四处原本要实现者临场判断的地方
+  （`test_worktree_cli.py` 不存在、`list_events` 存在但默认 limit=20、
+  `Path`/`hashlib` 已导入、`record_reply` 的事件在 save 之后、无
+  `_message_by_id` 需自建索引），全部改写为确定指令。**记录一处
+  实现偏差**：spec 说 staleness 投影进 `verdict_summary`，但那建在
+  store 内而 store 不得调 git —— 计划里写明正确形态并禁止用“给 store
+  加 git 调用”抹平。
+
+
 ### Freeze the verdict digest-binding design
 
 - **Type**: docs
