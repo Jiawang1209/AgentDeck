@@ -165,6 +165,7 @@ from .contracts import (
 from .autonomy import run_loop_gate, select_auto_approvals
 from .delegation_match import is_composite_command, normalize_match
 from .frontdesk import FRONTDESK_ROUTE_SAFETY, classify_frontdesk, frontdesk_goal
+from .review_digest import summarize_review_bindings
 from .review_group import expand_review_group, review_group_numbers
 from .role_topology import (
     ROLE_SPECS,
@@ -12755,6 +12756,65 @@ def _plan_requested_verdict(store: StateStore, plan_id: str) -> bool:
     return False
 
 
+def _plan_review_bindings(
+    config: ProjectConfig, store: StateStore, plan_id: str
+) -> dict[str, object]:
+    """Every verdict-bearing step of this plan, bound to the commit it reviewed.
+
+    Git resolution lives here, never in the store -- every other store method
+    touches nothing but its own JSON/SQLite. Read-only: it runs `git rev-parse`
+    and nothing else, writes no state and appends no event.
+    """
+    state = store.load()
+    replies_with_verdict = {
+        str(reply.get("message_id"))
+        for reply in state.get("replies", [])
+        if isinstance(reply, dict) and reply.get("verdict")
+    }
+    messages_by_id = {
+        str(message.get("message_id")): message
+        for message in state.get("messages", [])
+        if isinstance(message, dict)
+    }
+    git_available = _resolve_git_commit(config.root, "HEAD") is not None
+    resolved: dict[str, str | None] = {}
+    items: list[dict[str, object]] = []
+    for approval in state.get("approvals", []):
+        if not isinstance(approval, dict) or approval.get("plan_id") != plan_id:
+            continue
+        message_id = str(approval.get("message_id") or "")
+        if message_id not in replies_with_verdict:
+            continue
+        message = messages_by_id.get(message_id)
+        if message is None or not message.get("worktree_base_branch"):
+            continue
+        branch = str(message["worktree_base_branch"])
+        if branch not in resolved:
+            resolved[branch] = _resolve_git_commit(config.root, branch)
+        items.append({
+            "message_id": message_id,
+            "agent_id": approval.get("agent_id"),
+            "step": approval.get("step"),
+            "base_branch": branch,
+            "base_commit": message.get("worktree_base_commit"),
+            "resolved_commit": resolved[branch],
+        })
+    items.sort(key=lambda item: int(item.get("step") or 0))
+    return summarize_review_bindings(items, git_available=git_available)
+
+
+def _stale_review_merge_blocker(
+    config: ProjectConfig, store: StateStore, plan_id: str
+) -> str | None:
+    """Withhold the AUTOMATIC merge when the reviewed code has moved.
+
+    Explicit `agentdeck worktree merge-plan --confirm` is never gated -- the
+    same rule the G5 verdict gate follows.
+    """
+    blocker = _plan_review_bindings(config, store, plan_id).get("blocker")
+    return str(blocker) if blocker else None
+
+
 def _verdict_merge_blocker(store: StateStore, plan_id: str) -> str | None:
     summary = store.plan_verdict_summary(plan_id)
     if summary is None:
@@ -21888,9 +21948,15 @@ def run_loop_host_serve_command(args: argparse.Namespace) -> int:
         and last_gate == "complete"
     ):
         blocker = _verdict_merge_blocker(store, plan_id)
+        mode = "verdict_blocked"
+        if not blocker:
+            # A pass is not enough: it has to be a pass about the code we are
+            # about to merge.
+            blocker = _stale_review_merge_blocker(config, store, plan_id)
+            mode = "review_stale"
         if blocker:
             append_host_log(root, {
-                "plan_id": plan_id, "event": "plan_merge", "mode": "verdict_blocked",
+                "plan_id": plan_id, "event": "plan_merge", "mode": mode,
                 "blocker": blocker, "wave": wave_count, "at": utc_now(),
             })
         else:
@@ -22932,12 +22998,18 @@ def _run_loop_follow(
         return 1
     if follow_payload["merge_on_complete"] and follow_payload["stopped_reason"] == "complete":
         verdict_blocker = _verdict_merge_blocker(store, plan_id)
+        merge_block_mode = "verdict_blocked"
+        if not verdict_blocker:
+            # A pass is not enough: it has to be a pass about the code we are
+            # about to merge.
+            verdict_blocker = _stale_review_merge_blocker(config, store, plan_id)
+            merge_block_mode = "review_stale"
         if verdict_blocker:
             # G5 verdict gate (human-approved 2026-07-28): only the automatic
             # merge path is withheld; explicit `worktree merge-plan --confirm`
             # remains the human override.
             follow_payload["plan_merge"] = {
-                "mode": "verdict_blocked",
+                "mode": merge_block_mode,
                 "ok": False,
                 "plan_id": plan_id,
                 "blocker": verdict_blocker,

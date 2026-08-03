@@ -4,6 +4,25 @@
 
 ## 2026-08-03
 
+### Withhold the automatic merge when reviewed code has moved
+
+- **Type**: feat
+- **Motivation**: verdict 是自动合并的唯一放行依据，而它与被放行内容之间
+  原本没有绑定——“审查之后又被改动”发现不了。
+- **What**: `_plan_review_bindings` 在 **CLI 侧**解析 git（store 永不
+  shell out），把每个带 verdict 的步绑到它审过的 commit；
+  `_stale_review_merge_blocker` 在两处自动合并站点（run-loop-host serve、
+  `--follow`）接线，扣住时 `plan_merge.mode=review_stale` 并交回显式人类命令。
+- **Impact**: **只扣自动路径**；人类 `worktree merge-plan --confirm` 永不受
+  gate（与 G5 verdict gate 同一规则）。老 plan 无记录不阻断——唯一刻意
+  fail-open，spec 与契约都写明理由。
+- **Verification**: 走完整环后往被审分支追加提交 → 出 blocker 且点名分支；
+  clean 路径**先断言绑定存在再断言干净**（早先一版“无 blocker”是因为
+  verdict 根本没解析成功、一条绑定都没有，那种绿是空转——`criteria` 必须
+  非空才是合法 verdict）；人类 merge 命令输出不含扣留话术。**变异验证**：
+  把 drift 判定削成恒 match，drift 测试如实报红。全量 5223 passed。
+
+
 ### Classify a bound review commit in a pure module
 
 - **Type**: feat

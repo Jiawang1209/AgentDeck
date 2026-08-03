@@ -210,3 +210,82 @@ def test_a_step_without_a_base_records_no_commit(tmp_path: Path, monkeypatch) ->
 
     assert message["worktree_base_branch"] is None
     assert message["worktree_base_commit"] is None
+
+
+# --------------------------------------------------------------------------
+# Task 4: drift withholds the AUTOMATIC merge; the human's command never is.
+# --------------------------------------------------------------------------
+
+
+_PASS_VERDICT = (
+    'verdict: {"schema_version": "review-verdict/v1", '
+    '"criteria": [{"criterion": "\\u6d4b\\u8bd5\\u5168\\u7eff", "verdict": "pass"}], '
+    '"overall": "pass", "score": 90}\n'
+)
+_AGENT_FOR_STEP = {1: "planner", 2: "coder", 3: "reviewer"}
+
+
+def _reviewed_plan(tmp_path: Path, monkeypatch) -> tuple[Path, str]:
+    """Run planner -> coder -> reviewer to completion, reviewer passing."""
+    root = _prepare(tmp_path, monkeypatch)
+    _git_repo(root)
+    _running(root, "planner", "coder", "reviewer")
+    plan_id = _seed(root, "digest gate")
+    _approve_all(root, plan_id)
+    for step in (1, 2, 3):
+        message_id = _dispatch_step(root, plan_id, step)
+        text = "status: completed\nsummary: done\n" + (_PASS_VERDICT if step == 3 else "")
+        _run(["reply", "--agent", _AGENT_FOR_STEP[step], "--message-id", message_id,
+              "--text", text])
+    return root, plan_id
+
+
+def _commit_onto(worktree: Path, name: str) -> None:
+    (worktree / name).write_text("changed after review\n", encoding="utf-8")
+    git = ["-c", "user.email=t@t", "-c", "user.name=t"]
+    cli.subprocess.run(["git", *git, "add", name], cwd=worktree, check=True)
+    cli.subprocess.run(["git", *git, "commit", "-q", "-m", "after review"],
+                       cwd=worktree, check=True)
+
+
+def test_a_clean_review_does_not_withhold_the_merge(tmp_path: Path, monkeypatch) -> None:
+    root, plan_id = _reviewed_plan(tmp_path, monkeypatch)
+
+    bindings = cli._plan_review_bindings(cli.load_config(root), StateStore(root), plan_id)
+
+    # Assert the binding EXISTS before asserting it is clean: "no blocker"
+    # is also what an empty binding set produces, and an earlier version of
+    # this test passed that way -- the verdict had failed to parse, so nothing
+    # was ever bound and the silence meant nothing.
+    assert bindings["count"] == 1
+    assert bindings["match"] == 1
+    assert bindings["bindings"][0]["state"] == "match"
+    assert bindings["blocker"] is None
+    assert cli._stale_review_merge_blocker(
+        cli.load_config(root), StateStore(root), plan_id
+    ) is None
+
+
+def test_drift_withholds_the_automatic_merge(tmp_path: Path, monkeypatch) -> None:
+    root, plan_id = _reviewed_plan(tmp_path, monkeypatch)
+    reviewed_branch = _message_for_step(root, plan_id, 3)["worktree_base_branch"]
+    assert reviewed_branch, "the review step must be based on the implementation branch"
+    # the reviewed branch gains a commit AFTER the verdict was recorded
+    _commit_onto(Path(_message_for_step(root, plan_id, 2)["worktree_path"]), "late.txt")
+
+    blocker = cli._stale_review_merge_blocker(cli.load_config(root), StateStore(root), plan_id)
+
+    assert blocker is not None
+    assert reviewed_branch in blocker
+    assert "auto-merge withheld" in blocker
+
+
+def test_the_human_merge_command_is_never_gated(tmp_path: Path, monkeypatch) -> None:
+    root, plan_id = _reviewed_plan(tmp_path, monkeypatch)
+    _commit_onto(Path(_message_for_step(root, plan_id, 2)["worktree_path"]), "late.txt")
+
+    _code, payload = _run(["worktree", "merge-plan", "--plan-id", plan_id, "--confirm"])
+
+    # It may fail or skip for ordinary git/gate reasons -- what it must NEVER do
+    # is refuse with the staleness blocker.
+    assert "auto-merge withheld" not in json.dumps(payload or {})
