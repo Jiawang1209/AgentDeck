@@ -337,3 +337,102 @@ def test_plan_status_says_not_recorded_rather_than_verified(
     assert payload["review_bindings"]["blocker"] is None
     # ... but it must never read as verified
     assert binding["state"] != "match"
+
+
+# --------------------------------------------------------------------------
+# Final review: the gate is wired, not merely available.
+# --------------------------------------------------------------------------
+
+
+def _enable_autonomous(root: Path) -> None:
+    config_path = root / ".agentdeck" / "config.toml"
+    text = config_path.read_text(encoding="utf-8").replace(
+        'approval_mode = "confirm"', 'approval_mode = "autonomous"', 1
+    )
+    text += (
+        '\n[autonomous]\nallowed_agents = ["planner", "coder", "reviewer"]\n'
+        "max_approvals = 5\n"
+    )
+    config_path.write_text(text, encoding="utf-8")
+
+
+def test_merge_on_complete_reports_review_stale_when_the_reviewed_code_moved(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """The helper returning a blocker proves nothing if nobody calls it.
+
+    This drives the real `--follow --merge-on-complete` path, where the verdict
+    is a genuine pass, so only the staleness check can withhold the merge.
+    """
+    root, plan_id = _reviewed_plan(tmp_path, monkeypatch)
+    _enable_autonomous(root)
+    _commit_onto(Path(_message_for_step(root, plan_id, 2)["worktree_path"]), "late.txt")
+
+    code, payload = _run([
+        "run-loop", "--plan-id", plan_id, "--confirm", "--follow",
+        "--max-waves", "2", "--interval", "1",
+        "--merge-on-complete", "--max-review-rounds", "0",
+    ])
+
+    assert code == 0
+    assert payload["waves"][-1]["stopped_reason"] == "complete"
+    merge = payload["plan_merge"]
+    assert merge["mode"] == "review_stale"
+    assert merge["ok"] is False
+    assert "auto-merge withheld" in merge["blocker"]
+    assert merge["next_command"] == (
+        f"agentdeck worktree merge-plan --plan-id {plan_id} --confirm"
+    )
+
+
+def test_a_review_without_a_worktree_produces_no_binding_and_is_not_checked(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """The limit of this gate, pinned so the contract cannot overclaim.
+
+    A shared-workspace reviewer has no branch to bind a verdict to, so it yields
+    no binding and nothing is verified about it. That is a real coverage gap,
+    and the contract says so rather than implying every verdict is checked.
+    """
+    root = _prepare(tmp_path, monkeypatch)
+    # put the reviewer back into shared mode, leaving coder on worktree
+    config_path = root / ".agentdeck" / "config.toml"
+    text = config_path.read_text(encoding="utf-8")
+    marker = 'agent_id = "reviewer"'
+    head, _, tail = text.partition(marker)
+    config_path.write_text(
+        head + marker + tail.replace('workspace_mode = "worktree"', 'workspace_mode = "shared"', 1),
+        encoding="utf-8",
+    )
+    _git_repo(root)
+    _running(root, "planner", "coder", "reviewer")
+    plan_id = _seed(root, "shared reviewer")
+    _approve_all(root, plan_id)
+    for step in (1, 2, 3):
+        message_id = _dispatch_step(root, plan_id, step)
+        text = "status: completed\nsummary: done\n" + (_PASS_VERDICT if step == 3 else "")
+        _run(["reply", "--agent", _AGENT_FOR_STEP[step], "--message-id", message_id,
+              "--text", text])
+
+    assert _message_for_step(root, plan_id, 3)["worktree_base_branch"] is None
+    bindings = cli._plan_review_bindings(cli.load_config(root), StateStore(root), plan_id)
+
+    assert bindings["count"] == 0
+    assert bindings["blocker"] is None
+
+
+def test_merge_on_complete_still_merges_when_the_reviewed_code_held_still(
+    tmp_path: Path, monkeypatch
+) -> None:
+    # The other half: the new gate must not withhold a clean run.
+    root, plan_id = _reviewed_plan(tmp_path, monkeypatch)
+    _enable_autonomous(root)
+
+    code, payload = _run([
+        "run-loop", "--plan-id", plan_id, "--confirm", "--follow",
+        "--max-waves", "2", "--interval", "1",
+        "--merge-on-complete", "--max-review-rounds", "0",
+    ])
+
+    assert code == 0
+    assert payload["plan_merge"].get("mode") != "review_stale"

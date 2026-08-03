@@ -4,6 +4,24 @@
 
 ## 2026-08-03
 
+### Close the digest-binding lane's final-review findings
+
+- **Type**: test
+- **Motivation**: 整体终审（逐 task 审查看不到跨切片缝）。本仓库五次终审
+  五次抓到 fail-open，这次抓到两个。
+- **What**: ①`plan_merge.mode=review_stale` 的**接线**此前零覆盖——helper
+  会返回 blocker 证明不了有人调用它；补了走真实 `--follow
+  --merge-on-complete` 的两条测试（漂移出 `review_stale`、干净仍合并）。
+  ②契约原写"per verdict-bearing step"，而 **shared-workspace reviewer
+  没有分支可绑、根本不产生绑定、完全不被检查**；改写为明写这条覆盖缺口
+  并加回归钉住，README 同步。
+- **Impact**: 纯测试与文档订正，产品行为不变。
+- **Verification**: **变异验证接线**——把 follow 站点的
+  `_stale_review_merge_blocker(...)` 换成 `None` 后测试如实报红，且报出的
+  是 `worktree_merge_plan`：**没有这道门，漂移的分支真的被合并了**，
+  正是本刀要拦的那件事。全量 5233 passed / 3 skipped，`git diff --check` 干净。
+
+
 ### Correct an unsupported claim about CCB
 
 - **Type**: docs

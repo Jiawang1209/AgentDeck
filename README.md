@@ -199,8 +199,10 @@ AgentDeck › Mission started. Use /status or open the workbench to inspect it.
   never shown as "checked", because `verified: false` and `drift: false` read
   alike and only one of them is a claim the program established. A plan created
   before the field exists reports `not_recorded` and deliberately does not
-  block. `agentdeck plan status` shows all of it before the merge refuses
-  anything. Artifacts likewise carry a `content_hash`, `byte_count` and closed
+  block, and a reviewer working in the shared workspace has no branch to bind
+  to, so it yields no binding and is not checked at all — the surface says so
+  rather than implying every verdict was verified. `agentdeck plan status`
+  shows all of it before the merge refuses anything. Artifacts likewise carry a `content_hash`, `byte_count` and closed
   `digest_status` recorded at registration; re-registering identical content is
   idempotent, and a conflicting digest is rejected and audited rather than
   silently overwriting the record.

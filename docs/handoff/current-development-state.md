@@ -2,6 +2,39 @@
 
 Updated: 2026-08-03
 
+**verdict 绑定被审终态已落地(2026-08-03,user 拍板并追加"容纳 CCB 的能力
+并在此基础之上有所提升",spec
+`docs/superpowers/specs/2026-08-03-review-digest-binding-design.md`,
+plan `docs/superpowers/plans/2026-08-03-review-digest-binding.md`,
+7 切片 `bb7b6f73`→`f0ca2f37`,全量 5230+ 绿)**:merge gate 原本只问
+"verdict 说了什么",从不问"verdict 说的是不是我要合的这份代码"——
+**"审查之后又被改动"发现不了**。
+- **一条纪律两个轴**:轴一 artifact digest(**容纳 CCB**:登记时记
+  `content_hash`/`byte_count`/闭合 `digest_status`,同 `(message_id, path)`
+  重入 digest 相同则幂等、冲突 **fail-closed** 拒绝该条并审计,绝不静默
+  覆盖);轴二 tree digest(**超出 CCB**:review step 派发时记
+  `worktree_base_commit`,自动合并前重新解析比对)。
+- **前置修正(独立价值)**:`_plan_base_worktree_branch` 跳过同组兄弟。
+  DAG 扇出后成员 1 的崭新分支正好是成员 2 的"最近更早 step",不修则
+  digest 一绑上去每个并行组 plan 都被扣住;**它自己还修掉一个既有缺陷**
+  ——成员 2 原本看得见成员 1 的审查意见,而 any-fail-blocks 聚合以独立
+  判断为前提(并行让它碰巧不发生,本改动让它结构性不发生)。
+- **三态而非布尔**:`match`/`drift`/`unverifiable`(闭合原因
+  `not_recorded`/`branch_missing`/`no_git_repo`)。`unverifiable` **绝不
+  渲染成"已验证"**——`drift: false` 与 `verified: false` 读起来都像"没事",
+  只有一个是程序真正确立过的。
+- **只扣自动合并**,人类 `worktree merge-plan --confirm` 永不受 gate;
+  verdict gate 先判,故 `verdict_blocked` 仍优先。
+- **CCB 断言订正**:复研文档原称 CCB"以 worktree digest 作终态判据并做
+  post-review mutation 检测",对所持副本检索 `custody`/`worktree digest`/
+  `post-review mutation`/`root verification` **零命中**;CCB 实际把指纹绑在
+  **产物**上。该学的是产物级 digest 纪律,绑定 git 终态是我们多走的一步。
+- **两处刻意的 fail-open,都已写进契约**:①老 plan 无记录不阻断(否则在飞
+  的 plan 全被扣住);②**shared-workspace reviewer 没有分支可绑,不产生
+  绑定、完全不被检查**——契约明写"never claims coverage it does not have",
+  并有回归钉住。
+- **live 验证未做**:真实 provider 下的漂移拒绝尚未在真项目跑过。
+
 **DAG 执行第一刀已落地(2026-08-03,方向来自 CCB 复研"该学"第一条,spec
 `docs/superpowers/specs/2026-08-03-dag-step-dependencies-design.md`,4 commits
 `5995c418`→本次)**:单 wave 引擎的派发守卫从**线性位置**换成**依赖满足**。
