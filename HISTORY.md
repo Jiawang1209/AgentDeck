@@ -4,6 +4,29 @@
 
 ## 2026-08-03
 
+### Derive step dependencies in a pure module
+
+- **Type**: feat
+- **Motivation**: 冻结的 DAG 第一刀要求把守卫从"编号最早"换成"依赖已
+  满足",而依赖必须**由程序推导、绝不由 Leader 生成**——否则要动四个
+  provider 共用且已 live 验证的 plan schema,还会把"程序负责循环"这条
+  北极星原则让出去一半。
+- **What**: 新增纯模块 `src/agentdeck/step_dag.py`(零 IO、零 LLM、不
+  import cli/state/config,与 `role_topology.py` / `review_iteration.py`
+  同族):`derive_step_dependencies` 给直接边(普通 step 依赖前一步;
+  review 组成员共享"组首个成员之前的那一步";而**跟在组后面的普通 step
+  依赖该组全部成员**——不能只等编号相邻的那一个),`derive_step_ancestors`
+  给传递闭包,`dependencies_for` / `ancestors_for` 是对 plan 未描述编号
+  的回落查询。`STEP_DAG_RULE` 是规则名单一来源。
+- **Impact**: 本 commit **零接线**——模块尚未被任何调用面消费,引擎行为
+  逐字节不变。不新增持久化字段、无迁移。依赖不是权限:审批门、白名单、
+  预算和绝不 force-spawn 全部不变且仍在每次派发的上游。
+- **Verification**: `tests/test_step_dag.py` 13 项纯函数矩阵(线性、组扇出、
+  组在首位、组后普通 step、多组、空 steps、畸形 step、回落查询、纯度)全绿。
+  关键设计论证已写进模块 docstring:**守卫消费的是传递闭包而非直接边**,
+  因为"线性 step N 的全部祖先都完成"⟺"N 就是最早未完成 step",这使线性
+  路径与旧守卫**可证等价**,而组内兄弟互不为祖先,因此仍能同发。
+
 ### Freeze the DAG step-dependency design
 
 - **Type**: docs
