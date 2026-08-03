@@ -1590,6 +1590,88 @@ def test_workflow_run_stops_after_blocked_reply_without_dispatching_next_step(
     assert len(fake.sent) == 1
 
 
+def test_workflow_run_contract_failure_reports_that_the_workflow_already_ran(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    """Late-validation audit site #4.
+
+    The payload describes the run that just happened, so validation cannot be
+    moved ahead of the effect. The failure path must therefore say what landed:
+    workers were prompted and a run exists. Reporting a bare "validation failed"
+    invites a re-run, and a re-run prompts the same workers a second time.
+    """
+    root = prepare_project(tmp_path, monkeypatch)
+    bind_agent(root, "planner", "%1")
+    bind_agent(root, "reviewer", "%2")
+    plan = record_two_step_workflow_plan(root)
+    fake = WorkflowFakeBackend()
+    fake.existing_panes.update({"%1", "%2"})
+    monkeypatch.setattr(cli, "TmuxBackend", lambda: fake)
+    monkeypatch.setattr(
+        cli,
+        "validate_workflow_run_contract",
+        lambda payload: {"ok": False, "errors": ["injected contract failure"]},
+    )
+
+    exit_code = cli.main(
+        ["workflow", "run", "--plan-id", str(plan["plan_id"]), "--confirm"]
+    )
+
+    assert exit_code == 1
+    # the effect really did happen
+    assert fake.sent, "workers were prompted before validation ran"
+    run_id = str(StateStore(root).load()["workflow_runs"][0]["run_id"])
+
+    error = capsys.readouterr().err
+    assert "injected contract failure" in error
+    assert "already ran" in error
+    assert run_id in error
+    assert f"agentdeck workflow status --run-id {run_id}" in error
+    # it must name the prompting, because that is the part a re-run repeats
+    assert f"{len(fake.sent)} step" in error
+    assert any(
+        event["event_type"] == "workflow_contract_failed"
+        for event in StateStore(root).all_events()
+    )
+
+
+def test_workflow_resume_contract_failure_reports_that_the_workflow_already_ran(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    bind_agent(root, "planner", "%1")
+    bind_agent(root, "reviewer", "%2")
+    plan = record_two_step_workflow_plan(root)
+    store = StateStore(root)
+    run = store.create_workflow_run(
+        plan_id=str(plan["plan_id"]),
+        plan_hash=str(cli.workflow_plan_hash(store.plan_by_id(str(plan["plan_id"])))),
+        timeout_seconds=30,
+        authorized_steps=cli.authorized_steps(store.plan_by_id(str(plan["plan_id"]))),
+    )
+    store.update_workflow_run(
+        str(run["run_id"]), status="stopped", stop_reason="interrupted"
+    )
+    fake = WorkflowFakeBackend()
+    fake.existing_panes.update({"%1", "%2"})
+    monkeypatch.setattr(cli, "TmuxBackend", lambda: fake)
+    monkeypatch.setattr(
+        cli,
+        "validate_workflow_run_contract",
+        lambda payload: {"ok": False, "errors": ["injected contract failure"]},
+    )
+
+    exit_code = cli.main(
+        ["workflow", "resume", "--run-id", str(run["run_id"]), "--confirm"]
+    )
+
+    assert exit_code == 1
+    error = capsys.readouterr().err
+    assert "already ran" in error
+    assert str(run["run_id"]) in error
+    assert f"agentdeck workflow status --run-id {run['run_id']}" in error
+
+
 def test_workflow_resume_rejects_plan_drift_before_runtime_access(
     tmp_path, monkeypatch, capsys
 ) -> None:

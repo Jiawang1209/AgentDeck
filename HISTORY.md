@@ -4,6 +4,28 @@
 
 ## 2026-08-03
 
+### Tell the truth when a finished workflow fails its own contract
+
+- **Type**: fix
+- **Motivation**: 晚校验审计余账站点 #4，也是余下 7 处里**唯一被标为
+  (b) PLAUSIBLE 的两处之一**——它校验的 `turns[]` 来自解析 worker 回复，
+  是活状态派生，因而是真正可达而非潜伏。
+- **What**: `workflow run|resume --confirm` 的契约失败路径现在如实报告
+  **已经发生了什么**：run id、status、stop_reason、已派发步数/总步数、
+  `agentdeck workflow status --run-id <id>` 查证命令，以及一句明说
+  “workers 已被提示，重跑会新建一次 run 并再次提示他们”。新增
+  `_WorkflowContractError` 把契约失败与 runner 自身的 ValueError 分开标注
+  （原先一律写成 “contract validation failed”，把执行失败误标成我们的
+  契约坏了）。
+- **Impact**: 纯失败路径改动，成功路径逐字节不变；校验仍无法前置（payload
+  描述的正是那次已发生的运行），故应用规则后半句。
+- **Verification**: 注入契约失败后实测输出
+  `status=completed, 2 step(s) dispatched of 2`——**工作流其实整个跑完了**，
+  而旧文案只说“validation failed”，会诱导人把一次已完成的工作流整个重跑。
+  两条红→绿测试（run 与 resume）另断言事件 `workflow_contract_failed` 仍在。
+  全量 5235 passed / 3 skipped。
+
+
 ### Close the digest-binding lane's final-review findings
 
 - **Type**: test

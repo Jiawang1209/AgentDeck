@@ -20978,6 +20978,35 @@ def workflow_status_command(args: argparse.Namespace) -> int:
     return 0
 
 
+class _WorkflowContractError(ValueError):
+    """The execution payload failed its own contract, after the run happened."""
+
+
+def _workflow_already_ran_lines(store: StateStore, run_id: str) -> list[str]:
+    """The honest half of a late-validation failure: what already landed.
+
+    This payload *describes* the run that just happened, so validation cannot be
+    hoisted ahead of the effect. What must not happen is letting "the response
+    failed to validate" read as "nothing happened": the natural response to that
+    is to re-run, and re-running creates a new run and prompts the same workers
+    a second time.
+    """
+    try:
+        record = store.workflow_run_by_id(run_id)
+    except KeyError:
+        record = {}
+    turns = record.get("turns")
+    dispatched = len(turns) if isinstance(turns, list) else 0
+    return [
+        f"the workflow already ran: run {run_id}, status={record.get('status', 'unknown')}, "
+        f"stop_reason={record.get('stop_reason')}, "
+        f"{dispatched} step(s) dispatched of {record.get('step_count', '?')}",
+        f"inspect it with: agentdeck workflow status --run-id {run_id}",
+        "the workers were already prompted -- re-running this command starts a NEW "
+        "run and prompts them again",
+    ]
+
+
 def _workflow_execution_payload(
     record: dict[str, object], *, mode: str
 ) -> dict[str, object]:
@@ -20992,7 +21021,9 @@ def _workflow_execution_payload(
     )
     validation = validate_workflow_run_contract(payload)
     if not validation["ok"]:
-        raise ValueError("; ".join(str(item) for item in validation["errors"]))
+        raise _WorkflowContractError(
+            "; ".join(str(item) for item in validation["errors"])
+        )
     return payload
 
 
@@ -21065,7 +21096,14 @@ def workflow_run_command(args: argparse.Namespace) -> int:
                 "workflow_contract_failed", {"run_id": run_id, "detail": str(exc)}
             )
         )
-        print(f"workflow contract validation failed: {exc}", file=sys.stderr)
+        label = (
+            "workflow contract validation failed"
+            if isinstance(exc, _WorkflowContractError)
+            else "workflow run failed"
+        )
+        print(f"{label}: {exc}", file=sys.stderr)
+        for line in _workflow_already_ran_lines(store, run_id):
+            print(line, file=sys.stderr)
         return 1
     _print_json(payload)
     return 0
@@ -21144,7 +21182,14 @@ def workflow_resume_command(args: argparse.Namespace) -> int:
                 {"run_id": args.run_id, "detail": str(exc)},
             )
         )
-        print(f"workflow contract validation failed: {exc}", file=sys.stderr)
+        label = (
+            "workflow contract validation failed"
+            if isinstance(exc, _WorkflowContractError)
+            else "workflow resume failed"
+        )
+        print(f"{label}: {exc}", file=sys.stderr)
+        for line in _workflow_already_ran_lines(store, str(args.run_id)):
+            print(line, file=sys.stderr)
         return 1
     _print_json(payload)
     return 0
