@@ -4,6 +4,35 @@
 
 ## 2026-08-03
 
+### Freeze the protocol for measuring how far a walk-away segment actually goes
+
+- **Type**: docs
+- **Motivation**: 到今天为止本项目有 32 份验证文档、14 个 live round，自主度
+  梯子每一档都单独验过，但**走开段长度这个数字不存在**。它被意外测到过一次
+  （Round 13/14：846 wave 中 834 个空转在一道没人按的框上），那一次偶然观测
+  直接催生了 human_gate 与 gate-preview 两刀开发——足见这个数字有多贵，也
+  足见至今没有人**有意**去测它。14 轮丢掉它的原因是同一个：每一轮都有人在
+  旁边把它推过去。
+- **What**: 新增 `docs/validation/2026-08-03-walkaway-distance-measurement-runbook.md`。
+  human_gate 落地后走开段长度有了精确定义（`goal start` 到宿主自停之间的
+  wave 数 + `stopped_reason`），runbook 把它固化为可重复协议：每轮固定步骤、
+  必记字段表、六个 `stopped_reason` 的分诊表、汇总为停止原因直方图。
+  **核心是第 3 节"作废条件"**——跑起来之后任何人（含 AI 助手）按框、发送
+  pane 输入、手动 capture/ack/approve/dispatch、或中途改配置与委托，该轮
+  作废；允许的动作只有 `run-loop-host status`、读 `host.log`、只读 `capture`。
+- **Impact**: 纯文档，零代码改动，不触碰任何契约、state 或运行路径。它改变的
+  是**下一轮 live 怎么跑**：把"在真实项目上用一次"与"测量它自己"分开——两者
+  看起来一样，区别只在它停下来的那一刻是救它还是记录它，而前者正是过去 14 轮
+  丢掉这个数字的原因。直方图拿到之前，handoff 里列的三个下一刀候选都是在猜
+  瓶颈。
+- **Verification**: 文档本身无可执行断言。协议中引用的字段与枚举逐条核对过
+  源码：`RUN_LOOP_HOST_STOPPED_REASONS` 六值、`HUMAN_GATE_FIELDS` 六字段、
+  `host_log_path` 位置均取自 `src/agentdeck/run_loop_host.py`，非手抄推测。
+  同时核实本机现场：两个 tmux socket 均无 session，宿主无记录，
+  `.agentdeck/run-loop-host/` 不存在——故 handoff 中"Round 14 那道框仍在
+  pane 上等人按"已过时，该待办可销。全量 5239 passed / 3 skipped。
+
+
 ### Stop a presentational inbox card from unreporting a reply that was recorded
 
 - **Type**: fix
