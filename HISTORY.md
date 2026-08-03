@@ -4,6 +4,29 @@
 
 ## 2026-08-03
 
+### Freeze the verdict digest-binding design
+
+- **Type**: docs
+- **Motivation**: DAG 一刀收官后 user 拍板的下一条，并追加要求
+  “容纳 CCB 的能力，并在此基础之上有所提升”。merge gate 今天只问
+  “verdict 说了什么”，从不问“verdict 说的是不是我要合的这份代码”。
+- **What**: 冻结 `docs/superpowers/specs/2026-08-03-review-digest-binding-design.md`。
+  一条纪律两个轴：轴一 artifact digest（容纳 CCB 已有能力：登记时记
+  sha256 + 字节数，重入幂等，冲突 fail-closed）；轴二 tree digest（超出
+  CCB：review step 派发时记 `worktree_base_commit`，merge gate 比对）。
+  前置切片先修 base 选取（组内全员基于同一实现分支），否则并行组必然
+  误报；它自己还修掉“成员 2 看得见成员 1 审查意见”这个与 any-fail-blocks
+  独立性前提相矛盾的旧缺陷。
+- **Impact**: 纯设计文档，零代码改动。
+- **Verification**: 对 `References/claude_codex_bridge-main/` 逐条核实 CCB 行为。
+  **顺带查出自家一条不成立的断言**：复研文档第 145 行声称 CCB
+  “以 worktree digest 作终态判据并做 post-review mutation 检测”，而
+  `custody` / `worktree digest` / `post-review mutation` / `root verification`
+  在所持副本里零命中；CCB 实际把指纹绑在**产物**上。已写入 spec，
+  切片 ⑦ 修正那一行。教训与该复研文档自己要纠正的毛病同类，只是这次
+  是我方在犯。
+
+
 ### Pin the "step after a group waits for every member" seam at wave level
 
 - **Type**: test
