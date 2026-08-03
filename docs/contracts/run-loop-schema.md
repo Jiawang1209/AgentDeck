@@ -211,7 +211,19 @@ withheld and `plan_merge` is instead
 `{mode: "verdict_blocked", ok: false, plan_id, blocker, next_command}` where
 `next_command` is the explicit `agentdeck worktree merge-plan --plan-id <id>
 --confirm` human override; plans without any verdict merge exactly as before.
-The explicit human merge command itself is never verdict-gated.
+Reviewed-state binding (2026-08-03): a pass is not enough on its own — it has
+to be a pass *about the code being merged*. Each verdict-bearing step records
+the commit its worktree was created from (`worktree_base_commit`), and before
+an automatic merge that branch is re-resolved and compared. Drift, or a
+recorded binding that cannot be verified, withholds the automatic merge with
+`plan_merge` set to `{mode: "review_stale", ok: false, plan_id, blocker,
+next_command}` carrying the same explicit human override. The verdict gate is
+evaluated first, so `verdict_blocked` still wins when both apply. A binding
+whose commit was never recorded (a plan predating the field) does **not**
+withhold — the one deliberate fail-open, since blocking there would stall every
+in-flight plan.
+The explicit human merge command itself is never verdict-gated and never
+staleness-gated.
 Completion appends one `run_loop_follow_completed` summary event. Discovery
 exposes `follow_command_template` and `follow_response_fields`.
 

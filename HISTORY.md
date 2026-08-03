@@ -4,6 +4,23 @@
 
 ## 2026-08-03
 
+### Surface reviewed-state drift before the merge refuses it
+
+- **Type**: feat
+- **Motivation**: 只在自动合并被拒那一刻才知道有漂移太晚——那已经是走开段
+  的末尾。
+- **What**: `plan status` 的 step 投影已记录的 `worktree_base_commit`
+  （store 侧，纯事实）；实时三态由 CLI 侧同级 `review_bindings` 块给出，
+  与 merge gate 共用同一个 `_plan_review_bindings`。契约（project-view /
+  run-loop）、README、CLAUDE.md 同步。
+- **Impact**: 只读、零写。**记录的实现偏差**：spec 原写"投影进
+  `verdict_summary`"，但那建在 `StateStore` 内而 store 不得 shell out 调
+  git；已在 spec 写明正确形态并**明令禁止**用"给 store 加 git 调用"抹平。
+- **Verification**: drift 在 `plan status` 可见且 `state.json` 字节不变；
+  未记录的绑定显示 `not_recorded` 而**不是** `match`（那条 fail-open 只
+  不阻断，绝不谎称已验证）。全量 5230 passed / 3 skipped。
+
+
 ### Record artifact content digests, idempotent and fail-closed
 
 - **Type**: feat

@@ -289,3 +289,51 @@ def test_the_human_merge_command_is_never_gated(tmp_path: Path, monkeypatch) -> 
     # It may fail or skip for ordinary git/gate reasons -- what it must NEVER do
     # is refuse with the staleness blocker.
     assert "auto-merge withheld" not in json.dumps(payload or {})
+
+
+# --------------------------------------------------------------------------
+# Task 6: a human sees the drift before the merge refuses it.
+# --------------------------------------------------------------------------
+
+
+def test_plan_status_projects_the_recorded_binding_and_live_state(
+    tmp_path: Path, monkeypatch
+) -> None:
+    root, plan_id = _reviewed_plan(tmp_path, monkeypatch)
+    reviewed_branch = _message_for_step(root, plan_id, 3)["worktree_base_branch"]
+    _commit_onto(Path(_message_for_step(root, plan_id, 2)["worktree_path"]), "late.txt")
+    state_path = root / ".agentdeck" / "state" / "state.json"
+    before = state_path.read_bytes()
+
+    code, payload = _run(["plan", "status", "--plan-id", plan_id])
+
+    assert code == 0
+    review_step = next(s for s in payload["steps"] if s["step"] == 3)
+    assert review_step["worktree_base_commit"]           # recorded fact
+    binding = next(b for b in payload["review_bindings"]["bindings"] if b["step"] == 3)
+    assert binding["state"] == "drift"                   # live comparison
+    assert binding["base_branch"] == reviewed_branch
+    assert payload["review_bindings"]["blocker"] is not None
+    assert state_path.read_bytes() == before             # read-only
+
+
+def test_plan_status_says_not_recorded_rather_than_verified(
+    tmp_path: Path, monkeypatch
+) -> None:
+    root, plan_id = _reviewed_plan(tmp_path, monkeypatch)
+    # simulate a plan created before this feature: drop the recorded commit
+    store = StateStore(root)
+    state = store.load()
+    for message in state["messages"]:
+        message["worktree_base_commit"] = None
+    store.save(state)
+
+    _, payload = _run(["plan", "status", "--plan-id", plan_id])
+
+    binding = next(b for b in payload["review_bindings"]["bindings"] if b["step"] == 3)
+    assert binding["state"] == "unverifiable"
+    assert binding["reason"] == "not_recorded"
+    # the one deliberate fail-open: not recorded does not block ...
+    assert payload["review_bindings"]["blocker"] is None
+    # ... but it must never read as verified
+    assert binding["state"] != "match"

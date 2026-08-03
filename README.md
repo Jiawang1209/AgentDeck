@@ -189,6 +189,21 @@ AgentDeck › Mission started. Use /status or open the workbench to inspect it.
   parallelism is an explicit non-goal of the spec), so under `--all` a review
   group still advances one member per wave; the two guards agree on every plan
   without review groups.
+- Reviewed-state binding: a verdict is a judgement about a specific tree, so
+  AgentDeck records the commit each review worktree was created from (`git
+  worktree add` checks out exactly that ref, which makes it a provable
+  fingerprint of what the reviewer was handed) and re-checks it before an
+  automatic merge. Drift withholds that merge — `plan_merge.mode=review_stale`,
+  handing back the explicit human merge command, which is never gated. The
+  three states are `match` / `drift` / `unverifiable`: "could not check" is
+  never shown as "checked", because `verified: false` and `drift: false` read
+  alike and only one of them is a claim the program established. A plan created
+  before the field exists reports `not_recorded` and deliberately does not
+  block. `agentdeck plan status` shows all of it before the merge refuses
+  anything. Artifacts likewise carry a `content_hash`, `byte_count` and closed
+  `digest_status` recorded at registration; re-registering identical content is
+  idempotent, and a conflicting digest is rejected and audited rather than
+  silently overwriting the record.
 - G6 role bindings: `agentdeck roles` (and the identical workbench `roles_card`,
   `mode = role_bindings`)
   is a read-only map of the six north-star role layers — frontdesk, planner,

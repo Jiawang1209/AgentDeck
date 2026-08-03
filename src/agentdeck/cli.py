@@ -20163,14 +20163,18 @@ def plan_show_command(args: argparse.Namespace) -> int:
 
 
 def plan_status_command(args: argparse.Namespace) -> int:
-    _config, store, exit_code = _load_project_or_error()
-    if store is None:
+    config, store, exit_code = _load_project_or_error()
+    if store is None or config is None:
         return exit_code
     try:
         status = store.plan_status(args.plan_id)
     except KeyError:
         print(f"unknown plan: {args.plan_id}", file=sys.stderr)
         return 1
+    # Live staleness sits beside the recorded facts, never inside them: the
+    # store owns state, git resolution is ours. Read-only -- it resolves refs
+    # and writes nothing.
+    status["review_bindings"] = _plan_review_bindings(config, store, args.plan_id)
     _print_json(status)
     return 0
 

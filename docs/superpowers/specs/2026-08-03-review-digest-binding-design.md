@@ -152,6 +152,14 @@ staleness 投影进 `agentdeck plan status` 与 `verdict_summary`(三面共享),
 让人在走开段末尾撞上合并拒绝之前就能看见。只读投影只是 provenance,
 **不授权 dispatch、不改审批语义、不改任何 gate**。
 
+**实现偏差(2026-08-03,落地时记录)**:上一段写"投影进 `plan status` 与
+`verdict_summary`"。二者都建在 `StateStore` 内,而 store **不得 shell out
+调 git**(其余每个 store 方法都只碰自己的 JSON/SQLite)。因此实际形态是:
+`plan status`(store 侧)只投影**已记录**的 `worktree_base_commit`;三态
+**实时比对**由 **CLI 侧**以同级 `review_bindings` 块给出,与 merge gate
+共用同一个 `_plan_review_bindings` helper。`verdict_summary` 保持不变。
+**不要用"给 store 加一个 git 调用"来消除这条偏差。**
+
 ## 安全边界(逐条不变)
 
 - 审批门、白名单、`max_approvals` / `max_review_rounds` 预算:一字不动。

@@ -9794,6 +9794,11 @@ class StateStore:
         # provenance so a human can see which steps may run together; it is
         # not an authorization and changes no gate.
         step_dependencies = derive_step_dependencies(steps if isinstance(steps, list) else [])
+        messages_by_id = {
+            str(message.get("message_id")): message
+            for message in state.get("messages", [])
+            if isinstance(message, dict)
+        }
         if isinstance(steps, list):
             for step in steps:
                 if not isinstance(step, dict):
@@ -9825,6 +9830,13 @@ class StateStore:
                     "depends_on": dependencies_for(
                         step_dependencies, int(step.get("step") or 0)
                     ),
+                    # The commit this step's worktree was created from --
+                    # recorded provenance only. Comparing it against the branch
+                    # today needs git, which the store never runs; the CLI adds
+                    # that alongside as `review_bindings`.
+                    "worktree_base_commit": messages_by_id.get(
+                        str((approval or {}).get("message_id")), {}
+                    ).get("worktree_base_commit"),
                 }
                 if approval and approval.get("reason"):
                     status_item["reason"] = approval.get("reason")
