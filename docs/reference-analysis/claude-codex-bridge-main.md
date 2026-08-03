@@ -1,5 +1,12 @@
 # CCB 参考仓库深度研究报告
 
+> ⚠️ **本文是较早的源码快照深读,结论部分已过时(2026-08-03 复研确认)。**
+> 当前对照基准见 `2026-08-03-ccb-current-state-and-gap.md`。
+> 本文第 3–6 节的源码结构与通信机制细节仍有参考价值;但第 7–10 节的
+> 优劣判断与吸收建议**不要再据以做方向决策**——复研发现 CCB 已有
+> `agentic-loop-workflow` 架构(含两道显式人类门与确定性 verdict 聚合),
+> 与本文成文时的理解差距很大。
+
 > 审查对象：`References/claude_codex_bridge-main`  
 > 审查方式：subagent 只读源码分析，主线程整理落盘。  
 > 重点：多 Agent 通信、daemon 控制面、tmux 可见运行时、mailbox/message-bureau 设计。

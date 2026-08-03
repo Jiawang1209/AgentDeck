@@ -4,6 +4,32 @@
 
 ## 2026-08-03
 
+### Re-research CCB and correct a wrong comparison judgement
+
+- **Type**: docs
+- **Motivation**: user 问 AgentDeck 与 CCB 的区别,并在四个候选中选定"先把
+  对比研究更新完"。既有 `claude-codex-bridge-main.md` 是较早源码快照,
+  结论已对不上——CCB 现为 v8.5.4 / 1611 commits,带移动端与 Rust 加速器。
+- **What**: 新增 `docs/reference-analysis/2026-08-03-ccb-current-state-and-gap.md`
+  作为当前对照基准(证据来源与可信度分级、逐条差距总账、该学/是坑/不必追、
+  方向建议、待证条目);旧文顶部加过时告示,指向新文。
+- **Impact**: 纯文档;零代码改动。**方向叙事被修正**——"我们有治理、
+  他们没有"不成立,不得再作为差异化说法。
+- **Verification**: 抓取 CCB README、`docs/` 清单、
+  `agentic-loop-workflow-architecture.zh.md`、`ask-native-async-job-architecture.md`
+  四份原文。**首要更正**:我此前据 README 断言 CCB"信任式转交、无审批门"
+  是**错的**——其 loop 架构写明**两道显式人类门**(Frontdesk 入口、
+  Round Reviewer 集成),第一原则"角色产出语义,程序验证并提交权威"几乎
+  逐字等同本项目北极星第二条,角色分层(含 Round Reviewer)高度重合,
+  verdict 聚合同样明令"不能把 mixed outcome 降格为 pass"。
+  **错误根因值得记:README 描述产品,架构文档描述治理;只读 README 会
+  系统性低估一个项目的严谨程度**——这与本仓库反复在修的"显示了不成立的
+  事实"同类,只是这次是我在犯。真实差异改判为:CCB 的 loop 更宏大
+  (DAG 节点 / Controller 派发前校验 / digest chain-of-custody)但**其自述
+  尚未 production-ready**;AgentDeck 更窄(线性 plan)但**已 live 跑通**。
+  另确认 CCB 防失控靠熔断退避(可靠性手段)而非预算(授权手段),
+  两者失效模型不同。未读源码,四条待证已列明。
+
 ### Document the delegation gate preview and live-verify it
 
 - **Type**: docs
