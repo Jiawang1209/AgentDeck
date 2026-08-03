@@ -4,6 +4,24 @@
 
 ## 2026-08-03
 
+### Classify a bound review commit in a pure module
+
+- **Type**: feat
+- **Motivation**: 比对必须确定性、可单测，且**三态**——不能把“核不了”
+  折叠进“没问题”。`drift: false` 与 `verified: false` 读起来都像“没事”，
+  而那正是本仓库反复在修的“显示了不成立的事实”。
+- **What**: 新纯模块 `src/agentdeck/review_digest.py`（零 IO、无 git、
+  不 import cli/state/config）：`classify_review_binding` 出闭合三态
+  `match`/`drift`/`unverifiable`（闭合原因 `not_recorded`/`branch_missing`/
+  `no_git_repo`），`summarize_review_bindings` 聚合计数并给出 blocker 句子；
+  drift 在句子里**压过** unverifiable（一个证明代码动了，一个只说明读不到）。
+  git 解析留在调用方。
+- **Impact**: 本片尚未接线，运行时行为零变化。
+- **Verification**: 纯度断言 + 三态矩阵 + drift 优先级 + 空集合不阻断，
+  以及唯一一处刻意 fail-open（`not_recorded` 不阻断但绝不显示成 match）
+  由测试点名。13 项全绿。
+
+
 ### Record the commit a review worktree was created from
 
 - **Type**: feat
