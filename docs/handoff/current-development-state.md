@@ -2,6 +2,40 @@
 
 Updated: 2026-08-03
 
+**DAG 执行第一刀已落地(2026-08-03,方向来自 CCB 复研"该学"第一条,spec
+`docs/superpowers/specs/2026-08-03-dag-step-dependencies-design.md`,4 commits
+`5995c418`→本次)**:单 wave 引擎的派发守卫从**线性位置**换成**依赖满足**。
+守卫要守的真正性质从来是"绝不派发输入尚未就绪的工作";"编号最早"只是它在
+纯线性 plan 上一个**充分但过强**的实现。
+- **依赖由程序推导,绝不由 Leader 生成**(这是本刀最重要的边界:让 provider
+  出依赖图会把"程序负责循环"让掉一半,还要改四个 provider 共用的已 live plan
+  schema)。纯模块 `src/agentdeck/step_dag.py`(零 IO、不 import cli/state/config、
+  **不持久化、无迁移**)从既有 step 标记推导:普通 step 依赖前一步;review 组
+  成员共享"组首个成员之前的那一步"(因此**全组同 wave 扇出**);跟在组后面的
+  普通 step 依赖**该组全部成员**。守卫消费**传递闭包**,这正是线性 plan 与旧
+  守卫**可证等价**的原因("N 的全部祖先都完成" ⟺ "N 是最早未完成 step")。
+- **零行为变化由差分金样钉住**:金样 payload 捕自**改动前**的引擎,无
+  `[review]` 组标记的 plan 逐字节相同。
+- 并行的**唯一新风险是同 agent 冲突**:复用 `run-loop --all` 的 `_busy_agents`
+  **同一规则**(busy 集随本 wave 派发增长),命中者保持 approved 并记入
+  `skipped[]`,reason `agent busy this wave` 与顺序持留 `awaiting earlier step
+  completion` **明确可区分**。
+- 安全边界逐条不变:每步各自过审批门(并行**不合并审批**)、白名单/
+  `max_approvals`/`max_review_rounds` 预算、绝不 force-spawn、只认文件通道回复、
+  **"组完成才判定"一字不动**(保护迭代预算的一直是这条规则,不是串行)、
+  `worktree merge-plan` 仍按 step 编号顺序合并。
+- 只读投影:`agentdeck plan status` 每个 step 带 `depends_on`(升序直接依赖
+  编号),让人看得见哪几步可以一起跑;它是 provenance,不授权 dispatch、
+  不改审批语义。
+- **`run-loop --all` 刻意保留旧守卫**:跨 plan 并行是该 spec 明写非目标,
+  `_run_loop_all` 零触碰。要知道的后果=**`--all` 下 review 组仍逐成员串行**;
+  两套守卫在无组标记的 plan 上完全一致。契约已如实写明,不留"看起来一样"的
+  假象。
+- **下一刀候选(未开工,需 user 拍板)**:①让 Leader 产出 DAG(本刀先证明
+  引擎层可行);②Controller 式派发前校验;③digest 绑定终态 + post-review
+  mutation 检测(**当前发现不了"审查之后又被改动"**)。后两条来自同一份
+  CCB 复研。live 验证亦未做:真实 review 组同 wave 扇出尚未在真项目上跑过。
+
 **从人类门一键决策已落地(2026-08-03,user 在四个候选中选定的方向,
 spec `docs/superpowers/specs/2026-08-03-delegation-gate-preview-design.md`,
 4 commits `c9a99c12`→`ca04d713`,全量 5180 绿,live 实测)**:

@@ -69,6 +69,7 @@ from .review_iteration import (
     select_plan_verdict,
 )
 from .review_verdict import align_verdict_with_criteria, parse_verdict_line
+from .step_dag import dependencies_for, derive_step_dependencies
 from .mission_authority import (
     SEMANTIC_MISSION_COMPACT_FIELDS,
     canonical_workflow_plan_hash,
@@ -9788,6 +9789,11 @@ class StateStore:
             "dispatched": 0,
         }
         status_steps = []
+        # Derived, never persisted and never authored by the Leader: which
+        # steps must be finished before this one may start. Read-only
+        # provenance so a human can see which steps may run together; it is
+        # not an authorization and changes no gate.
+        step_dependencies = derive_step_dependencies(steps if isinstance(steps, list) else [])
         if isinstance(steps, list):
             for step in steps:
                 if not isinstance(step, dict):
@@ -9813,6 +9819,12 @@ class StateStore:
                     # 组内序号。只读展示,不授权 dispatch、不改审批语义。
                     "review_group": step.get("review_group"),
                     "review_group_member": step.get("review_group_member"),
+                    # 派生依赖 provenance:普通 step 依赖前一步,review 组
+                    # 成员共享组前一步(因此可并行),组后的普通 step 依赖
+                    # 全组。只读展示,不授权 dispatch、不改审批语义。
+                    "depends_on": dependencies_for(
+                        step_dependencies, int(step.get("step") or 0)
+                    ),
                 }
                 if approval and approval.get("reason"):
                     status_item["reason"] = approval.get("reason")

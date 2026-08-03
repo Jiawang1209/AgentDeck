@@ -280,3 +280,32 @@ def test_partial_group_reply_derives_no_verdict_and_no_iteration_round(
     assert [c["message_id"] for c in wave4.get("captured_replies", [])] == [first["message_id"]]
     assert wave4.get("review_iterations") in (None, [])
     assert len(_steps(root, plan_id)) == step_count_before
+
+
+# --------------------------------------------------------------------------
+# Read-only projection: a human can see which steps may run together.
+# --------------------------------------------------------------------------
+
+
+def test_plan_status_projects_the_linear_chain(tmp_path: Path, monkeypatch) -> None:
+    root = _prepare(tmp_path, monkeypatch)
+    plan_id = _seed_plan(root, "projection")
+    assert [step["depends_on"] for step in _steps(root, plan_id)] == [[], [1], [2]]
+
+
+def test_plan_status_projects_the_group_fan_out(tmp_path: Path, monkeypatch) -> None:
+    root, plan_id = _group_project(tmp_path, monkeypatch)
+    steps = _steps(root, plan_id)
+    assert [step["depends_on"] for step in steps] == [[], [1], [2], [2]]
+
+
+def test_plan_status_projection_writes_nothing(tmp_path: Path, monkeypatch) -> None:
+    root, plan_id = _group_project(tmp_path, monkeypatch)
+    state_path = root / ".agentdeck" / "state" / "state.json"
+    before = state_path.read_bytes()
+
+    code, payload = _run(["plan", "status", "--plan-id", plan_id])
+
+    assert code == 0
+    assert [step["depends_on"] for step in payload["steps"]] == [[], [1], [2], [2]]
+    assert state_path.read_bytes() == before

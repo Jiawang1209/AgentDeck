@@ -4,6 +4,24 @@
 
 ## 2026-08-03
 
+### Project derived step dependencies into plan status
+
+- **Type**: feat
+- **Motivation**: 新守卫按依赖派发之后,"哪几步可以一起跑"必须**人看得见**,
+  否则并行是一个不可解释的黑箱。
+- **What**: `StateStore.plan_status()` 的每个 step 只读投影 `depends_on`
+  (升序直接依赖编号,来自纯模块 `derive_step_dependencies` /
+  `dependencies_for`)。同步 `docs/contracts/run-loop-schema.md`(依赖满足
+  语义 + `agent busy this wave` 冲突 reason)、`run-loop-all-schema.md`
+  (如实写明 `--all` **仍用旧守卫**,跨 plan 并行是 spec 明写非目标)、
+  `project-view-schema.md`、README 和 CLAUDE.md。
+- **Impact**: 纯只读派生——不持久化、无迁移、读时计算,`plan status` 不写
+  state。`depends_on` 只是 provenance,不授权 dispatch、不改审批语义。
+- **Verification**: 新增 3 项:线性 plan 投影 `[[], [1], [2]]`、组 plan 投影
+  `[[], [1], [2], [2]]`(两个组成员依赖同一步 = 可并行)、以及渲染
+  `plan status` 后 `state.json` 字节不变的零写断言。全量 5203 passed /
+  3 skipped。
+
 ### Guard the run-loop wave by dependency satisfaction, not step position
 
 - **Type**: feat

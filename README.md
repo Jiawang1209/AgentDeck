@@ -152,8 +152,10 @@ AgentDeck › Mission started. Use /status or open the workbench to inspect it.
 - review groups + round reviewer: the optional `[review]` config section turns
   one review stage into an ordered group of reviewers — `reviewers = ["reviewer",
   "planner"]` deterministically expands every review step into N consecutive
-  serial steps at plan generation (no parallel dispatch, execution engine
-  unchanged), aggregated **any-fail-blocks** and only judged once the whole
+  steps at plan generation, which since the 2026-08-03 DAG slice `run-loop
+  --plan-id` dispatches **together in one wave** (they review the same finished
+  implementation and depend on nothing else), aggregated **any-fail-blocks**
+  and only judged once the whole
   group has replied, so a partial group never burns an extra iteration round;
   `round_reviewer = "planner"` swaps who performs the re-review an iteration
   round appends (appended re-review groups are themselves group-aware). The
@@ -167,6 +169,26 @@ AgentDeck › Mission started. Use /status or open the workbench to inspect it.
   configured every path is byte-identical to before, except that
   `verdict_summary` always carries the additive `group` projection
   (`size: 1` for a lone reviewer).
+- DAG step dependencies: `run-loop --plan-id` no longer dispatches "the earliest
+  incomplete step"; it dispatches every approved step whose **inputs are ready**.
+  The dependencies are derived by the program in the pure `agentdeck.step_dag`
+  module — never authored by the Leader, never persisted, no migration — from
+  the step markers that already exist: an ordinary step depends on the one
+  before it, review-group members share the step before the group's first
+  member (hence the fan-out), and a step after a group waits for all of it. On a
+  plan without review groups this is *provably* the old behaviour, pinned by a
+  differential golden captured from the pre-change engine. Each `plan status`
+  step projects a read-only `depends_on`. Parallelism's one new risk — two ready
+  steps aimed at one pane — is handled by the same `_busy_agents` rule
+  `run-loop --all` already used: the second one stays `approved` and appears in
+  `skipped[]` with `reason="agent busy this wave"`. Every safety boundary is
+  unchanged: per-step approval (parallelism never merges approvals), allowlist
+  and budgets, never force-spawn, file-channel replies only, group verdicts
+  judged only when the whole group has replied, merge still in step order.
+  `run-loop --all` deliberately keeps the old per-plan guard (cross-plan
+  parallelism is an explicit non-goal of the spec), so under `--all` a review
+  group still advances one member per wave; the two guards agree on every plan
+  without review groups.
 - G6 role bindings: `agentdeck roles` (and the identical workbench `roles_card`,
   `mode = role_bindings`)
   is a read-only map of the six north-star role layers — frontdesk, planner,
