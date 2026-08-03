@@ -2,6 +2,16 @@
 
 Updated: 2026-08-03
 
+> **2026-08-03 订正**:下方多条历史条目的"剩余需 human"里带着
+> "Round 14 那道框仍在 pane 上等人按"。**该待办已销**——本机两个 tmux
+> socket(默认与 `agentdeck-multi-agent-explore`)均无 session,那个 pane
+> 已经不存在。已从各条目中移除该句;把 Round 14 作为**证据**引用的段落
+> (框卡两天、846 wave 里 834 空转、gate-preview live 实测)保持原样,
+> 那些仍然成立。
+>
+> 仍然成立的待办是另一条:**完整走开段从未 live 跑通**。测量协议见
+> `docs/validation/2026-08-03-walkaway-distance-measurement-runbook.md`。
+
 **verdict 绑定被审终态已落地(2026-08-03,user 拍板并追加"容纳 CCB 的能力
 并在此基础之上有所提升",spec
 `docs/superpowers/specs/2026-08-03-review-digest-binding-design.md`,
@@ -86,8 +96,7 @@ safe"字样);MCP 框无梯子。两步闭环(grant → release-box)只作文本�
 `agent boxes` 实时只读扫描(`--follow` 用户唯一路径)。**刻意不做危险命令
 模式检测**——部分检测器会让"没有警告"被读成"安全"。契约扩展 delegation 族,
 索引仍 45。live 实测 Round 14 真框:三级梯子正确、state+events 逐字节不变。
-**剩余需 human**:Round 14 那道框仍在 pane 上等按(现在有了 gate-preview,
-可先看梯子再决定是否 grant);完整走开段 live 仍未验。
+**剩余需 human**:完整走开段 live 仍未验。
 
 **人类门对称性与可执行指示(2026-08-02,`0f4028b6`→`b72f664d`,全量 5162 绿,
 live 复验)**:①`run-loop --follow` 补上与宿主完全相同的人类门检测(同一批
@@ -148,7 +157,7 @@ live 复验:同一现场 `human_gate_command` 解析出 `select-pane -t %4`,正�
 失败时 `goal start` 谎称"宿主没起"(改为"可能已起,去查 status")。
 **live 已验**:真项目 preview 渲染、白名单/预算分行、委托按 agent 分组、
 plan 绑定门拒绝且零写零 spawn。**剩余需 human**:完整走开段(真 `goal start`
-→ 宿主跑完)尚未 live;Round 14 那道框仍在 pane 上等人按。
+→ 宿主跑完)尚未 live。
 
 **`/goal` 一句话走开已落地(2026-08-01,spec/plan
 `docs/superpowers/{specs,plans}/2026-08-01-goal-one-shot-walkaway*`,
@@ -183,8 +192,7 @@ plan 绑定门拒绝且零写零 spawn。**剩余需 human**:完整走开段(真
   须单独拍板)。
 - **剩余需 human**:`goal` 尚无 live 验证记录——建议在真实项目上跑一次
   `goal preview` → `goal start`(会真的起后台宿主),确认渲染读起来确实是
-  "一次信息完整的确认",并把结果记进 `docs/validation/`。Round 14 那道框
-  仍在 pane 上等人按。
+  "一次信息完整的确认",并把结果记进 `docs/validation/`。
 
 **G6 Role Topology 已落地——北极星最后一相收官(2026-08-01,spec/plan
 `docs/superpowers/{specs,plans}/2026-08-01-g6-role-topology*`,11 commits
@@ -207,8 +215,7 @@ plan 绑定门拒绝且零写零 spawn。**剩余需 human**:完整走开段(真
 真配置项目十条断言逐行核过);live 当场暴露一处低报——两人复审组只显示
 首位,已追加只读 `group_members` 修复(`9be5dfef`,与 `candidates` 严格分工:
 前者表成员、后者表歧义,首位必须等于 `agent_id` 是 validator 回归钉)。
-**剩余需 human**:Round 14 那道框仍在 pane 上等人按;
-下一候选是 user 提的 `/goal` 一句话走开 + 呈现层渐进披露。
+**剩余需 human**:下一候选是 user 提的 `/goal` 一句话走开 + 呈现层渐进披露。
 
 **G6 Role Topology 已落地(2026-08-01,北极星最后一相,spec
 `docs/superpowers/specs/2026-08-01-g6-role-topology-design.md`,plan
@@ -258,9 +265,8 @@ MCP 提取器那道硬约束同源)与"身份非空"两条判据,收紧后同一
 PASS。**教训**:此前每个 serve 级人类门测试都 mock 掉了扫描,所以 pane
 文本→解析→候选整段从未端到端执行过,F1 才能活过七个 commit 和一次 live
 PASS(live 那次恰好是真待批框,只走了 happy path);现已补三个喂真实 pane
-文本、跑未 mock 扫描的端到端回归。**剩余需 human**:Round 14 那道框仍在
-pane 上等人按(本功能有意不代按);`run-loop --follow` 的对称实现是
-follow-up;下一个拍板候选是 user 提的 `/goal` 一句话走开 + 呈现层渐进
+文本、跑未 mock 扫描的端到端回归。**剩余需 human**:`run-loop --follow` 的
+对称实现是 follow-up;下一个拍板候选是 user 提的 `/goal` 一句话走开 + 呈现层渐进
 披露(本切片是它的前置:走开命令遇到人类门必须吭声)。
 
 **宿主人类门诚实停止已落地(2026-08-01)**:spec
@@ -351,8 +357,7 @@ provider,支持性用 `getattr` 探测(与 `plan_brief` 同模式)。落地 step
 `codex exec` 直接调用 `CodexCliProvider.refine_rework_task()` 返回 316 字符
 干净返工正文、零交互记录残留,`validate_refined_task()` 接受并由程序追加
 固定尾句;终审遗留的唯一未验证项关闭,两个 CLI backend 的精修路径现在
-都已确证。**队列已清空**——剩余全部需要 human:Round 14 的 playwright
-授权框、以及新方向拍板。
+都已确证。**队列已清空**——剩余全部需要 human:新方向拍板。
 
 **CLI provider 失败原因可观测已落地**(2026-08-01,b2ca1635 + 0e799272 +
 6b816c26):新纯模块 `providers/cli_failure.py` 按"解析→分类→丢弃原文"

@@ -4,6 +4,34 @@
 
 ## 2026-08-03
 
+### Retire a stale standing TODO and clear a false alarm on approval_mode
+
+- **Type**: docs
+- **Motivation**: 两件在准备走开段测量时顺手查出来的事。①handoff 有 **6 处**
+  历史条目的"剩余需 human"带着"Round 14 那道框仍在 pane 上等人按"——一条
+  被反复复制的**待办**，不是历史陈述。②本仓库 `.agentdeck/config.toml` 里
+  `approval_mode = "confirm"`，而 CLAUDE.md 把模式列为 ask/approve/autonomous，
+  看起来像非法值或静默降级。
+- **What**: ①核实本机两个 tmux socket（默认与 `agentdeck-multi-agent-explore`）
+  均无 session，那个 pane 已不存在；从 6 处条目移除该句，并在 handoff 顶部
+  加一条订正块说明为何移除。把 Round 14 作为**证据**引用的四处段落（框卡两天、
+  846 wave 里 834 空转、gate-preview live 实测）**原样保留**——那些仍然成立，
+  被销的只是待办。②查证 `approval_mode`：**没有缺陷，不做改动**。
+- **Impact**: ①handoff 恢复"读它就知道现在什么是真的"这个职能——一条假的
+  standing TODO 复制 6 遍会直接摧毁它。仍然成立的待办只剩一条：完整走开段
+  从未 live 跑通。②记录下来是为了**防止未来有人去"修"它**：`confirm` 是
+  ask 模式的磁盘表示，也是代码默认值（`policy set-mode --mode ask` 写的正是
+  `"confirm"`，见 `cli.py:9867`）。存在两套词汇——面向用户的
+  `{ask, approve, autonomous}` 与磁盘上的 `{confirm, approve, autonomous}`，
+  `confirm ↔ ask` 一一对应，dashboard 同时打印两者。读路径
+  `_control_mode_from_approval_mode` 把一切未知值落到 `ask`（最严）=fail-safe，
+  所有 autonomous 门是显式 `== "autonomous"`=fail-closed。
+- **Verification**: ①6 处替换逐一命中（脚本逐条报数），git diff 逐段核对断句
+  完整、无残句，折行宽度与全文一致。②读写两条路径均在源码中核对到行
+  （`cli.py:9867` 写、`cli.py:3283` 读、`models.py:69` 与 `config.py:269`
+  默认值），非从文档推断。零代码改动，全量 5239 passed / 3 skipped 不受影响。
+
+
 ### Freeze the protocol for measuring how far a walk-away segment actually goes
 
 - **Type**: docs
