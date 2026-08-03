@@ -4,6 +4,27 @@
 
 ## 2026-08-03
 
+### Stop a presentational inbox card from unreporting a reply that was recorded
+
+- **Type**: fix
+- **Motivation**: 检查本轮自己的改动是否让某个"潜伏"站点变可达时，发现
+  审计对站点 #6 的判定**是错的**：`reply` / `capture-reply` 在
+  `record_reply` 之后渲染收件方 `inbox_card` 并校验，与已修的站点 #1
+  `approval dispatch` **是同一个可达缺陷**（遗留 mailbox 行渲染即失败）；
+  #1 的修复引入了降级助手 `_dispatch_inbox_card`，却只落在派发那一处，
+  `_reply_success_payload` 这条兄弟路径被漏掉。
+- **What**: 两条路径共用的 `_reply_success_payload` 改为复用同一个降级
+  助手：渲染不出来时 `inbox_card: null` + 解释性 `blocker` +
+  `reply_inbox_card_unrenderable` 审计事件，命令**仍退 0**。
+- **Impact**: 回复、产物与 mailbox 条目在渲染卡片**之前**就已入账，展示层
+  失败绝不能推翻它。这里尤其贵：**重跑 `agentdeck reply` 会给同一 message
+  写第二条 reply**。规则已写进 CLAUDE.md，要求此类响应一律走同一助手。
+- **Verification**: 两条测试（reply / capture-reply 各一）先红——**stdout
+  完全为空**，即回复已入账而命令什么都没打印就退 1；修复后退 0 且带
+  blocker。**变异验证**改回"校验失败即 return None"后两条如实报红。
+  全量 5239 passed / 3 skipped。
+
+
 ### Tell the truth when a mission that already ran fails its own contract
 
 - **Type**: fix

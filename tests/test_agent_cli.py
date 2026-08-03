@@ -15419,6 +15419,85 @@ def test_approval_dispatch_survives_unrenderable_inbox_card(tmp_path, monkeypatc
     assert "approval_dispatch_inbox_card_unrenderable" in types
 
 
+def _corrupt_leader_inbox(root) -> None:
+    """The reply flows back to the leader mailbox; poison that one instead."""
+    store = StateStore(root)
+    state = store.load()
+    state.setdefault("inbox", {}).setdefault("leader", []).insert(0, "legacy-inbox-row")
+    store.save(state)
+
+
+def test_reply_survives_an_unrenderable_inbox_card(tmp_path, monkeypatch, capsys) -> None:
+    """Late-validation audit site #6, and the same defect class as site #1.
+
+    `record_reply` already wrote the reply, its artifacts and the recipient's
+    mailbox entry. The inbox card is a presentational extra on top of that; when
+    it cannot be rendered the command used to report failure, and re-running
+    `agentdeck reply` writes a SECOND reply for the same message.
+    """
+    root = prepare_project(tmp_path, monkeypatch)
+    _, approval_id, _fake = _approve_first_step_only(
+        root, monkeypatch, capsys, task="坏 mailbox 不得推翻已入账的回复"
+    )
+    assert cli.main(["approval", "dispatch", "--approval-id", approval_id]) == 0
+    message_id = str(
+        next(
+            a for a in StateStore(root).load()["approvals"]
+            if a["approval_id"] == approval_id
+        )["message_id"]
+    )
+    capsys.readouterr()
+    _corrupt_leader_inbox(root)
+
+    exit_code = cli.main([
+        "reply", "--agent", "planner", "--message-id", message_id,
+        "--text", "status: completed\nsummary: done\n",
+    ])
+    payload = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 0
+    assert payload["ok"] is True
+    assert payload["inbox_card"] is None
+    assert "agentdeck inbox --agent leader" in payload["blocker"]
+    # the reply really is on the books -- which is why reporting failure was wrong
+    replies = StateStore(root).load()["replies"]
+    assert [r["message_id"] for r in replies] == [message_id]
+    types = [e["event_type"] for e in _read_events(root)]
+    assert "task_replied" in types
+    assert "reply_inbox_card_unrenderable" in types
+
+
+def test_capture_reply_survives_an_unrenderable_inbox_card(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    _, approval_id, fake = _approve_first_step_only(
+        root, monkeypatch, capsys, task="capture 同样不得被展示层推翻"
+    )
+    assert cli.main(["approval", "dispatch", "--approval-id", approval_id]) == 0
+    message_id = str(
+        next(
+            a for a in StateStore(root).load()["approvals"]
+            if a["approval_id"] == approval_id
+        )["message_id"]
+    )
+    capsys.readouterr()
+    fake.capture_output = (
+        lambda _config, pane_id, lines=200: "status: completed\nsummary: captured"
+    )
+    _corrupt_leader_inbox(root)
+
+    exit_code = cli.main(
+        ["capture-reply", "--agent", "planner", "--message-id", message_id]
+    )
+    payload = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 0
+    assert payload["ok"] is True
+    assert payload["inbox_card"] is None
+    assert "agentdeck inbox --agent leader" in payload["blocker"]
+
+
 def test_approval_dispatch_degrades_when_inbox_card_fails_contract(tmp_path, monkeypatch, capsys) -> None:
     root = prepare_project(tmp_path, monkeypatch)
     _, approval_id, fake = _approve_first_step_only(root, monkeypatch, capsys, task="inbox 契约失败不得推翻派发")

@@ -12500,14 +12500,29 @@ def _reply_success_payload(reply: dict[str, object], store: StateStore) -> dict[
     }
     to_actor = reply.get("to_actor")
     if to_actor and to_actor != "user":
-        inbox_card = _inbox_queue_payload(str(to_actor), store)
-        validation = validate_inbox_contract(inbox_card)
-        if not validation["ok"]:
-            print("Inbox contract validation failed", file=sys.stderr)
-            for error in validation["errors"]:
-                print(f"- {error}", file=sys.stderr)
-            return None
+        # The reply, its artifacts and this mailbox entry are already on the
+        # books. The card is a presentational extra on top of that, so a card
+        # that will not render may only degrade the response -- reporting
+        # failure here invites a re-run, and re-running `agentdeck reply`
+        # records a SECOND reply for the same message. Same rule, and the same
+        # helper, as `approval dispatch`.
+        inbox_card, inbox_blocker, inbox_errors = _dispatch_inbox_card(
+            str(to_actor), store
+        )
         payload["inbox_card"] = inbox_card
+        payload["blocker"] = inbox_blocker
+        if inbox_blocker is not None:
+            store.append_event(
+                EventRecord.create(
+                    "reply_inbox_card_unrenderable",
+                    {
+                        "reply_id": reply.get("reply_id"),
+                        "message_id": reply.get("message_id"),
+                        "agent_id": str(to_actor),
+                        "errors": inbox_errors,
+                    },
+                )
+            )
     artifacts = reply.get("artifacts")
     if isinstance(artifacts, list) and artifacts:
         payload["artifacts"] = store.artifact_summaries(artifacts)

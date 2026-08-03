@@ -1,6 +1,6 @@
 # 审计:契约校验发生在不可逆副作用之后(2026-08-01)
 
-Status: 已修 7 处(当下可达的 2 处 + 加固潜伏的前 3 处 + 2026-08-03 两处 PLAUSIBLE),剩 5 处潜伏,本文是余账
+Status: 已修 8 处(当下可达的 2 处 + 加固潜伏的前 3 处 + 2026-08-03 的 #4/#5 两处 PLAUSIBLE + #6 的 reply/capture-reply),剩 4 处潜伏(另 `release`/`run --task` 半条),本文是余账
 起因: `/goal` 终审 Finding 3 —— `run-loop-host start` 在 spawn 之后才校验契约,
 失败时命令退非 0 而宿主**真的在跑**,调用方于是谎称"宿主没起"。终审的收尾
 一句是本次审计的理由:"根因是个模式,不是一次性问题。"
@@ -117,7 +117,7 @@ pid 占位投影过一次校验;占位用 `os.getpid()`——真实存活 pid,�
 | 3 | `run-loop-host stop --confirm` | process(SIGTERM) | "停止失败"——而信号已发,某条路径上宿主已退出且记录已清 |
 | ~~4~~ | ~~`workflow run\|resume --confirm`~~ | tmux + state | **已修 2026-08-03**:失败路径现报告 run id/status/已派发步数/查证命令,并明说"重跑会新建 run 并再次提示 workers"。实测注入失败时 `status=completed`——工作流其实整个跑完了 |
 | ~~5~~ | ~~`mission run\|resume --confirm`~~ | tmux + state | **已修 2026-08-03**:新增 `MissionContractError`(`MissionRunError` 子类)只在 run/resume 模式抛出,失败路径报告 mission id/status/查证命令。**只从 state 取值、绝不含异常文本**——mission 失败消息的 sanitized 属性有守卫测试(`SECRET` 不得出现),诚实不能变成泄漏通道;**前置拒绝(未产生效果)仍是原来的 `mission run failed`**,由一条对照测试钉住 |
-| 6 | `release` / `run --task` / `reply` / `capture-reply` | state | 各自"失败了"——而轮次已推进 / plan 已存在 / reply 已入账 |
+| 6 | ~~`reply` / `capture-reply`~~ + `release` / `run --task` | state | **`reply`/`capture-reply` 已修 2026-08-03**——**本条原判 (b) UNREACHABLE 是错的**:二者在 `record_reply` 之后渲染收件方 `inbox_card` 并校验,与站点 #1 `approval dispatch` **是同一个可达缺陷**(遗留 mailbox 行渲染即失败),而 #1 的修复只落在派发那一处,`_reply_success_payload` 这条兄弟路径被漏掉。现改为复用同一个 `_dispatch_inbox_card` 降级助手:`inbox_card: null` + `blocker` + `reply_inbox_card_unrenderable` 审计,命令仍退 0。**重跑 `agentdeck reply` 会给同一 message 写第二条 reply**,所以把已入账的回复报成失败尤其贵。`release` / `run --task` 仍未处理 |
 | 7 | `leader chat` | state |(b) **CONFIRMED 可达**,但它是**全仓库最好的失败路径**:退出前把失败写进 `leader_errors[]` 与 `leader_chat_contract_failed`。它是"让失败路径说真话"的范本 |
 
 ## 覆盖(已检查且干净)
