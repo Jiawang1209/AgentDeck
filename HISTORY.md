@@ -4,6 +4,21 @@
 
 ## 2026-08-03
 
+### Document the delegation gate preview and live-verify it
+
+- **Type**: docs
+- **Motivation**: 契约文档、README、CLAUDE.md 三面需同步(仓库纪律),而这个
+  命令的价值全在**它拒绝做什么**上——那些拒绝必须写进契约,否则下一个人
+  会"顺手改进"掉。
+- **What**: `docs/contracts/delegation-schema.md` 新增 gate-preview 节
+  (两条只读来源对照表、梯子字段表、**宽度由人选**的理由、无梯子的 MCP 形态、
+  两步闭环、以及"为什么刻意没有危险检测器"整节);README 与 CLAUDE.md 同步。
+- **Impact**: 纯文档;零代码改动。契约索引不变(扩展 delegation 族)。
+- **Verification**: **live 实测**(scratch 项目里 Round 14 那道真实的
+  Playwright 框):三级梯子正确渲染,`unpinned_tail` 逐条对得上——第 2 条
+  连带授权"任意 file:// 位置"、第 3 条连带授权"任意子命令与参数"并标
+  ⚠ 最宽;两步闭环命令齐全;退出 0;**state + events 逐字节不变**。
+
 ### Bridge a human gate to an explicit delegation decision
 
 - **Type**: feat

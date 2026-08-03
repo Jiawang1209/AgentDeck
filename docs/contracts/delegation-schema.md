@@ -227,6 +227,93 @@ Commands:
   (`docs/contracts/run-loop-host-schema.md`) and are **evidence only** — they
   do not affect which boxes are released, and never authorize a press.
 
+## Gate preview: from a stopped walk-away segment to an explicit decision (2026-08-03)
+
+`agentdeck delegation gate-preview [--agent <id>]` is **read-only**. It bridges
+the two halves that already existed: the walk-away segment stops on an
+undelegated authorization box and hands over the full evidence
+(`docs/contracts/run-loop-host-schema.md`, `human_gate`), and `delegation grant`
+can pre-sanction that class of box — but nothing connected them, so a human had
+to copy the command out, invent a prefix, hand-type a grant, and release the box.
+Design: `docs/superpowers/specs/2026-08-03-delegation-gate-preview-design.md`.
+
+### Two read-only evidence sources
+
+| `source` | Where the box comes from | Pane reads |
+| --- | --- | --- |
+| `host_record` (default) | `.agentdeck/run-loop-host/host.json` → `human_gate` | **zero** — tmux is never even instantiated |
+| `agent_scan` (`--agent <id>`) | one live read-only scan, reusing the `agent boxes` core | one, same as `agent boxes` |
+
+`run-loop --follow` never writes a host record, so its users can only take the
+`--agent` path; that is why both exist.
+
+### Width is the human's choice, never AgentDeck's
+
+For one command box the response carries a **deterministic prefix ladder**, in
+`candidates[]`, narrowest first. Width differs by orders of magnitude across the
+ladder, which is the entire reason the command exists:
+
+```
+.../playwright_cli.sh open file:///…/index.html   → only that one command
+.../playwright_cli.sh open                        → any target
+.../playwright_cli.sh                             → navigate / fill / evaluate too
+```
+
+Ladder derivation is a pure function (`src/agentdeck/gate_preview.py`,
+`prefix_ladder`): whitespace tokens, longest prefix first, capped at
+`GATE_PREVIEW_LADDER_CAP` (5) with the narrowest and the widest always present.
+Each `candidates[]` item carries the fields in
+`gate_preview.GATE_PREVIEW_CANDIDATE_FIELDS` (single source; the contract layer
+imports it and never retypes it):
+
+| Field | Meaning |
+| --- | --- |
+| `index` | 1-based position in the ladder |
+| `prefix` | the literal text to paste into `--prefix` |
+| `unpinned_tail` | the part this prefix does **not** pin — i.e. what may be anything |
+| `is_widest` | bare single token, the maximum width. A statement of fact, not a rating |
+| `grant_command` | the exact `delegation grant … --confirm` for this candidate |
+
+**The response never recommends, ranks by safety, pre-selects, or highlights a
+candidate**, and there is a regression test pinning that the rendering contains
+no "建议 / recommended / safe" wording. Which prefix to grant is a judgement
+about what a command can do, and AgentDeck cannot make it.
+
+An MCP tool box has **no ladder**: one grant covers exactly one
+`(server, tool)` pair, so `candidates` is empty and `grant_command` is the exact
+MCP form.
+
+### The whole loop is laid out, as text only
+
+The response also carries `release_command` — after a grant, the pending box
+still needs one explicit `agentdeck agent release-box --agent <id> --confirm`.
+Preview emits both steps as strings; it performs neither.
+
+### Why there is deliberately no danger detector
+
+`verification_notice` states, once, that AgentDeck cannot verify what a command
+does, and that **the absence of a warning does not mean the command is safe**.
+
+The guidance above ("never grant push / install / network-changing prefixes")
+might suggest shipping a pattern detector. That is a **deliberate non-goal**: a
+detector that only recognises `push|install|curl` makes "no warning" read as
+"safe" for everything it does not recognise — a displayed fact that does not
+hold, which is the defect class this project has repeatedly had to remove. One
+honest sentence beats a partial guard that looks like protection.
+
+### Boundaries
+
+Writes nothing: no state, no events, no grant, no release, no provider call, no
+tmux input. Empty states are explicit and exit non-zero: no host record (with a
+pointer to the `--agent` form), no `human_gate` in the record, no box on the
+agent, or a box already covered by an active delegation (which reports the
+`delegation_id` and the release command, since a second grant would be
+redundant). Response fields are
+`DELEGATION_GATE_PREVIEW_RESPONSE_FIELDS`, guarded by
+`validate_delegation_gate_preview_contract()` before printing; discovery is the
+existing `agentdeck contract delegation` (this is the delegation family — **not**
+a new contract, and the contract index count is unchanged).
+
 ## Recommended read-only starter pack (2026-08-01)
 
 Accumulated live evidence (rounds 8–13) shows worker authorization boxes are

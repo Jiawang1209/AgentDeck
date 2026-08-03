@@ -131,6 +131,24 @@ AgentDeck › Mission started. Use /status or open the workbench to inspect it.
   calls a provider — and any provider failure falls back to the deterministic
   template with `refined: false` + a closed `refine_skipped_reason`, exit 0);
   discovery: `agentdeck contract plan-rework`;
+- gate preview: when a walk-away segment stops on an undelegated authorization
+  box, `agentdeck delegation gate-preview [--agent <id>]` turns that stop into
+  an explicit decision — read-only, reading the host record with **zero pane
+  reads** by default, or one live read-only scan with `--agent` (which is the
+  only route for `run-loop --follow`, since it writes no host record). For a
+  command box it emits a deterministic **prefix ladder**, narrowest first, each
+  rung carrying what that prefix leaves unpinned, because width differs by
+  orders of magnitude across it (`…/playwright_cli.sh open` vs
+  `…/playwright_cli.sh`). It **never recommends, ranks or pre-selects a rung**:
+  choosing one is a judgement about what a command can do, and AgentDeck cannot
+  make it. An MCP box has no ladder — one grant covers exactly one
+  `(server, tool)`. Both steps of the loop (`delegation grant … --confirm`,
+  then `agentdeck agent release-box --agent <id> --confirm`) are emitted as
+  text and neither is performed. There is deliberately **no danger-pattern
+  detector**: one that recognised only `push|install|curl` would make "no
+  warning" read as "safe"; instead the response says plainly that AgentDeck
+  cannot verify what a command does and that the absence of a warning means
+  nothing. Discovery: `agentdeck contract delegation`;
 - review groups + round reviewer: the optional `[review]` config section turns
   one review stage into an ordered group of reviewers — `reviewers = ["reviewer",
   "planner"]` deterministically expands every review step into N consecutive
