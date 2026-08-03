@@ -4,6 +4,24 @@
 
 ## 2026-08-03
 
+### Correct an unsupported claim about CCB
+
+- **Type**: docs
+- **Motivation**: 落地 digest 绑定时逐条核对 CCB 副本，发现 2026-08-03
+  复研文档第 145 行的断言无法证实。
+- **What**: 改写该条——CCB 的 digest 绑在**产物**上（commit 时先校验
+  path/kind/state edge/required evidence，再 `record digest / actor / job /
+  timestamp`；同 `(task, loop, result, report digest)` 重入幂等；
+  **conflicting result or digest fails closed**；拒绝理由闭合枚举且明令
+  "不应该让 agent 猜测状态"）。"绑定 git 终态 + 检测审查之后又被改动"是
+  AgentDeck 在其之上多走的一步，**不是对标 CCB**。
+- **Impact**: 纯文档订正；差异化叙事以核实过的版本为准。
+- **Verification**: 对 `References/claude_codex_bridge-main/` 检索
+  `custody` / `worktree digest` / `post-review mutation` /
+  `root verification` 零命中。教训与该文档自己要纠正的毛病同类，只是这次
+  是我方在犯：**读一手材料时，把"我据此推断的"与"文档确实写了的"分开记。**
+
+
 ### Surface reviewed-state drift before the merge refuses it
 
 - **Type**: feat

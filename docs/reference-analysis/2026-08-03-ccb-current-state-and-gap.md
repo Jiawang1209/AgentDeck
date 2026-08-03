@@ -142,9 +142,28 @@ AgentDeck 独有(据现有证据,CCB 文档未见对应物):
    revision / capacity / digest。AgentDeck 刚做完的晚校验审计正是同一个
    问题的另一面——我们是"校验发生在副作用之后",他们是"把校验前置成
    独立层"。可借鉴为一个显式的 dispatch precondition 层。
-3. **digest 绑定终态**。CCB 以"worktree digest 与绑定 digest 相同"作为
-   终态判据,并做 post-review mutation 检测。AgentDeck 目前靠 reply +
-   verdict,**无法发现"审查之后又被改动"**——这是一个真实的信任缺口。
+3. **digest 纪律**(2026-08-03 修正)。**本条原文断言 CCB"以 worktree
+   digest 与绑定 digest 相同作为终态判据,并做 post-review mutation 检测",
+   该断言在本仓库所持副本中无法证实**——对
+   `References/claude_codex_bridge-main/` 全量检索 `custody` /
+   `worktree digest` / `post-review mutation` / `root verification`,零命中。
+
+   CCB 实际把指纹绑在**产物**上(`docs/plantree/plans/agentic-loop-workflow/`,
+   已核对原文):脚本 commit artifact 时先
+   `validate path / kind / state edge / required evidence`,再
+   `record digest / actor / job / timestamp`;同
+   `(task, loop, result, report digest)` 重入**幂等**;
+   **conflicting result or digest fails closed**;拒绝理由是闭合枚举,
+   且明令"脚本拒绝时不应该让 agent 猜测状态"。AgentDeck 当时连这一层都
+   没有——artifact 只记 path/kind/status/时间戳。
+
+   所以:**该学的是产物级 digest 纪律**;而"绑定 git 终态、检测审查之后
+   又被改动"是 AgentDeck 在其之上多走的一步,**不是对标 CCB**。两者都已于
+   2026-08-03 落地,见
+   `docs/superpowers/specs/2026-08-03-review-digest-binding-design.md`。
+
+   教训与本文档自己要纠正的毛病同类,只是这次是我方在犯:**读一手材料时,
+   把"我据此推断的"与"文档确实写了的"分开记。**
 
 ### 是坑(旧研究已点名,复研后仍成立)
 
