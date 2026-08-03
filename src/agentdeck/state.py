@@ -10554,8 +10554,10 @@ class StateStore:
         if verdict is not None:
             reply["verdict"] = verdict
         state.setdefault("replies", []).append(reply)
-        artifacts = self._artifacts_from_reply(reply, text)
-        state.setdefault("artifacts", []).extend(artifacts)
+        artifacts, artifact_conflicts = self._artifacts_from_reply(
+            reply, text, state.setdefault("artifacts", [])
+        )
+        state["artifacts"].extend(artifacts)
         message["status"] = "replied"
         if attempt:
             attempt["status"] = "completed"
@@ -10604,27 +10606,89 @@ class StateStore:
                     },
                 )
             )
-        return {**reply, "artifacts": artifacts}
+        for conflict in artifact_conflicts:
+            self.append_event(
+                EventRecord.create("artifact_digest_conflict", dict(conflict))
+            )
+        result = {**reply, "artifacts": artifacts}
+        if artifact_conflicts:
+            result["artifact_conflicts"] = artifact_conflicts
+        return result
 
-    @classmethod
-    def _artifacts_from_reply(cls, reply: dict[str, Any], text: str) -> list[dict[str, Any]]:
-        output_path = cls._structured_reply_value(text, "full_output_path")
+    def _artifacts_from_reply(
+        self, reply: dict[str, Any], text: str, existing: list[dict[str, Any]]
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        """(new artifacts, conflicts).
+
+        The digest is computed here, on the WRITE path -- the read-only surfaces
+        (`agentdeck artifacts`, `artifacts_card`, trace) still never open an
+        artifact file.
+
+        Re-registering the same (message_id, path) with identical content is
+        idempotent. A conflicting digest FAILS CLOSED: the entry is rejected,
+        the original record is left untouched, and the conflict is named -- the
+        rule CCB states as "conflicting result or digest fails closed". The
+        rejection is per artifact, not per reply: a reply is a fact, registering
+        evidence is a judgement, the same split that lets an invalid verdict
+        record its reply anyway.
+        """
+        output_path = self._structured_reply_value(text, "full_output_path")
         if not output_path:
-            return []
+            return [], []
+        message_id = reply.get("message_id")
+        content_hash, byte_count, digest_status = self._artifact_digest(output_path)
+        previous = next(
+            (
+                item
+                for item in existing
+                if isinstance(item, dict)
+                and item.get("message_id") == message_id
+                and item.get("path") == output_path
+            ),
+            None,
+        )
+        if previous is not None:
+            if previous.get("content_hash") == content_hash:
+                return [], []
+            return [], [{
+                "message_id": message_id,
+                "path": output_path,
+                "recorded_hash": previous.get("content_hash"),
+                "observed_hash": content_hash,
+                "artifact_id": previous.get("artifact_id"),
+            }]
         return [
             {
                 "artifact_id": new_id("art"),
-                "message_id": reply.get("message_id"),
+                "message_id": message_id,
                 "attempt_id": reply.get("attempt_id"),
                 "job_id": reply.get("job_id"),
                 "reply_id": reply.get("reply_id"),
                 "from_agent": reply.get("from_agent"),
                 "path": output_path,
-                "kind": cls._artifact_kind(output_path),
+                "kind": self._artifact_kind(output_path),
                 "status": "created",
+                "content_hash": content_hash,
+                "byte_count": byte_count,
+                "digest_status": digest_status,
                 "created_at": utc_now(),
             }
-        ]
+        ], []
+
+    @staticmethod
+    def _artifact_digest(path: str) -> tuple[str | None, int | None, str]:
+        """(sha256, byte count, closed status).
+
+        Never reports "recorded" on failure: "could not hash it" and "hashed it"
+        must not read the same downstream.
+        """
+        try:
+            data = Path(path).read_bytes()
+        except FileNotFoundError:
+            return None, None, "file_missing"
+        except OSError:
+            return None, None, "read_failed"
+        return hashlib.sha256(data).hexdigest(), len(data), "recorded"
 
     @staticmethod
     def _structured_reply_value(text: str, key: str) -> str | None:

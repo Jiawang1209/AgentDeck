@@ -4,6 +4,27 @@
 
 ## 2026-08-03
 
+### Record artifact content digests, idempotent and fail-closed
+
+- **Type**: feat
+- **Motivation**: 容纳 CCB 已有的能力。AgentDeck 的 artifact 只记
+  path/kind/status/时间戳——作为证据登记的文件事后被改写，系统一无所知。
+  这与 verdict 那一层是同一个洞，只是低一层。
+- **What**: 登记时记 `content_hash`(sha256) / `byte_count` / 闭合
+  `digest_status`(`recorded`/`file_missing`/`read_failed`)。同
+  `(message_id, path)` 重入：digest 相同则**幂等**；**冲突 fail-closed**
+  ——该条拒绝入账、原记录一字不动、点名两个 digest 并追加
+  `artifact_digest_conflict` 审计事件（CCB 原则："conflicting result or
+  digest fails closed"）。
+- **Impact**: 计算只在**写路径**发生；只读面（`agentdeck artifacts`、
+  `artifacts_card`、trace）仍一字不读产物文件，既有边界不破。拒绝粒度是
+  **artifact 条目而非整条 reply**——回复是事实，产物登记是判断，沿用
+  “无效 verdict 不阻断 reply”的既有先例。
+- **Verification**: hash/字节数与文件一致；缺文件记 `file_missing` 而不是
+  “算过了”；重入幂等；冲突后原 hash 不变、事件已记、reply 仍照常入账。
+  全量 5228 passed / 3 skipped。
+
+
 ### Withhold the automatic merge when reviewed code has moved
 
 - **Type**: feat
