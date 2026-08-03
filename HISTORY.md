@@ -4,6 +4,29 @@
 
 ## 2026-08-03
 
+### Freeze the DAG step-dependency design
+
+- **Type**: docs
+- **Motivation**: CCB 复研列出的"该学"第一条,也是当前最限制"可行且好用"
+  的缺口:plan 严格线性。Round 14 的 `coder → reviewer → planner` 里,
+  两个 reviewer 审的是**同一份已完成的实现**、彼此毫无依赖,却只能排队跑。
+  北极星分层图里 coder 与 code_reviewer 本就是分叉节点。
+- **What**: 冻结 `docs/superpowers/specs/2026-08-03-dag-step-dependencies-design.md`。
+  把守卫从"编号最早"换成"依赖已满足"——守卫要守的**真正性质**从来是
+  "绝不派发输入尚未就绪的工作","编号最早"只是它在纯线性 plan 上一个
+  **充分但过强**的实现。`depends_on` 由纯模块确定性推导(普通 step 依赖
+  前一步 = 与今天逐字节等价;review 组成员共享组前一步 → 并行扇出),
+  **不持久化、无迁移**,只读投影进 `plan status`。
+- **Impact**: 纯文档;零代码改动。重审了 review 组"串行叠加"那条明写的
+  妥协。
+- **Verification**: 设计对照现行守卫代码逐行核过(`earliest_incomplete`
+  分支与 `_step_is_incomplete` 定义)。**两条边界写进 spec**:①**不让
+  Leader 生成依赖图**——那会把"程序负责循环"让出去一半,还要动四个
+  provider 共用且已 live 验证的 plan schema;②如实写明这**对 review 组
+  是一次放松**,并给出它安全的四条理由,其中关键一条是"组完成才判定"
+  的预算保护**本就由组完成规则守着,不是由串行守着**。同 agent 冲突是
+  并行引入的唯一新风险,复用 `--all` 的 `_busy_agents` 同一规则。
+
 ### Re-research CCB and correct a wrong comparison judgement
 
 - **Type**: docs
