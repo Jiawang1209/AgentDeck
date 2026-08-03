@@ -11787,6 +11787,35 @@ def storage_events_diff_command(_args: argparse.Namespace) -> int:
     return 0 if not mismatches else 1
 
 
+def _orchestration_boundary_lines() -> list[str]:
+    """派发给**每一个** worker 的编排边界。
+
+    Round 1 live 暴露的两件事同源——worker 手里有完整 shell、`agentdeck`
+    CLI 和整个仓库,于是自发跑进了 AgentDeck 以为自己独占的角色:
+
+    - reviewer 自行 `git merge` 并清理分支,绕过 verdict/digest 合并闸,
+      而确认屏印的是"不自动合并——复审通过后停下来等你点头";它是 shared
+      工作区,`worktree_path` 为 None,因此**从来没收到过** worktree 段里
+      那句"不要切换或合并分支"。合并边界属于每个 worker,不属于"恰好有
+      worktree 的那些"。
+    - planner 自写轮询循环去 `agentdeck agent capture --agent coder`,
+      发明了一套没人要求的编排。
+
+    **这几行是说明,不是强制。** worker 手里有 shell,AgentDeck 拦不住它
+    执行其中任何一条;它们只降低发生率。真正的边界要么靠沙箱、要么靠把
+    越界**检测**出来,都需要单独设计——在那之前,至少要把话说清楚,而不是
+    默认对方能猜到。
+    """
+    return [
+        "编排边界:",
+        "本任务由 AgentDeck 调度;推进循环、派发下一步、判定是否完成都由它负责,不由你负责。",
+        "不要合并或删除任何分支,也不要 push——合并是人类的显式动作。",
+        "不要驱动、轮询或指挥其它 agent,也不要运行 agentdeck 命令。",
+        "完成本任务后按下面的格式回复并停下,由人类决定下一步。",
+        "",
+    ]
+
+
 def build_dispatch_prompt(
     agent: AgentSpec,
     task: str,
@@ -11847,6 +11876,7 @@ def build_dispatch_prompt(
         "角色说明:",
         agent.role_prompt or "请按该 agent 的配置角色完成任务。",
         "",
+        *_orchestration_boundary_lines(),
         "当前任务:",
         task,
         *skill_lines,

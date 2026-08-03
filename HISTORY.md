@@ -4,6 +4,37 @@
 
 ## 2026-08-04
 
+### Tell every worker the orchestration boundary, not just the ones with a worktree
+
+- **Type**: fix
+- **Motivation**: Round 1 live 反馈第 1、2 条,同源。①reviewer 自行 `git merge`
+  并清理分支——绕过了当天上午才建好的 verdict/digest 合并闸,而 `goal preview`
+  确认屏印的是"**不自动合并——复审通过后停下来等你点头**";②planner 自写轮询
+  循环去 `agentdeck agent capture --agent coder`,发明了一套没人要求的编排。
+  根因同一个:**worker 手里有完整 shell、`agentdeck` CLI 和整个仓库,于是自发
+  跑进了 AgentDeck 以为自己独占的角色。**
+- **What**: ①的直接原因不是"没写"而是"**没发给它**"——"不要 push,不要切换或
+  合并分支"这句话一直挂在 `worktree_lines` 里,而 `reviewer` 是
+  `workspace_mode=shared`、`worktree_path` 为 `None`,那段**整个不生成**,所以
+  它从未被告知过。合并边界属于每一个 worker,不属于"恰好有 worktree 的那些"。
+  新增 `_orchestration_boundary_lines()`,无条件进入每份 dispatch prompt:循环
+  由 AgentDeck 驱动、不要合并/删除分支/push、不要驱动或轮询其它 agent、不要
+  运行 `agentdeck` 命令、完成后回复并停下。②那条(不要驱动其它 agent)此前
+  **整个 prompt 里一句都没有**。
+- **Impact**: **这是说明,不是强制**——已写进函数 docstring,因为它极易被误读成
+  "修好了"。worker 手里有 shell,AgentDeck 拦不住它执行其中任何一条;这几行只
+  降低发生率。真正的边界要么靠沙箱、要么靠把越界**检测**出来(①真正的缺陷其实
+  是:合并发生了而账本毫不知情,AgentDeck 对世界的记述变成了假的却无人察觉),
+  都需要单独设计。零 gate 改动:不碰审批、委托、放行不变量或任何 contract 字段。
+- **Verification**: TDD,2 条新测试先红后绿(shared 工作区也必须收到合并边界 /
+  任何 worker 都不得驱动其它 agent)。另修 1 条既有测试
+  `test_shared_dispatch_prompt_has_no_commit_requirement`——**它的意图未被破坏**
+  (shared agent 不该被要求 commit 到任务分支,我一句 commit 指令都没加),失效的
+  是它拿 `不要 push` 当"worktree 段没渲染"的**代理标记**,已换成 worktree 段
+  独有的措辞;对 shared agent 而言"不要 push/合并"只会更该说——它干活的地方就是
+  主工作区。全量 5245 passed / 3 skipped（前一刀 5243 + 本刀 2 条）。
+
+
 ### Put the agent's role on the tmux pane border, where the program cannot erase it
 
 - **Type**: fix

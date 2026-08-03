@@ -678,7 +678,12 @@ def test_shared_dispatch_prompt_has_no_commit_requirement(tmp_path, monkeypatch,
     capsys.readouterr()
     prompt = fake.sent[0][1]
     assert "git commit" not in prompt
-    assert "不要 push" not in prompt
+    # 探针换成 worktree 段独有的措辞:原本用的 "不要 push" 现在也出现在发给
+    # **每个** worker 的编排边界里(Round 1 live:reviewer 是 shared 工作区,
+    # 因而从未收到过合并边界,然后它自己合并了)。本测试守的是"shared agent
+    # 不该被要求 commit 到任务分支",那条不变;"不要 push / 不要合并"对 shared
+    # agent 只会更该说——它干活的地方就是主工作区。
+    assert "本任务专用 worktree" not in prompt
 
 
 def test_dispatch_degrades_cleanly_without_real_git_repo(tmp_path, monkeypatch, capsys) -> None:

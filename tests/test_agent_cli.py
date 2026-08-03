@@ -1787,6 +1787,34 @@ def test_dispatch_prompt_requests_full_output_path_for_artifact_recovery(tmp_pat
     assert "full_output_path:" in prompt
 
 
+def test_dispatch_prompt_states_merge_boundary_without_a_worktree(
+    tmp_path, monkeypatch
+) -> None:
+    # Round 1 live:reviewer 是 shared 工作区(worktree_path=None),因此从来
+    # 没收到过 worktree 分支里那句"不要切换或合并分支"——而合并的正是它。
+    # 合并边界属于每一个 worker,不属于"恰好有 worktree 的那些"。
+    root = prepare_project(tmp_path, monkeypatch)
+    config = cli.load_config(root)
+
+    prompt = cli.build_dispatch_prompt(config.agents[0], "复核实现产物")
+
+    assert "不要合并" in prompt
+
+
+def test_dispatch_prompt_tells_worker_not_to_drive_other_agents(
+    tmp_path, monkeypatch
+) -> None:
+    # Round 1 live:planner 自己写了个轮询循环去 `agentdeck agent capture
+    # --agent coder`,发明了一套 AgentDeck 没要求的编排。
+    root = prepare_project(tmp_path, monkeypatch)
+    config = cli.load_config(root)
+
+    prompt = cli.build_dispatch_prompt(config.agents[0], "分析页面结构")
+
+    assert "其它 agent" in prompt
+    assert "agentdeck 命令" in prompt
+
+
 def test_dispatch_injects_loaded_worker_skill_snapshot_into_prompt(
     tmp_path, monkeypatch, capsys
 ) -> None:
