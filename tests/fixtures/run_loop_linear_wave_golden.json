@@ -1,0 +1,366 @@
+{
+  "blocked_middle_step": [
+    {
+      "exit": 0,
+      "payload": {
+        "auto_approved": 3,
+        "blocked": [],
+        "dispatched": [
+          {
+            "agent_id": "planner",
+            "approval_id": "apv_1",
+            "message_id": "msg_1",
+            "trace_command": "agentdeck trace --id msg_1"
+          }
+        ],
+        "mode": "run_loop",
+        "next_command": "agentdeck capture-reply --agent planner --message-id msg_1",
+        "ok": true,
+        "plan_id": "pln_1",
+        "policy": {
+          "allowed_agents": [
+            "planner",
+            "coder",
+            "reviewer"
+          ],
+          "max_approvals": 9
+        },
+        "reply_file_ready": false,
+        "requires_explicit_user": true,
+        "safety": "delegated",
+        "skipped": [
+          {
+            "agent_id": "coder",
+            "approval_id": "apv_2",
+            "reason": "awaiting earlier step completion"
+          },
+          {
+            "agent_id": "reviewer",
+            "approval_id": "apv_3",
+            "reason": "awaiting earlier step completion"
+          }
+        ],
+        "stopped_reason": "waiting_for_reply"
+      }
+    },
+    {
+      "exit": 0,
+      "payload": {
+        "auto_approved": 0,
+        "blocked": [
+          {
+            "agent_id": "coder",
+            "approval_id": "apv_2",
+            "blocker": "agent is not spawned: coder"
+          }
+        ],
+        "captured_replies": [
+          {
+            "agent_id": "planner",
+            "captured_from": "file",
+            "message_id": "msg_1",
+            "reply_id": "rep_1",
+            "trace_command": "agentdeck trace --id rep_1"
+          }
+        ],
+        "dispatched": [],
+        "mode": "run_loop",
+        "next_command": "agentdeck agent spawn --agent coder",
+        "ok": true,
+        "plan_id": "pln_1",
+        "policy": {
+          "allowed_agents": [
+            "planner",
+            "coder",
+            "reviewer"
+          ],
+          "max_approvals": 9
+        },
+        "requires_explicit_user": true,
+        "safety": "delegated",
+        "skipped": [
+          {
+            "agent_id": "reviewer",
+            "approval_id": "apv_3",
+            "reason": "awaiting earlier step completion"
+          }
+        ],
+        "stopped_reason": "blocked"
+      }
+    },
+    {
+      "exit": 0,
+      "payload": {
+        "auto_approved": 0,
+        "blocked": [
+          {
+            "agent_id": "coder",
+            "approval_id": "apv_2",
+            "blocker": "agent is not spawned: coder"
+          }
+        ],
+        "dispatched": [],
+        "mode": "run_loop",
+        "next_command": "agentdeck agent spawn --agent coder",
+        "ok": true,
+        "plan_id": "pln_1",
+        "policy": {
+          "allowed_agents": [
+            "planner",
+            "coder",
+            "reviewer"
+          ],
+          "max_approvals": 9
+        },
+        "requires_explicit_user": true,
+        "safety": "delegated",
+        "skipped": [
+          {
+            "agent_id": "reviewer",
+            "approval_id": "apv_3",
+            "reason": "awaiting earlier step completion"
+          }
+        ],
+        "stopped_reason": "blocked"
+      }
+    },
+    {
+      "exit": 0,
+      "payload": {
+        "auto_approved": 0,
+        "blocked": [
+          {
+            "agent_id": "coder",
+            "approval_id": "apv_2",
+            "blocker": "agent is not spawned: coder"
+          }
+        ],
+        "dispatched": [],
+        "mode": "run_loop",
+        "next_command": "agentdeck agent spawn --agent coder",
+        "ok": true,
+        "plan_id": "pln_1",
+        "policy": {
+          "allowed_agents": [
+            "planner",
+            "coder",
+            "reviewer"
+          ],
+          "max_approvals": 9
+        },
+        "requires_explicit_user": true,
+        "safety": "delegated",
+        "skipped": [
+          {
+            "agent_id": "reviewer",
+            "approval_id": "apv_3",
+            "reason": "awaiting earlier step completion"
+          }
+        ],
+        "stopped_reason": "blocked"
+      }
+    },
+    {
+      "exit": 0,
+      "payload": {
+        "auto_approved": 0,
+        "blocked": [
+          {
+            "agent_id": "coder",
+            "approval_id": "apv_2",
+            "blocker": "agent is not spawned: coder"
+          }
+        ],
+        "dispatched": [],
+        "mode": "run_loop",
+        "next_command": "agentdeck agent spawn --agent coder",
+        "ok": true,
+        "plan_id": "pln_1",
+        "policy": {
+          "allowed_agents": [
+            "planner",
+            "coder",
+            "reviewer"
+          ],
+          "max_approvals": 9
+        },
+        "requires_explicit_user": true,
+        "safety": "delegated",
+        "skipped": [
+          {
+            "agent_id": "reviewer",
+            "approval_id": "apv_3",
+            "reason": "awaiting earlier step completion"
+          }
+        ],
+        "stopped_reason": "blocked"
+      }
+    }
+  ],
+  "linear_full_drive": [
+    {
+      "exit": 0,
+      "payload": {
+        "auto_approved": 3,
+        "blocked": [],
+        "dispatched": [
+          {
+            "agent_id": "planner",
+            "approval_id": "apv_1",
+            "message_id": "msg_1",
+            "trace_command": "agentdeck trace --id msg_1"
+          }
+        ],
+        "mode": "run_loop",
+        "next_command": "agentdeck capture-reply --agent planner --message-id msg_1",
+        "ok": true,
+        "plan_id": "pln_1",
+        "policy": {
+          "allowed_agents": [
+            "planner",
+            "coder",
+            "reviewer"
+          ],
+          "max_approvals": 9
+        },
+        "reply_file_ready": false,
+        "requires_explicit_user": true,
+        "safety": "delegated",
+        "skipped": [
+          {
+            "agent_id": "coder",
+            "approval_id": "apv_2",
+            "reason": "awaiting earlier step completion"
+          },
+          {
+            "agent_id": "reviewer",
+            "approval_id": "apv_3",
+            "reason": "awaiting earlier step completion"
+          }
+        ],
+        "stopped_reason": "waiting_for_reply"
+      }
+    },
+    {
+      "exit": 0,
+      "payload": {
+        "auto_approved": 0,
+        "blocked": [],
+        "captured_replies": [
+          {
+            "agent_id": "planner",
+            "captured_from": "file",
+            "message_id": "msg_1",
+            "reply_id": "rep_1",
+            "trace_command": "agentdeck trace --id rep_1"
+          }
+        ],
+        "dispatched": [
+          {
+            "agent_id": "coder",
+            "approval_id": "apv_2",
+            "message_id": "msg_2",
+            "trace_command": "agentdeck trace --id msg_2"
+          }
+        ],
+        "mode": "run_loop",
+        "next_command": "agentdeck capture-reply --agent coder --message-id msg_2",
+        "ok": true,
+        "plan_id": "pln_1",
+        "policy": {
+          "allowed_agents": [
+            "planner",
+            "coder",
+            "reviewer"
+          ],
+          "max_approvals": 9
+        },
+        "reply_file_ready": false,
+        "requires_explicit_user": true,
+        "safety": "delegated",
+        "skipped": [
+          {
+            "agent_id": "reviewer",
+            "approval_id": "apv_3",
+            "reason": "awaiting earlier step completion"
+          }
+        ],
+        "stopped_reason": "waiting_for_reply"
+      }
+    },
+    {
+      "exit": 0,
+      "payload": {
+        "auto_approved": 0,
+        "blocked": [],
+        "captured_replies": [
+          {
+            "agent_id": "coder",
+            "captured_from": "file",
+            "message_id": "msg_2",
+            "reply_id": "rep_2",
+            "trace_command": "agentdeck trace --id rep_2"
+          }
+        ],
+        "dispatched": [
+          {
+            "agent_id": "reviewer",
+            "approval_id": "apv_3",
+            "message_id": "msg_3",
+            "trace_command": "agentdeck trace --id msg_3"
+          }
+        ],
+        "mode": "run_loop",
+        "next_command": "agentdeck capture-reply --agent reviewer --message-id msg_3",
+        "ok": true,
+        "plan_id": "pln_1",
+        "policy": {
+          "allowed_agents": [
+            "planner",
+            "coder",
+            "reviewer"
+          ],
+          "max_approvals": 9
+        },
+        "reply_file_ready": false,
+        "requires_explicit_user": true,
+        "safety": "delegated",
+        "skipped": [],
+        "stopped_reason": "waiting_for_reply"
+      }
+    },
+    {
+      "exit": 0,
+      "payload": {
+        "auto_approved": 0,
+        "blocked": [],
+        "captured_replies": [
+          {
+            "agent_id": "reviewer",
+            "captured_from": "file",
+            "message_id": "msg_3",
+            "reply_id": "rep_3",
+            "trace_command": "agentdeck trace --id rep_3"
+          }
+        ],
+        "dispatched": [],
+        "mode": "run_loop",
+        "next_command": "agentdeck leader summary --plan-id pln_1",
+        "ok": true,
+        "plan_id": "pln_1",
+        "policy": {
+          "allowed_agents": [
+            "planner",
+            "coder",
+            "reviewer"
+          ],
+          "max_approvals": 9
+        },
+        "requires_explicit_user": true,
+        "safety": "delegated",
+        "skipped": [],
+        "stopped_reason": "complete"
+      }
+    }
+  ]
+}

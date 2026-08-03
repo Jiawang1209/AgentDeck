@@ -4,6 +4,40 @@
 
 ## 2026-08-03
 
+### Guard the run-loop wave by dependency satisfaction, not step position
+
+- **Type**: feat
+- **Motivation**: Round 14 的 `coder → reviewer → planner` 里两个 reviewer
+  审的是**同一份已完成的实现**、彼此毫无依赖,却只能一前一后跑。守卫要
+  守的真正性质是"绝不派发输入尚未就绪的工作","编号最早"只是它在纯线性
+  plan 上一个充分但过强的实现。
+- **What**: `_run_loop_single_wave` 的派发守卫从
+  `approval.step != earliest_incomplete` 换成"该 step 的全部**祖先**都已
+  完成"(祖先来自纯模块 `step_dag`,新 helper `_plan_body_steps` 提供带组
+  标记的 step 表,未知 plan 回落线性链)。并行引入的唯一新风险是同 agent
+  冲突,复用 `run-loop --all` 的 `_busy_agents` **同一规则**(不另写一份):
+  已有 dispatched-but-unreplied message 的 agent 本 wave 不再收任务,busy
+  集合随本 wave 派发增长;命中者保持 `approved`,进 `skipped[]` 且 reason
+  是 `agent busy this wave`——与顺序持留的
+  `awaiting earlier step completion` 明确可区分。4b gate 诚实化分支同时
+  覆盖两类持留。`_step_is_incomplete`、review 组展开、review 迭代触发、
+  worktree/merge 路径、`run-loop --all` 均**未改动**。
+- **Impact**: 无 `[review]` 配置的项目行为不变;配了 `reviewers` 的项目
+  里,一个 review 环节的全部成员在共享输入完成后**同一 wave 内一起派发**。
+  安全边界逐条不变:每个 step 仍各自过审批门(并行不合并审批)、白名单 +
+  `max_approvals` + `max_review_rounds` 预算不变、绝不 force-spawn、只认
+  文件通道回复、"组完成才判定"的 verdict 规则一字不动(保护迭代预算的
+  正是这条规则,不是串行)、`worktree merge-plan` 仍按 step 编号顺序合并。
+- **Verification**: 新增 `tests/test_step_dag_wave.py` 7 项。最重要的一条是
+  **零行为变化差分**:`tests/fixtures/run_loop_linear_wave_golden.json` 是
+  在本改动**落地之前**从引擎录下的两条线性场景(完整驱动到 complete、
+  中间 step 无 pane 的 blocked)的逐 wave payload 全文(id 归一化后),
+  改动后必须逐字段复现——不是感觉上的"看起来没变"。另有组扇出(同一
+  wave 内 reviewer+planner 一起派发)、依赖未满足(实现步未回复时两个
+  review step 都被持留)、同 agent 冲突(只派一个,另一个带可区分 reason
+  留在 `skipped[]` 且仍是 approved)、组只报到一人时不判定也不追加迭代轮。
+  全量 5200 passed / 3 skipped。
+
 ### Derive step dependencies in a pure module
 
 - **Type**: feat

@@ -177,6 +177,7 @@ from .review_iteration import (
     rework_step_numbers,
     validate_refined_task,
 )
+from .step_dag import ancestors_for, derive_step_ancestors
 from .gate_preview import derive_gate_preview, render_gate_preview
 from .run_loop_host import (
     HUMAN_GATE_FIELDS,
@@ -20663,6 +20664,19 @@ def approval_auto_command(args: argparse.Namespace) -> int:
     return 0
 
 
+def _plan_body_steps(store: StateStore, plan_id: str) -> list[dict[str, object]]:
+    """This plan's steps, carrying the review-group markers the DAG reads.
+
+    An unknown plan yields no steps, which makes the derivation fall back to the
+    plain linear chain -- never to a wider one.
+    """
+    try:
+        steps = store.plan_status(plan_id).get("steps", [])
+    except KeyError:
+        return []
+    return [step for step in steps if isinstance(step, dict)]
+
+
 def _busy_agents(store: StateStore) -> set[str]:
     """Agents occupied by a dispatched-but-unreplied step, across all plans."""
     state = store.load()
@@ -22539,13 +22553,19 @@ def _run_loop_single_wave(
         elif appended.get("reason") == "rounds_exhausted":
             review_iterations.append({"skipped": "rounds_exhausted"})
 
-    # 3) dispatch approved approvals for the earliest incomplete step only
-    # (sequential plan semantics): later approved steps stay approved and are
-    # reported as skipped with an explicit reason.
+    # 3) dispatch every approved approval whose **dependencies are satisfied**
+    # (2026-08-03 DAG slice): the property this guard protects has always been
+    # "never dispatch work whose inputs are not ready" -- "earliest step number"
+    # was merely a sufficient but too strong implementation of it on purely
+    # linear plans. Steps whose inputs are not ready stay approved and are
+    # reported as skipped with an explicit reason. On a plan without review
+    # groups the two formulations are provably equivalent (see step_dag), so
+    # linear projects behave byte for byte as before.
     backend = TmuxBackend()
     dispatched: list[dict[str, object]] = []
     blocked: list[dict[str, object]] = []
     sequence_held: list[dict[str, object]] = []
+    contention_held: list[dict[str, object]] = []
     has_error = False
     state_seq = store.load()
     replied_now = {
@@ -22566,18 +22586,39 @@ def _run_loop_single_wave(
             return False
         return True
 
-    incomplete_steps = [
+    incomplete_steps = {
         int(item.get("step") or 0) for item in seq_approvals if _step_is_incomplete(item)
-    ]
-    earliest_incomplete = min(incomplete_steps) if incomplete_steps else None
+    }
+    # The guard consumes the **transitive** ancestor set, not the direct edges:
+    # on a linear plan "every ancestor of N is complete" is exactly "N is the
+    # earliest incomplete step", which is why this is not a relaxation there.
+    # Review-group siblings are not each other's ancestors, so they fan out.
+    step_ancestors = derive_step_ancestors(_plan_body_steps(store, plan_id))
+    # One pane must never receive two tasks at once -- the single new risk
+    # parallelism introduces. Same rule as run-loop --all: an agent already
+    # holding a dispatched-but-unreplied message gets nothing more this wave,
+    # and the set grows as this wave dispatches.
+    busy_agents = _busy_agents(store)
     approved_now = [a for a in seq_approvals if a.get("status") == "approved"]
     for approval in approved_now:
         approval_id = str(approval.get("approval_id", ""))
-        if earliest_incomplete is not None and int(approval.get("step") or 0) != earliest_incomplete:
+        step_number = int(approval.get("step") or 0)
+        if any(
+            ancestor in incomplete_steps
+            for ancestor in ancestors_for(step_ancestors, step_number)
+        ):
             sequence_held.append({
                 "approval_id": approval_id,
                 "agent_id": approval.get("agent_id"),
                 "reason": "awaiting earlier step completion",
+            })
+            continue
+        agent_id = approval.get("agent_id")
+        if agent_id in busy_agents:
+            contention_held.append({
+                "approval_id": approval_id,
+                "agent_id": agent_id,
+                "reason": "agent busy this wave",
             })
             continue
         preview = _approval_dispatch_preview_card(approval, config, store)
@@ -22598,6 +22639,7 @@ def _run_loop_single_wave(
                 "message_id": result["message_id"],
                 "trace_command": result["trace_command"],
             })
+            busy_agents.add(agent_id)
         except Exception as exc:  # dispatch failed -- stop at the error gate
             has_error = True
             store.append_event(EventRecord.create("run_loop_dispatch_failed", {
@@ -22608,13 +22650,14 @@ def _run_loop_single_wave(
     review = store.leader_review(plan_id)
     stopped_reason, next_command = run_loop_gate(review, has_error, plan_id)
 
-    # 4b) sequential-hold refinement: when this wave held later steps, nothing
-    # actually blocked, and the earliest step is still awaiting its reply, the
-    # honest gate is waiting_for_reply on that earlier step -- not a dispatch
-    # recommendation for an intentionally held approval.
+    # 4b) hold refinement: when this wave intentionally held approvals (either
+    # because their inputs are not ready, or because their agent is already
+    # busy), nothing actually blocked, and an earlier step is still awaiting its
+    # reply, the honest gate is waiting_for_reply on that earlier step -- not a
+    # dispatch recommendation for an intentionally held approval.
     waiting_message_id = str(review.get("message_id") or "")
     waiting_agent_id = str(review.get("agent_id") or "")
-    if sequence_held and not blocked and stopped_reason == "blocked":
+    if (sequence_held or contention_held) and not blocked and stopped_reason == "blocked":
         state_after = store.load()
         replied_after = {
             str(reply.get("message_id"))
@@ -22643,7 +22686,7 @@ def _run_loop_single_wave(
         "auto_approved": len(selected),
         "dispatched": len(dispatched),
         "blocked": len(blocked),
-        "skipped": len(skipped) + len(sequence_held),
+        "skipped": len(skipped) + len(sequence_held) + len(contention_held),
         "stopped_reason": stopped_reason,
     }))
 
@@ -22659,7 +22702,7 @@ def _run_loop_single_wave(
         "skipped": [
             {"approval_id": s.get("approval_id"), "agent_id": s.get("agent_id"), "reason": s.get("reason")}
             for s in skipped
-        ] + sequence_held,
+        ] + sequence_held + contention_held,
         "stopped_reason": stopped_reason,
         "next_command": next_command,
         "policy": {"allowed_agents": list(policy.allowed_agents), "max_approvals": policy.max_approvals},
