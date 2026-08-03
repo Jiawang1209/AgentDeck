@@ -5,6 +5,10 @@ from pathlib import Path
 
 from agentdeck import cli
 from agentdeck.config import write_default_config
+from agentdeck.contracts import (
+    delegation_gate_preview_example,
+    validate_delegation_gate_preview_contract,
+)
 from agentdeck.state import StateStore
 
 
@@ -1218,3 +1222,241 @@ def test_boxes_watch_releases_composite_box_with_provenance(tmp_path, monkeypatc
     assert len(released["matched_segments"]) == 9
     assert fake.sent == [("%50", "")]
     assert '"match_kind": "composite"' in _events_text(root)
+
+
+# --- delegation gate-preview: 从人类门一键决策的桥 -------------------------
+
+# Round 14 的真实框:一道 Playwright 框卡了两天,846 wave 里 834 个空转在它上面。
+ROUND14_PLAYWRIGHT_COMMAND = (
+    "/Users/x/.codex/skills/playwright/scripts/playwright_cli.sh "
+    "open file:///Users/x/proj/index.html"
+)
+
+
+def _write_human_gate_record(root: Path, gate: dict[str, object] | None) -> None:
+    from agentdeck.run_loop_host import write_host_record
+
+    write_host_record(root, {
+        "pid": None, "plan_id": "pln_gate_1", "wave_count": 3, "max_waves": 20,
+        "interval": 10.0, "last_gate": "waiting_for_reply",
+        "last_wave_at": "2026-08-03T02:00:00+00:00",
+        "stopped_reason": "human_gate" if gate else "gate_reached",
+        "log_path": ".agentdeck/run-loop-host/host.log",
+        "human_gate": gate,
+    })
+
+
+class ExplodingTmuxBackend:
+    """缺省路径**零 pane 读取**的记录监视器:任何一次读取都会被点名。"""
+
+    def __init__(self) -> None:
+        self.captures: list[tuple[str, int]] = []
+        self.sent: list[tuple[str, str]] = []
+
+    def capture_output(self, _config, pane_id: str, lines: int = 200) -> str:
+        self.captures.append((pane_id, lines))
+        raise AssertionError("gate-preview default source must not read any pane")
+
+    def send_input(self, _config, pane_id: str, text: str) -> None:  # pragma: no cover
+        raise AssertionError("gate-preview must never send tmux input")
+
+
+def _read_only_snapshot(root: Path) -> tuple[bytes, bytes]:
+    """`state.json` 与 events 的逐字节快照(尚未落盘的算空,消失同样是漂移)。"""
+    state = root / ".agentdeck" / "state" / "state.json"
+    events = root / ".agentdeck" / "state" / "events.jsonl"
+    return (
+        state.read_bytes() if state.exists() else b"",
+        events.read_bytes() if events.exists() else b"",
+    )
+
+
+def _seed_state_file(root: Path) -> None:
+    """先把 state.json 真正落盘,免得"文件不存在"冒充"零写"。"""
+    store = StateStore(root)
+    store.save(store.load())
+
+
+def test_gate_preview_reads_the_host_record_without_touching_any_pane(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    _write_human_gate_record(root, {
+        "agent_id": "planner", "box_kind": "command",
+        "command": ROUND14_PLAYWRIGHT_COMMAND,
+        "mcp_server": None, "mcp_tool": None,
+        "waiting_hint": "Press enter to confirm or esc to cancel",
+    })
+    backend = ExplodingTmuxBackend()
+    monkeypatch.setattr(cli, "TmuxBackend", lambda: backend)
+    _seed_state_file(root)
+    before = _read_only_snapshot(root)
+
+    assert cli.main(["delegation", "gate-preview", "--json"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+
+    assert payload["mode"] == "delegation_gate_preview"
+    assert payload["source"] == "host_record"
+    assert payload["agent_id"] == "planner"
+    assert payload["command"] == ROUND14_PLAYWRIGHT_COMMAND
+    assert payload["candidate_count"] == 3
+    assert [item["prefix"] for item in payload["candidates"]] == [
+        ROUND14_PLAYWRIGHT_COMMAND,
+        "/Users/x/.codex/skills/playwright/scripts/playwright_cli.sh open",
+        "/Users/x/.codex/skills/playwright/scripts/playwright_cli.sh",
+    ]
+    assert payload["release_command"] == (
+        "agentdeck agent release-box --agent planner --confirm"
+    )
+    # 缺省路径零 pane 读取——这正对应"走开段刚停下来告诉你"那个流程。
+    assert backend.captures == []
+    assert backend.sent == []
+    # 纯只读:state 与 events 逐字节相同。
+    assert _read_only_snapshot(root) == before
+
+
+def test_gate_preview_never_recommends_a_candidate(tmp_path, monkeypatch, capsys) -> None:
+    """绝不推荐的回归钉:宽度必须由人选,程序不得替人挑一条。"""
+    root = prepare_project(tmp_path, monkeypatch)
+    _write_human_gate_record(root, {
+        "agent_id": "planner", "box_kind": "command",
+        "command": ROUND14_PLAYWRIGHT_COMMAND,
+        "mcp_server": None, "mcp_tool": None, "waiting_hint": None,
+    })
+
+    assert cli.main(["delegation", "gate-preview"]) == 0
+    rendered = capsys.readouterr().out
+    lowered = rendered.lower()
+    for word in ("建议", "推荐", "recommend", "safe", "best", "✅"):
+        assert word not in lowered
+
+    assert cli.main(["delegation", "gate-preview", "--json"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    marker_keys = {"recommended", "selected", "preferred", "suggested", "default"}
+    for candidate in payload["candidates"]:
+        assert not marker_keys & set(candidate)
+    # 含占位符的 grant control 必须 disabled(仓库既有 control 纪律)。
+    grant = next(c for c in payload["controls"] if c["kind"] == "grant")
+    assert "<prefix>" in grant["command"] and grant["enabled"] is False
+
+
+def test_gate_preview_mcp_box_has_no_ladder(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    _write_human_gate_record(root, {
+        "agent_id": "planner", "box_kind": "mcp_tool", "command": None,
+        "mcp_server": "chrome-devtools", "mcp_tool": "hover",
+        "waiting_hint": "enter to submit | esc to cancel",
+    })
+
+    assert cli.main(["delegation", "gate-preview", "--json"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["candidates"] == [] and payload["candidate_count"] == 0
+    assert payload["grant_command"] == (
+        "agentdeck delegation grant --agent planner "
+        "--mcp-server chrome-devtools --mcp-tool hover --confirm"
+    )
+    grant = next(c for c in payload["controls"] if c["kind"] == "grant")
+    assert grant["enabled"] is True and grant["blocker"] is None
+
+
+def test_gate_preview_agent_source_uses_the_live_read_only_scan(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    """`--follow` 不写宿主记录,它的用户只能走实时扫描这条路。"""
+    root = prepare_project(tmp_path, monkeypatch)
+    bind_coder(root)
+    fake = FakeTmuxBackend()
+    fake.output = CODEX_AUTH_BOX
+    monkeypatch.setattr(cli, "TmuxBackend", lambda: fake)
+    before = _read_only_snapshot(root)  # bind_coder 已把 state.json 落盘
+
+    assert cli.main(["delegation", "gate-preview", "--agent", "coder", "--json"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["source"] == "agent_scan"
+    assert payload["agent_id"] == "coder"
+    assert payload["command"] == "node tests/focus-carousel-tab-order.mjs"
+    assert [item["prefix"] for item in payload["candidates"]] == [
+        "node tests/focus-carousel-tab-order.mjs",
+        "node",
+    ]
+    assert payload["candidates"][-1]["is_widest"] is True
+    # 只读扫描:一次 capture,零输入。
+    assert fake.sent == []
+    assert _read_only_snapshot(root) == before
+
+
+def test_gate_preview_empty_states_are_explicit(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    bind_coder(root)
+    _seed_state_file(root)
+    before = _read_only_snapshot(root)
+
+    # 1) 无宿主记录。
+    assert cli.main(["delegation", "gate-preview"]) == 1
+    err = capsys.readouterr().err
+    assert "no run-loop host record" in err
+    assert "--agent" in err  # --follow 用户的出路必须指明
+
+    # 2) 有记录但没有人类门。
+    _write_human_gate_record(root, None)
+    assert cli.main(["delegation", "gate-preview"]) == 1
+    assert "no human gate" in capsys.readouterr().err
+
+    # 3) --agent 但屏上无框。
+    fake = FakeTmuxBackend()
+    fake.output = "idle pane\n"
+    monkeypatch.setattr(cli, "TmuxBackend", lambda: fake)
+    assert cli.main(["delegation", "gate-preview", "--agent", "coder"]) == 1
+    assert "no authorization box detected" in capsys.readouterr().err
+
+    assert _read_only_snapshot(root) == before
+
+
+def test_gate_preview_says_so_when_the_box_is_already_delegated(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    bind_coder(root)
+    fake = FakeTmuxBackend()
+    fake.output = CODEX_AUTH_BOX
+    monkeypatch.setattr(cli, "TmuxBackend", lambda: fake)
+    cli.main(["delegation", "grant", "--agent", "coder", "--prefix", "node tests/", "--confirm"])
+    capsys.readouterr()
+
+    assert cli.main(["delegation", "gate-preview", "--agent", "coder"]) == 1
+    err = capsys.readouterr().err
+    assert "already covered by an active delegation" in err
+    assert "agentdeck agent release-box --agent coder --confirm" in err
+
+
+def test_gate_preview_contract_is_part_of_the_delegation_family(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    prepare_project(tmp_path, monkeypatch)
+    assert cli.main(["contract", "delegation", "--example"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["gate_preview_command_template"] == (
+        "agentdeck delegation gate-preview [--agent <agent_id>]"
+    )
+    assert "candidates" in payload["gate_preview_response_fields"]
+    assert "unpinned_tail" in payload["gate_preview_candidate_fields"]
+    example = payload["example_gate_preview"]
+    assert example["mode"] == "delegation_gate_preview"
+    assert validate_delegation_gate_preview_contract(example)["ok"] is True
+
+
+def test_gate_preview_contract_validator_rejects_a_broken_payload() -> None:
+    example = delegation_gate_preview_example()
+    assert validate_delegation_gate_preview_contract(example)["ok"] is True
+
+    broken = dict(example)
+    broken["candidate_count"] = 99
+    assert validate_delegation_gate_preview_contract(broken)["ok"] is False
+
+    broken = dict(example)
+    broken["source"] = "guesswork"
+    assert validate_delegation_gate_preview_contract(broken)["ok"] is False
+
+    broken = dict(example)
+    broken["candidates"] = [{"prefix": "node"}]
+    assert validate_delegation_gate_preview_contract(broken)["ok"] is False

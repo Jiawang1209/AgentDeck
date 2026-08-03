@@ -33,6 +33,12 @@ from .models import (
     PROJECT_VIEW_SEMANTIC_AUTHORITY_FIELDS,
 )
 from .providers.plan_schema import LEADER_PLAN_SCHEMA_VERSION
+from .gate_preview import (
+    GATE_PREVIEW_CANDIDATE_FIELDS,
+    GATE_PREVIEW_CONTROL_FIELDS,
+    GATE_PREVIEW_MODE,
+    GATE_PREVIEW_SOURCES,
+)
 from .review_group import REVIEW_GROUP_RULE
 from .role_topology import (
     ROLE_BINDING_KINDS,
@@ -1004,6 +1010,29 @@ DELEGATION_BOXES_RESPONSE_FIELDS = (
     "release_command",
 )
 
+DELEGATION_GATE_PREVIEW_RESPONSE_FIELDS = (
+    "ok",
+    "mode",
+    # 证据来源:host_record(缺省,零 pane 读取)或 agent_scan(一次只读扫描)。
+    "source",
+    "agent_id",
+    "box_kind",
+    "command",
+    "mcp_server",
+    "mcp_tool",
+    "waiting_hint",
+    "candidates",
+    "candidate_count",
+    "grant_command",
+    "release_command",
+    "verification_notice",
+    "controls",
+)
+
+# 候选项/control 字段清单单一来源自纯模块 `gate_preview`,契约层绝不另抄一份。
+DELEGATION_GATE_PREVIEW_CANDIDATE_FIELDS = GATE_PREVIEW_CANDIDATE_FIELDS
+DELEGATION_GATE_PREVIEW_CONTROL_FIELDS = GATE_PREVIEW_CONTROL_FIELDS
+
 BOXES_WATCH_RESPONSE_FIELDS = (
     "ok",
     "mode",
@@ -1071,6 +1100,124 @@ def delegation_list_example() -> dict[str, object]:
     }
 
 
+def validate_delegation_gate_preview_contract(
+    payload: dict[str, object],
+) -> dict[str, object]:
+    errors: list[str] = []
+    for field in DELEGATION_GATE_PREVIEW_RESPONSE_FIELDS:
+        if field not in payload:
+            errors.append(f"missing delegation_gate_preview field: {field}")
+    if payload.get("mode") != GATE_PREVIEW_MODE:
+        errors.append(
+            f"delegation_gate_preview.mode must be {GATE_PREVIEW_MODE}, "
+            f"got {payload.get('mode')}"
+        )
+    if payload.get("source") not in GATE_PREVIEW_SOURCES:
+        errors.append(
+            "delegation_gate_preview.source must be one of "
+            f"{list(GATE_PREVIEW_SOURCES)}, got {payload.get('source')}"
+        )
+    candidates = payload.get("candidates")
+    if not isinstance(candidates, list):
+        errors.append("delegation_gate_preview.candidates must be a list")
+    else:
+        if payload.get("candidate_count") != len(candidates):
+            errors.append(
+                "delegation_gate_preview.candidate_count must match candidates length"
+            )
+        for index, candidate in enumerate(candidates):
+            if not isinstance(candidate, dict):
+                errors.append(
+                    f"delegation_gate_preview.candidates[{index}] must be an object"
+                )
+                continue
+            for field in DELEGATION_GATE_PREVIEW_CANDIDATE_FIELDS:
+                if field not in candidate:
+                    errors.append(
+                        f"missing delegation_gate_preview.candidates[{index}] "
+                        f"field: {field}"
+                    )
+            # 绝不推荐:一条候选带上"被选中"标记,GUI 就会替人做宽度决定。
+            for marker in ("recommended", "selected", "preferred", "suggested"):
+                if marker in candidate:
+                    errors.append(
+                        f"delegation_gate_preview.candidates[{index}] must not carry "
+                        f"a {marker} marker: the width is chosen by a human"
+                    )
+        # MCP 框没有梯子;命令框的梯子必须由窄到宽,最后一条才是裸单 token。
+        if candidates and not candidates[-1].get("is_widest"):
+            errors.append(
+                "delegation_gate_preview.candidates must end with the widest entry"
+            )
+        if sum(1 for item in candidates if isinstance(item, dict) and item.get("is_widest")) > 1:
+            errors.append(
+                "delegation_gate_preview.candidates must carry exactly one widest entry"
+            )
+    controls = payload.get("controls")
+    if not isinstance(controls, list) or not controls:
+        errors.append("delegation_gate_preview.controls must be a non-empty list")
+    else:
+        for index, control in enumerate(controls):
+            if not isinstance(control, dict):
+                errors.append(
+                    f"delegation_gate_preview.controls[{index}] must be an object"
+                )
+                continue
+            for field in DELEGATION_GATE_PREVIEW_CONTROL_FIELDS:
+                if field not in control:
+                    errors.append(
+                        f"missing delegation_gate_preview.controls[{index}] "
+                        f"field: {field}"
+                    )
+            if not control.get("enabled") and not control.get("blocker"):
+                errors.append(
+                    f"delegation_gate_preview.controls[{index}] is disabled "
+                    "and must carry a blocker"
+                )
+            command = control.get("command")
+            # 含占位符的 control 必须 disabled(仓库既有 control 纪律)。
+            if isinstance(command, str) and "<" in command and control.get("enabled"):
+                errors.append(
+                    f"delegation_gate_preview.controls[{index}] carries a placeholder "
+                    "and must be disabled"
+                )
+    if not payload.get("verification_notice"):
+        errors.append("delegation_gate_preview.verification_notice must be non-empty")
+    return {"ok": not errors, "errors": errors}
+
+
+def delegation_gate_preview_example() -> dict[str, object]:
+    from .gate_preview import derive_gate_preview
+
+    # 例子直接由纯推导产出:契约示例与实现永不各写一份而悄悄分叉。
+    return derive_gate_preview(
+        agent_id="planner",
+        box_kind="command",
+        command=(
+            "/Users/x/.codex/skills/playwright/scripts/playwright_cli.sh "
+            "open file:///Users/x/proj/index.html"
+        ),
+        mcp_server=None,
+        mcp_tool=None,
+        waiting_hint="Press enter to confirm or esc to cancel",
+        source="host_record",
+    )
+
+
+def delegation_gate_preview_mcp_example() -> dict[str, object]:
+    from .gate_preview import derive_gate_preview
+
+    return derive_gate_preview(
+        agent_id="planner",
+        box_kind="mcp_tool",
+        command=None,
+        mcp_server="chrome-devtools",
+        mcp_tool="hover",
+        waiting_hint="enter to submit | esc to cancel",
+        source="agent_scan",
+    )
+
+
 def delegation_boxes_example() -> dict[str, object]:
     return {
         "ok": True,
@@ -1126,12 +1273,18 @@ def delegation_contract_payload(contract_path: Path) -> dict[str, object]:
         "boxes_command_template": "agentdeck agent boxes --agent <agent_id>",
         "release_box_command_template": "agentdeck agent release-box --agent <agent_id> --confirm",
         "watch_command_template": "agentdeck boxes watch --confirm --iterations <n> --interval <seconds>",
+        # 人类门与 grant 之间那座桥:纯只读,绝不推荐任何一条前缀。
+        "gate_preview_command_template": "agentdeck delegation gate-preview [--agent <agent_id>]",
         "contract_path": str(contract_path),
         "contract_exists": contract_path.exists(),
         "list_response_fields": list(DELEGATION_LIST_RESPONSE_FIELDS),
         "delegation_item_fields": list(DELEGATION_ITEM_FIELDS),
         "boxes_response_fields": list(DELEGATION_BOXES_RESPONSE_FIELDS),
         "watch_response_fields": list(BOXES_WATCH_RESPONSE_FIELDS),
+        "gate_preview_response_fields": list(DELEGATION_GATE_PREVIEW_RESPONSE_FIELDS),
+        "gate_preview_candidate_fields": list(DELEGATION_GATE_PREVIEW_CANDIDATE_FIELDS),
+        "gate_preview_control_fields": list(DELEGATION_GATE_PREVIEW_CONTROL_FIELDS),
+        "gate_preview_sources": list(GATE_PREVIEW_SOURCES),
         "project_view_schema_version": PROJECT_VIEW_SCHEMA_VERSION,
         "project_view_contract": "agentdeck contract project-view",
     }
@@ -1146,6 +1299,8 @@ def delegation_contract_response(contract_path: Path, include_example: bool = Fa
         payload["example_delegation_item_fields"] = list(list_example["items"][0])
         payload["example_boxes"] = delegation_boxes_example()
         payload["example_watch"] = boxes_watch_example()
+        payload["example_gate_preview"] = delegation_gate_preview_example()
+        payload["example_gate_preview_mcp"] = delegation_gate_preview_mcp_example()
     return payload
 
 

@@ -4,6 +4,33 @@
 
 ## 2026-08-03
 
+### Bridge a human gate to an explicit delegation decision
+
+- **Type**: feat
+- **Motivation**: human_gate 让走开段停得诚实,但停下之后仍是死路——人得
+  自己把命令抄出来、想清楚该 grant 什么前缀、手敲 grant、再手动放行,而且
+  下次同类命令还会再停一次。Round 14 那道 Playwright 框正是这样卡了两天。
+  宿主已握有完整框证据,`delegation grant` 也早已存在,缺的只是桥。
+- **What**: `agentdeck delegation gate-preview [--agent <id>]`,**纯只读**。
+  证据两条来源:缺省读宿主记录(**零 pane 读取**),`--agent` 走
+  `agent boxes` 的实时只读扫描(`--follow` 不写宿主记录,其用户只能走这条)。
+  命令框输出**确定性前缀梯子**(整条命令=最窄 → 首个 token=最宽,上限 5 条、
+  首尾必在),每条标注 `unpinned_tail`(该前缀没钉住、因而可以是任何东西的
+  那段)与 `is_widest`;MCP 框精确无梯子。输出摊开完整两步闭环
+  (`grant` → `release-box`)但只是文本。推导在纯模块
+  `src/agentdeck/gate_preview.py`(零 IO、不 import cli/state)。
+- **Impact**: 契约**不新增第 46 个**,扩展既有 delegation 族(同族);索引
+  仍为 45。510 行纯新增、0 行删除——既有代码与测试一行未改。
+- **Verification**: 全量 5180 passed / 3 skipped,compileall 干净。
+  真项目渲染实测(Round-14 形状的 Playwright 命令)三级梯子正确。
+  **两条不可放松的设计点各有回归钉**:①`test_gate_preview_never_recommends_a_candidate`
+  ——输出不得含"建议/recommended/safe"字样,且没有任何候选带选中标记
+  (**宽度必须由人选**:`playwright_cli.sh` 与 `playwright_cli.sh open` 的
+  授权宽度差数量级);②`test_gate_preview_reads_the_host_record_without_touching_any_pane`
+  ——缺省路径零 pane 读取。刻意**不做**危险命令模式检测,并在输出末尾明说
+  "没有警告不代表无害"——部分检测器会让"没有警告"被读成"安全",而那正是
+  本项目反复在修的"显示了不成立的事实"那一类。
+
 ### Derive the authorization-box grant ladder as a pure function
 
 - **Type**: feat

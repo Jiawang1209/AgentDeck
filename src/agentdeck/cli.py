@@ -116,6 +116,7 @@ from .contracts import (
     validate_approval_dispatch_ready_contract,
     validate_artifacts_contract,
     validate_worktree_list_contract,
+    validate_delegation_gate_preview_contract,
     validate_delegation_list_contract,
     validate_worktree_diff_contract,
     validate_continue_contract,
@@ -176,7 +177,9 @@ from .review_iteration import (
     rework_step_numbers,
     validate_refined_task,
 )
+from .gate_preview import derive_gate_preview, render_gate_preview
 from .run_loop_host import (
+    HUMAN_GATE_FIELDS,
     append_host_log,
     host_log_path,
     human_gate_candidate,
@@ -11207,6 +11210,104 @@ def delegation_revoke_command(args: argparse.Namespace) -> int:
         )
     )
     _print_json({"ok": True, "mode": "delegation_revoked", **record})
+    return 0
+
+
+# 空态退出码:没有门可预览不是崩溃,但也绝不是成功——固定 1,让脚本可判。
+_GATE_PREVIEW_NOTHING_TO_PREVIEW = 1
+
+
+def _gate_preview_from_host_record() -> tuple[dict[str, object] | None, int]:
+    """缺省来源:走开段的宿主记录。**零 pane 读取**——连 tmux 都不实例化。"""
+    record = read_host_record(project_root())
+    if record is None:
+        print(
+            "no run-loop host record at .agentdeck/run-loop-host/host.json",
+            file=sys.stderr,
+        )
+        print(
+            "  a foreground run-loop --follow never writes one; preview its box with: "
+            "agentdeck delegation gate-preview --agent <agent_id>",
+            file=sys.stderr,
+        )
+        return None, _GATE_PREVIEW_NOTHING_TO_PREVIEW
+    gate = record.get("human_gate")
+    if not isinstance(gate, dict) or not gate.get("agent_id"):
+        print(
+            "no human gate in the run-loop host record "
+            f"(stopped_reason={record.get('stopped_reason')})",
+            file=sys.stderr,
+        )
+        return None, _GATE_PREVIEW_NOTHING_TO_PREVIEW
+    return gate, 0
+
+
+def _gate_preview_from_agent_scan(agent_id: str) -> tuple[dict[str, object] | None, int]:
+    """`--agent` 来源:一次只读实时框扫描。
+
+    复用既有 `agent boxes` 命令核心(仓库既有的 `_run_reused_command` 纪律),
+    绝不复制它的框解析逻辑,也绝不新增第二个 pane 读取面。`--follow` 不写
+    宿主记录,它的用户只能走这条路,所以这条必须有。
+    """
+    exit_code, box = _run_reused_command(
+        agent_boxes_command, argparse.Namespace(agent=agent_id)
+    )
+    if exit_code != 0 or not isinstance(box, dict):
+        return None, exit_code or 1
+    if not box.get("box_present"):
+        print(f"no authorization box detected for agent: {agent_id}", file=sys.stderr)
+        return None, _GATE_PREVIEW_NOTHING_TO_PREVIEW
+    if box.get("delegated"):
+        # 已被覆盖的框不需要再 grant 一次;此时唯一缺的是那一次显式放行。
+        print(
+            "this box is already covered by an active delegation: "
+            f"{box.get('delegation_id')}",
+            file=sys.stderr,
+        )
+        print(f"  release it once with: {box.get('release_command')}", file=sys.stderr)
+        return None, _GATE_PREVIEW_NOTHING_TO_PREVIEW
+    return {field: box.get(field) for field in HUMAN_GATE_FIELDS} | {
+        "agent_id": agent_id
+    }, 0
+
+
+def delegation_gate_preview_command(args: argparse.Namespace) -> int:
+    """把一道停住走开段的授权框摊开成"grant 什么 → 再放行一次"——**纯只读**。
+
+    它不写 state、不追加事件、不 grant、不 release、不调 provider、不发送任何
+    tmux 输入。**绝不推荐**任何一条前缀:同一道框不同前缀的授权宽度差着数量级,
+    该由谁承担风险,谁就该自己挑那一条。
+    """
+    config, store, exit_code = _load_project_or_error()
+    if config is None or store is None:
+        return exit_code
+    if args.agent:
+        gate, exit_code = _gate_preview_from_agent_scan(args.agent)
+        source = "agent_scan"
+    else:
+        gate, exit_code = _gate_preview_from_host_record()
+        source = "host_record"
+    if gate is None:
+        return exit_code
+    payload = derive_gate_preview(
+        agent_id=str(gate.get("agent_id")),
+        box_kind=gate.get("box_kind"),
+        command=gate.get("command"),
+        mcp_server=gate.get("mcp_server"),
+        mcp_tool=gate.get("mcp_tool"),
+        waiting_hint=gate.get("waiting_hint"),
+        source=source,
+    )
+    validation = validate_delegation_gate_preview_contract(payload)
+    if not validation["ok"]:
+        print("delegation gate-preview contract validation failed", file=sys.stderr)
+        for error in validation["errors"]:
+            print(f"- {error}", file=sys.stderr)
+        return 1
+    if args.json:
+        _print_json(payload)
+    else:
+        print(render_gate_preview(payload))
     return 0
 
 
@@ -23828,6 +23929,18 @@ def build_parser() -> argparse.ArgumentParser:
     delegation_revoke.add_argument("--delegation-id", required=True, help="Delegation id from delegation list")
     delegation_revoke.add_argument("--confirm", action="store_true", help="Explicitly confirm the revocation")
     delegation_revoke.set_defaults(func=delegation_revoke_command)
+    delegation_gate_preview = delegation_subparsers.add_parser(
+        "gate-preview",
+        help="Lay out the grant options for the box a human gate stopped on (read-only)",
+    )
+    delegation_gate_preview.add_argument(
+        "--agent",
+        help="Scan this agent's pane once instead of reading the run-loop host record",
+    )
+    delegation_gate_preview.add_argument(
+        "--json", action="store_true", help="Print the contract payload instead of the rendering"
+    )
+    delegation_gate_preview.set_defaults(func=delegation_gate_preview_command)
 
     boxes = subparsers.add_parser("boxes", help="Authorization box automation (delegation-gated)")
     boxes_subparsers = boxes.add_subparsers(dest="boxes_command")
