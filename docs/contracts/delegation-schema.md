@@ -339,8 +339,10 @@ agentdeck delegation grant --agent <id> --prefix "rg -n" --confirm
 Plus, for agents expected to commit to task worktrees: `git add`,
 `git commit` (worktree-scoped by task design; never `git push`). Do not add
 open-ended interpreters (`node -e`, `python -c`, `bash`), installers, or
-network-touching prefixes to any pack — arbitrary-content commands must stay
-on the human-eyes path (round 10 conclusion).
+network-reading prefixes to any pack — arbitrary-content commands must stay
+on the human-eyes path (round 10 conclusion). On network reads specifically,
+see the dedicated boundary below: they are not network *mutations*, but they
+do not belong in a pack either, and the reason is worth stating precisely.
 
 ## Boundaries
 
@@ -350,6 +352,24 @@ on the human-eyes path (round 10 conclusion).
 - Guidance: grant prefixes only for local read-only verification commands
   (e.g. the starter pack above) and task-worktree-scoped git writes; never
   for push, install, or network mutation prefixes.
+- Guidance (network reads): a network *read* prefix (`curl`, `wget` and the
+  like) is a third category — it is genuinely not a mutation, so the line
+  above does not forbid it, but it does not belong in a starter pack either.
+  The reason is the unpinned tail: a prefix pins the URL and nothing else,
+  and the tail can turn a read into an exfiltration — `curl -s <url> -d
+  @<secret>` still matches the prefix `curl -s <url>`, while no tail on
+  `git status` can do anything comparable. Granting one is therefore an
+  explicit, per-command human decision made in full knowledge that the tail
+  is granted along with it. AgentDeck cannot verify a command's nature; the
+  human owns that judgment at grant time — the same division of
+  responsibility as the MCP guidance below.
+- Known gap (needs its own spec; do not work around it by loosening grants):
+  AgentDeck's workers can reach the network, but there is no safe way to
+  express "let this worker read exactly this one URL" — prefix granularity
+  cannot pin the tail. Consequently every network read is a permanent human
+  gate, and a task whose premise is reading a live site (replicate this
+  page, check this API) cannot progress through a walk-away segment at all.
+  Recorded 2026-08-03 while preparing the walk-away distance measurement.
 - Guidance (MCP): grant MCP delegations only for read-only-natured tools
   (the hover/press_key/screenshot class), never for page-mutating tools
   (the navigate/fill/evaluate_script class). AgentDeck cannot verify a

@@ -4,6 +4,34 @@
 
 ## 2026-08-03
 
+### Name network reads as their own delegation category, and record the gap they expose
+
+- **Type**: docs
+- **Motivation**: 准备走开段测量时挑任务（复刻一个真实网站首页）暴露出:关于
+  "能不能 grant 网络前缀",本仓库自己有**三种说法**——CLAUDE.md 与
+  delegation-schema.md 的 Boundaries 都写"网络**变更**"(mutation),而同一份
+  schema 的 starter pack 节写"**任何触网**"(network-touching)。二比一,而
+  `curl` 读一个公开页面不是变更。代码层零强制:`grant_delegation` 只校验结构
+  (prefix/mcp 二选一、mcp 字符集、不重复),前缀内容完全任意。
+- **What**: 三处统一,但**不是靠挑一种措辞**——往松统一会抹掉一条有实质理由的
+  边界,往紧统一会让 CLAUDE.md 比它实际执行的更严。改为把**网络读列为第三类**
+  并写明理由:前缀只钉住 URL、钉不住尾巴,而尾巴能把一次读变成一次外传
+  (`curl -s <url> -d @<secret>` 仍匹配前缀 `curl -s <url>`,`git status` 的
+  尾巴做不到任何可比的事)。因此它不属于"网络变更"、不被上一条禁止,但同样
+  不进任何 starter pack;要 grant 必须由人类在明白"尾巴一并被授权"的前提下
+  逐条显式做——**与既有的 MCP 工具性质指引是同一条责任划分**,不是新原则。
+- **Impact**: 同时把这次挑任务挑出来的**缺口**记进契约:AgentDeck 的 worker
+  能联网,却没有一种安全方式表达"允许这个 worker 只读这一个 URL"——前缀粒度
+  钉不住尾巴,于是**每一次网络读都是永久人类门**,而以"读一个活站点"为前提的
+  任务(复刻这个页面、查这个 API)根本无法走完任何走开段。明写"需单独 spec,
+  不得靠放宽 grant 绕过"。零代码改动,`grant` 的行为一字未变。
+- **Verification**: 三处措辞逐条核对(CLAUDE.md 一处、delegation-schema.md
+  starter pack 与 Boundaries 各一处);`grant_delegation` 无内容校验这一事实
+  读源码确认(`state.py:9358`),非从文档推断。`pytest -k "delegation or
+  contract_index"` 75 passed——两份被测试引用的文档(test_contracts.py、
+  test_delegation_cli.py)均未因措辞改动而失败。
+
+
 ### Retire a stale standing TODO and clear a false alarm on approval_mode
 
 - **Type**: docs
