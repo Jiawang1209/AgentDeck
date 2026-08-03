@@ -170,6 +170,69 @@ def _group_project(tmp_path: Path, monkeypatch) -> tuple[Path, str]:
     return root, plan_id
 
 
+def _group_then_final_project(tmp_path: Path, monkeypatch) -> tuple[Path, str]:
+    """planner → coder → [reviewer, planner] → coder.
+
+    The shape the group-last fixture cannot exercise: an ordinary step that
+    follows a review group. Its dependency is the *whole* group, so it must not
+    start while any member is still reviewing.
+    """
+    root = _prepare(
+        tmp_path, monkeypatch, '\n[review]\nreviewers = ["reviewer", "planner"]\n'
+    )
+    _bind(root, "planner", "%41")
+    _bind(root, "coder", "%42")
+    _bind(root, "reviewer", "%43")
+    _, plan = _run(
+        ["leader", "plan", "--provider", "fake", "--model", "fake-plan", "--task", "post group"]
+    )
+    plan_id = plan["plan_id"]
+
+    store = StateStore(root)
+    state = store.load()
+    body = next(p for p in state["plans"] if p["plan_id"] == plan_id)["plan"]
+    implementation = next(s for s in body["steps"] if s["agent_id"] == "coder")
+    body["steps"].append({
+        **implementation,
+        "step": len(body["steps"]) + 1,
+        "task": "apply what both reviewers asked for",
+    })
+    store.save(state)
+
+    _run(["approval", "create-from-plan", "--plan-id", plan_id])
+    _autonomous(root)
+    return root, plan_id
+
+
+def test_a_step_after_a_group_waits_for_every_member(tmp_path: Path, monkeypatch) -> None:
+    root, plan_id = _group_then_final_project(tmp_path, monkeypatch)
+    assert [step["depends_on"] for step in _steps(root, plan_id)] == [[], [1], [2], [2], [3, 4]]
+
+    for _ in range(2):  # planner, then coder
+        _, wave = _run(["run-loop", "--plan-id", plan_id, "--confirm"])
+        _reply_file(root, wave["dispatched"][0]["message_id"])
+
+    _, group_wave = _run(["run-loop", "--plan-id", plan_id, "--confirm"])
+    assert sorted(d["agent_id"] for d in group_wave["dispatched"]) == ["planner", "reviewer"]
+    # Only ONE member reports -- deliberately the LAST one. Replying to the
+    # first member would leave the numerically adjacent step outstanding, which
+    # a plain "depends on the step before me" rule would also hold on; this
+    # ordering is the one that actually pins "waits for *every* member".
+    _reply_file(root, group_wave["dispatched"][1]["message_id"])
+
+    _, held_wave = _run(["run-loop", "--plan-id", plan_id, "--confirm"])
+
+    assert held_wave["dispatched"] == []
+    assert [s["reason"] for s in held_wave["skipped"]] == ["awaiting earlier step completion"]
+    assert held_wave["skipped"][0]["agent_id"] == "coder"
+
+    _reply_file(root, group_wave["dispatched"][0]["message_id"])
+    _, released_wave = _run(["run-loop", "--plan-id", plan_id, "--confirm"])
+
+    assert [d["agent_id"] for d in released_wave["dispatched"]] == ["coder"]
+    assert released_wave["skipped"] == []
+
+
 def _steps(root: Path, plan_id: str) -> list[dict[str, object]]:
     return StateStore(root).plan_status(plan_id)["steps"]
 

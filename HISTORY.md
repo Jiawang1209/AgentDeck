@@ -4,6 +4,24 @@
 
 ## 2026-08-03
 
+### Pin the "step after a group waits for every member" seam at wave level
+
+- **Type**: test
+- **Motivation**: DAG 一刀的**整体终审**(逐 task 审查看不到跨切片组合缝)。
+  纯函数矩阵已覆盖"跟在组后面的 step 依赖全组",wave 级却只跑过**组在末位**的
+  plan 形状——那条依赖从未在引擎接缝上端到端跑过。它守的正是 fail-open:
+  半组审完就放行下游实现。
+- **What**: 新增 `planner → coder → [reviewer, planner] → coder` 形状的 wave
+  级测试(`tests/test_step_dag_wave.py`),断言投影 `[[], [1], [2], [2], [3, 4]]`、
+  只有一名组员回复时下游 step 被持留、两名都回复后才派发。
+- **Impact**: 纯测试,零产品代码改动。
+- **Verification**: **变异验证**——把 `closing_set` 的组分支删成"只依赖前一步"
+  后该测试必须红。第一版测试**在变异下仍绿**:它回复的是组内**首个**成员,
+  而那恰好也是编号相邻的那一步,退化规则同样会持留下游,断言因此空转。改为
+  先回复**最后**一名成员(留下非相邻的那位未回复)后,变异下如实报红——
+  真按下 coder 的派发。教训:**变异验证不只问"测试会不会红",还要问"我挑的
+  那条数据路径是不是恰好让弱规则也成立"。** 全量 5204 passed / 3 skipped。
+
 ### Project derived step dependencies into plan status
 
 - **Type**: feat
