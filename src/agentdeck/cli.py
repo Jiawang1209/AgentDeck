@@ -163,6 +163,7 @@ from .contracts import (
     validate_mission_scheduler_contract,
 )
 from .autonomy import run_loop_gate, select_auto_approvals
+from .branch_custody import classify_branch_custody
 from .delegation_match import is_composite_command, normalize_match
 from .frontdesk import FRONTDESK_ROUTE_SAFETY, classify_frontdesk, frontdesk_goal
 from .review_digest import summarize_review_bindings
@@ -12901,6 +12902,77 @@ def _plan_requested_verdict(store: StateStore, plan_id: str) -> bool:
     return False
 
 
+def _resolve_git_branch_exists(root: object, branch: str | None) -> bool | None:
+    """该本地分支还在不在;无法判断时返回 None,**绝不返回 False**。
+
+    与 `_resolve_git_commit` 同一条纪律:"查不了"和"不存在"是两件事。把前者
+    塌成后者,就会把一次 git 探测失败报成一次越界合并——而越界合并是要给人
+    看的告警,假警报会很快让人不再看它。
+    """
+    if not branch:
+        return None
+    done = subprocess.run(
+        ["git", "rev-parse", "--verify", "--quiet", f"refs/heads/{branch}"],
+        cwd=str(root),
+        capture_output=True,
+        text=True,
+    )
+    return done.returncode == 0
+
+
+def _plan_branch_custody(
+    config: ProjectConfig, store: StateStore, plan_id: str
+) -> dict[str, object]:
+    """这条 plan 建过的每条任务分支,现在处于什么状态。
+
+    Round 1 finding ①:reviewer 自行 `git merge` 并清理分支,绕过了当天上午
+    才建好的合并闸,而账本毫不知情。AgentDeck 拦不住一个有 shell 的 worker
+    敲 git,但它至少可以**发现**自己的记述已经不成立了。
+
+    与 `_plan_review_bindings` 同构:git 解析只在这里,store 一次都不 shell
+    out;全程只读,不写 state、不追加事件、不阻断任何合并或派发。
+    """
+    state = store.load()
+    settled = {
+        str(message_id)
+        for key in ("merged_worktrees", "abandoned_worktrees")
+        for message_id in state.get(key, [])
+    }
+    messages_by_id = {
+        str(message.get("message_id")): message
+        for message in state.get("messages", [])
+        if isinstance(message, dict)
+    }
+    git_available = _resolve_git_commit(config.root, "HEAD") is not None
+    items: list[dict[str, object]] = []
+    for approval in state.get("approvals", []):
+        if not isinstance(approval, dict) or approval.get("plan_id") != plan_id:
+            continue
+        message_id = str(approval.get("message_id") or "")
+        message = messages_by_id.get(message_id)
+        if message is None or not message.get("worktree_branch"):
+            continue
+        branch = str(message.get("worktree_branch"))
+        verdict = classify_branch_custody(
+            worktree_branch=branch,
+            settled_by_agentdeck=message_id in settled,
+            branch_exists=(
+                _resolve_git_branch_exists(config.root, branch)
+                if git_available
+                else None
+            ),
+        )
+        items.append({"message_id": message_id, **verdict})
+    return {
+        "count": len(items),
+        "items": items,
+        # 只点名需要人看的那一档;其余三档都不是告警。
+        "gone_unrecorded_count": sum(
+            1 for item in items if item["state"] == "gone_unrecorded"
+        ),
+    }
+
+
 def _plan_review_bindings(
     config: ProjectConfig, store: StateStore, plan_id: str
 ) -> dict[str, object]:
@@ -20320,6 +20392,7 @@ def plan_status_command(args: argparse.Namespace) -> int:
     # store owns state, git resolution is ours. Read-only -- it resolves refs
     # and writes nothing.
     status["review_bindings"] = _plan_review_bindings(config, store, args.plan_id)
+    status["branch_custody"] = _plan_branch_custody(config, store, args.plan_id)
     _print_json(status)
     return 0
 

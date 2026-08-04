@@ -4,6 +4,38 @@
 
 ## 2026-08-04
 
+### Notice when a task branch is settled behind AgentDeck's back
+
+- **Type**: feat
+- **Motivation**: 走开段 round 1 finding ①。reviewer 自行 `git merge` 并清理
+  分支——绕过了当天上午才建好的合并闸(`worktree_base_commit`、digest 绑定、
+  `review_stale`),而 `goal preview` 确认屏印的是"不自动合并——复审通过后停
+  下来等你点头"。上一刀只把边界写进了 prompt,**那是说明不是强制**,拦不住
+  任何东西。真正的缺陷也不在"合并发生了":AgentDeck 拦不住一个有 shell 的
+  worker 敲 git,假装能拦正是本仓库一直在删除的那种"声称存在却并不存在的
+  保证"。缺陷在于**合并发生了而账本毫不知情**——记述悄悄变成假的,无人察觉。
+  而这是可观测的,观测还很便宜。
+- **What**: 新增纯模块 `src/agentdeck/branch_custody.py`(零 IO、零 git、
+  不 import cli/state/config),闭合四态 `held` / `settled` /
+  `gone_unrecorded` / `unverifiable`(闭合原因 `not_recorded` / `no_git_repo`)。
+  CLI 侧 `_plan_branch_custody()` 做 git 解析并投影进 `agentdeck plan status`
+  的同级 `branch_custody` 块——**与 `_plan_review_bindings` 同构,store 一次
+  都不 shell out**。"AgentDeck 自己经手过"同时算 `merged_worktrees` 与
+  `abandoned_worktrees`,否则被显式放弃的分支会被误报成越界合并。
+- **Impact**: **它不是一道闸**:不阻断合并、不改审批、不撤委托、不写 state、
+  不追加事件,只让账本能说出一件关于自己所建分支的真话。`unverifiable`
+  **绝不能渲染成"没事"**——探测失败与查过没问题若塌进同一个布尔,读起来都像
+  "没问题",而只有一个是程序真正确立过的事实(与 `review_digest` 同源纪律)。
+  同理 `_resolve_git_branch_exists` 无法判断时返回 `None` 而**绝不返回
+  `False`**:把"查不了"塌成"不存在",就会把一次 git 探测失败报成一次越界
+  合并,而假警报会很快让人不再看这个告警。
+- **Verification**: TDD,10 条新测试先红后绿(7 条纯模块含闭合枚举与
+  "unverifiable 不得读成没事",3 条 CLI 侧集成)。CLI 侧三条共用同一套 setup、
+  只差一次 `git branch -D` 或一次 `mark_worktree_merged`,因此 `held` /
+  `gone_unrecorded` / `settled` 三档确实在互相区分,不是假绿。全量
+  5269 passed / 3 skipped(前一刀 5259 + 本刀 10)。
+
+
 ### Stop reporting a pane parked on a trust prompt as "not waiting for input"
 
 - **Type**: fix
