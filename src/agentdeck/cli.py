@@ -10430,6 +10430,14 @@ def _match_active_delegation(
             continue
         if not command:
             continue
+        if kind == "exact_command":
+            # 等值形态钉住整条命令，没有尾巴——这正是 gate-preview 梯子
+            # 第 1 级"仅此一条命令"要成立所依赖的语义。两侧按单空格归一
+            # 后比较，与下面折叠回退同一取舍（框文本折行会丢失空格）。
+            exact = str(item.get("exact_command") or "")
+            if exact and " ".join(command.split()) == " ".join(exact.split()):
+                return item
+            continue
         prefix = str(item.get("prefix") or "")
         if not prefix:
             continue
@@ -10469,9 +10477,20 @@ def _match_delegation_with_provenance(
         and (item.get("kind") or "command_prefix") == "command_prefix"
         and item.get("prefix")
     ]
+    exact_items = [
+        item
+        for item in state.get("delegations", [])
+        if isinstance(item, dict)
+        and not item.get("revoked_at")
+        and item.get("agent_id") == agent_id
+        and (item.get("kind") or "command_prefix") == "exact_command"
+        and item.get("exact_command")
+    ]
     def composite_arm() -> tuple[dict[str, object] | None, str | None, list[dict[str, str]] | None]:
         composite = normalize_match(
-            str(command), [str(item["prefix"]) for item in prefix_items]
+            str(command),
+            [str(item["prefix"]) for item in prefix_items],
+            exact_commands=[str(item["exact_command"]) for item in exact_items],
         )
         if composite is None:
             return None, None, None
@@ -10485,6 +10504,17 @@ def _match_delegation_with_provenance(
             None,
         )
         if item is None:
+            # 等值形态的 via 是折叠后的整条命令，反查也按折叠比较。
+            item = next(
+                (
+                    candidate
+                    for candidate in exact_items
+                    if " ".join(str(candidate.get("exact_command")).split())
+                    == first_prefix
+                ),
+                None,
+            )
+        if item is None:
             return None, None, None
         segments = [
             {"segment": segment.segment, "via": segment.via}
@@ -10496,10 +10526,11 @@ def _match_delegation_with_provenance(
         return composite_arm()
     match = _match_active_delegation(state, agent_id, command, mcp_box)
     if match is not None:
-        kind = (
-            "mcp_tool"
-            if (match.get("kind") or "command_prefix") == "mcp_tool"
-            else "prefix"
+        record_kind = match.get("kind") or "command_prefix"
+        # 溯源必须说实话:等值命中被标成 `prefix` 会让审计事件声称一件
+        # 不成立的事——两者的授权宽度差着一整条尾巴。
+        kind = {"mcp_tool": "mcp_tool", "exact_command": "exact"}.get(
+            str(record_kind), "prefix"
         )
         return match, kind, None
     if not command:
@@ -11155,16 +11186,26 @@ def delegation_grant_command(args: argparse.Namespace) -> int:
     prefix = args.prefix.strip() if args.prefix is not None else None
     mcp_server = args.mcp_server.strip() if args.mcp_server is not None else None
     mcp_tool = args.mcp_tool.strip() if args.mcp_tool is not None else None
+    exact_command = (
+        args.exact_command.strip() if args.exact_command is not None else None
+    )
     wants_prefix = args.prefix is not None
     wants_mcp = args.mcp_server is not None or args.mcp_tool is not None
-    if wants_prefix == wants_mcp:
+    wants_exact = args.exact_command is not None
+    if sum((wants_prefix, wants_mcp, wants_exact)) != 1:
         print(
-            "delegation grant requires exactly one of --prefix or --mcp-server/--mcp-tool",
+            "delegation grant requires exactly one of --prefix, --exact-command "
+            "or --mcp-server/--mcp-tool",
             file=sys.stderr,
         )
         return 1
     if wants_prefix and not prefix:
         print("delegation prefix must not be empty", file=sys.stderr)
+        return 1
+    if wants_exact and not exact_command:
+        # 空值永远匹配不到屏上框，委托会在 walk-away 期间静默失效——
+        # 与 MCP 字符集校验同一条理由，grant 时即拒绝零写。
+        print("delegation exact command must not be empty", file=sys.stderr)
         return 1
     if wants_mcp and (not mcp_server or not mcp_tool):
         print(
@@ -11187,7 +11228,13 @@ def delegation_grant_command(args: argparse.Namespace) -> int:
                 )
                 return 1
     try:
-        record = store.grant_delegation(args.agent, prefix, mcp_server=mcp_server, mcp_tool=mcp_tool)
+        record = store.grant_delegation(
+            args.agent,
+            prefix,
+            mcp_server=mcp_server,
+            mcp_tool=mcp_tool,
+            exact_command=exact_command,
+        )
     except ValueError as exc:
         print(str(exc), file=sys.stderr)
         return 1
@@ -11198,6 +11245,7 @@ def delegation_grant_command(args: argparse.Namespace) -> int:
                 "delegation_id": record["delegation_id"],
                 "agent_id": record["agent_id"],
                 "prefix": record["prefix"],
+                "exact_command": record["exact_command"],
                 "kind": record["kind"],
                 "mcp_server": record["mcp_server"],
                 "mcp_tool": record["mcp_tool"],
@@ -24214,7 +24262,12 @@ def build_parser() -> argparse.ArgumentParser:
         "grant", help="Grant a command-prefix delegation for one agent's authorization boxes (explicit)"
     )
     delegation_grant.add_argument("--agent", required=True, help="Agent id from .agentdeck/config.toml")
-    delegation_grant.add_argument("--prefix", help="Command prefix the delegation covers")
+    delegation_grant.add_argument("--prefix", help="Command prefix the delegation covers (the tail stays unpinned)")
+    delegation_grant.add_argument(
+        "--exact-command",
+        dest="exact_command",
+        help="Exact full command the delegation covers, matched by equality — nothing may be appended",
+    )
     delegation_grant.add_argument("--mcp-server", dest="mcp_server", help="MCP server name the delegation covers")
     delegation_grant.add_argument("--mcp-tool", dest="mcp_tool", help="MCP tool name the delegation covers")
     delegation_grant.add_argument("--confirm", action="store_true", help="Explicitly confirm the grant")

@@ -25,6 +25,15 @@ with every release audited. Data source: round 6/7 live loops
 - `kind="mcp_tool"` — one grant covers exactly one
   `(agent, mcp_server, mcp_tool)` pair (no whole-server wildcard;
   `hover` + `press_key` require two grants).
+- `kind="exact_command"` — one grant covers exactly one full command, matched
+  by equality: **nothing may be appended**. This is the narrowest rung and the
+  only one where "just this one command" is literally true. It exists because
+  a prefix pins only the head: granting the whole observed command as a
+  *prefix* still covers `curl <url> -o <path>` (writes a file) and
+  `curl <url> -d @<file>` (sends one), neither of which is a shell redirect,
+  so none of the composite hard-refusals apply (walk-away round 1, finding
+  F2). Both sides are compared with whitespace folded to single spaces — the
+  same trade-off the folded-box command extractor already makes.
 
 Commands:
 
@@ -47,13 +56,28 @@ Commands:
   `grant_delegation` writer reject it), an unknown agent, or a duplicate
   active `(agent, server, tool)` triple refuse with zero writes. Duplicate-active refusal is per kind:
   `(agent, prefix)` for `command_prefix`, `(agent, mcp_server, mcp_tool)`
-  for `mcp_tool` — the same server with a different tool is a new grant.
+  for `mcp_tool`, `(agent, exact_command)` for `exact_command` — the same
+  server with a different tool is a new grant.
+- `agentdeck delegation grant --agent <agent_id> --exact-command <command>
+  --confirm` writes the equality shape:
+  `{delegation_id, agent_id, kind="exact_command", prefix=null,
+  exact_command, mcp_server=null, mcp_tool=null, created_at,
+  revoked_at=null}`, plus a `delegation_granted` event carrying
+  `kind`/`exact_command`. The three forms are mutually exclusive: giving more
+  than one, or none, refuses with zero writes, as does an empty
+  `--exact-command` — an empty value could never match a box on screen, so
+  the delegation would fail silently during a walk-away segment, which is the
+  same reason the MCP charset is enforced at grant time.
+  `gate-preview` emits this form for the one ladder rung whose
+  `unpinned_tail` is empty, and the prefix form for every rung that leaves a
+  tail; the rendered width claim and the grant it hands you therefore agree.
 - `agentdeck delegation list` (read-only) returns `mode=delegation_list` with
   `count`/`items[]`; each item carries the stored fields plus derived
   `active` (`revoked_at` is null), a normalized `kind`
   (`command_prefix` default for legacy kind-less records), and explicit
-  `mcp_server`/`mcp_tool` (null on `command_prefix` items; `prefix` is null
-  on `mcp_tool` items). Validates with
+  `mcp_server`/`mcp_tool`/`exact_command` — each kind fills only its own
+  fields and leaves the others null, so `prefix` never carries a whole
+  command and never has to be read as anything but a prefix. Validates with
   `validate_delegation_list_contract()` before printing.
 - `agentdeck delegation revoke --delegation-id <id> --confirm` sets
   `revoked_at` (registered `revoke_delegation` writer) plus a
@@ -180,9 +204,13 @@ Commands:
     `tail …` / `head …` **only** when every path-like argument starts with
     `/tmp/` and contains no `..` (flags such as `-80` allowed). Nothing else.
   - Provenance: `match_kind` is `prefix` (plain or whitespace-collapsed
-    match), `composite` (split-and-cover match), `mcp_tool` (MCP-pair match),
+    match), `exact` (equality match against an `exact_command` grant),
+    `composite` (split-and-cover match), `mcp_tool` (MCP-pair match),
     or null when the box is undelegated or absent — so every delegated box
-    carries a uniform match provenance. `matched_segments` is populated for
+    carries a uniform match provenance. `exact` is not a flavour of `prefix`
+    and must never be reported as one: the two differ by an entire unpinned
+    tail, and an audit line that called an equality match a prefix match
+    would be claiming something that does not hold. `matched_segments` is populated for
     `composite` matches only (a list of `{segment, via}`, where `via` is the
     covering prefix verbatim or the literal `"glue"`) and null otherwise.
     `delegation_id` is the delegation whose prefix covered the first covered

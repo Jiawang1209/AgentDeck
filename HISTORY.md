@@ -4,6 +4,39 @@
 
 ## 2026-08-04
 
+### Wire the exact-command delegation end to end (F2 step 2 of 2 — closed)
+
+- **Type**: feat
+- **Motivation**: 关闭上一条留下的口子。step 1 只让等值匹配在纯模块里存在;
+  在 `gate_preview` 改发等值 grant 命令之前,**梯子第 1 级那句"连带授权:
+  (无——仅此一条命令)"仍然是假的**,而它正是谨慎的人最可能选的一级。
+- **What**: 六处接线全部落地。①`grant_delegation` 第三种互斥形态
+  `exact_command=`,记 `kind="exact_command"`、`exact_command` 独立字段、
+  `prefix=null`——**跟随 MCP 已确立的模式(每种 kind 只填自己的字段)**,
+  若把整条命令塞进 `prefix`,读它的人会按前缀语义理解它;空值 grant 时即拒绝
+  (空值永远匹配不到框,委托会在 walk-away 期间静默失效,与 MCP 字符集校验
+  同一条理由)。②CLI `--exact-command`,三形态互斥。③④**两条匹配臂都接**:
+  平前缀臂(简单命令走它)新增等值分支,composite 臂传 `exact_commands=` 并按
+  折叠反查回记录;两侧都按单空格归一。⑤`prefix_ladder` 对
+  `unpinned_tail` 为空的那一级改发 `--exact-command`,其余每级仍发 `--prefix`。
+  ⑥契约同步:判别联合加第三支、`match_kind` 枚举加 `exact`、`delegation list`
+  字段说明、grant 命令段。
+- **Impact**: **F2 关闭**——梯子印的宽度与它递给你的 grant 现在一致。
+  `match_kind=exact` **不是 `prefix` 的一个变体,也绝不能被报成 prefix**:
+  两者差着一整条尾巴,把等值命中写成前缀命中,审计行就在陈述一件不成立的事。
+  等值形态让"只授权这一条命令"第一次成为**真实存在的档位**;宽度仍然只能
+  由人选,梯子依旧不推荐、不排序、不预选。
+- **Verification**: TDD,8 条新测试先红后绿(state 形态与互斥/空值、CLI 两条、
+  `agent boxes` 端到端正负各一、梯子形态两条)。**负向那条("不覆盖追加的
+  尾巴")在正向变绿之前毫无判别力**——当时什么都匹配不上,它是假绿;两条
+  同时绿才说明它真的在区分。另修 1 条既有测试
+  `test_derive_gate_preview_..._never_marks_a_choice`:它守的"绝不推荐"未被
+  破坏,失效的是顺带断言的 `--prefix` 统一形状,新断言把**形态与该级自己
+  声明的宽度绑定**,比原来更强。**端到端实测**:真跑一遍 grant + `delegation
+  list`,确认记录形状正确且 validator 未把 `kind` 当闭合枚举(否则新形态会
+  直接炸)。全量 5257 passed / 3 skipped(step 1 的 5249 + 本刀 8)。
+
+
 ### Give the matcher an exact-command form (F2 step 1 of 2 — NOT yet wired)
 
 - **Type**: feat

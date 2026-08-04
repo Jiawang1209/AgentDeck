@@ -100,9 +100,17 @@ def test_derive_gate_preview_for_command_box_never_marks_a_choice() -> None:
     for candidate in payload["candidates"]:
         assert not marker_keys & set(candidate)
         assert candidate["grant_command"].startswith(
-            "agentdeck delegation grant --agent planner --prefix "
+            "agentdeck delegation grant --agent planner "
         )
         assert candidate["grant_command"].endswith(" --confirm")
+        # 形态必须与该级自己声明的宽度一致:留着尾巴的发前缀形态,没有
+        # 尾巴的发等值形态——否则那一级印的"仅此一条命令"就是假的(F2)。
+        expected_form = "--prefix " if candidate["unpinned_tail"] else "--exact-command "
+        unexpected_form = (
+            "--exact-command " if candidate["unpinned_tail"] else "--prefix "
+        )
+        assert expected_form in candidate["grant_command"]
+        assert unexpected_form not in candidate["grant_command"]
 
 
 def test_derive_gate_preview_for_mcp_box_has_no_ladder() -> None:
@@ -183,3 +191,25 @@ def test_render_gate_preview_marks_only_the_widest_entry() -> None:
     )
     text = render_gate_preview(payload)
     assert text.count("最宽") == 1
+
+
+def test_ladder_rung_with_no_unpinned_tail_grants_an_exact_command() -> None:
+    # F2:整条命令那一级向人声称"连带授权:(无——仅此一条命令)"。在
+    # `--prefix` 下这句话不成立(startswith 会覆盖任何追加的尾巴),所以
+    # 它必须发等值形态的 grant 命令,那句话才是真的。
+    ladder = prefix_ladder("curl -sS https://example.edu/", agent_id="coder")
+
+    exact_rungs = [item for item in ladder if not item["unpinned_tail"]]
+    assert len(exact_rungs) == 1
+    assert "--exact-command" in exact_rungs[0]["grant_command"]
+    assert "--prefix" not in exact_rungs[0]["grant_command"]
+
+
+def test_ladder_rungs_that_leave_a_tail_still_grant_a_prefix() -> None:
+    # 其余每一级都确实留着尾巴,前缀语义正确且不变。
+    ladder = prefix_ladder("curl -sS https://example.edu/", agent_id="coder")
+
+    for item in ladder:
+        if item["unpinned_tail"]:
+            assert "--prefix" in item["grant_command"]
+            assert "--exact-command" not in item["grant_command"]

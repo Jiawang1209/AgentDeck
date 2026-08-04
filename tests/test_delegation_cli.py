@@ -1460,3 +1460,141 @@ def test_gate_preview_contract_validator_rejects_a_broken_payload() -> None:
     broken = dict(example)
     broken["candidates"] = [{"prefix": "node"}]
     assert validate_delegation_gate_preview_contract(broken)["ok"] is False
+
+
+def test_grant_delegation_writer_exact_command_form(tmp_path, monkeypatch) -> None:
+    # F2:等值形态钉住整条命令,让 gate-preview 第 1 级"仅此一条命令"成真。
+    root = prepare_project(tmp_path, monkeypatch)
+    store = StateStore(root)
+    exact = "curl -L --max-time 30 -sS https://example.edu/"
+
+    record = store.grant_delegation("coder", exact_command=exact)
+
+    assert record["kind"] == "exact_command"
+    assert record["exact_command"] == exact
+    # prefix 必须留空:它若装着整条命令,读者会按前缀语义理解它
+    # (MCP 形态已确立该模式:每种 kind 只填自己的字段)。
+    assert record["prefix"] is None
+
+
+def test_grant_delegation_writer_rejects_mixing_exact_with_other_forms(
+    tmp_path, monkeypatch
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    store = StateStore(root)
+    exact = "curl -sS https://example.edu/"
+
+    # 三种形态互斥；空值在 grant 时即拒绝（空值永远匹配不到框，
+    # 委托会在 walk-away 期间静默失效——与 MCP 字符集校验同一条理由）。
+    for kwargs in (
+        {"prefix": "node tests/", "exact_command": exact},
+        {"exact_command": exact, "mcp_server": "s", "mcp_tool": "t"},
+        {"exact_command": "   "},
+    ):
+        try:
+            store.grant_delegation("coder", **kwargs)
+            raise AssertionError("expected ValueError")
+        except ValueError:
+            pass
+    assert store.load().get("delegations", []) == []
+
+    # 重复活跃的同一条等值委托拒绝零写
+    store.grant_delegation("coder", exact_command=exact)
+    try:
+        store.grant_delegation("coder", exact_command=exact)
+        raise AssertionError("expected ValueError")
+    except ValueError:
+        pass
+    assert len(store.load()["delegations"]) == 1
+
+
+EXACT_CMD = "curl -L --max-time 30 -sS https://example.edu/"
+
+
+def test_delegation_grant_exact_command_requires_confirm_and_writes_registry(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+
+    # 缺 --confirm：拒绝零写
+    assert cli.main(["delegation", "grant", "--agent", "coder", "--exact-command", EXACT_CMD]) == 1
+    capsys.readouterr()
+    assert StateStore(root).load().get("delegations", []) == []
+
+    assert cli.main(
+        ["delegation", "grant", "--agent", "coder", "--exact-command", EXACT_CMD, "--confirm"]
+    ) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["mode"] == "delegation_granted"
+    assert payload["kind"] == "exact_command"
+    assert payload["exact_command"] == EXACT_CMD
+    assert payload["prefix"] is None
+
+
+def test_delegation_grant_rejects_exact_command_mixed_with_prefix(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+
+    assert cli.main([
+        "delegation", "grant", "--agent", "coder",
+        "--prefix", "curl", "--exact-command", EXACT_CMD, "--confirm",
+    ]) == 1
+    capsys.readouterr()
+    assert StateStore(root).load().get("delegations", []) == []
+
+
+def _curl_box(command: str) -> str:
+    return (
+        "  Would you like to run the following command?\n"
+        "  Environment: local\n"
+        f"  $ {command}\n"
+        "› 1. Yes, proceed (y)\n"
+        "  2. Yes, and don't ask again for commands that start with `curl`\n"
+        "  3. No, and tell Codex what to do differently (esc)\n"
+        "  Press enter to confirm or esc to cancel\n"
+    )
+
+
+def test_agent_boxes_exact_delegation_covers_only_that_command(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    # F2 的落点:等值委托必须命中它自己那条命令……
+    root = prepare_project(tmp_path, monkeypatch)
+    bind_coder(root)
+    fake = FakeTmuxBackend()
+    monkeypatch.setattr(cli, "TmuxBackend", lambda: fake)
+    assert cli.main([
+        "delegation", "grant", "--agent", "coder",
+        "--exact-command", EXACT_CMD, "--confirm",
+    ]) == 0
+    capsys.readouterr()
+
+    fake.output = _curl_box(EXACT_CMD)
+    assert cli.main(["agent", "boxes", "--agent", "coder"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["command"] == EXACT_CMD
+    assert payload["delegated"] is True
+
+
+def test_agent_boxes_exact_delegation_does_not_cover_an_appended_tail(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    # ……而绝不覆盖追加了尾巴的那条:`-o <路径>` 落盘、`-d @<文件>` 外发,
+    # 都不是 shell 重定向,既有硬拒一条都不适用。这正是梯子第 1 级原先
+    # 声称"仅此一条命令"却不成立的地方。
+    root = prepare_project(tmp_path, monkeypatch)
+    bind_coder(root)
+    fake = FakeTmuxBackend()
+    monkeypatch.setattr(cli, "TmuxBackend", lambda: fake)
+    assert cli.main([
+        "delegation", "grant", "--agent", "coder",
+        "--exact-command", EXACT_CMD, "--confirm",
+    ]) == 0
+    capsys.readouterr()
+
+    for tail in ("-o /tmp/out.html", "-d @/tmp/secret"):
+        fake.output = _curl_box(f"{EXACT_CMD} {tail}")
+        assert cli.main(["agent", "boxes", "--agent", "coder"]) == 0
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["delegated"] is False, tail

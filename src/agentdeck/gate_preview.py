@@ -85,6 +85,21 @@ def _grant_command(agent_id: str, prefix: str) -> str:
     )
 
 
+def _exact_grant_command(agent_id: str, command: str) -> str:
+    """整条命令那一级发等值形态,而不是前缀形态。
+
+    这一级的渲染向人声称"连带授权:(无——仅此一条命令)"。在 `--prefix` 下
+    那句话**不成立**——匹配是 `startswith`,`curl <url> -o <路径>`(落盘)与
+    `curl <url> -d @<文件>`(外发)都以它开头、都会命中,而两者都不是 shell
+    重定向,既有硬拒一条都不适用(round 1 finding F2)。改发 `--exact-command`
+    之后,那句话才是真的,"只授权这一条命令"也才成为一个真实存在的档位。
+    """
+    return (
+        f"agentdeck delegation grant --agent {agent_id} "
+        f"--exact-command {_quote(command)} --confirm"
+    )
+
+
 def _mcp_grant_command(agent_id: str, server: str, tool: str) -> str:
     return (
         f"agentdeck delegation grant --agent {agent_id} "
@@ -134,13 +149,20 @@ def prefix_ladder(
     for level in _ladder_levels(len(spans), cap):
         end = spans[level - 1][1]
         prefix = command[:end]
+        unpinned_tail = command[end:].strip()
         candidates.append(
             {
                 "index": len(candidates) + 1,
                 "prefix": prefix,
-                "unpinned_tail": command[end:].strip(),
+                "unpinned_tail": unpinned_tail,
                 "is_widest": level == 1,
-                "grant_command": _grant_command(agent_id, prefix),
+                # 没有未钉住的尾巴 → 等值形态,让该级的"仅此一条命令"成真;
+                # 其余每一级都确实留着尾巴,前缀语义正确且不变。
+                "grant_command": (
+                    _grant_command(agent_id, prefix)
+                    if unpinned_tail
+                    else _exact_grant_command(agent_id, prefix)
+                ),
             }
         )
     return candidates

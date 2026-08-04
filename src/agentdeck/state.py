@@ -9362,13 +9362,20 @@ class StateStore:
         *,
         mcp_server: str | None = None,
         mcp_tool: str | None = None,
+        exact_command: str | None = None,
     ) -> dict[str, Any]:
         wants_prefix = prefix is not None
         wants_mcp = mcp_server is not None or mcp_tool is not None
-        if wants_prefix == wants_mcp:
+        wants_exact = exact_command is not None
+        if sum((wants_prefix, wants_mcp, wants_exact)) != 1:
             raise ValueError(
-                "delegation requires exactly one of prefix or (mcp_server, mcp_tool)"
+                "delegation requires exactly one of prefix, exact_command or "
+                "(mcp_server, mcp_tool)"
             )
+        if wants_exact and not str(exact_command or "").strip():
+            # 与下面 MCP 字符集校验同一条理由:空值永远匹配不到任何框,
+            # 委托会在 walk-away 期间静默失效——grant 时即拒绝。
+            raise ValueError("exact_command must not be empty")
         if wants_mcp and (not mcp_server or not mcp_tool):
             raise ValueError("mcp delegation requires both mcp_server and mcp_tool")
         if wants_mcp:
@@ -9386,6 +9393,10 @@ class StateStore:
                 continue
             if wants_prefix and item.get("prefix") == prefix:
                 raise ValueError(f"delegation already active for {agent_id}: {prefix}")
+            if wants_exact and item.get("exact_command") == exact_command:
+                raise ValueError(
+                    f"delegation already active for {agent_id}: {exact_command}"
+                )
             if wants_mcp and (
                 item.get("mcp_server") == mcp_server
                 and item.get("mcp_tool") == mcp_tool
@@ -9396,8 +9407,15 @@ class StateStore:
         record = {
             "delegation_id": new_id("dlg"),
             "agent_id": agent_id,
-            "kind": "command_prefix" if wants_prefix else "mcp_tool",
+            "kind": (
+                "command_prefix"
+                if wants_prefix
+                else "exact_command"
+                if wants_exact
+                else "mcp_tool"
+            ),
             "prefix": prefix,
+            "exact_command": exact_command,
             "mcp_server": mcp_server,
             "mcp_tool": mcp_tool,
             "created_at": utc_now(),
