@@ -15820,3 +15820,57 @@ def test_agent_capture_does_not_report_an_answered_trust_prompt_as_waiting(
     payload = json.loads(capsys.readouterr().out)
     assert payload["waiting_for_input"] is False
     assert payload["waiting_hint"] is None
+
+
+def test_agent_ready_does_not_claim_readiness_over_an_untrusted_directory(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    # round 1 现场:spawn 之后 `agent ready` 报 all_running: True / 3-of-3,
+    # next_command 指向 `approval dispatch-ready --confirm`,而三个 pane 全
+    # 冻在首次目录信任框上,一个都没进 REPL——那条 next_command 当时不可能
+    # 成功。框本身不是缺陷,在它上面宣称就绪才是。
+    prepare_project(tmp_path, monkeypatch)
+    fake = FakeTmuxBackend()
+    monkeypatch.setattr(cli, "TmuxBackend", lambda: fake)
+    # 干净的 HOME:两个 CLI 都没有本目录的信任记录。
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    (tmp_path / "home").mkdir()
+    cli.main(["agent", "spawn-ready", "--confirm"])
+    capsys.readouterr()
+
+    assert cli.main(["agent", "ready"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+
+    trust = payload["startup_trust"]
+    assert trust["untrusted_count"] == 3
+    assert {item["state"] for item in trust["items"]} == {"untrusted"}
+    # 下一步必须指向真正成立的那件事,而不是一条注定失败的 dispatch。
+    assert "dispatch-ready" not in str(payload["next_command"])
+    assert "attach" in str(payload["next_command"])
+
+
+def test_agent_ready_reports_unknown_trust_without_calling_it_untrusted(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    # 自定义 command 的 agent:我们不知道它把 trust 存在哪。那是"查不了",
+    # 既不能报成 trusted(会让人在注定冻住的 pane 上开跑),也不能报成
+    # untrusted(会把人指去按一道并不存在的框)。
+    root = prepare_project(tmp_path, monkeypatch)
+    path = root / ".agentdeck" / "config.toml"
+    path.write_text(
+        path.read_text(encoding="utf-8").replace('provider = "codex"', 'provider = "my-own-agent"'),
+        encoding="utf-8",
+    )
+    fake = FakeTmuxBackend()
+    monkeypatch.setattr(cli, "TmuxBackend", lambda: fake)
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    (tmp_path / "home").mkdir()
+    cli.main(["agent", "spawn-ready", "--confirm"])
+    capsys.readouterr()
+
+    assert cli.main(["agent", "ready"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+
+    states = {item["provider"]: item["state"] for item in payload["startup_trust"]["items"]}
+    assert states["my-own-agent"] == "unknown"
+    assert payload["startup_trust"]["unknown_count"] >= 1

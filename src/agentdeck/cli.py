@@ -164,6 +164,7 @@ from .contracts import (
 )
 from .autonomy import run_loop_gate, select_auto_approvals
 from .branch_custody import classify_branch_custody
+from .startup_trust import classify_startup_trust
 from .delegation_match import is_composite_command, normalize_match
 from .frontdesk import FRONTDESK_ROUTE_SAFETY, classify_frontdesk, frontdesk_goal
 from .review_digest import summarize_review_bindings
@@ -9813,6 +9814,90 @@ def agent_list_command(_args: argparse.Namespace) -> int:
     return 0
 
 
+def _resolve_codex_directory_trust(root: object) -> bool | None:
+    """codex 是否已信任该目录;读不出来一律 None(绝不塌成 False)。"""
+    path = Path(os.path.expanduser("~")) / ".codex" / "config.toml"
+    # 文件整个不存在 = 该 CLI 从未在任何目录留下记录,它一定会弹框。
+    # 这是确凿的"没信任过",不是"查不了"——两者混为一谈会让预检漏报。
+    if not path.exists():
+        return False
+    try:
+        import tomllib
+
+        data = tomllib.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        # 文件在、但读不出来:这才是真的查不了。
+        return None
+    projects = data.get("projects")
+    if not isinstance(projects, dict):
+        return False
+    entry = projects.get(str(root))
+    if entry is None:
+        # 记录可读、本目录不在其中 —— 确凿的"没信任过"。
+        return False
+    return str(entry.get("trust_level") or "") == "trusted"
+
+
+def _resolve_claude_directory_trust(root: object) -> bool | None:
+    """Claude Code 是否已信任该目录;读不出来一律 None。"""
+    path = Path(os.path.expanduser("~")) / ".claude.json"
+    if not path.exists():
+        return False
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    projects = data.get("projects")
+    if not isinstance(projects, dict):
+        return False
+    entry = projects.get(str(root))
+    if entry is None:
+        return False
+    return bool(entry.get("hasTrustDialogAccepted"))
+
+
+def _startup_trust_block(config: ProjectConfig) -> dict[str, object]:
+    """spawn 之前就能回答的问题:哪几个 agent 会冻在首次目录信任框上。
+
+    Round 1 现场:`agent ready` 报 `all_running: True, 3/3` 且 `next_command`
+    指向 `approval dispatch-ready`,而三个 pane 全冻在信任框上——那条命令当时
+    不可能成功。框本身不是缺陷,**在它上面宣称就绪**才是。
+
+    只读各 CLI 自己的磁盘记录,**不读 tmux、不读 pane**——`agent ready` 因此
+    保住它"不得 inspect tmux"的契约。它也绝不代按那道框:信任一个目录意味着
+    允许 project-local config / hooks / exec policies 加载,那是人的决定。
+    """
+    resolvers = {
+        "codex": _resolve_codex_directory_trust,
+        "claude": _resolve_claude_directory_trust,
+    }
+    items: list[dict[str, object]] = []
+    for agent in config.agents:
+        provider = str(agent.provider or "")
+        resolver = resolvers.get(provider.strip().lower())
+        recorded = resolver(config.root) if resolver else None
+        items.append(
+            {
+                "agent_id": agent.agent_id,
+                **classify_startup_trust(provider=provider, recorded=recorded),
+            }
+        )
+    attach_command = (
+        f"tmux -L {config.runtime.socket_name} attach -t {config.runtime.session_name}"
+    )
+    untrusted = [item for item in items if item["state"] == "untrusted"]
+    return {
+        "count": len(items),
+        "items": items,
+        "untrusted_count": len(untrusted),
+        "unknown_count": sum(1 for item in items if item["state"] == "unknown"),
+        # 唯一成立的下一步:去那些 pane 里各按一次。AgentDeck 只渲染这行文本,
+        # 不 attach、不 select、不发送输入。
+        "next_command": attach_command if untrusted else None,
+        "attach_command": attach_command,
+    }
+
+
 def agent_ready_command(_args: argparse.Namespace) -> int:
     config, store, exit_code = _load_project_or_error()
     if config is None or store is None:
@@ -9820,7 +9905,19 @@ def agent_ready_command(_args: argparse.Namespace) -> int:
     project_view = _project_view_payload_or_error(config, store)
     if project_view is None:
         return 1
-    _print_json(_agent_ready_card_payload(project_view))
+    payload = _agent_ready_card_payload(project_view)
+    trust = _startup_trust_block(config)
+    payload["startup_trust"] = trust
+    if trust["next_command"] and payload.get("all_running"):
+        # pane 起来了不等于 agent 能接活。有 agent 冻在首次信任框上时,
+        # 原来那条 `approval dispatch-ready --confirm` 当场不可能成功——
+        # 指向一条注定失败的命令,比不给指引更糟。
+        #
+        # 但只在 `all_running` 之后才改指向:还有 agent 没起时,下一步本来
+        # 就该是 spawn,信任框是 spawn 之后才出现的;那时把人指去 attach,
+        # 是换了一条同样不成立的指引。谎言恰好发生在"全部就绪"这一刻。
+        payload["next_command"] = trust["next_command"]
+    _print_json(payload)
     return 0
 
 

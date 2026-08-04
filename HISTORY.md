@@ -4,6 +4,38 @@
 
 ## 2026-08-04
 
+### Stop claiming startup readiness over an untrusted directory
+
+- **Type**: fix
+- **Motivation**: user 在两轮实操后指出的摩擦——每进一个新目录,codex ×2 与
+  Claude Code ×1 都会停在"你信任这个目录吗"上等人。**真正的缺陷比"要按三次"
+  更重**:round 1 现场 `agent ready` 报 `all_running: True, 3/3` 且
+  `next_command` 指向 `approval dispatch-ready --confirm`,而那一刻三个 pane
+  全冻在信任框上、一个都没进 REPL——那条命令当场不可能成功。**框本身不是
+  缺陷,在它上面宣称就绪才是。**
+- **What**: 新增纯模块 `src/agentdeck/startup_trust.py`(零 IO,闭合三态
+  `trusted`/`untrusted`/`unknown`,闭合原因 `provider_not_recognized`/
+  `trust_state_unreadable`)。CLI 侧两个只读解析器读**各 CLI 自己的磁盘记录**
+  (`~/.codex/config.toml` 的 `[projects."<root>"].trust_level`、
+  `~/.claude.json` 的 `projects["<root>"].hasTrustDialogAccepted`),
+  `agent ready` 新增 `startup_trust` 块;仅当 `all_running` 为真且存在
+  untrusted 时,`next_command` 改指向 attach 命令。
+- **Impact**: **读文件不是读 tmux**——`agent ready` 因此完整保住它"不得
+  inspect tmux/capture pane"的既有契约。它**不代按那道框**:信任一个目录
+  意味着允许 project-local config / hooks / exec policies 加载,那是关于
+  "什么代码在这台机器上跑"的决定。`unknown` 绝不渲染成 `trusted`,也绝不
+  塌成 `untrusted`——后者会把人指去按一道并不存在的框,预检就此失去信用。
+  改指向只在 `all_running` 那一刻发生:还有 agent 没起时 `spawn-ready` 本来
+  就是对的下一步,那时指人 attach 是换了一条同样不成立的指引。
+- **Verification**: TDD,9 条新测试先红后绿(7 条纯模块 + 2 条 `agent ready`
+  端到端,后者用干净 `HOME` 构造未信任现场)。**测试抓出我自己设计里的一处
+  混淆**:首版把"配置文件整个不存在"也判成 `unknown`,而那其实是确凿的
+  `untrusted`(该 CLI 从未留下任何记录,必然弹框),混为一谈会让预检漏报;
+  现已只在"文件在、但解析不出来"时才判 `unknown`。另修 1 条既有测试的
+  前提理解——它只 spawn 了 1/3,此时 `spawn-ready` 仍是正确下一步,是我的
+  覆盖条件写宽了。全量 5281 passed / 3 skipped(前一刀 5272 + 本刀 9)。
+
+
 ### Let the host stop honestly on a directory-trust box instead of spinning
 
 - **Type**: fix
