@@ -10264,6 +10264,41 @@ def _detect_waiting_for_input(output: str) -> str | None:
     return None
 
 
+# F4(走开段 round 1 live):三个 pane 起来后都停在首次目录 trust 框上等人,
+# 而 `agent capture` 报告 `waiting_for_input: False`——现有 marker 认的是执行
+# 框句式,trust 框("Press enter to continue" / "Enter to confirm · Esc to
+# cancel")一个都不匹配。标签存在与标签为真是两件事。
+#
+# 这组 marker **刻意独立于** `_WAITING_FOR_INPUT_MARKERS`:后者同时被
+# `_pending_box_region` 用作区域锚定,往里加会改变两个框提取器认定的"待批
+# 区域"——trust 屏上没有原 marker,锚点落空(`start=0`)后 `$ ` 行提取会扫过
+# 整段回滚历史,可能刮出一条早已答复的旧命令当作待批命令。诚实性信号不值得
+# 冒那个险,所以它只进 `agent capture` 载荷,不进框扫描、不进提取、不进 release。
+#
+# 边界:trust 框**本来就不该可委托**(CLAUDE.md 明写首次目录 trust 是 human
+# setup,不得由 worker 任务输入或静默 Enter 绕过)。这里只让"这个 pane 在等
+# 输入"变成真话,绝不让它变得可被放行。
+_DIRECTORY_TRUST_MARKERS = (
+    "Do you trust the contents of this directory",  # codex
+    "Is this a project you created or one you trust",  # Claude Code
+)
+_DIRECTORY_TRUST_TAIL_LINES = 20
+# 活动选择器字形:与 MCP 框那道硬约束同源的"框还活着"正证明。已答复的框
+# 折进历史后不再渲染它,只留 "-> Yes" 一类文本——没有这道正证明就会把旧框
+# 读成在等人(本轮我自己用裸 grep 检查 trust 是否按下时正是这样误判的)。
+_ACTIVE_SELECTOR_PATTERN = re.compile(r"[›❯]\s*1\.")
+
+
+def _detect_directory_trust_prompt(output: str) -> str | None:
+    tail = output.splitlines()[-_DIRECTORY_TRUST_TAIL_LINES:]
+    if not any(_ACTIVE_SELECTOR_PATTERN.search(line) for line in tail):
+        return None
+    for line in reversed(tail):
+        if any(marker in line for marker in _DIRECTORY_TRUST_MARKERS):
+            return line.strip()
+    return None
+
+
 _AUTH_BOX_OPTION_PREFIXES = ("›", "Press enter")
 
 
@@ -10824,7 +10859,11 @@ def agent_capture_command(args: argparse.Namespace) -> int:
         return exit_code
     pane_id = str(binding["pane_id"])
     output = TmuxBackend().capture_output(config.runtime, pane_id, args.lines)
-    waiting_hint = _detect_waiting_for_input(output)
+    # 只在这一处(只读观察面)兜住 trust 框;框扫描与放行路径仍只看
+    # `_detect_waiting_for_input`,提取器的区域锚定因此逐字节不变。
+    waiting_hint = _detect_waiting_for_input(output) or _detect_directory_trust_prompt(
+        output
+    )
     composer_pending, composer_preview = _detect_composer_pending(output)
     _print_json(
         {

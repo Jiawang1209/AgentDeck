@@ -15748,3 +15748,75 @@ def test_skills_lock_contract_failure_names_the_lockfile_it_wrote(tmp_path, monk
     monkeypatch.chdir(root)
     assert cli.main(["skills", "lock-verify", "--name", "a"]) == 0
     assert json.loads(capsys.readouterr().out)["locked"] is True
+
+
+# F4(round 1 live):三个 pane 起来后都停在首次目录 trust 框上等人,而
+# `agent capture` 报告 waiting_for_input: False——检测器认的是执行框句式
+# ("Press enter to confirm" / "enter to submit" / "Would you like to run"),
+# trust 框一个都不匹配。下面两段是当轮真实捕获的形状。
+CODEX_TRUST_BOX = (
+    "> You are in /tmp/demo\n"
+    "\n"
+    "  Do you trust the contents of this directory? Working with untrusted\n"
+    "  contents comes with higher risk of prompt injection.\n"
+    "\n"
+    "› 1. Yes, continue\n"
+    "  2. No, quit\n"
+    "\n"
+    "  Press enter to continue\n"
+)
+
+CLAUDE_TRUST_BOX = (
+    " Accessing workspace:\n"
+    " /tmp/demo\n"
+    "\n"
+    " Quick safety check: Is this a project you created or one you trust?\n"
+    "\n"
+    " ❯ 1. Yes, I trust this folder\n"
+    "   2. No, exit\n"
+    "\n"
+    " Enter to confirm · Esc to cancel\n"
+)
+
+
+def test_agent_capture_reports_a_directory_trust_prompt_as_waiting(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    prepare_project(tmp_path, monkeypatch)
+    fake = FakeTmuxBackend()
+    monkeypatch.setattr(cli, "TmuxBackend", lambda: fake)
+    cli.main(["agent", "spawn", "--agent", "planner"])
+    capsys.readouterr()
+
+    for box in (CODEX_TRUST_BOX, CLAUDE_TRUST_BOX):
+        fake.capture_text = box
+        assert cli.main(["agent", "capture", "--agent", "planner"]) == 0
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["waiting_for_input"] is True, box[:40]
+        assert payload["waiting_hint"]
+
+
+def test_agent_capture_does_not_report_an_answered_trust_prompt_as_waiting(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    # 已答复的 trust 框会折进滚动历史,句子还在、活动选择器字形没了。
+    # 只按句子判定就会把它读成还在等人——本轮我用裸 grep 检查是否按下时
+    # 正是这样误判的,而框提取器早就用"活动选择器"这道正证明防住了它。
+    prepare_project(tmp_path, monkeypatch)
+    fake = FakeTmuxBackend()
+    monkeypatch.setattr(cli, "TmuxBackend", lambda: fake)
+    cli.main(["agent", "spawn", "--agent", "planner"])
+    capsys.readouterr()
+
+    fake.capture_text = (
+        "  Do you trust the contents of this directory?\n"
+        "  -> Yes, continue\n"
+        "\n"
+        "  Tip: Try the Desktop app.\n"
+        "› Explain this codebase\n"
+        "  gpt-5.6-sol medium fast · ~/demo · main\n"
+    )
+    assert cli.main(["agent", "capture", "--agent", "planner"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["waiting_for_input"] is False
+    assert payload["waiting_hint"] is None

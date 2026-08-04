@@ -4,6 +4,33 @@
 
 ## 2026-08-04
 
+### Stop reporting a pane parked on a trust prompt as "not waiting for input"
+
+- **Type**: fix
+- **Motivation**: 走开段 round 1 finding F4。三个 pane 起来后都停在首次目录
+  trust 框上等人,而 `agent capture` 报告 `waiting_for_input: False`——现有
+  marker 认的是执行框句式("Press enter to confirm" / "enter to submit" /
+  "Would you like to run"),而 trust 框说的是 "Press enter to **continue**"
+  与 "Enter to confirm · Esc to cancel",一个都不匹配。
+- **What**: 新增独立的 `_DIRECTORY_TRUST_MARKERS` + `_detect_directory_trust_prompt()`,
+  只在 `agent capture` 的载荷里兜底。判定要求尾窗内出现**活动选择器字形**
+  (`›1.` / `❯1.`)作为"框还活着"的正证明——与 MCP 框那道硬约束同源。
+- **Impact**: **刻意不往 `_WAITING_FOR_INPUT_MARKERS` 里加**:那个元组同时被
+  `_pending_box_region` 用作区域锚定,而 trust 屏上没有任何原 marker,加进去
+  会让锚点落空(`start=0`),`$ ` 行提取随之扫过整段回滚历史,**可能刮出一条
+  早已答复的旧命令当成待批命令**——诚实性信号不值得冒那个险。因此框扫描、
+  命令提取、MCP 提取、放行路径**逐字节不变**,改的只有"这个 pane 在不在等
+  输入"这一句是不是真话。trust 框**依旧不可委托**(CLAUDE.md 明写首次目录
+  trust 是 human setup),本刀只让观察诚实,不让它可被放行。**未做**:
+  `box_kind` 仍无 trust 分支,故宿主遇到 trust 框仍不会判成 human_gate 而会
+  空转到预算耗尽——那要动闭合枚举与 human_gate 四条判据,是独立一刀。
+- **Verification**: TDD,2 条新测试先红后绿。负向那条(已答复的 trust 框折进
+  历史后**不得**报成在等人)守的正是本轮我自己犯过的错——用裸 grep 检查
+  trust 是否按下时,scrollback 里的旧框文本让我误判成"还没按",而框提取器
+  早就用活动选择器这道正证明防住了它。两段样本取自当轮真实捕获。全量
+  5259 passed / 3 skipped(前一刀 5257 + 本刀 2)。
+
+
 ### Wire the exact-command delegation end to end (F2 step 2 of 2 — closed)
 
 - **Type**: feat
