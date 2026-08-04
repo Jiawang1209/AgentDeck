@@ -363,13 +363,29 @@ do not belong in a pack either, and the reason is worth stating precisely.
   is granted along with it. AgentDeck cannot verify a command's nature; the
   human owns that judgment at grant time — the same division of
   responsibility as the MCP guidance below.
-- Known gap (needs its own spec; do not work around it by loosening grants):
-  AgentDeck's workers can reach the network, but there is no safe way to
-  express "let this worker read exactly this one URL" — prefix granularity
-  cannot pin the tail. Consequently every network read is a permanent human
-  gate, and a task whose premise is reading a live site (replicate this
-  page, check this API) cannot progress through a walk-away segment at all.
-  Recorded 2026-08-03 while preparing the walk-away distance measurement.
+- Known gap, part 1 — the shell path (needs its own spec; do not work around
+  it by loosening grants): a worker's `curl` / `wget` does raise a normal
+  command box and is correctly caught as a human gate, but there is no safe
+  way to express "let this worker read exactly this one URL", because prefix
+  matching is `startswith` and cannot pin the tail. So a task whose premise
+  is reading a live site (replicate this page, check this API) stalls on that
+  box every time.
+- Known gap, part 2 — the built-in-tool path, and the more serious of the
+  two: a CLI agent's *own* tools (codex's web search, an agent's built-in
+  fetch/browser) run under **that agent's** permission model, not AgentDeck's.
+  They raise no `$ command` box and no MCP box, so they are not delegatable,
+  never become a human gate, and — the part that matters — **AgentDeck
+  neither authorizes nor observes them**. The delegation model's premise
+  ("automate the Enter a human would otherwise press") presupposes a box;
+  on this path there is no box and no human.
+- Correction (2026-08-03, same day): an earlier version of this section
+  claimed "every network read is a permanent human gate" and that such a task
+  "cannot progress through a walk-away segment at all". Walk-away round 1
+  disproved both within 11 waves: the planner fetched the target site through
+  codex's built-in web search with **no box at all**, and only later raised a
+  box by falling back to `curl`. Both paths coexist; only one of them passes
+  through a gate. Evidence:
+  `docs/validation/2026-08-03-walkaway-round-1.md` (finding F1).
 - Guidance (MCP): grant MCP delegations only for read-only-natured tools
   (the hover/press_key/screenshot class), never for page-mutating tools
   (the navigate/fill/evaluate_script class). AgentDeck cannot verify a

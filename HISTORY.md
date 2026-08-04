@@ -4,6 +4,30 @@
 
 ## 2026-08-04
 
+### Correct a same-day claim the first walk-away round disproved
+
+- **Type**: docs
+- **Motivation**: `6447524f` 当天写进 `delegation-schema.md` 与 CLAUDE.md 的
+  "**每一次网络读都是永久人类门**，以读活站点为前提的任务无法走完任何走开段"
+  ——走开段 round 1 在 **11 个 wave 内就把它证伪了**：planner 用 codex 内建
+  web search 取站点，**一个框都没弹**；直到它回落 `curl` 才产生标准命令框。
+  这句错话正躺在契约文档里误导下一个读它的人，而且是本仓库刚花一周消灭的
+  那一类——**陈述了一件不成立的事**。
+- **What**: 拆成两处如实的缺口。①**shell 路径**：`curl`/`wget` 确实弹框并被
+  正确判成人类门，但没有安全方式表达"只读这一个 URL"（前缀匹配是
+  `startswith`，钉不住尾巴），故以读活站点为前提的任务每次卡在那道框上。
+  ②**内建工具路径，且更严重**：CLI agent 自带工具走**该 agent 自己的**权限
+  模型，既不弹 `$ command` 框也不弹 MCP 框，因而不可委托、永不成为人类门，
+  且 **AgentDeck 既不授权也不观察**——委托模型"自动化人本来要按的那个回车"
+  这个前提在这条路上根本不成立：没有框，也没有那个人。另加一条显式
+  Correction 段记录被证伪的原话与证据出处，不做无声改写。
+- **Impact**: 纯文档，零代码改动。两条路**并存**，只有一条经过门——这是订正
+  的要点：原话不只是过严，它把一个**观察盲区**误报成了一道**闸**。
+- **Verification**: `pytest -k "delegation or contract_index or contracts"`
+  700 passed（两份引用该文档的测试均未因措辞改动失败）。证据出处
+  `docs/validation/2026-08-03-walkaway-round-1.md` F1 为同日实测记录。
+
+
 ### Tell every worker the orchestration boundary, not just the ones with a worktree
 
 - **Type**: fix
