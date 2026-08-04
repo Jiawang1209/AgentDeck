@@ -9898,6 +9898,120 @@ def _startup_trust_block(config: ProjectConfig) -> dict[str, object]:
     }
 
 
+def _backup_before_write(path: Path) -> Path:
+    stamp = "".join(ch for ch in utc_now() if ch.isalnum())
+    backup = path.with_name(f"{path.name}.agentdeck-backup-{stamp}")
+    backup.write_bytes(path.read_bytes())
+    return backup
+
+
+def _record_codex_trust(root: object) -> None:
+    """把信任记录**追加**进 codex 的 config.toml。
+
+    绝不解析后重写:该文件带注释、格式和上百条既有记录,round-trip 会把它们
+    全部抹平。追加是唯一能保证既有字节逐字不动的写法。
+    """
+    path = Path(os.path.expanduser("~")) / ".codex" / "config.toml"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if path.exists():
+        _backup_before_write(path)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(f'\n[projects."{root}"]\ntrust_level = "trusted"\n')
+
+
+def _record_claude_trust(root: object) -> None:
+    """在 Claude Code 的 ~/.claude.json 里把本项目标为已信任。
+
+    这个文件装着**所有**项目的活状态,所以:写前备份、只改本项目那一条、
+    其余键原样 round-trip、最后原子替换。
+    """
+    path = Path(os.path.expanduser("~")) / ".claude.json"
+    data: dict[str, Any] = {}
+    if path.exists():
+        _backup_before_write(path)
+        try:
+            loaded = json.loads(path.read_text(encoding="utf-8"))
+            if isinstance(loaded, dict):
+                data = loaded
+        except Exception:
+            # 读不出来时不该走到这里(状态会是 unknown,调用方已跳过);
+            # 真到了这里就停手,绝不用空对象覆盖掉整份配置。
+            return
+    projects = data.setdefault("projects", {})
+    if not isinstance(projects, dict):
+        return
+    entry = projects.setdefault(str(root), {})
+    if not isinstance(entry, dict):
+        return
+    entry["hasTrustDialogAccepted"] = True
+    tmp = path.with_name(f"{path.name}.agentdeck-tmp")
+    tmp.write_text(
+        json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    tmp.replace(path)
+
+
+def agent_trust_command(args: argparse.Namespace) -> int:
+    """显式把本项目目录记进各 agent CLI 自己的信任记录。
+
+    这**不是**代按屏上那道框——AgentDeck 永远不往 pane 里发回车绕过闸门。
+    它写的是那道框按下去会写的**同一条记录**,而触发它的是人显式跑的一条
+    带 `--confirm` 的命令:同一个人、同一个决定,换了个入口。人在这个目录里
+    配置并 spawn 了这些 agent,信任该目录本就是那个决定的一部分。
+
+    只在状态确凿为 `untrusted` 时写。`unknown`(记录读不出来)一律跳过:
+    TOML 里重复的 `[projects."<path>"]` 表会让 codex 的配置**直接解析失败**,
+    为省一次回车而写坏别人的配置是划不来的交换。
+    """
+    config, store, exit_code = _load_project_or_error()
+    if config is None or store is None:
+        return exit_code
+    if not args.confirm:
+        print("agent trust requires --confirm", file=sys.stderr)
+        return 1
+    writers = {"codex": _record_codex_trust, "claude": _record_claude_trust}
+    trust = _startup_trust_block(config)
+    done_providers: set[str] = set()
+    items: list[dict[str, object]] = []
+    for item in trust["items"]:
+        provider = str(item.get("provider") or "").strip().lower()
+        if provider not in writers:
+            outcome = "unsupported"
+        elif item["state"] == "trusted":
+            outcome = "already_trusted"
+        elif item["state"] == "unknown":
+            outcome = "skipped_unknown"
+        elif provider in done_providers:
+            # 同一个 CLI 的多个 agent 共用一条记录,只写一次。
+            outcome = "recorded"
+        else:
+            writers[provider](config.root)
+            done_providers.add(provider)
+            outcome = "recorded"
+        items.append({**item, "outcome": outcome})
+    counts = {
+        f"{name}_count": sum(1 for i in items if i["outcome"] == name)
+        for name in ("recorded", "already_trusted", "unsupported", "skipped_unknown")
+    }
+    store.append_event(
+        EventRecord.create(
+            "agent_directory_trust_recorded",
+            {"project_root": str(config.root), **counts},
+        )
+    )
+    _print_json(
+        {
+            "ok": True,
+            "mode": "agent_directory_trust",
+            "project_root": str(config.root),
+            "items": items,
+            **counts,
+            "ready_command": "agentdeck agent ready",
+        }
+    )
+    return 0
+
+
 def agent_ready_command(_args: argparse.Namespace) -> int:
     config, store, exit_code = _load_project_or_error()
     if config is None or store is None:
@@ -24295,6 +24409,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Show a read-only startup card for configured agent panes",
     )
     agent_ready.set_defaults(func=agent_ready_command)
+    agent_trust = agent_subparsers.add_parser(
+        "trust",
+        help="Record this project directory as trusted in each agent CLI's own config",
+    )
+    agent_trust.add_argument("--confirm", action="store_true")
+    agent_trust.set_defaults(func=agent_trust_command)
 
     agent_spawn = agent_subparsers.add_parser("spawn", help="Spawn a configured agent in tmux")
     agent_spawn.add_argument("--agent", required=True, help="Agent id from .agentdeck/config.toml")

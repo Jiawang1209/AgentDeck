@@ -4,6 +4,36 @@
 
 ## 2026-08-04
 
+### Record directory trust through an explicit AgentDeck command
+
+- **Type**: feat
+- **Motivation**: 预检那一刀只让 `agent ready` 停止说谎,摩擦本身还在:每进
+  一个新目录仍要人去三个 pane 各按一次。user 的论点站得住——**人在这个目录
+  里配置并 spawn 了这些 agent,信任该目录本就是那个决定的一部分**。
+- **What**: `agentdeck agent trust --confirm`,写的是那道框按下去会写的
+  **同一条记录**:codex 走 `~/.codex/config.toml` **追加**
+  `[projects."<root>"]`(绝不解析后重写——该文件带注释与上百条既有记录,
+  round-trip 会全部抹平),Claude Code 走 `~/.claude.json` 的 round-trip
+  (备份 → 只改本项目那一条 → 原子替换)。两侧写前各备份。同一 CLI 的多个
+  agent 只写一次。
+- **Impact**: **不是代按屏上那道框**——AgentDeck 永不往 pane 发回车绕过闸门;
+  触发它的是人显式跑的带 `--confirm` 的命令,同一个人、同一个决定换了个入口,
+  并留 `agent_directory_trust_recorded` 审计事件。**只在确凿 `untrusted` 时
+  写**:`unknown` 一律跳过,因为 TOML 里重复的 `[projects."<path>"]` 表会让
+  codex 配置**直接解析失败**——为省一次回车写坏别人的配置划不来。**刻意不用**
+  两个 CLI 的 `--dangerously-skip-permissions` / `bypassPermissions` 类开关:
+  它们同时关掉**全部**授权框,而授权框是整个委托系统的地基。
+- **Verification**: TDD,4 条新测试先红后绿(无 `--confirm` 零写 / codex 追加
+  后原字节逐字保留且生成备份 / claude 其它项目与顶层键一字未动且生成备份 /
+  未知 provider 报 `unsupported` 而非谎称已处理)。**两条更简单的方案被证伪**:
+  ①`codex -c 'projects."<dir>".trust_level="trusted"'` 在 tmux 里真跑一遍,
+  信任框**照样弹出**;②项目级 `CLAUDE.md` / `AGENTS.md` 更不可能——框自己
+  写着"信任该目录才允许 project-local config/hooks 加载",用目录里的文件去
+  授予对该目录的信任是**循环**的,而这正是它防的东西(prompt injection)。
+  结论:信任记录必须存在**该目录够不着的地方**,即用户级配置——这也正是本命令
+  写在那里的原因。全量 5285 passed / 3 skipped(前一刀 5281 + 本刀 4)。
+
+
 ### Stop claiming startup readiness over an untrusted directory
 
 - **Type**: fix
