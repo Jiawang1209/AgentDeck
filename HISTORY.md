@@ -4,6 +4,35 @@
 
 ## 2026-08-04
 
+### Give the matcher an exact-command form (F2 step 1 of 2 — NOT yet wired)
+
+- **Type**: feat
+- **Motivation**: 走开段 round 1 finding F2。`gate_preview.py` 在
+  `unpinned_tail` 为空时向人渲染 `连带授权: (无——仅此一条命令)`,而
+  `delegation_match.py` 的匹配是 `rest.startswith(prefix)` 且**无等值特例**
+  ——以整条命令为前缀的委托同样命中 `curl <url> -o <路径>`(落盘)与
+  `curl <url> -d @<文件>`(外发),二者都不是 shell 重定向,既有硬拒
+  (命令替换 / heredoc / 非 `/tmp` 重定向 / `eval` / 后台 `&`)一条都不适用。
+  那句话在语义上不成立,**而它偏偏是谨慎的人最可能选的一级**;该模块
+  docstring 自陈存在理由正是消除"显示了不成立的事实"。
+- **What**: `normalize_match()` 新增可选关键字 `exact_commands`:等值形态钉住
+  整条命令、没有尾巴,先于前缀判定(最窄一档,命中即定)。两侧按单空格归一后
+  比较,与命令提取处"匹配时空白折叠兜住折行歧义"同一取舍。**目前没有任何
+  调用方传该参数**,现有语义逐字节不变。
+- **Impact**: **F2 尚未修复,不要据此认为它修好了。** 这一步只让"只授权这
+  一条命令"第一次成为一个**存在的档位**;在 `gate_preview` 改发等值 grant
+  命令之前,**梯子第 1 级那句话仍然是假的**。剩余接线六处:
+  `state.grant_delegation` 第三形态、CLI `--exact-command`、`composite_arm`
+  传参与 `via` 反查、**`_match_active_delegation` 平前缀那条臂**(简单命令
+  走的是它)、`gate_preview` 第 1 级的 `grant_command`、以及 `match_kind`
+  枚举加 `exact`——最后一项是**审计溯源字段**,会流进 `auth_box_released`
+  事件与 `delegation-schema.md`,须同步契约与测试。
+- **Verification**: TDD,4 条新测试先红后绿(等值只匹配自己 / 不覆盖追加的
+  尾巴,`-o` 与 `-d @` 各一条 / 空白折叠两侧归一),外加一条对照组钉住前缀
+  语义未变。RED 因 `TypeError: unexpected keyword argument` 而红,即功能
+  缺失而非笔误。全量 5249 passed / 3 skipped(前一刀 5245 + 本刀 4)。
+
+
 ### Correct a same-day claim the first walk-away round disproved
 
 - **Type**: docs

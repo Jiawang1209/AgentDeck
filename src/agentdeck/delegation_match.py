@@ -203,13 +203,34 @@ def is_composite_command(command: str) -> bool:
 
 
 def normalize_match(
-    command: str, prefixes: Sequence[str]
+    command: str,
+    prefixes: Sequence[str],
+    *,
+    exact_commands: Sequence[str] = (),
 ) -> CompositeMatch | None:
-    """拆段+逐段覆盖匹配;任何解析失败返回 None(fail-closed)。"""
+    """拆段+逐段覆盖匹配;任何解析失败返回 None(fail-closed)。
+
+    两种委托形态在这里汇合:
+
+    - `prefixes` 是 `startswith`——前缀钉住开头,**尾巴可以是任何东西**。
+    - `exact_commands` 是等值——整条命令都被钉住,没有尾巴。
+
+    后者是 round 1 finding F2 的修复:gate-preview 梯子第 1 级把整条命令当
+    前缀,并向人声称"连带授权:(无——仅此一条命令)",而在纯 `startswith` 下
+    这句话不成立——`curl <url> -o <路径>` / `-d @<文件>` 都以它开头,都会命中,
+    而这两个都不是 shell 重定向,既有硬拒一条也不适用。等值形态让那句话
+    变成真的,也让"只授权这一条命令"第一次成为一个**存在的档位**。
+
+    两侧都按单空格归一后比较:框文本折行会折叠空白,这与命令提取处"匹配时
+    空白折叠兜住折行歧义"同一取舍。
+    """
     if not command or not command.strip():
         return None
     active = [prefix for prefix in prefixes if prefix]
-    if not active:
+    active_exact = [
+        " ".join(item.split()) for item in exact_commands if item and item.strip()
+    ]
+    if not active and not active_exact:
         return None
     for marker in _HARD_REJECT_SUBSTRINGS:
         if marker in command:
@@ -237,7 +258,10 @@ def normalize_match(
             matched.append(MatchedSegment(raw, "glue"))
             continue
         rest = " ".join(after_env)
-        via = next((prefix for prefix in active if rest.startswith(prefix)), None)
+        # 等值先判:它是最窄的一档,命中即定,不必再看有没有更宽的前缀覆盖它。
+        via = next((item for item in active_exact if rest == item), None)
+        if via is None:
+            via = next((prefix for prefix in active if rest.startswith(prefix)), None)
         if via is None:
             return None
         covered_any = True
