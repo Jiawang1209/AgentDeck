@@ -383,3 +383,50 @@ def test_contract_is_discoverable(capsys) -> None:
     assert cli.main(["contract", "list"]) == 0
     index = json.loads(capsys.readouterr().out)
     assert any(item.get("name") == "run-loop-host" for item in index["contracts"])
+
+
+def test_human_gate_candidate_accepts_a_directory_trust_box() -> None:
+    from agentdeck.run_loop_host import human_gate_candidate
+
+    # F4 后半:pane 停在首次目录 trust 框上时,被等待的回复永不自解——
+    # 宿主必须诚实停下,而不是空转到预算耗尽(round 1 里三个 pane 都停在
+    # 这道框上,而扫描连 skipped[] 都没记它)。
+    skipped = [
+        {
+            "agent_id": "coder",
+            "command": None,
+            "box_kind": "directory_trust",
+            "mcp_server": None,
+            "mcp_tool": None,
+            "waiting_hint": "Do you trust the contents of this directory?",
+            "box_pending": True,
+            "reason": "directory trust is human setup",
+            "iteration": 0,
+        }
+    ]
+
+    gate = human_gate_candidate(skipped, {"coder"})
+
+    assert gate is not None
+    assert gate["box_kind"] == "directory_trust"
+
+
+def test_human_gate_candidate_still_ignores_a_pane_capture_failure() -> None:
+    from agentdeck.run_loop_host import human_gate_candidate
+
+    # 理由集是闭合的:runtime 抖动仍然不是人类门。
+    skipped = [
+        {
+            "agent_id": "coder",
+            "command": None,
+            "box_kind": None,
+            "mcp_server": None,
+            "mcp_tool": None,
+            "waiting_hint": None,
+            "box_pending": False,
+            "reason": "pane capture failed",
+            "iteration": 0,
+        }
+    ]
+
+    assert human_gate_candidate(skipped, {"coder"}) is None

@@ -102,7 +102,8 @@ Commands:
   fallback takes the **last** occurrence of the option-2 marker text in the
   region (same reverse-scan rationale). It reports
   `box_present`, `waiting_hint`, `command`, `box_kind`
-  (`command` | `mcp_tool` | null), `mcp_server`, `mcp_tool`, `match_kind`,
+  (`command` | `mcp_tool` | `directory_trust` | null), `mcp_server`,
+  `mcp_tool`, `match_kind`,
   `matched_segments`, `delegated`, `delegation_id`, and the explicit
   `release_command`. It never writes state and never sends input.
 - MCP tool boxes (the fifth box class, round 11 live finding #3; wording
@@ -391,6 +392,20 @@ do not belong in a pack either, and the reason is worth stating precisely.
   is granted along with it. AgentDeck cannot verify a command's nature; the
   human owns that judgment at grant time — the same division of
   responsibility as the MCP guidance below.
+- Directory-trust boxes (the sixth box class, walk-away round 1 finding F4):
+  a first-run "do you trust this directory?" prompt is a box a human must
+  answer, and `box_kind="directory_trust"` says so. It is **structurally
+  undelegatable** — no command to extract, no MCP pair, therefore nothing a
+  grant could ever cover — and that is by design: first-run directory trust
+  is human setup and must never be bypassed by worker input or a silent
+  Enter. The scan records it in `skipped[]` with the reason
+  `directory trust is human setup` and stops there: no command extraction, no
+  MCP extraction. Reusing `no active delegation` for it would be a false
+  remediation hint, implying a grant would help when no such grant exists or
+  should. Recording it exists solely so the host can stop honestly
+  (`stopped_reason=human_gate`) instead of spinning to budget exhaustion —
+  round 1 parked three panes on this box and the scan dropped every one of
+  them silently.
 - Known gap, part 1 — the shell path (needs its own spec; do not work around
   it by loosening grants): a worker's `curl` / `wget` does raise a normal
   command box and is correctly caught as a human gate, but there is no safe

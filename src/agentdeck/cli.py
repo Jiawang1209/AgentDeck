@@ -10411,11 +10411,25 @@ def _extract_mcp_tool_target(output: str) -> _McpToolTarget | None:
 
 
 def _box_fields(
-    command: str | None, mcp_box: _McpToolTarget | None
+    command: str | None,
+    mcp_box: _McpToolTarget | None,
+    *,
+    directory_trust: bool = False,
 ) -> dict[str, object]:
     # boxes/release/scan 三面与审计事件共用的框身份三元组。
+    # `directory_trust` 是第三类框:它没有可提取的命令,也没有 MCP 对,
+    # 因此**结构上不可委托、不可放行**——它只提供身份,好让宿主认得出
+    # 这是一道等人的框,而不是把整个 pane 当成"没在等"。
     return {
-        "box_kind": "command" if command else ("mcp_tool" if mcp_box else None),
+        "box_kind": (
+            "command"
+            if command
+            else "mcp_tool"
+            if mcp_box
+            else "directory_trust"
+            if directory_trust
+            else None
+        ),
         "mcp_server": mcp_box.server if mcp_box else None,
         "mcp_tool": mcp_box.tool if mcp_box else None,
     }
@@ -10718,6 +10732,32 @@ def _scan_release_delegated_boxes(
             continue
         waiting_hint = _detect_waiting_for_input(output)
         if waiting_hint is None:
+            # 第三类框:首次目录 trust。它的句式与执行框不同,原检测器一个
+            # marker 都不命中,于是整段 `continue`——宿主因此毫无证据,只能
+            # 空转到预算耗尽(round 1 三个 pane 全停在这道框上)。
+            #
+            # 记录它,但**到此为止**:不做命令提取、不做 MCP 提取。trust 屏上
+            # 没有任何原 marker,区域锚定会落空(`start=0`),`$ ` 行提取随之
+            # 扫过整段回滚历史,可能刮出一条早已答复的旧命令当成待批命令。
+            # 提取器与放行路径因此逐字节不变。
+            trust_hint = _detect_directory_trust_prompt(output)
+            if trust_hint is None:
+                continue
+            skipped.append(
+                {
+                    "agent_id": agent_id,
+                    "command": None,
+                    **_box_fields(None, None, directory_trust=True),
+                    "waiting_hint": trust_hint,
+                    # 检测器已要求活动选择器字形,命中即证明框还活着。
+                    "box_pending": True,
+                    # 绝不写 "no active delegation":trust 框结构上永远不可
+                    # 委托,那句话会暗示"grant 一条就好了",而那条 grant 并
+                    # 不存在也不该存在。
+                    "reason": "directory trust is human setup",
+                    "iteration": iteration,
+                }
+            )
             continue
         command = _extract_auth_box_command(output)
         mcp_box = _extract_mcp_tool_target(output) if command is None else None

@@ -4,6 +4,33 @@
 
 ## 2026-08-04
 
+### Let the host stop honestly on a directory-trust box instead of spinning
+
+- **Type**: fix
+- **Motivation**: F4 后半——前半只让 `agent capture` 说了真话,宿主那一侧
+  没动。根因在扫描:`waiting_hint = _detect_waiting_for_input(output)` 之后
+  `if waiting_hint is None: continue`,而 trust 框的句式一个 marker 都不命中,
+  于是**整段被跳过,连 `skipped[]` 都进不去**。宿主因此毫无证据,只能空转到
+  预算耗尽——round 1 三个 pane 全停在这道框上,扫描一个都没记。
+- **What**: 第六类框 `box_kind="directory_trust"`(`_box_fields` 新增该档)。
+  扫描在原检测器落空时回落 `_detect_directory_trust_prompt`,命中即记入
+  `skipped[]`(`box_pending=True`——检测器已要求活动选择器字形作正证明)。
+  `human_gate_candidate` 的判据 1 由单值比较扩为闭合 `HUMAN_GATE_REASONS`。
+  契约同步 `box_kind` 枚举与第六类框说明;CLAUDE.md 两处判据描述一并订正。
+- **Impact**: 两个刻意的取舍。①**记录到此为止**:trust 分支记完即 `continue`,
+  不做命令提取、不做 MCP 提取——trust 屏上没有任何原 marker,区域锚定会落空
+  (`start=0`),`$ ` 行提取随之扫过整段回滚历史,**可能刮出一条早已答复的旧
+  命令当成待批命令**;提取器与放行路径因此逐字节不变。②**理由绝不写
+  `no active delegation`**:trust 框结构上永远不可委托(没有命令可提取、没有
+  MCP 对,任何 grant 都覆盖不了它,而这是设计使然),复用那句话会暗示"grant
+  一条就好了",而那条 grant 既不存在也不该存在——**假的补救指引比没有指引
+  更糟**。记录它的唯一目的是让宿主诚实停下,绝不使它可被自动按下。
+- **Verification**: TDD,3 条新测试先红后绿(gate 接受 trust 档 / gate 仍拒绝
+  pane capture 失败这条对照 / 扫描确实记入 `skipped[]` 而非静默丢弃)。RED
+  时扫描返回的 `skipped` 是空列表,与诊断的根因一致。全量 5272 passed /
+  3 skipped(前一刀 5269 + 本刀 3)。
+
+
 ### Notice when a task branch is settled behind AgentDeck's back
 
 - **Type**: feat

@@ -114,6 +114,18 @@ _HUMAN_GATE_IDENTITY = ("agent_id", "box_kind", "command", "mcp_server", "mcp_to
 HUMAN_GATE_FIELDS = (*_HUMAN_GATE_IDENTITY, "waiting_hint")
 
 
+# 构成人类门的闭合理由集。判据 1 消费它。
+HUMAN_GATE_REASONS = (
+    # 屏上有一道框,但没有任何活跃委托覆盖它——grant 一条就能让它自动放行。
+    "no active delegation",
+    # 首次目录 trust 框。它**结构上永远不可委托**(CLAUDE.md 明写这是 human
+    # setup,不得由 worker 输入或静默 Enter 绕过),所以绝不能复用上面那句
+    # ——"no active delegation" 会暗示"grant 一条就好了",而那条 grant 并不
+    # 存在也不该存在。假的补救指引比没有指引更糟。
+    "directory trust is human setup",
+)
+
+
 def human_gate_candidate(
     skipped: list[dict[str, Any]], awaiting_agents: set[str]
 ) -> dict[str, Any] | None:
@@ -121,8 +133,8 @@ def human_gate_candidate(
 
     四条判据全部成立才算候选:
 
-    1. `reason == "no active delegation"` —— pane capture 失败是 runtime
-       抖动而非人类门;
+    1. `reason` 落在闭合的 `HUMAN_GATE_REASONS` 内 —— pane capture 失败是
+       runtime 抖动而非人类门;
     2. agent 落在本 plan 的 awaiting 集内 —— 别的 plan、闲置 agent 身上的
        框不该停掉这台宿主;
     3. `box_pending` —— 屏上确有一道**待批**框(活动选择器字形)。终审
@@ -138,7 +150,7 @@ def human_gate_candidate(
     for item in skipped:
         if not isinstance(item, dict):
             continue
-        if item.get("reason") != "no active delegation":
+        if item.get("reason") not in HUMAN_GATE_REASONS:
             continue
         agent_id = item.get("agent_id")
         if agent_id not in awaiting_agents:

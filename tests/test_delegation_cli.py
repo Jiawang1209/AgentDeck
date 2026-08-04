@@ -1598,3 +1598,42 @@ def test_agent_boxes_exact_delegation_does_not_cover_an_appended_tail(
         assert cli.main(["agent", "boxes", "--agent", "coder"]) == 0
         payload = json.loads(capsys.readouterr().out)
         assert payload["delegated"] is False, tail
+
+
+CODEX_TRUST_BOX_SCREEN = (
+    "> You are in /tmp/demo\n"
+    "\n"
+    "  Do you trust the contents of this directory? Working with untrusted\n"
+    "  contents comes with higher risk of prompt injection.\n"
+    "\n"
+    "› 1. Yes, continue\n"
+    "  2. No, quit\n"
+    "\n"
+    "  Press enter to continue\n"
+)
+
+
+def test_scan_records_a_directory_trust_box_instead_of_skipping_it_silently(
+    tmp_path, monkeypatch
+) -> None:
+    # F4 后半:扫描原本在 `waiting_hint is None` 处直接 continue,trust 框
+    # 连 skipped[] 都进不去——宿主因此毫无证据,只能空转到预算耗尽
+    # (round 1 三个 pane 全停在这道框上)。
+    root = prepare_project(tmp_path, monkeypatch)
+    bind_coder(root)
+    fake = FakeTmuxBackend()
+    fake.output = CODEX_TRUST_BOX_SCREEN
+
+    released, skipped = cli._scan_release_delegated_boxes(
+        cli.load_config(root), StateStore(root), fake, ["coder"], 0
+    )
+
+    assert released == []
+    assert len(skipped) == 1
+    item = skipped[0]
+    assert item["box_kind"] == "directory_trust"
+    assert item["box_pending"] is True
+    # 理由绝不能写成 "no active delegation":trust 框结构上永远不可委托,
+    # 那句话会暗示"grant 一条就好了",而那条 grant 并不存在也不该存在。
+    assert item["reason"] == "directory trust is human setup"
+    assert item["command"] is None
