@@ -4,6 +4,34 @@
 
 ## 2026-08-05
 
+### Say which stage failed, let the step's budget govern the request, and drop stale blockers
+
+- **Type**: fix
+- **Motivation**: 首次真实 ACP 运行(字母表 13 步、四个 worker 全走协议)一次暴露
+  三处**我自己接线时的错误**:
+  ① blocker 只写了异常类名。`WorkerCompletionStageError` 携带闭合的
+  `completion_stage`({prompt, update, parse, finish, cleanup}),而且刻意不含
+  provider 输出——它本来就是为了能安全展示给人看而设计的。"失败了"和"在
+  prompt 阶段失败了"对下一步的指导完全不同,我把唯一有用的信息扔了。
+  ② 两个超时各说各话:`agentdeck workflow run --timeout 240` 给了 240 秒,而
+  `AcpWorkerTransport` 用它自己 30 秒的默认值。协议请求早就放弃了,引擎还以为
+  自己在等。codex worker 启动+出词常超过 30 秒,于是**反复挂在 prompt 阶段**;
+  claude 那两个因为快所以没事,看上去像"codex 适配器不行"——其实是我没把预算
+  传下去。
+  ③ 续跑成功之后,那一步仍挂着上一次的失败说明:一条 `completed` 的记录同时
+  展示着一句失败,又是账本在说一件不成立的事。
+- **What**: blocker 带上 `completion_stage`(有就写 `<类名> at <stage>`);
+  `_drive_acp_step` 把该 run 的 `timeout_seconds` 作为 `request_timeout` 传给
+  传输层——谁给的预算谁说了算;`_record_step_reply` 入账前清掉 `blocker`。
+- **Impact**: ACP 失败现在说得出卡在哪一段;步骤预算与协议请求不再分叉;
+  成功的一步不再展示失败说明。tmux 路径不受影响。
+- **Verification**: 三条测试先红后绿(阶段带出、预算传下、成功清 blocker)。
+  **真实验证**:同一份 13 步计划,四个 worker 全走 ACP(两个
+  `claude-agent-acp`、两个 `codex-acp`),**13/13 完成**,全程零 pane 输入。
+  全量 5338 passed / 3 skipped。
+- **注**:①挡住了②——要不是先把 stage 带出来,根本查不到超时那条。这也是
+  "把已知信息如实报出来"本身就有价值的一次实例。
+
 ### Drive an ACP worker over the protocol instead of the keyboard
 
 - **Type**: feat

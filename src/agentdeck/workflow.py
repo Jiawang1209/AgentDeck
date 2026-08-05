@@ -448,6 +448,9 @@ def _record_step_reply(
         reply_id=str(recorded["reply_id"]),
         artifact_paths=artifact_paths,
     )
+    # 成功之后清掉上一次的失败说明:一条 `completed` 的记录同时展示着一句失败,
+    # 就是账本在说一件不成立的事(2026-08-06 live 的 codex4 正是如此)。
+    turn.pop("blocker", None)
     turn.update(
         {
             "status": reply["status"],
@@ -555,6 +558,7 @@ def _drive_acp_step(
     previous_handoff: dict[str, Any] | None,
     transport_factory: Callable[..., Any],
     workspace: str | Path,
+    timeout_seconds: int,
 ) -> dict[str, Any]:
     """把一步交给 ACP worker:请求进去,响应回来,中间没有键盘也没有屏幕。
 
@@ -615,6 +619,10 @@ def _drive_acp_step(
         argv=tuple(agent.transport_command),
         workspace=workspace,
         prompt=prompt,
+        # 这一步的预算由引擎说了算。不传的话传输层会用它自己 30 秒的默认值,
+        # 于是两个超时各说各话:协议请求早就放弃了,引擎还以为自己在等
+        # (2026-08-06 首次真实 ACP 运行里 codex worker 就反复挂在 prompt 阶段)。
+        request_timeout=timeout_seconds,
     )
 
     async def drive() -> Any:
@@ -638,6 +646,11 @@ def _drive_acp_step(
     try:
         result = asyncio.run(drive())
     except Exception as error:  # transport 自己的异常层级由 daemon 定义
+        # `completion_stage` 是闭合枚举 {prompt, update, parse, finish, cleanup},
+        # 而且刻意不含 provider 输出——它本来就是为了能安全展示给人看而设计的。
+        # "失败了"和"在解析阶段失败了"对下一步的指导完全不同,别把它扔掉。
+        stage = getattr(error, "completion_stage", None)
+        detail = f"{type(error).__name__} at {stage}" if stage else type(error).__name__
         return {
             "stopped": True,
             "record": _stop_workflow(
@@ -647,7 +660,7 @@ def _drive_acp_step(
                 turn=turn,
                 turn_status="failed",
                 reason="transport_failed",
-                blocker=f"ACP worker transport failed: {agent.agent_id} ({type(error).__name__})",
+                blocker=f"ACP worker transport failed: {agent.agent_id} ({detail})",
             ),
         }
     if (
@@ -771,6 +784,7 @@ def run_sequential_workflow(
                 previous_handoff=previous_handoff,
                 transport_factory=acp_worker_transport,
                 workspace=config.root,
+                timeout_seconds=timeout_seconds,
             )
             if outcome.get("stopped"):
                 return outcome["record"]

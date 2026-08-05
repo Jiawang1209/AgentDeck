@@ -256,3 +256,110 @@ def test_an_acp_turn_that_does_not_end_the_turn_is_not_taken_as_done(tmp_path) -
     assert stopped["status"] == "stopped"
     assert stopped["stop_reason"] == "invalid_reply"
     assert backend.sent == []
+
+
+def test_an_acp_failure_reports_the_lifecycle_stage(tmp_path) -> None:
+    """传输失败要说清**卡在哪一段**,而不只是一个异常类名。
+
+    `WorkerCompletionStageError` 携带闭合的 `completion_stage`
+    ({prompt, update, parse, finish, cleanup}),而且刻意不含 provider 输出——
+    它就是为了能安全地展示给人看而设计的。2026-08-06 首次真实 ACP 运行里
+    codex4 挂在这上面,而我的 blocker 只写了类名,把唯一有用的信息扔掉了:
+    "失败了"和"在解析阶段失败了"对下一步的指导完全不同。
+    """
+    FakeAcpWorkerTransport.instances.clear()
+
+    class FailsAtParse(FakeAcpWorkerTransport):
+        async def complete(self, attempt, receipt):
+            from agentdeck.daemon.transports import WorkerCompletionStageError
+
+            raise WorkerCompletionStageError("parse")
+
+    config, store, run_id = _project(tmp_path, acp_agent="planner")
+
+    stopped = run_sequential_workflow(
+        config=config,
+        store=store,
+        backend=ScriptedPaneBackend(deliver_via="file"),
+        run_id=run_id,
+        poll_interval=0,
+        sleeper=lambda _seconds: None,
+        acp_worker_transport=FailsAtParse,
+    )
+
+    assert stopped["stop_reason"] == "transport_failed"
+    blocker = stopped["turns"][0]["blocker"]
+    assert "parse" in blocker, f"阶段没被带出来: {blocker}"
+    assert "planner" in blocker
+
+
+def test_the_step_timeout_governs_the_protocol_request(tmp_path) -> None:
+    """一步的超时预算必须传到传输层。
+
+    2026-08-06 首次真实 ACP 运行:codex worker 反复挂在 `prompt` 阶段。接线时
+    我没把步骤超时传下去,`AcpWorkerTransport` 于是用它自己 30 秒的默认值——
+    而这一步的预算是 240 秒。**两个超时各说各话**:协议请求早就放弃了,引擎
+    还以为自己在等。谁给的预算,就该由谁说了算。
+    """
+    FakeAcpWorkerTransport.instances.clear()
+    seen: dict[str, object] = {}
+
+    class RecordingTimeout(FakeAcpWorkerTransport):
+        def __init__(self, **kwargs):
+            seen["request_timeout"] = kwargs.get("request_timeout")
+            super().__init__(**kwargs)
+
+    config, store, run_id = _project(tmp_path, acp_agent="planner")
+    store.update_workflow_run(run_id, timeout_seconds=180)
+
+    run_sequential_workflow(
+        config=config,
+        store=store,
+        backend=ScriptedPaneBackend(deliver_via="file"),
+        run_id=run_id,
+        poll_interval=0,
+        sleeper=lambda _seconds: None,
+        acp_worker_transport=RecordingTimeout,
+    )
+
+    assert seen["request_timeout"] == 180
+
+
+def test_a_retried_step_does_not_keep_its_old_failure_blocker(tmp_path) -> None:
+    """续跑成功之后,那一步不该还挂着上一次的失败说明。
+
+    2026-08-06 live:codex4 第一次挂在 transport,续跑成功了,而 `blocker` 原样
+    留在 turn 上——一条 `completed` 的记录同时展示着一句失败。它属于本仓库一直
+    在消灭的那类:账本说了一件不成立的事。成功就该把上一次的说明清掉。
+    """
+    FakeAcpWorkerTransport.instances.clear()
+    config, store, run_id = _project(tmp_path, acp_agent="planner")
+
+    class FailsOnce(FakeAcpWorkerTransport):
+        attempts = 0
+
+        async def complete(self, attempt, receipt):
+            FailsOnce.attempts += 1
+            if FailsOnce.attempts == 1:
+                from agentdeck.daemon.transports import WorkerCompletionStageError
+
+                raise WorkerCompletionStageError("prompt")
+            return await super().complete(attempt, receipt)
+
+    stopped = run_sequential_workflow(
+        config=config, store=store, backend=ScriptedPaneBackend(deliver_via="file"),
+        run_id=run_id, poll_interval=0, sleeper=lambda _s: None,
+        acp_worker_transport=FailsOnce,
+    )
+    assert stopped["stop_reason"] == "transport_failed"
+    assert stopped["turns"][0]["blocker"]
+
+    resumed = run_sequential_workflow(
+        config=config, store=store, backend=ScriptedPaneBackend(deliver_via="file"),
+        run_id=run_id, poll_interval=0, sleeper=lambda _s: None,
+        acp_worker_transport=FailsOnce,
+    )
+
+    turn = resumed["turns"][0]
+    assert turn["status"] == "completed"
+    assert not turn.get("blocker"), f"成功的一步不该留着失败说明: {turn.get('blocker')!r}"
