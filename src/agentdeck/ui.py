@@ -71,6 +71,32 @@ _PAGE = """<!doctype html>
   .muted { color: var(--muted); } .ok { color: var(--ok); } .warn { color: var(--warn); }
   code { font-family: var(--mono); background: #2c2a27; padding: .1rem .3rem; border-radius: 3px; }
 
+  /* 新建任务对话框 */
+  #overlay {
+    position: fixed; inset: 0; background: rgba(0,0,0,.55);
+    display: none; align-items: center; justify-content: center; z-index: 50;
+  }
+  #overlay.on { display: flex; }
+  #dialog {
+    width: min(34rem, calc(100vw - 3rem)); background: var(--panel);
+    border: 1px solid var(--line); border-radius: 14px; padding: 1.1rem 1.2rem;
+  }
+  #dialog h3 { margin: 0 0 .3rem; font-size: .95rem; }
+  #dialog .hint { color: var(--muted); font-size: .78rem; line-height: 1.55; margin-bottom: .8rem; }
+  #goal {
+    width: 100%; min-height: 5.5rem; resize: vertical; background: var(--bg);
+    color: var(--ink); border: 1px solid var(--line); border-radius: 9px;
+    padding: .6rem .75rem; font: inherit; font-size: .85rem;
+  }
+  #goal:focus { outline: none; border-color: var(--accent); }
+  #dialog .acts { display: flex; gap: .5rem; justify-content: flex-end; margin-top: .8rem; }
+  #dialog .acts button {
+    border-radius: 9px; padding: .45rem 1rem; font: inherit; font-size: .82rem; cursor: pointer;
+  }
+  #cancel { background: transparent; color: var(--muted); border: 1px solid var(--line); }
+  #create { background: var(--accent); color: #fff; border: 0; font-weight: 600; }
+  #create:disabled { opacity: .5; cursor: default; }
+
   /* 侧边栏:任务 */
   #sidebar {
     border-right: 1px solid var(--line); background: #161514;
@@ -221,6 +247,21 @@ _PAGE = """<!doctype html>
   }
   button { font: inherit; }
 </style>
+
+<div id="overlay">
+  <div id="dialog">
+    <h3>新建任务</h3>
+    <div class="hint">
+      交给 Leader 拆解成计划，并为每一步创建<strong>待审批项</strong>。
+      到此为止——不会派发给任何 worker，派发要你逐条批准。
+    </div>
+    <textarea id="goal" placeholder="想让它做什么？例如：给页面加一个深色模式开关，并补上对应的结构测试"></textarea>
+    <div class="acts">
+      <button id="cancel" type="button">取消</button>
+      <button id="create" type="button">生成计划</button>
+    </div>
+  </div>
+</div>
 
 <div id="sidebar">
   <div id="sidehead"><button id="newtask" type="button">＋  新建任务</button></div>
@@ -728,10 +769,38 @@ setInterval(refreshControls, 30000);
       }
     }
 
+    // 新建任务:走自然语言的 run_start mode——它调 Leader 出计划并创建
+    // **待审批项**,停在审批门前,不派发。审批门一条不减,GUI 只是把入口
+    // 摆出来,不改变它背后发生什么。
+    const overlay = document.getElementById("overlay");
+    const goal = document.getElementById("goal");
+    const create = document.getElementById("create");
+
+    function closeDialog() { overlay.classList.remove("on"); }
+
     document.getElementById("newtask").addEventListener("click", function () {
-      input.value = "开始运行 ";
-      input.focus();
-      input.setSelectionRange(input.value.length, input.value.length);
+      goal.value = "";
+      overlay.classList.add("on");
+      goal.focus();
+    });
+    document.getElementById("cancel").addEventListener("click", closeDialog);
+    overlay.addEventListener("click", function (event) {
+      if (event.target === overlay) { closeDialog(); }
+    });
+    document.addEventListener("keydown", function (event) {
+      if (event.key === "Escape" && overlay.classList.contains("on")) { closeDialog(); }
+    });
+    create.addEventListener("click", function () {
+      const text = goal.value.trim();
+      if (!text) { goal.focus(); return; }
+      closeDialog();
+      send.disabled = true;
+      create.disabled = true;
+      ask("开始运行 " + text).finally(function () {
+        send.disabled = false;
+        create.disabled = false;
+        loadTasks();
+      });
     });
 
     loadProviders();
