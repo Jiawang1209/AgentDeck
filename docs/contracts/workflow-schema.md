@@ -84,7 +84,17 @@ directory trust prompt or a pending authorization box. That run stops with
 effect: `send_input` returning successfully does **not** mean the task arrived —
 tmux eats the keystrokes without an error, which is how a dispatch was once lost
 while the approval was recorded as `dispatched` and the host waited fifty
-minutes for a reply that could never come. `pane_not_receptive` is deliberately
+minutes for a reply that could never come. A worker configured for a transport other than `tmux` stops the run with
+`transport_unsupported` before anything is sent, and the turn keeps
+`message_id: null`. The sequential runner drives only the tmux transport today;
+the ACP worker transport exists and is validated in the Mission daemon
+(`daemon/transports.py`) but is not wired here yet. Until it is, the runner
+refuses rather than typing into the agent's pane: CLAUDE.md forbids ACP and tmux
+from silently falling back to each other, and the typing path is precisely where
+the failures live. `transport_unsupported` is distinct from `agent_unavailable`
+— the agent is fine; this engine cannot drive its channel.
+
+`pane_not_receptive` is deliberately
 distinct from `pane_lost`: the pane and the agent are both alive, and the next
 step is a human answering the dialog rather than respawning anything. A pane
 that cannot be read is *not* a blocker — an unreadable capture is runtime

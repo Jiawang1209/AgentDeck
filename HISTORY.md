@@ -4,6 +4,36 @@
 
 ## 2026-08-05
 
+### Stop silently typing at a worker that is configured to speak a protocol
+
+- **Type**: fix
+- **Motivation**: 摸清 ACP 现状时发现 AgentDeck 其实有**两套执行栈**。
+  Mission daemon 那套早有完整传输抽象:`AcpWorkerTransport` 与
+  `TmuxWorkerTransport` 同接口,`admit()` 给出**送达回执**,完成判据也分得
+  清清楚楚——ACP 要 `stop_reason == "end_turn"`(协议告诉你的),tmux 要
+  `"structured_reply"`(从屏幕上猜的)。它已由
+  `test_semantic_daemon_acceptance_...acp_tmux_mission` 端到端验收。
+  而 `workflow` 这一套**零 transport 感知**:`transport` 这个词在
+  `workflow.py` 里出现 0 次(唯一一次是注释),不管配置写什么,一律
+  `backend.send_input` 往 pane 里打字。
+  live 探针证实:给 planner 配上 `transport = "acp"`,workflow 照样把任务打进
+  它的 pane,并报告 `completed`。CLAUDE.md 明文禁止 ACP 与 tmux 互相静默
+  fallback——这正是那种情形,而且是把一个本可以走协议的 worker,推到当天已经
+  暴露六个 bug 的"打字进去、读像素出来"那条缝上,还不说一声。
+- **What**: 在解析出 agent 之后、**任何 pane 操作之前**判定 transport(对一个
+  走协议的 worker,连"pane 存不存在"都不是有意义的问题)。非 tmux 一律以新的
+  闭合 stop reason `transport_unsupported` 停下,turn 保持 `message_id: null`
+  (什么都没发),blocker 说清是哪个 agent、哪条 transport、以及**不会**静默
+  回落。它与 `agent_unavailable` 刻意分开:agent 好好的,是这台引擎还驱动不了
+  那条通道。
+- **Impact**: tmux worker 路径逐字节不变(缺省 transport 就是 tmux)。这一刀
+  只去掉**静默**,不改变 workflow 能做什么;真正驱动 ACP 派发是下一刀。
+- **Verification**: 先红后绿。红的时候 live 复现出静默 fallback:`sent: 2`、
+  `status: completed`——它确实往 ACP worker 的 pane 里打了字并宣称成功。
+  三条测试分别钉住:ACP worker 一个字都不许收到、tmux 路径不受影响、混合 plan
+  停在正确的那一步(先跑完的 tmux 步不受牵连)。契约文档与闭合 stop reason
+  已同步。全量 5333 passed / 3 skipped。
+
 ### Wait for evidence that the paste arrived before pressing Enter
 
 - **Type**: fix

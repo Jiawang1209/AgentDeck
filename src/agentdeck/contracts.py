@@ -4267,6 +4267,10 @@ WORKFLOW_STOP_REASONS = (
     # 2026-08-05:pane 还在、agent 也在,但键盘被模态框占着。它与 `pane_lost`
     # 必须分开——下一步不同:一个是重启 pane,一个是人去把那道框按掉。
     "pane_not_receptive",
+    # 2026-08-05:配置说这个 worker 走别的 transport(今天只有 acp)。它与
+    # `agent_unavailable` 不同——agent 好好的,是**这台引擎**还驱动不了那条
+    # 通道;绝不静默回落到往 pane 里打字。
+    "transport_unsupported",
     "timed_out",
     "invalid_reply",
     "worker_blocked",

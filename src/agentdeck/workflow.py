@@ -517,6 +517,35 @@ def run_sequential_workflow(
 
         agent_id = str(step.get("agent_id") or "")
         agent = agents.get(agent_id)
+        # transport 决定"怎么把任务交给它",必须在任何 pane 操作之前判定:
+        # 对一个走协议的 worker,连"pane 存不存在"都不是有意义的问题。
+        #
+        # 2026-08-05:此前 workflow 完全没有 transport 感知——配置写着
+        # `transport = "acp"` 的 worker 照样被往 pane 里打字,而且报告
+        # completed。CLAUDE.md 明文禁止 ACP 与 tmux 互相静默 fallback,这正是
+        # 那种情形:把一个本可以走协议的 worker,推到当天已经暴露出六个 bug 的
+        # "打字进去、读像素出来"那条缝上,还不说一声。
+        #
+        # 本切片先去掉**静默**:非 tmux transport 一律停下并说清楚,一个字都不
+        # 往那个 pane 里打。真正驱动 ACP 派发是下一刀(daemon/transports.py 的
+        # `AcpWorkerTransport` 已经实现并通过端到端验收,workflow 还没接上)。
+        if agent is not None and agent.transport != "tmux":
+            turn = existing or _pending_turn(run_id, step_number, agent_id)
+            if existing is None:
+                turns.append(turn)
+            return _stop_workflow(
+                store,
+                run_id=run_id,
+                turns=turns,
+                turn=turn,
+                turn_status="pending",
+                reason="transport_unsupported",
+                blocker=(
+                    f"agent is configured for the {agent.transport} transport, which "
+                    f"the sequential workflow runner cannot drive yet: {agent_id}; "
+                    "AgentDeck will not silently fall back to typing into its pane"
+                ),
+            )
         binding = store.agent_binding(agent_id)
         if agent is None or not binding or binding.get("status") != "running" or not binding.get("pane_id"):
             turn = existing or {
