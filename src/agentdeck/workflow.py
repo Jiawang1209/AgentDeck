@@ -7,7 +7,9 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
-from .models import EventRecord, ProjectConfig, utc_now
+from pathlib import Path
+
+from .models import EventRecord, ProjectConfig, new_id, utc_now
 from .mission_authority import (
     canonical_workflow_authorized_steps,
     canonical_workflow_plan_hash,
@@ -234,6 +236,7 @@ def workflow_plan_hash(plan_record: dict[str, Any]) -> str:
 def _reply_blocks(output: str) -> list[dict[str, str]]:
     blocks: list[dict[str, str]] = []
     current: dict[str, str] | None = None
+    pending_key: str | None = None
     for raw_line in output.splitlines():
         line = raw_line.strip()
         for tui_prefix in ("• ", "› ", "⏺ "):
@@ -244,12 +247,26 @@ def _reply_blocks(output: str) -> list[dict[str, str]]:
             if current is not None:
                 blocks.append(current)
             current = {"handoff_token": line.split(":", 1)[1].strip()}
+            pending_key = None
             continue
-        if current is None or ":" not in line:
+        if current is None:
             continue
-        key, value = line.split(":", 1)
-        if key in {*REPLY_FIELDS, "full_output_path"}:
+        key, separator, value = line.partition(":")
+        if separator and key.strip() in {*REPLY_FIELDS, "full_output_path"}:
+            key = key.strip()
             current[key] = value.strip()
+            # 值留空说明它续在下面几行——聊天式 agent 对长句的常态写法。
+            pending_key = key if not current[key] else None
+            continue
+        if pending_key is None:
+            continue
+        if not line:
+            # 续行到此为止:空行之后的内容与该字段无关,绝不吞进来。
+            pending_key = None
+            continue
+        current[pending_key] = (
+            f"{current[pending_key]} {line}".strip() if current[pending_key] else line
+        )
     if current is not None:
         blocks.append(current)
     return blocks
@@ -319,6 +336,29 @@ def render_legacy_handoff(
     }
 
 
+def workflow_reply_file(root: str | Path, message_id: str) -> Path:
+    """worker 交回复的文件通道,与 run-loop 的 `_reply_file_path` 同一约定。
+
+    读 pane 不可靠:真实 agent TUI 会清滚动区、会按终端宽度折行、会把长值换到
+    下一行。run-loop 因此早就只认这个文件;2026-08-05 之前 `workflow` 是唯一
+    还在刮屏幕的引擎,今晚三个 bug 都长在那条接缝上。
+    """
+    return Path(root) / ".agentdeck" / "replies" / f"{message_id}.reply.txt"
+
+
+def _workflow_reply_text(root: str | Path, message_id: object) -> str | None:
+    """读回复文件;不存在或读不出来一律 None(交回刮 pane 的回落路径)。
+
+    读失败绝不当成"回复无效"——那会把一次 IO 抖动变成一次终止。
+    """
+    if type(message_id) is not str or not message_id:
+        return None
+    try:
+        return workflow_reply_file(root, message_id).read_text(encoding="utf-8")
+    except OSError:
+        return None
+
+
 def build_workflow_prompt(
     *,
     role: str,
@@ -326,11 +366,24 @@ def build_workflow_prompt(
     task: str,
     handoff_token: str,
     previous_handoff: dict[str, Any] | None,
+    reply_file: str | None = None,
 ) -> str:
     handoff = (
         json.dumps(previous_handoff, ensure_ascii=False, sort_keys=True, indent=2)
         if previous_handoff is not None
         else "none"
+    )
+    # 文件通道与 run-loop 同一套约定、同一套措辞:真实 agent TUI 会清滚动区、
+    # 会折行、会把长值换到下一行,pane 刮取因此不可靠。终端输出保留(人要看得
+    # 见),但可靠的回收路径是这个文件。
+    reply_channel = (
+        (
+            "\n\n回复通道:\n"
+            "除了在终端输出上述结构化回复，还必须把同一份内容原样写入该文件（覆盖写）:\n"
+            f"{reply_file}"
+        )
+        if reply_file
+        else ""
     )
     return (
         "You are executing one explicitly authorized AgentDeck sequential workflow step.\n"
@@ -349,6 +402,7 @@ def build_workflow_prompt(
         "risks: <text>\n"
         "next_steps: <text>\n"
         "full_output_path: <optional path>"
+        f"{reply_channel}"
     )
 
 
@@ -486,15 +540,25 @@ def run_sequential_workflow(
         undelivered = existing is not None and existing.get("message_id") is None
         if existing is None or undelivered:
             token = f"{run_id}_step_{step_number}"
+            # message_id 必须先铸出来:回复文件以它命名,而 worker 要在提示词
+            # 里读到那个路径。`create_dispatch_records` 本来就接受外部 id,
+            # 所以存进 message 记录的 prompt 与真正发出去的逐字节相同。
+            message_id = new_id("msg")
             prompt = build_workflow_prompt(
                 role=str(step.get("role") or agent.role),
                 role_prompt=agent.role_prompt,
                 task=str(step.get("task") or ""),
                 handoff_token=token,
                 previous_handoff=previous_handoff,
+                reply_file=str(workflow_reply_file(config.root, message_id)),
             )
             dispatch = store.create_dispatch_records(
-                "leader", agent_id, str(step.get("task") or ""), prompt, pane_id
+                "leader",
+                agent_id,
+                str(step.get("task") or ""),
+                prompt,
+                pane_id,
+                message_id=message_id,
             )
             turn = {
                 "step": step_number,
@@ -559,7 +623,12 @@ def run_sequential_workflow(
                     turn_status="failed",
                     reason="pane_lost",
                 )
-            output = backend.capture_output(config.runtime, pane_id, lines=400)
+            # 文件通道优先:worker 写出的字节不会被终端宽度折行,也不会被
+            # TUI 清掉。读不到文件才回落刮 pane——旧回合和还没学会写文件的
+            # worker 都仍然能被收回。
+            output = _workflow_reply_text(config.root, turn.get("message_id"))
+            if output is None:
+                output = backend.capture_output(config.runtime, pane_id, lines=400)
             try:
                 reply = parse_correlated_reply(output, token)
             except ValueError:

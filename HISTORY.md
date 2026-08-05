@@ -4,6 +4,39 @@
 
 ## 2026-08-05
 
+### Collect workflow replies from the file channel, not off the screen
+
+- **Type**: fix
+- **Motivation**: 一次"三个 agent 轮流背《出师表》"的探针,一晚上撞出五个
+  bug,其中三个长在**同一条接缝**上——AgentDeck 靠往 pane 里打字、再从 pane
+  里读像素来和 worker 通信。最刺眼的一次:reviewer 交回了一份**完全正确**的
+  回复,token 精确匹配、七个字段对了六个,却被整份丢掉,因为它把长句写成
+  `summary:` 换行再写内容;解析器逐行读 `key: value`,summary 读成空串,
+  `parse_correlated_reply` 返回 `None`(=「还没来」),运行器继续等,240 秒后
+  报 `timed_out`。屏幕上躺着正确答复,账本说「没收到」。
+  而 run-loop **早就不刮屏幕了**:它只认 worker 写出的
+  `.agentdeck/replies/<message_id>.reply.txt`,派发提示词里连理由都写着
+  "真实 agent TUI 会清滚动区导致 pane 刮取失败"。`workflow` 是唯一还在刮
+  屏幕的引擎——两个引擎在最关键的接缝上不一致。
+- **What**: (1) `workflow_reply_file()` 复用 run-loop 的同一路径约定;
+  `build_workflow_prompt` 新增可选 `reply_file`,附上与 run-loop **逐字相同**
+  的"回复通道"段落;runner 先铸 `message_id` 再拼提示词(`create_dispatch_
+  records` 本就接受外部 id),因此**账本里存的 prompt 与真正发出去的逐字节
+  相同**——否则审计里会留下一份从没发出去过的文案。收回时优先读文件,读不到
+  才回落刮 pane(旧回合与尚未写文件的 worker 仍能被收回;读失败一律 None,
+  绝不把一次 IO 抖动变成一次终止)。(2) 解析器接受**续行**:字段值留空时,
+  后续行并入该字段,遇到下一个已知字段或空行即止——值换行是聊天式 agent
+  写长句的常态,不是异常。
+- **Impact**: workflow 的回收路径不再依赖终端宽度、折行或 TUI 是否清屏。
+  既有 pane 回落保留,16 条 workflow 测试(含"不重复派发"那条)全部不变。
+- **Verification**: 先红后绿,三条新测试:文件通道(`FileChannelBackend`
+  让 pane 完全刮不出东西,仍能完成两步)、续行解析(fixture 逐字取自现场
+  claude 的回复)、续行有界(空行之后的闲聊绝不进 summary)。
+  全量 5306 passed / 3 skipped。
+- **注**:探针任务本身(背古文)不需要多智能体,但它每步几秒、对错一眼可辨、
+  又走完整条链——这正是它一晚上挖出五个 bug 的原因。我一度把它当成"选错了
+  演示任务",那是把探针当成了目的。
+
 ### Dispatch a workflow turn that was never actually delivered
 
 - **Type**: fix

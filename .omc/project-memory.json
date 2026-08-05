@@ -109,6 +109,12 @@
   },
   "hotPaths": [
     {
+      "path": "src/agentdeck/workflow.py",
+      "accessCount": 7,
+      "lastAccessed": 1785928475088,
+      "type": "file"
+    },
+    {
       "path": "tests/test_ui_server.py",
       "accessCount": 2,
       "lastAccessed": 1785915200013,
@@ -130,12 +136,6 @@
       "path": "HISTORY.md",
       "accessCount": 2,
       "lastAccessed": 1785925370174,
-      "type": "file"
-    },
-    {
-      "path": "src/agentdeck/workflow.py",
-      "accessCount": 2,
-      "lastAccessed": 1785927396741,
       "type": "file"
     },
     {

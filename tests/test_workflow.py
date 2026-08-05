@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from agentdeck.config import load_config, write_default_config
@@ -492,3 +494,125 @@ def test_runner_resume_dispatches_a_turn_that_was_never_delivered(tmp_path) -> N
     assert [turn["status"] for turn in resumed["turns"]] == ["completed", "completed"]
     # 每一步仍然只被派发一次——"不重复派发"这条守卫没有被放宽。
     assert len(backend.sent) == 2
+
+
+def test_reply_field_value_may_continue_on_the_next_line() -> None:
+    # 2026-08-05 live:reviewer(claude)交回了一份**完全正确**的回复,token 精确
+    # 匹配、七个字段对了六个,却被整份丢掉——因为它把长句写成
+    #     summary:
+    #     侍中、侍郎郭攸之、费祎、董允等,……
+    # 解析器按 `key: value` 逐行读,于是 summary 读成空串,`parse_correlated_reply`
+    # 返回 None(=「还没来」),运行器继续等,240 秒后报 timed_out。
+    # 屏幕上躺着正确答复,账本说「没收到」。
+    # 值换行是聊天式 agent 的常态,不是异常。
+    output = (
+        "handoff_token: tok_1\n"
+        "status: completed\n"
+        "summary:\n"
+        "侍中、侍郎郭攸之、费祎、董允等，此皆良实，志虑忠纯。\n"
+        "verification: 已按任务要求逐字输出，无增删。\n"
+        "risks: 无。\n"
+        "next_steps: 无。\n"
+        "full_output_path:\n"
+    )
+
+    reply = parse_correlated_reply(output, "tok_1")
+
+    assert reply is not None
+    assert reply["summary"].startswith("侍中、侍郎郭攸之")
+    assert reply["verification"] == "已按任务要求逐字输出，无增删。"
+
+
+def test_reply_continuation_stops_at_a_blank_line() -> None:
+    # 续行必须**有界**:遇到下一个已知字段或空行就结束,绝不吞掉后面无关的内容。
+    output = (
+        "handoff_token: tok_2\n"
+        "status: completed\n"
+        "summary:\n"
+        "第一句原文。\n"
+        "\n"
+        "这一段是 agent 后来的闲聊，绝不能进 summary。\n"
+        "verification: ok\n"
+        "risks: none\n"
+        "next_steps: none\n"
+    )
+
+    reply = parse_correlated_reply(output, "tok_2")
+
+    assert reply is not None
+    assert reply["summary"] == "第一句原文。"
+
+
+class FileChannelBackend(CorrelatedFakeBackend):
+    """worker 走文件通道交回复,终端里只剩刮不出东西的残影。
+
+    这就是真实 agent TUI 的样子:它会清滚动区、会折行、会把长值换到下一行。
+    run-loop 早就只认文件了;`workflow` 是唯一还在刮屏幕的引擎。
+    """
+
+    def send_input(self, _config, pane_id: str, text: str) -> None:
+        self.sent.append((pane_id, text))
+        token = next(
+            line.rsplit(":", 1)[1].strip()
+            for line in text.splitlines()
+            if line.startswith("Complete only this task. Use this handoff token exactly:")
+        )
+        path = Path(text.strip().splitlines()[-1].strip())
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            f"handoff_token: {token}\n"
+            "status: completed\n"
+            "summary: finished via the file channel\n"
+            "verification: file channel\n"
+            "risks: none\n"
+            "next_steps: continue\n",
+            encoding="utf-8",
+        )
+
+    def capture_output(self, _config, _pane_id: str, lines: int = 200) -> str:
+        return "the agent TUI cleared its scrollback; nothing scrapeable here"
+
+
+def test_runner_accepts_a_reply_written_to_the_file_channel(tmp_path) -> None:
+    # 今晚五个 bug 里有三个长在同一条接缝上:AgentDeck 靠往 pane 里打字、
+    # 再从 pane 里读像素来和 worker 通信。run-loop 早已改用 worker 写出的
+    # 文件("真实 agent TUI 会清滚动区导致 pane 刮取失败"),而 workflow
+    # 还在刮屏幕。这条测试钉住:屏幕完全读不出东西时,文件通道仍能收回结果。
+    root = tmp_path / "repo"
+    root.mkdir()
+    (root / ".git").mkdir()
+    write_default_config(root)
+    config = load_config(root)
+    store = StateStore(root)
+    state = store.load()
+    for agent_id, pane_id in (("planner", "%1"), ("reviewer", "%2")):
+        state["agents"][agent_id] = {
+            "agent_id": agent_id,
+            "pane_id": pane_id,
+            "session_name": "agentdeck",
+            "cwd": str(root),
+            "status": "running",
+        }
+    store.save(state)
+    plan = store.record_plan(
+        "Prepare and review evidence", "fake", "fake-plan", PLAN["plan"]
+    )
+    run = store.create_workflow_run(
+        plan_id=str(plan["plan_id"]),
+        plan_hash=workflow_plan_hash(plan),
+        timeout_seconds=30,
+        authorized_steps=authorized_steps(plan),
+    )
+
+    finished = run_sequential_workflow(
+        config=config,
+        store=store,
+        backend=FileChannelBackend(),
+        run_id=str(run["run_id"]),
+        poll_interval=0,
+        sleeper=lambda _seconds: None,
+    )
+
+    assert finished["status"] == "completed"
+    assert [turn["status"] for turn in finished["turns"]] == ["completed", "completed"]
+    assert finished["turns"][0]["handoff"]["summary"] == "finished via the file channel"
