@@ -302,7 +302,7 @@ _PAGE = """<!doctype html>
   <form id="composer" autocomplete="off">
     <div class="wrap">
       <textarea id="message" rows="1" placeholder="说点什么…（Enter 发送，Shift+Enter 换行）"></textarea>
-      <select id="provider" title="Leader 推理后端"></select>
+      <select id="provider" title="Leader 推理后端" autocomplete="off"></select>
       <button id="send" type="submit">发送</button>
     </div>
   </form>
@@ -702,6 +702,10 @@ setInterval(refreshControls, 30000);
           if (!item.enabled) { opt.disabled = true; opt.textContent += " — " + (item.blocker || ""); }
           picker.appendChild(opt);
         });
+        // 浏览器会恢复刷新前的选中项,重建选项后触发 change——于是**刷新页面
+        // 就在提议改 Leader 配置**(2026-08-06 实测弹出过)。显式复位到"当前
+        // provider"这一项,配合 autocomplete="off",让恢复不成立。
+        picker.value = "";
       } catch (err) {
         picker.innerHTML = "<option>后端列表不可用</option>";
       }
@@ -784,6 +788,35 @@ setInterval(refreshControls, 30000);
         const trans = ((wb.worker_transport_card || {}).items) || [];
         const byId = {};
         trans.forEach(function (item) { byId[item.agent_id] = item; });
+        // 协议路径上的活动脉搏。ProjectView 已经投影了 `agent_sessions` 与
+        // `transport_updates`,workbench 带着整个 project_view——**够得着,不用
+        // 改端点白名单**。
+        //
+        // 投影里**没有 payload**:落库的是 `{byte_count, content_hash}`,仓库不
+        // 存 provider 原文。所以这里只说得出「在流式输出、第几条、什么时候」,
+        // 说不出「它说了什么」——不要把这渲染成后者。
+        const pv = wb.project_view || {};
+        const sessions = ((pv.agent_sessions || {}).items) || [];
+        const updates = ((pv.transport_updates || {}).items) || [];
+        const agentOfSession = {};
+        const sessionState = {};
+        sessions.forEach(function (s) {
+          agentOfSession[s.session_id] = s.agent_id;
+          // 同一个 agent 可能有多条会话(每步一条),取最近那条的状态。
+          const prev = sessionState[s.agent_id];
+          if (!prev || (s.updated_at || "") >= prev.updated_at) {
+            sessionState[s.agent_id] = { state: s.state, updated_at: s.updated_at || "" };
+          }
+        });
+        const pulse = {};
+        updates.forEach(function (u) {
+          const who = agentOfSession[u.session_id];
+          if (!who) { return; }
+          const p = pulse[who] || (pulse[who] = { total: 0, kinds: {}, last: "" });
+          p.total += 1;
+          p.kinds[u.kind] = (p.kinds[u.kind] || 0) + 1;
+          if ((u.created_at || "") > p.last) { p.last = u.created_at || ""; }
+        });
         teamBox.className = "";
         teamBox.innerHTML = "";
         if (!life.length) {
@@ -826,6 +859,25 @@ setInterval(refreshControls, 30000);
           if (tr.readiness) { bits.push("传输 " + tr.readiness); }
           facts.textContent = bits.join(" · ");
           card.appendChild(facts);
+
+          // 协议活动:只有走 ACP 的 worker 才有会话与分片。
+          const p = pulse[m.agent_id];
+          const sess = sessionState[m.agent_id];
+          if (p || sess) {
+            const act = document.createElement("div");
+            act.className = "facts";
+            const parts = [];
+            if (sess) { parts.push("会话 " + sess.state); }
+            if (p) {
+              const kinds = Object.keys(p.kinds).sort().map(function (k) {
+                return k + " " + p.kinds[k];
+              }).join(" / ");
+              parts.push(p.total + " 条更新（" + kinds + "）");
+              if (p.last) { parts.push("最后 " + p.last.slice(11, 19)); }
+            }
+            act.textContent = parts.join(" · ");
+            card.appendChild(act);
+          }
 
           // blocker 照抄,不改写措辞。
           (tr.blockers || []).forEach(function (b) {

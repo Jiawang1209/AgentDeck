@@ -4,6 +4,27 @@
 
 ## 2026-08-05
 
+### Put the protocol pulse on the team card, and stop a reload from proposing a config change
+
+- **Type**: feat
+- **Motivation**: 分片落库之后,GUI 还看不到它们。查下来 **不用改端点白名单**——
+  ProjectView 早已投影 `agent_sessions` 与 `transport_updates`,而 workbench 带着
+  整个 project_view,`/api/workbench` 一条就够。
+- **What**: 队伍卡新增一行协议活动:按 `session_id → agent_id` 归并,显示会话状态、
+  更新条数与 kind 分布、最后一条的时间。只对走 ACP 的 worker 出现。
+- **Impact**: 「这个 agent 此刻在做什么」在协议路径上第一次有了答案。它与旁边那句
+  `传输 blocked` 放在一起也终于自洽——跑完之后会话 `disconnected`,此刻确实不就绪。
+- **顺带修掉一个真 bug**:刷新页面会弹出「执行这条命令？agentdeck leader
+  set-provider …」。浏览器恢复了 `<select>` 刷新前的选中项,选项重建后触发
+  change——**一次刷新在提议改 Leader 配置**。加 `autocomplete="off"` 并在填充后
+  显式复位。两次强制刷新复验,不再弹出。
+- **Verification**: `node --check` 只证明能解析(今天已因此栽过),所以**真浏览器
+  实测**:两张卡渲染出 `会话 disconnected · 6 条更新（progress 3 / text 3） ·
+  最后 20:20:30`,选择器停在当前 provider(`value=""`)。全量 5343 passed / 3 skipped。
+- **仍是缺口**:投影里**没有 payload**,所以这条脉搏说得出「在流式输出、第几条、
+  什么时候」,说不出「它说了什么」。要显示内容必须先决定是否放宽"绝不留存
+  provider 原文"那条纪律——那是产品决定,不是顺手能做的事。
+
 ### Persist the ACP update stream instead of discarding it
 
 - **Type**: feat
