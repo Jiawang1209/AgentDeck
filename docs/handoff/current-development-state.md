@@ -1,6 +1,34 @@
 # AgentDeck Current Development State
 
-Updated: 2026-08-03
+Updated: 2026-08-04
+
+> **未完成的下一刀:让启动指引以 trust 优先(2026-08-04,已尝试并主动撤回)**
+>
+> 已落地(`505620a4`,两个 CLI 均 live 验证):`agentdeck agent trust --confirm`
+> 把项目目录写进各 CLI **自己的**信任记录(codex 追加 `[projects."<root>"]`、
+> Claude Code 走 JSON round-trip,写前各备份),写完再启动**不再弹信任框**。
+> 新目录的正确顺序因此是 `project init` → `agent trust --confirm` →
+> `spawn-ready --confirm`。
+>
+> **未落地**:`agent ready` 与自然语言「启动所有 agent」仍推荐 `spawn-ready`
+> (未信任时等于推荐一个必然产出冻住 pane 的步骤),`startup_trust.next_command`
+> 也还指向"去 attach 手按"而不是那条已经存在的命令。
+>
+> **撤回原因,以及给下一个人的路标**:这不是补丁,是一次协调更新。改动会依次
+> 撞上这条耦合链,每一环的校验器**都是对的**——
+> ①`_agent_ready_card_payload` 是共享 builder,覆盖必须放在卡片里而不是命令
+> 处理器里(放处理器只修好 CLI 一面,自然语言仍走老路);②`_workbench_snapshot_payload`
+> 拿不到 `config`(16 个调用点),不穿进去就会出现"同一张卡在不同面形状不一致";
+> ③leader-chat 契约硬要求 `startup_preview_card.next_command` 必须等于顶层
+> `next_command`——顶层说 trust、内嵌清单说 spawn 是同一份响应自相矛盾;
+> ④控件注册表 selection 必须能解析到推荐命令对应的 control,所以要给
+> `scope=agent_ready` 新增 `kind=trust`(`safety=explicit_user`,它是配置写操作),
+> 并同步 controls 契约、workbench `snapshot_fields`、leader-chat 卡片字段与
+> 各处 fixture。一次做完这些,而不是逐个试。
+>
+> **另一条边界(不变)**:`leader chat` 永不执行 runtime 动作,所以"一句话跑完
+> 三步"不在设计内;能做到的最好形态是一句话按正确顺序把三条命令摊开。
+> `project init` 更没有自然语言入口——chat 本身要求项目已存在。
 
 > **2026-08-03 订正**:下方多条历史条目的"剩余需 human"里带着
 > "Round 14 那道框仍在 pane 上等人按"。**该待办已销**——本机两个 tmux
