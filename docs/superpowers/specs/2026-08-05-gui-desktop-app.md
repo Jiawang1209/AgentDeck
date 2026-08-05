@@ -64,6 +64,27 @@ user 的原话：**"我要完整的去模仿桌面版本去做，当然对应的
    recommended/safe"字样）。这是 CLI 下八步恢复流程压成一步的地方，也是
    GUI 相对 CLI 唯一真正解锁的东西。
 
+   **⛔ 2026-08-05 实测:该项被三重阻碍,需 user 决定后才能开工。**
+
+   1. **够不着**。控件注册表 132 条、27 个 scope，**没有一条 delegation
+      或 gate-preview**，所以 `/api/inspect` 走不通。要么把它加进 GET
+      白名单（与加 `chat` 同类的决定，但**更小**——gate-preview 是纯只读，
+      chat 是会写的），要么在 CLI 侧给注册表补一个 `scope=delegation`
+      控件（契约改动）。
+   2. **空态不是 JSON**。无人类门时它打印纯文本
+      `no human gate in the run-loop host record (stopped_reason=…)`
+      并**非零退出**；`run_cli_json` 期望 JSON，直接接进来会 500。
+      接线时必须先处理这个降级路径。
+   3. **无法验证**。当前项目没有人类门（宿主以 `budget_exhausted` 停止），
+      造不出真实数据。对着猜出来的形状做渲染器，正是本 spec 开头警告过的
+      那件事——所以不做。
+
+   可行的验证路径：起一个真实走开段并让它撞上未委托的授权框（今天 round 1
+   就是这样停的），届时 `gate-preview` 才有真实输出可渲染。
+
+   **只暴露零 pane 读取的那一档**：`gate-preview` 默认读宿主记录（零 pane
+   读取），`--agent` 会做实时 pane 扫描。若日后接线，只暴露默认档。
+
 ## 会碰到的已知阻碍
 
 - ~~任务标题~~：**已解除**（字段是 `task`，见上表订正）。
