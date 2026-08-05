@@ -2,6 +2,39 @@
 
 本文件记录 AgentDeck 每一次开发内容。约束：每次新增功能、文档规则、项目骨架、运行环境或用户可见行为变化，都必须同步更新本文件，并在同一次 commit 中提交。
 
+## 2026-08-05
+
+### Classify whether a pane can receive a dispatch (step 1 of 2 — NOT yet wired)
+
+- **Type**: feat
+- **Motivation**: 2026-08-04 走开段实测的失败,比信任框本身严重得多。三个 pane
+  spawn 后冻在首次信任框上,`agent ready` 报 `all_running: True, 3/3`,
+  `goal start` 照常派发——**按键落进了对话框而不是 composer**。任务丢失,审批
+  却被记成 `dispatched`;宿主随后对着一个永远不会来的回复等了 **300 个 wave、
+  五十分钟**,最后 `budget_exhausted`。`human_gate` 全程没触发,因为那时屏上
+  连框都没有了,只剩一个空提示符——**没有任何东西可检测**。
+- **What**: 新增纯模块 `src/agentdeck/dispatch_receptive.py`,闭合三态
+  `receptive` / `blocked` / `unverifiable`(闭合原因 `directory_trust` /
+  `pending_box` / `pane_unreadable`)。活性判据复用本仓库既有的那道纪律——
+  必须有**活动选择器字形**(`› 1.`)作正证明,否则滚动历史里的旧框会误拦派发;
+  且只看尾窗。注意 codex 的普通输入行也以 `› ` 开头,故必须要求其后紧跟 `1.`。
+- **Impact**: **检查设计在发送之前而非之后**——按键一旦离开就收不回来,而本
+  仓库自己的规则是"契约校验必须发生在效果之前"。`unverifiable` **刻意不拦**:
+  capture 失败是既有的 runtime 抖动,把一次读取失败变成拒绝派发会停掉正常
+  工作;它同样不得报成 `receptive`。**尚未接线**——两处派发点(`dispatch`
+  命令与宿主走的 `_dispatch_approved_approval`)的接线已实现并验证有效,但被
+  **撤回**:5 条既有测试用全测试范围的代理断言 `fake.captured == []` 守
+  "只读面不读 pane",而派发合法地多了一次读取,污染了那个代理。它们真正的
+  边界未被破坏,但正确地重新划定范围需要逐个读懂各自 setup;其中
+  `test_leader_cli.py:1768` 的现象与模型不符(它断言 `fake.sent == []`,按理
+  不该有派发),在派发/授权路径上凭猜测改测试是当天已犯过一次的错,故停手。
+- **Verification**: TDD,7 条新测试先红后绿(正常 composer / 信任框 / 待批
+  授权框 / 已答复旧框不得误拦 / 读不出来是 unverifiable / 闭合枚举 /
+  unverifiable 不得读成 receptive)。接线撤回后
+  `test_dispatch_receptive.py + test_dispatch_cli.py + test_agent_cli.py`
+  462 passed。**下一刀**:重新划定那 5 条代理断言的范围,再把两处派发点接上。
+
+
 ## 2026-08-04
 
 ### Record directory trust through an explicit AgentDeck command
