@@ -76,6 +76,7 @@ _PAGE = """<!doctype html>
     padding: .85rem 1.5rem; border-bottom: 1px solid var(--line);
   }
   #dot { width: .5rem; height: .5rem; border-radius: 50%; background: var(--accent); }
+  #whoami { font-size: .78rem; margin-left: auto; font-family: var(--mono); }
   #stream { flex: 1; overflow-y: auto; padding: 1.5rem; }
   #stream:empty::before {
     content: "问点什么，或者说「帮助」"; color: var(--muted);
@@ -148,7 +149,10 @@ _PAGE = """<!doctype html>
 </style>
 
 <div id="main">
-  <div id="topbar"><span id="dot"></span><h1>AgentDeck</h1></div>
+  <div id="topbar">
+    <span id="dot"></span><h1>AgentDeck</h1>
+    <span id="whoami" class="muted">Leader · 载入中…</span>
+  </div>
   <div id="stream"></div>
   <form id="composer" autocomplete="off">
     <div class="wrap">
@@ -375,6 +379,15 @@ setInterval(refreshControls, 30000);
           fetch("/api/workbench").then(function (r) { return r.json(); }),
         ]);
         const health = workbench.provider_health || {};
+        // 你在和谁说话:Leader 是逻辑角色(agent_id=leader、无 pane),
+        // worker 是它派发的对象。这条今天就成立,只是界面没说出来。
+        const who = document.getElementById("whoami");
+        if (who) {
+          who.textContent = "Leader · " + (health.provider || "?")
+            + " · " + (health.model || "?")
+            + (health.ready === false ? " · 未就绪" : "");
+          who.classList.toggle("warn", health.ready === false);
+        }
         providerOptions = (controls.items || []).filter(function (i) {
           return i.scope === "provider" && i.kind === "set_provider" && i.control_id;
         });
