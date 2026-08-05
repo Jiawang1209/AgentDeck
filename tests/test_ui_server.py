@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import http.client
+import re
 import json
 import threading
 from pathlib import Path
@@ -367,3 +368,27 @@ def test_chat_is_the_only_new_post_path(tmp_path, monkeypatch) -> None:
     finally:
         server.shutdown()
         connection.close()
+
+
+def test_served_page_scripts_actually_parse() -> None:
+    # 2026-08-05:两次同类事故——`_PAGE` 是**非 raw** 三引号串,源码里的 `\n`
+    # 和 `\"` 会被 Python 先解释一遍,到了浏览器就是断掉的字面量,整块 script
+    # 静默解析失败。页面照常渲染(HTML/CSS 无碍),但**所有交互全死**。
+    #
+    # 之前的"实测"只抓页面、数 id、数 script 块——那些全过了,而 JS 从未运行。
+    # 验结构不等于验功能;这条守卫直接让解析器说话。
+    import shutil
+    import subprocess
+    import tempfile
+
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node not available")
+    blocks = re.findall(r"<script>(.*?)</script>", ui._PAGE, re.S)
+    assert len(blocks) >= 2
+    for index, block in enumerate(blocks):
+        with tempfile.NamedTemporaryFile("w", suffix=".js", delete=False) as handle:
+            handle.write(block)
+            path = handle.name
+        done = subprocess.run([node, "--check", path], capture_output=True, text=True)
+        assert done.returncode == 0, f"script block {index} failed to parse:\n{done.stderr}"

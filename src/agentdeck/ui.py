@@ -444,7 +444,7 @@ setInterval(refreshControls, 30000);
     }
     async function runControl(ctl) {
       const inspect = ctl.safety === "inspect";
-      if (!inspect && !window.confirm("执行这条命令？\n\n" + ctl.command)) { return; }
+      if (!inspect && !window.confirm("执行这条命令？\\n\\n" + ctl.command)) { return; }
       const res = await fetch(inspect ? "/api/inspect" : "/api/execute", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -614,7 +614,7 @@ setInterval(refreshControls, 30000);
       if (!item) { return; }
       // 切换 Leader 后端是配置写操作(safety=explicit_user),走既有的二步确认:
       // 对话框展示**完整命令原文**,取消即零执行。
-      if (!window.confirm("执行这条命令？\n\n" + item.command)) { return; }
+      if (!window.confirm("执行这条命令？\\n\\n" + item.command)) { return; }
       const res = await fetch("/api/execute", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -693,7 +693,7 @@ setInterval(refreshControls, 30000);
           tasksBox.appendChild(b);
         });
       } catch (err) {
-        tasksBox.innerHTML = "<div class=\"cap\">任务列表不可用</div>";
+        tasksBox.innerHTML = "<div class='cap'>任务列表不可用</div>";
       }
     }
 
