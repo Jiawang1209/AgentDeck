@@ -257,16 +257,45 @@ class _UIRequestHandler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:  # noqa: N802 - stdlib handler naming
         parsed = urlparse(self.path)
-        if parsed.path not in ("/api/inspect", "/api/execute"):
+        if parsed.path not in ("/api/inspect", "/api/execute", "/api/chat"):
             self._send(405, "text/plain; charset=utf-8", b"read-only server: GET only")
             return
         try:
             length = min(int(self.headers.get("Content-Length") or 0), 4096)
             body = json.loads(self.rfile.read(length).decode("utf-8"))
+        except (ValueError, UnicodeDecodeError):
+            self._send(400, "text/plain; charset=utf-8", b"body must be JSON")
+            return
+        if parsed.path == "/api/chat":
+            # 与另两条 POST 的本质差异:浏览器在这里发的是**自由文本**。
+            # 缓解不是限制文本,而是文本从不进入命令位置——它作为单个 argv
+            # 元素传给 `leader chat --message <text>`(与 events --since 同一
+            # 处理,无 shell),所以它是数据不是命令。
+            #
+            # 不做 confirmed 二步确认:chat 契约本身就不执行 runtime 动作,
+            # 二步确认在这里只是噪音,还会让人误以为这是个执行面。
+            message = body.get("message") if isinstance(body, dict) else None
+            if type(message) is not str or not message.strip() or len(message) > 4000:
+                self._send(
+                    400, "text/plain; charset=utf-8", b"body must be JSON with a non-empty message"
+                )
+                return
+            result = run_cli_json(
+                self.project_root, ["leader", "chat", "--message", message]
+            )
+            # 原样透传:chat 响应本身就是契约载荷(intent_card / mode /
+            # embedded_card / controls),再包一层只会让浏览器多剥一次。
+            self._send(
+                200,
+                "application/json; charset=utf-8",
+                json.dumps(result, ensure_ascii=False).encode("utf-8"),
+            )
+            return
+        try:
             control_id = body["control_id"]
             if type(control_id) is not str or not control_id or len(control_id) > 200:
                 raise ValueError("invalid control_id")
-        except (ValueError, KeyError, TypeError, UnicodeDecodeError):
+        except (ValueError, KeyError, TypeError):
             self._send(400, "text/plain; charset=utf-8", b"body must be JSON with control_id")
             return
         if parsed.path == "/api/inspect":

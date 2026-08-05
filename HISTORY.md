@@ -4,6 +4,36 @@
 
 ## 2026-08-05
 
+### Give the web UI a chat endpoint, the spine a conversational shell needs
+
+- **Type**: feat
+- **Motivation**: user 拍板把 GUI 转为主线,并明确界面形态就是 chat-first 的
+  桌面应用壳——pane、审批队列、委托梯子是往这个壳里**补的面板**,不是另起
+  炉灶的理由。但既有 `ui serve` 的端点里**没有 chat**:五个端点全是
+  workbench/controls/events/inspect/execute。没有它,页面再完整也只是仪表盘。
+  `leader chat` 的 `intent_card`(mode / embedded_card / controls[])本就是
+  为外壳内联渲染设计的,缺的只是通道。
+- **What**: `POST /api/chat`,第三条也是最后一条 POST 路径。仅接受
+  `{"message": <非空字符串>}`(缺失/空白/非字符串/超 4000 字符 400),响应
+  **原样透传** chat 的契约载荷——它本身就是 `intent_card` 那套东西,再包一层
+  只会让浏览器多剥一次。不做 `confirmed` 二步确认:chat 执行不了任何东西,
+  二步确认在这里只是噪音,还会让人误以为这是个执行面。
+- **Impact**: **spec 第 3 条"server 绝不执行任何 mutating 命令"被显式改写
+  而非无声放宽**(`018c6e65`)。与另两条 POST 有一处本质差异并已写进契约:
+  inspect/execute 的骄傲属性是"浏览器永远只发 control_id、命令文本只来自
+  live registry",而 chat **必须收自由文本**;缓解不是限制文本,而是文本
+  **从不进入命令位置**——作为单个 argv 元素传给 `leader chat --message`
+  (与 `events --since` 同一处理,无 shell),因此是数据不是命令。安全边界
+  不来自 server 而来自 chat 自己的契约:从不执行 runtime 动作;但它确实会写
+  ——`chat_turns[]`、审计事件,个别 mode 创建 plan/approval,即"chat 写的
+  东西都停在人类审批门之前",而非"chat 是只读的"。
+- **Verification**: TDD,3 条新测试先红后绿,其中钉安全性质的那条断言自由
+  文本(含 `--confirm ; rm -rf /`)必须原样成为**单个 argv 元素**。**live
+  实测**:真起 server,`{"message":"帮助"}` 返回 `mode=help`、
+  `intent_card.embedded_card=capability_card`、64 个顶层键(完整载荷而非
+  精简版);空白消息 400。全量 5295 passed / 3 skipped。
+
+
 ### Refuse to dispatch into a pane that cannot receive the task (step 2 of 2 — closed)
 
 - **Type**: fix

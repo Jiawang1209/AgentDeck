@@ -314,3 +314,56 @@ def test_ui_serve_cli_is_wired(tmp_path, monkeypatch) -> None:
     args = parser.parse_args(["ui", "serve", "--port", "0"])
     assert args.port == 0
     assert callable(args.func)
+
+
+def _post_chat(connection, body: object):
+    connection.request(
+        "POST", "/api/chat", json.dumps(body), {"Content-Type": "application/json"}
+    )
+    return connection.getresponse()
+
+
+def test_chat_endpoint_passes_the_message_as_a_single_argument(tmp_path, monkeypatch) -> None:
+    # inspect/execute 的骄傲属性是"浏览器只发 control_id";chat 必须收自由文本,
+    # 缓解不是限制文本,而是文本从不进入命令位置——单个 argv 元素,无 shell。
+    prepare_project(tmp_path, monkeypatch)
+    connection, (server, calls) = _serve(monkeypatch, {"leader": {"ok": True, "mode": "help"}})
+    try:
+        response = _post_chat(connection, {"message": "查看 planner 输出 --confirm ; rm -rf /"})
+        payload = json.loads(response.read())
+        assert response.status == 200
+        assert payload["mode"] == "help"
+        assert calls == [
+            ["leader", "chat", "--message", "查看 planner 输出 --confirm ; rm -rf /"]
+        ]
+    finally:
+        server.shutdown()
+        connection.close()
+
+
+def test_chat_endpoint_rejects_a_missing_or_empty_message(tmp_path, monkeypatch) -> None:
+    prepare_project(tmp_path, monkeypatch)
+    connection, (server, calls) = _serve(monkeypatch, {"leader": {"ok": True}})
+    try:
+        for body in ({}, {"message": ""}, {"message": "   "}, {"message": 5}, {"message": None}):
+            response = _post_chat(connection, body)
+            response.read()
+            assert response.status == 400, body
+        assert calls == []
+    finally:
+        server.shutdown()
+        connection.close()
+
+
+def test_chat_is_the_only_new_post_path(tmp_path, monkeypatch) -> None:
+    prepare_project(tmp_path, monkeypatch)
+    connection, (server, calls) = _serve(monkeypatch, {"leader": {"ok": True}})
+    try:
+        connection.request("POST", "/api/workbench", "{}", {"Content-Type": "application/json"})
+        response = connection.getresponse()
+        response.read()
+        assert response.status == 405
+        assert calls == []
+    finally:
+        server.shutdown()
+        connection.close()
