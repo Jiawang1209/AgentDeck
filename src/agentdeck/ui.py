@@ -194,16 +194,30 @@ _PAGE = """<!doctype html>
     border-left: 1px solid var(--line); background: #191817;
     overflow-y: auto; padding: 1.1rem 1.25rem;
   }
-  #layout { display: block; }
-  table { border-collapse: collapse; width: 100%; font-family: var(--mono); font-size: .74rem; }
-  td, th {
-    border-bottom: 1px solid var(--line); padding: .3rem .4rem;
-    text-align: left; vertical-align: top;
+  #layout { display: flex; flex-direction: column; gap: .75rem; }
+  /* 右栏由**受保护脚本**渲染内部内容,所以这里只做外层与样式,不碰它一行 JS。
+     每段包成卡片,与对话区的 .card 视觉一致。 */
+  .panel {
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: 10px; padding: .7rem .8rem;
   }
-  th { color: var(--muted); font-weight: 500; }
+  .panel h2 { margin: 0 0 .5rem; }
+  .panel > div, .panel > pre { font-size: .78rem; line-height: 1.55; }
+  table { border-collapse: collapse; width: 100%; font-family: var(--mono); font-size: .72rem; }
+  td, th { padding: .3rem .35rem; text-align: left; vertical-align: top; }
+  tr + tr td { border-top: 1px solid var(--line); }
+  th {
+    color: var(--muted); font-weight: 500; font-size: .66rem;
+    text-transform: uppercase; letter-spacing: .05em; padding-bottom: .35rem;
+  }
+  .panel table button {
+    background: #2c2a27; color: var(--ink); border: 1px solid var(--line);
+    border-radius: 6px; padding: .16rem .45rem; font-size: .7rem; cursor: pointer;
+  }
+  .panel table button:hover { border-color: var(--accent); }
   #result {
-    font-family: var(--mono); font-size: .74rem; white-space: pre-wrap;
-    word-break: break-word; max-height: 16rem; overflow: auto; margin: 0;
+    font-family: var(--mono); font-size: .72rem; white-space: pre-wrap;
+    word-break: break-word; max-height: 14rem; overflow: auto; margin: 0;
   }
   button { font: inherit; }
 </style>
@@ -231,12 +245,12 @@ _PAGE = """<!doctype html>
 
 <div id="rail">
   <div id="layout">
-    <h2>Overview</h2><div id="overview" class="muted">loading…</div>
-    <h2>Agents</h2><table id="agents"></table>
-    <h2>Queues</h2><div id="queues" class="muted"></div>
-    <h2>Controls</h2><table id="controls"></table>
-    <h2>Inspect result</h2><pre id="result" class="muted">click a Run button…</pre>
-    <h2>Events</h2><table id="events"></table>
+    <section class="panel"><h2>概览</h2><div id="overview" class="muted">载入中…</div></section>
+    <section class="panel"><h2>Agents</h2><table id="agents"></table></section>
+    <section class="panel"><h2>队列</h2><div id="queues" class="muted"></div></section>
+    <section class="panel"><h2>命令面板</h2><table id="controls"></table></section>
+    <section class="panel"><h2>检查结果</h2><pre id="result" class="muted">点右侧 Run 按钮…</pre></section>
+    <section class="panel"><h2>事件</h2><table id="events"></table></section>
   </div>
 </div>
 <script>
