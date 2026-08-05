@@ -363,3 +363,79 @@ def test_a_retried_step_does_not_keep_its_old_failure_blocker(tmp_path) -> None:
     turn = resumed["turns"][0]
     assert turn["status"] == "completed"
     assert not turn.get("blocker"), f"成功的一步不该留着失败说明: {turn.get('blocker')!r}"
+
+
+def test_acp_fragments_reach_a_sink_the_caller_supplies(tmp_path) -> None:
+    """流式分片必须能落到调用方给的 sink 上,而不是用完就丢。
+
+    2026-08-06:`AcpWorkerTransport` 本来就接受 `sink`,而 workflow 一直不传,
+    于是走 `_MemoryAcpSink`——分片只在 `complete()` 执行期间存在于内存里。
+    「这个 agent 此刻在做什么」因此无从回答:账本里只有最终那句 summary。
+
+    `workflow` 不能 import `cli`(会循环),所以 sink 由调用方注入,与
+    `acp_worker_transport` 同一个模式。这条测试钉住那条线真的接上了。
+    """
+    FakeAcpWorkerTransport.instances.clear()
+    seen: dict[str, object] = {}
+
+    class RecordingSink:
+        fragments: list = []
+
+        def __init__(self) -> None:
+            self.updates: list = []
+
+        async def append_update(self, session_id, kind, payload):
+            self.updates.append((kind, payload))
+
+        async def append_permission(self, *a, **k):
+            return None
+
+        async def append_permission_decision(self, *a, **k):
+            return None
+
+    class StreamingTransport(FakeAcpWorkerTransport):
+        def __init__(self, **kwargs):
+            seen["sink"] = kwargs.get("sink")
+            super().__init__(**kwargs)
+
+        async def complete(self, attempt, receipt):
+            # 真实适配器就是这样一路把分片喂给 sink 的。
+            await seen["sink"].append_update("sess", "text", {"role": "agent"})
+            return await super().complete(attempt, receipt)
+
+    config, store, run_id = _project(tmp_path, acp_agent="planner")
+
+    finished = run_sequential_workflow(
+        config=config,
+        store=store,
+        backend=ScriptedPaneBackend(deliver_via="file"),
+        run_id=run_id,
+        poll_interval=0,
+        sleeper=lambda _seconds: None,
+        acp_worker_transport=StreamingTransport,
+        acp_sink_factory=lambda **_kwargs: RecordingSink(),
+    )
+
+    assert finished["status"] == "completed"
+    sink = seen["sink"]
+    assert sink is not None, "workflow 必须把调用方给的 sink 传给传输层"
+    assert sink.updates == [("text", {"role": "agent"})]
+
+
+def test_without_a_sink_factory_the_acp_path_still_runs(tmp_path) -> None:
+    """不给 sink 时行为不变——落库是可选的增量,不是新的前置条件。"""
+    FakeAcpWorkerTransport.instances.clear()
+    config, store, run_id = _project(tmp_path, acp_agent="planner")
+
+    finished = run_sequential_workflow(
+        config=config,
+        store=store,
+        backend=ScriptedPaneBackend(deliver_via="file"),
+        run_id=run_id,
+        poll_interval=0,
+        sleeper=lambda _seconds: None,
+        acp_worker_transport=FakeAcpWorkerTransport,
+    )
+
+    assert finished["status"] == "completed"
+    assert FakeAcpWorkerTransport.instances[0].__dict__.get("sink") is None

@@ -1587,6 +1587,59 @@ def _daemon_acp_update_digest(
     }
 
 
+class _DirectMutationWriter:
+    """让 daemon 的那份 worker sink 也能在前台 workflow 里跑。
+
+    `_DaemonAcpWorkerSink` 对 daemon 的依赖恰好三处,这里逐一给出前台等价物。
+    (我第一次只 grep 了类的前 110 行就断言"只有一处",漏了另外两个——类有 345
+    行。收尾因此失败,而活其实早就干完了。)
+
+    - `submit_mutation`:前台是单进程单写者,直接执行等价;`StateStore` 自己的
+      `_protocol_mutation_lock` 仍在。
+    - `submit_worker_cleanup`:调用方会 `add_done_callback` 并 `asyncio.shield`,
+      所以必须返回 Future,不能返回裸值。
+    - `wait_for_permission`:**fail-closed**。`workflow run` 里没有可交互的人,
+      而"没人可问"绝不等于"批准"。一律拒绝并说明原因;真要在这条路上处理授权
+      请求,那是单独一刀,不是这里悄悄放行。
+    """
+
+    async def submit_mutation(self, callback: Any) -> object:
+        return callback()
+
+    def submit_worker_cleanup(self, callback: Any) -> "asyncio.Future[object]":
+        future: asyncio.Future[object] = asyncio.get_running_loop().create_future()
+        try:
+            future.set_result(callback())
+        except BaseException as error:  # 交回给调用方的 done_callback 处理
+            future.set_exception(error)
+        return future
+
+    async def wait_for_permission(self, _authority: object, **_kwargs: Any) -> str:
+        return "denied"
+
+
+def _workflow_acp_sink_factory(store: StateStore) -> Callable[..., Any]:
+    """workflow 的 ACP 分片落库入口。
+
+    2026-08-06 之前 workflow 不传 sink,分片只在 `complete()` 期间存在于内存里,
+    用完就丢——账本里只剩最终那句 summary,「此刻在做什么」无从回答。
+    这里给的是已经在用的那份 sink:它会建 `agent_sessions`、建 turn,并把每条
+    `session/update` 落进 `transport_updates`,顺带让 worker transport 卡上那句
+    「session is not ready」变成真话。
+    """
+
+    def build(*, agent: AgentSpec, attempt: Mapping[str, object], workspace: object) -> Any:
+        return _DaemonAcpWorkerSink(
+            service=_DirectMutationWriter(),
+            store=store,
+            attempt=attempt,
+            agent=agent,
+            workspace=Path(str(workspace)),
+        )
+
+    return build
+
+
 class _DaemonAcpWorkerSink:
     """Queue ACP callbacks into the daemon's single authoritative writer."""
 
@@ -21608,6 +21661,7 @@ def workflow_run_command(args: argparse.Namespace) -> int:
             # 才有这条路;不传就仍按 `transport_unsupported` 停下——绝不静默
             # 回落到往 pane 里打字(CLAUDE.md 明文)。
             acp_worker_transport=AcpWorkerTransport,
+            acp_sink_factory=_workflow_acp_sink_factory(store),
         )
         payload = _workflow_execution_payload(result, mode="workflow_run")
     except KeyboardInterrupt:
@@ -21697,6 +21751,7 @@ def workflow_resume_command(args: argparse.Namespace) -> int:
             # 才有这条路;不传就仍按 `transport_unsupported` 停下——绝不静默
             # 回落到往 pane 里打字(CLAUDE.md 明文)。
             acp_worker_transport=AcpWorkerTransport,
+            acp_sink_factory=_workflow_acp_sink_factory(store),
         )
         payload = _workflow_execution_payload(result, mode="workflow_resume")
     except KeyboardInterrupt:

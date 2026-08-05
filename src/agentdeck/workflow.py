@@ -557,6 +557,7 @@ def _drive_acp_step(
     agent: AgentSpec,
     previous_handoff: dict[str, Any] | None,
     transport_factory: Callable[..., Any],
+    sink_factory: Callable[..., Any] | None,
     workspace: str | Path,
     timeout_seconds: int,
 ) -> dict[str, Any]:
@@ -615,10 +616,19 @@ def _drive_acp_step(
         "dispatch_key": token,
         "configured_transport": "acp",
     }
+    # 流式分片的去处。不给就走传输层自己的内存版(用完即丢),给了就落库——
+    # 「这个 agent 此刻在做什么」只能从这条流上回答,最终那句 summary 回答不了。
+    # `workflow` 不能 import `cli`,所以 sink 由调用方注入,与 transport 同模式。
+    sink = (
+        sink_factory(agent=agent, attempt=attempt, workspace=workspace)
+        if sink_factory is not None
+        else None
+    )
     transport = transport_factory(
         argv=tuple(agent.transport_command),
         workspace=workspace,
         prompt=prompt,
+        **({"sink": sink} if sink is not None else {}),
         # 这一步的预算由引擎说了算。不传的话传输层会用它自己 30 秒的默认值,
         # 于是两个超时各说各话:协议请求早就放弃了,引擎还以为自己在等
         # (2026-08-06 首次真实 ACP 运行里 codex worker 就反复挂在 prompt 阶段)。
@@ -735,6 +745,7 @@ def run_sequential_workflow(
     monotonic: Callable[[], float] = time.monotonic,
     sleeper: Callable[[float], None] = time.sleep,
     acp_worker_transport: Callable[..., Any] | None = None,
+    acp_sink_factory: Callable[..., Any] | None = None,
 ) -> dict[str, Any]:
     record = store.workflow_run_by_id(run_id)
     steps = list(record.get("authorized_steps") or [])
@@ -783,6 +794,7 @@ def run_sequential_workflow(
                 agent=agent,
                 previous_handoff=previous_handoff,
                 transport_factory=acp_worker_transport,
+                sink_factory=acp_sink_factory,
                 workspace=config.root,
                 timeout_seconds=timeout_seconds,
             )

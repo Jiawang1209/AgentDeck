@@ -4,6 +4,37 @@
 
 ## 2026-08-05
 
+### Persist the ACP update stream instead of discarding it
+
+- **Type**: feat
+- **Motivation**: 「这个 agent 此刻在做什么」在 ACP 路径上无从回答:分片只在
+  `complete()` 执行期间存在于 `_MemoryAcpSink` 里,用完就丢,账本里只剩最终那句
+  summary。而 AgentDeck **早就会持久化 ACP 分片**——`store.record_transport_update()`
+  和一份完整的 worker sink(`_DaemonAcpWorkerSink`,会建 `agent_sessions`、建 turn、
+  逐条落 `transport_updates`)都在,只是 workflow 从不传 sink。
+- **What**: `run_sequential_workflow` 新增可选 `acp_sink_factory`,由**调用方**
+  注入(workflow 不能 import cli,会循环——与 `acp_worker_transport` 同模式)。
+  CLI 侧用 `_DirectMutationWriter` 把那份 daemon sink 整体复用:它对 daemon 的
+  依赖恰好三处,逐一给出前台等价物——`submit_mutation` 直接执行(前台单写者,
+  `_protocol_mutation_lock` 仍在)、`submit_worker_cleanup` 返回 Future(调用方
+  会 `add_done_callback` 并 `asyncio.shield`)、`wait_for_permission`
+  **fail-closed 返回 denied**:`workflow run` 里没有可交互的人,而"没人可问"绝不
+  等于"批准"。
+- **Impact**: ACP 每一步现在留下 `agent_sessions` + 逐条 `transport_updates`,
+  卡上那句「session is not ready」也随之成为真话。不传 sink 时行为逐字节不变——
+  落库是可选增量,不是新的前置条件。
+- **Verification**: 先红后绿两条(sink 真的被传给传输层、不传时照常跑)。
+  **真实运行**:两个 claude worker 走 ACP,`completed`,**3 个会话、46 条分片落库**。
+  全量 5343 passed / 3 skipped。
+- **我的两个错误,都由证据纠正**:①第一次跑完看到"18 条分片落库"就说"成了",
+  没看运行结果——那次其实 `transport_failed`。②我只 grep 了 sink 类的前 110 行
+  就断言"对 daemon 只有一处依赖",而类有 345 行,漏了另外两处;收尾因此失败,
+  而活早就干完了(协议转换链一路走到 `turn streaming → completed`)。
+- **仍是缺口**:落的是 `{byte_count, content_hash}` **元数据,不是内容**——这是
+  仓库既有的"绝不留存 provider 原文"纪律。因此能显示"它在流式输出/调用工具/
+  多少字节",**不能**显示"它说了什么"。这与"盯着终端看"仍有实质差距,不要
+  把二者混为一谈。
+
 ### Show the team in the GUI, and stop calling a working ACP worker "not running"
 
 - **Type**: feat
