@@ -373,6 +373,12 @@ setInterval(refreshControls, 30000);
         s.textContent = bits.join("   ");
         li.appendChild(s);
       }
+      // 控件多半嵌在 item 里而不是卡片顶层(runtime_card 的 agents、
+      // approval_card 的 approvals 都是如此),这里必须一并渲染,
+      // 否则界面看得见状态却按不动任何东西。
+      if (Array.isArray(obj.controls) && obj.controls.length) {
+        controlButtons(li, obj.controls);
+      }
       parent.appendChild(li);
     }
     // 按钮的 enabled / blocker / safety **一律照抄 contract**,前端不判断。
@@ -386,12 +392,15 @@ setInterval(refreshControls, 30000);
         b.className = "btn" + (ctl.safety === "inspect" ? " run" : "");
         b.textContent = ctl.label || ctl.kind || "control";
         b.title = ctl.command || "";
-        const runnable = ctl.enabled && ctl.control_id
+        const id = ctl.control_id || registryByCommand[ctl.command];
+        const runnable = ctl.enabled && id
           && ["inspect", "explicit_user", "explicit_runtime"].indexOf(ctl.safety) >= 0;
         b.disabled = !runnable;
         if (ctl.blocker) { b.title = ctl.blocker; }
         if (runnable) {
-          b.addEventListener("click", function () { runControl(ctl); });
+          b.addEventListener("click", function () {
+            runControl(Object.assign({}, ctl, { control_id: id }));
+          });
         }
         box.appendChild(b);
       });
@@ -513,6 +522,11 @@ setInterval(refreshControls, 30000);
     // 拒绝),二者都不该混进一个"选后端"的下拉里。
     const picker = document.getElementById("provider");
     let providerOptions = [];
+    // 命令原文 → control_id 的映射。卡片里的 controls[] **不带 control_id**
+    // (实测:runtime_card.agents[].controls 全是 None),而注册表里同一条命令
+    // 带 id——注册表本就是 control_id 的权威来源,查它不是绕过契约,正是消费它。
+    // 没有这座桥,所有卡片按钮都点不动,界面就只是展示面。
+    let registryByCommand = {};
 
     async function loadProviders() {
       try {
@@ -530,6 +544,12 @@ setInterval(refreshControls, 30000);
             + (health.ready === false ? " · 未就绪" : "");
           who.classList.toggle("warn", health.ready === false);
         }
+        registryByCommand = {};
+        (controls.items || []).forEach(function (i) {
+          if (i.command && i.control_id && !registryByCommand[i.command]) {
+            registryByCommand[i.command] = i.control_id;
+          }
+        });
         providerOptions = (controls.items || []).filter(function (i) {
           return i.scope === "provider" && i.kind === "set_provider" && i.control_id;
         });
