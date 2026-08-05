@@ -4,6 +4,32 @@
 
 ## 2026-08-05
 
+### Stop swallowing the Enter that Chinese input methods use to pick a word
+
+- **Type**: fix
+- **Motivation**: user 用中文输入法在对话框里打"你是什么模型？"、按回车,
+  **什么都没发生**。live 排查时在 DOM 里看见输入框中留着 `你是she`——一段
+  没上屏的拼音。后端没问题(同一句话 curl 打过去 HTTP 200、25KB、0.48s),
+  JS 也没问题(两块 script 都过 `node --check`,控制台零报错)。问题在
+  composer 的 keydown:它把**组字过程中**的 Enter 也当成"发送"。中文输入法
+  的第一个回车是**选词上屏**,`preventDefault()` 把它吃掉之后,词上不了屏、
+  消息也发不出去。对一个几乎只用中文提问的人,这条对话框等于完全不能用。
+- **What**: keydown 开头加一句 `if (event.isComposing || event.keyCode ===
+  229) { return; }`。`isComposing` 是标准信号,keyCode 229 是 Safari/旧
+  Chrome 的说法。
+- **Impact**: 中文/日文/韩文输入法用户现在能正常发消息;英文直接输入路径
+  逐字节不变。纯前端修复,不碰契约、不碰端点白名单、不碰那个受保护脚本块。
+- **Verification**: 先红后绿。新测试 `test_enter_during_ime_composition_
+  does_not_send` **真的执行**处理器——从 `_PAGE` 里抠出 keydown 注册语句,
+  用桩 event/form 在 node 里跑三种情形;修复前 `assert 2 == 0`(组字中的两次
+  回车都提交了),修复后组字 0 次、组字结束 1 次。另在真实 Chrome 里
+  `dispatchEvent` 复现:组字回车 0 轮、提交回车 2 轮、输入框清空。
+  全量 5297 passed / 3 skipped。
+- **注**:上一条"验结构不等于验功能"的教训在这里换了个形状又出现一次——
+  这回 JS 解析没问题、也真的在跑,坏的是**它跑的时机**。我此前所有验证都是
+  用 `fill` + 点按钮做的,那条路径绕过了 keydown,所以从没碰到过这个 bug。
+  自动化点按钮永远发现不了"人是怎么打字的"。
+
 ### Put a contract-driven backend picker beside the composer
 
 - **Type**: feat

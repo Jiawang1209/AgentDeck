@@ -614,6 +614,10 @@ setInterval(refreshControls, 30000);
       ask(text).finally(function () { send.disabled = false; input.focus(); });
     });
     input.addEventListener("keydown", function (event) {
+      // 输入法组字中的 Enter 是**选词上屏**,不是发送。吃掉它,中文用户的每
+      // 一句话都会卡在输入框里:词上不了屏,消息也发不出去。
+      // `isComposing` 是标准信号;keyCode 229 是 Safari/旧 Chrome 的说法。
+      if (event.isComposing || event.keyCode === 229) { return; }
       if (event.key === "Enter" && !event.shiftKey) {
         event.preventDefault();
         form.requestSubmit();

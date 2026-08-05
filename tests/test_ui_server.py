@@ -392,3 +392,49 @@ def test_served_page_scripts_actually_parse() -> None:
             path = handle.name
         done = subprocess.run([node, "--check", path], capture_output=True, text=True)
         assert done.returncode == 0, f"script block {index} failed to parse:\n{done.stderr}"
+
+
+def test_enter_during_ime_composition_does_not_send() -> None:
+    # 2026-08-05 live 发现:user 用中文输入法打"你是什么模型？"、按回车,
+    # **什么都没发生**,输入框里留着半截拼音 `你是she`。
+    #
+    # 原因是这个 keydown 处理器把组字过程中的 Enter 也当成"发送":中文输入法
+    # 的第一个回车是**选词上屏**,不是提交。`preventDefault()` 把它吃掉,词
+    # 上不了屏、消息也发不出去——对一个几乎只用中文提问的人来说,这条对话框
+    # 等于完全不能用。
+    #
+    # 这条测试**真的执行**处理器(不是断言源码里有某个字样):用桩 event/form
+    # 跑三种情形,组字中的两种(标准 `isComposing`、Safari/旧 Chrome 的
+    # keyCode 229)必须一次都不提交,组字结束的那次必须提交。
+    import json
+    import shutil
+    import subprocess
+    import tempfile
+
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node not available")
+    match = re.search(
+        r'input\.addEventListener\("keydown".*?\n    \}\);', ui._PAGE, re.S
+    )
+    assert match is not None, "composer keydown handler not found in _PAGE"
+    harness = """
+let handler = null;
+const form = { count: 0, requestSubmit() { this.count += 1; } };
+const input = { addEventListener(name, fn) { if (name === "keydown") handler = fn; } };
+%s
+const fire = (event) => { handler({ preventDefault() {}, ...event }); };
+fire({ key: "Enter", shiftKey: false, isComposing: true });
+fire({ key: "Enter", shiftKey: false, keyCode: 229 });
+const composing = form.count;
+fire({ key: "Enter", shiftKey: false, isComposing: false });
+console.log(JSON.stringify({ composing, after: form.count }));
+""" % match.group(0)
+    with tempfile.NamedTemporaryFile("w", suffix=".js", delete=False) as handle:
+        handle.write(harness)
+        path = handle.name
+    done = subprocess.run([node, path], capture_output=True, text=True)
+    assert done.returncode == 0, done.stderr
+    result = json.loads(done.stdout)
+    assert result["composing"] == 0, "IME composition Enter must not send the message"
+    assert result["after"] == 1, "Enter after composition ends must send the message"
