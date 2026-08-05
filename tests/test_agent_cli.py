@@ -15880,3 +15880,50 @@ def test_agent_ready_reports_unknown_trust_without_calling_it_untrusted(
     states = {item["provider"]: item["state"] for item in payload["startup_trust"]["items"]}
     assert states["my-own-agent"] == "unknown"
     assert payload["startup_trust"]["unknown_count"] >= 1
+
+
+def test_approval_dispatch_refuses_to_type_at_an_acp_worker(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    """`approval dispatch`(run-loop 也走它)同样不许静默回落到打字。
+
+    2026-08-06:workflow 已按 `agent.transport` 分流,而这条路仍然完全不看配置。
+    拒绝必须在**任何写之前**——这里是先 `create_dispatch_records()` 再
+    `send_input()`,拦晚一步就会留下"账上有、其实没送出去"的 message/job。
+    """
+    root = prepare_project(tmp_path, monkeypatch)
+    bind_agent(root, "planner", "%42")
+    fake = FakeTmuxBackend()
+    monkeypatch.setattr(cli, "TmuxBackend", lambda: fake)
+    cli.main(
+        ["leader", "plan", "--provider", "fake", "--model", "fake-plan", "--task", "走协议的 worker"]
+    )
+    plan_id = json.loads(capsys.readouterr().out)["plan_id"]
+    cli.main(["approval", "create-from-plan", "--plan-id", plan_id])
+    approvals = json.loads(capsys.readouterr().out)["approvals"]
+    approval_id = next(
+        item["approval_id"] for item in approvals if item["agent_id"] == "planner"
+    )
+    cli.main(["approval", "approve", "--approval-id", approval_id])
+    capsys.readouterr()
+
+    path = root / ".agentdeck" / "config.toml"
+    text = path.read_text(encoding="utf-8")
+    path.write_text(
+        text.replace(
+            'agent_id = "planner"',
+            'agent_id = "planner"\ntransport = "acp"\ntransport_command = ["fake-acp-adapter"]',
+        ),
+        encoding="utf-8",
+    )
+    before = StateStore(root).load()
+
+    exit_code = cli.main(["approval", "dispatch", "--approval-id", approval_id])
+
+    assert exit_code != 0
+    assert fake.sent == []
+    err = capsys.readouterr().err
+    assert "acp" in err.lower() and "planner" in err
+    after = StateStore(root).load()
+    assert after["messages"] == before["messages"], "拒绝之前不许留下任何记录"
+    assert after["jobs"] == before["jobs"]

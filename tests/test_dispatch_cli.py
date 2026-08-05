@@ -1056,3 +1056,45 @@ def test_worktree_prune_protects_dirty_until_abandoned(tmp_path, monkeypatch, ca
     payload = json.loads(capsys.readouterr().out)
     assert msg in [item["message_id"] for item in payload["removed"]]
     assert not Path(wt).exists()
+
+
+def _make_planner_acp(root: Path) -> None:
+    path = root / ".agentdeck" / "config.toml"
+    text = path.read_text(encoding="utf-8")
+    marker = 'agent_id = "planner"'
+    assert text.count(marker) == 1
+    path.write_text(
+        text.replace(
+            marker,
+            f'{marker}\ntransport = "acp"\ntransport_command = ["fake-acp-adapter"]',
+        ),
+        encoding="utf-8",
+    )
+
+
+def test_dispatch_refuses_to_type_at_an_acp_worker(tmp_path, monkeypatch, capsys) -> None:
+    """配了协议的 worker,不该被 `agentdeck dispatch` 往 pane 里打字。
+
+    2026-08-06:workflow 那条路已经不再静默回落了,而 `dispatch` 与
+    `approval dispatch`(run-loop 也走它)仍然完全不看 `agent.transport`。
+    CLAUDE.md 明文禁止 ACP 与 tmux 互相静默 fallback。
+
+    拒绝必须发生在**任何写之前**:两处都是先 `create_dispatch_records()` 再
+    `send_input()`,拦晚一步就会留下"账上有、其实没送出去"的 message/job——
+    正是今晚在 workflow 里刚修掉的那种。
+    """
+    root = prepare_project(tmp_path, monkeypatch)
+    bind_planner(root)
+    _make_planner_acp(root)
+    backend = FakeTmuxBackend()
+    monkeypatch.setattr(cli, "TmuxBackend", lambda: backend)
+
+    exit_code = cli.main(["dispatch", "--agent", "planner", "--task", "设计消息账本"])
+
+    assert exit_code != 0
+    assert backend.sent == []
+    err = capsys.readouterr().err
+    assert "acp" in err.lower() and "planner" in err
+    state = StateStore(root).load()
+    assert state["messages"] == [], "拒绝之前不许留下任何记录"
+    assert state["jobs"] == []

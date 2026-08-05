@@ -4,6 +4,28 @@
 
 ## 2026-08-05
 
+### Close the same silent fallback on the dispatch and approval paths
+
+- **Type**: fix
+- **Motivation**: workflow 那条路已按 `agent.transport` 分流,但同样的静默
+  fallback 还在另外两处:`agentdeck dispatch` 与 `approval dispatch`
+  (**run-loop 也走后者**)完全不看配置,照样往 pane 里打字。CLAUDE.md 明文禁止
+  ACP 与 tmux 互相静默回落。
+- **What**: 纯 helper `transport_dispatch_blocker(agent)` 作为两处共用的单一
+  来源,拒绝发生在**任何写之前**——两处都是先 `create_dispatch_records()` 再
+  `send_input()`,拦晚一步就会留下"账上有、其实没送出去"的 message/job,正是
+  同日刚在 workflow 里修掉的那种。它与本模块既有的接收性判定同源:两者都在回答
+  "现在能不能把任务交过去",都必须在效果之前问。
+- **Impact**: 这一刀**只拒绝、不改道**。`dispatch` 是"发出去就返回",而 ACP 是
+  请求/响应——两者生命周期不同,不是能就地对换的东西;真要在这两条路上跑协议是
+  另一刀。tmux 路径逐字节不变。
+- **Verification**: 两条测试各自钉住 exit≠0、`send_input` 零调用、**state 里
+  messages/jobs 与拒绝前逐字相同**。approval 那条我先写了实现后写测试,于是
+  临时移除守卫复跑确认它确实会红——否则那条测试可能在测空气。
+  全量 5340 passed / 3 skipped。
+- **注**:`agent send --agent X --text Y` 刻意不拦——那是人类对着一个可见终端
+  显式敲字,不是 AgentDeck 在投递任务,两件事不同。
+
 ### Say which stage failed, let the step's budget govern the request, and drop stale blockers
 
 - **Type**: fix

@@ -105,3 +105,29 @@ def receptive_blocker_message(
         f"agent pane is waiting on an authorization box: {agent_id} "
         f"(pane={pane_id}); answer it or grant a delegation before dispatching"
     )
+
+
+def transport_dispatch_blocker(agent: Any) -> str | None:
+    """这台引擎能不能用**配置指定的通道**把任务交给它;tmux 之外一律 None 以外。
+
+    与本模块另一个问题同源:两者都在回答"现在能不能把任务交过去",都必须在
+    **任何写之前**问——`dispatch` 与 `approval dispatch` 都是先
+    `create_dispatch_records()` 再 `send_input()`,拦晚一步就会留下"账上有、
+    其实没送出去"的 message/job。
+
+    2026-08-06:`workflow` 已按 `agent.transport` 分流,而这两条路仍然完全不看
+    配置就往 pane 里打字。CLAUDE.md 明文禁止 ACP 与 tmux 互相静默 fallback,
+    把一个配了协议的 worker 推回打字那条缝上,正是那种情形。
+
+    这里只拒绝、不改道:`dispatch` 是"发出去就返回",而 ACP 是请求/响应——两者
+    生命周期不同,不是能就地对换的东西。真要在这两条路上跑协议,是另一刀。
+    """
+    transport = getattr(agent, "transport", "tmux")
+    if transport == "tmux":
+        return None
+    agent_id = getattr(agent, "agent_id", "?")
+    return (
+        f"agent is configured for the {transport} transport, which this dispatch path "
+        f"cannot drive: {agent_id}; AgentDeck will not silently fall back to typing "
+        "into its pane"
+    )

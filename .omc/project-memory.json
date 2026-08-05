@@ -19,7 +19,7 @@
   },
   "build": {
     "buildCommand": null,
-    "testCommand": "cd /Users/liuyue/Desktop/Github_repos/multi-agent-explore\npython3 - <<'PY'\nimport pathlib\np = pathlib.Path(\"src/agentdeck/workflow.py\"); t = p.read_text(encoding=\"utf-8\")\nold = '''    turn.update(\n        {\n            \"status\": reply[\"status\"],\n            \"reply_id\": recorded[\"reply_id\"],'''\nnew = '''    # 成功之后清掉上一次的失败说明:一条 `completed` 的记录同时展示着一句失败,\n    # 就是账本在说一件不成立的事(2026-08-06 live 的 codex4 正是如此)。\n    turn.pop(\"blocker\", None)\n    turn.update(\n        {\n            \"status\": reply[\"status\"],\n            \"reply_id\": recorded[\"reply_id\"],'''\nassert t.count(old) == 1\np.write_text(t.replace(old, new), encoding=\"utf-8\"); print(\"ok\")\nPY\nsource ~/miniforge3/etc/profile.d/conda.sh && conda activate agentdeck && python -m pytest tests/test_workflow_transport.py -q 2>&1 | tail -3 && python -m pytest -q 2>&1 | tail -3",
+    "testCommand": "cd /Users/liuyue/Desktop/Github_repos/multi-agent-explore\nsource ~/miniforge3/etc/profile.d/conda.sh && conda activate agentdeck && python -m pytest -q 2>&1 | tail -4",
     "lintCommand": "ruff check",
     "devCommand": null,
     "scripts": {}

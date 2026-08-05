@@ -164,7 +164,11 @@ from .contracts import (
 )
 from .autonomy import run_loop_gate, select_auto_approvals
 from .branch_custody import classify_branch_custody
-from .dispatch_receptive import classify_pane_receptive, receptive_blocker_message
+from .dispatch_receptive import (
+    classify_pane_receptive,
+    receptive_blocker_message,
+    transport_dispatch_blocker,
+)
 from .startup_trust import classify_startup_trust
 from .delegation_match import is_composite_command, normalize_match
 from .frontdesk import FRONTDESK_ROUTE_SAFETY, classify_frontdesk, frontdesk_goal
@@ -12768,6 +12772,10 @@ def dispatch_command(args: argparse.Namespace) -> int:
     if blocker is not None:
         print(blocker, file=sys.stderr)
         return 1
+    transport_blocker = transport_dispatch_blocker(agent)
+    if transport_blocker is not None:
+        print(transport_blocker, file=sys.stderr)
+        return 1
     skill_loads = _loaded_skill_records_for_agent(store, agent.agent_id)
     prompt_skill_context = _dispatch_prompt_skill_context(skill_loads)
     message_id = new_id("msg")
@@ -20941,6 +20949,9 @@ def _dispatch_approved_approval(
     receptive_blocker = _pane_receptive_blocker(config, backend, agent_id, pane_id)
     if receptive_blocker is not None:
         raise RuntimeError(receptive_blocker)
+    transport_blocker = transport_dispatch_blocker(agent)
+    if transport_blocker is not None:
+        raise RuntimeError(transport_blocker)
     task = str(approval.get("task", ""))
     skill_loads = _loaded_skill_records_for_agent(store, agent.agent_id)
     prompt_skill_context = _dispatch_prompt_skill_context(skill_loads)
