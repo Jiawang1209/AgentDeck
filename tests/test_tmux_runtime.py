@@ -352,3 +352,45 @@ def test_send_input_rejects_non_string_before_tmux_side_effect(monkeypatch) -> N
             "%1",
             True,
         )
+
+
+def test_enter_is_not_pressed_the_instant_the_paste_is_queued(monkeypatch) -> None:
+    """粘贴与回车之间必须静置一下。
+
+    2026-08-05 live:提示词被拆断——一半提交、一半留在输入框,那一步永远停在
+    `dispatched`。粘贴本身是对的(bracketed paste,换行不会被当成回车),坏在
+    粘贴完**立刻**发回车:TUI 还在渲染时回车就到了。它和长度相关,所以短提示
+    词侥幸没事,长的就撞上。
+
+    刻意**不去读 pane 确认**:只读探测本身也是可观察行为,加了 `capture-pane`
+    会打乱对端预期的交互顺序(一条 daemon 验收测试证明了这点)。这是把窗口关小,
+    不是证明粘贴完整——真正的解法是不再靠打字。
+    """
+    actions: list[str] = []
+
+    def fake_run(command, **kwargs):
+        if "load-buffer" in command:
+            actions.append("paste_load")
+        elif "paste-buffer" in command:
+            actions.append("paste")
+        elif "send-keys" in command:
+            actions.append("enter")
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(tmux.shutil, "which", lambda _name: "/fake/tmux")
+    monkeypatch.setattr(tmux.subprocess, "run", fake_run)
+    monkeypatch.setattr(tmux.time, "sleep", lambda seconds: actions.append(f"settle:{seconds}"))
+
+    tmux.TmuxBackend().send_input(
+        RuntimeConfig(backend="tmux", session_name="demo", socket_name="demo"),
+        "%1",
+        "line one\nline two",
+    )
+
+    assert actions == [
+        "paste_load",
+        "paste",
+        f"settle:{tmux.TmuxBackend._PASTE_SETTLE_SECONDS}",
+        "enter",
+    ]
+    assert tmux.TmuxBackend._PASTE_SETTLE_SECONDS > 0

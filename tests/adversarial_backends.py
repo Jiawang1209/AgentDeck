@@ -66,11 +66,12 @@ def reply_block(token: str, *, wrap_field: str | None = None, **overrides: str) 
 
 def reply_path_from_prompt(prompt: str) -> Path | None:
     """从派发提示词里取出回复文件路径——worker 就是这么知道往哪写的。"""
-    lines = [line.strip() for line in prompt.splitlines() if line.strip()]
-    if not lines:
-        return None
-    candidate = lines[-1]
-    return Path(candidate) if candidate.endswith(".reply.txt") else None
+    # 按**内容**找,不靠位置:提示词末尾还跟着"通道优先于任务限制"那句声明,
+    # 靠"最后一行"会取到那句话。真实 worker 也是认路径本身,不是数行号。
+    for line in reversed([line.strip() for line in prompt.splitlines()]):
+        if line.endswith(".reply.txt"):
+            return Path(line)
+    return None
 
 
 def token_from_prompt(prompt: str) -> str | None:

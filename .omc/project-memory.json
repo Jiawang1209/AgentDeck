@@ -19,7 +19,7 @@
   },
   "build": {
     "buildCommand": null,
-    "testCommand": "python3 - <<'PY'\nimport pathlib\np = pathlib.Path(\"docs/contracts/workflow-schema.md\"); t = p.read_text(encoding=\"utf-8\")\nold = \"A tmux send failure is persisted as `stopped` with `pane_lost`; the CLI does not leave the workflow in a false `running` state.\"\nnew = \"\"\"A tmux send failure is persisted as `stopped` with `pane_lost`; the CLI does not leave the workflow in a false `running` state.\n\nBefore every dispatch the runner asks whether the pane can receive the task at\nall, and refuses to send when a modal dialog owns the keyboard — a first-run\ndirectory trust prompt or a pending authorization box. That run stops with\n`pane_not_receptive` and a blocker naming the next step, and the turn keeps\n`message_id: null` because nothing was sent. The check must happen *before* the\neffect: `send_input` returning successfully does **not** mean the task arrived —\ntmux eats the keystrokes without an error, which is how a dispatch was once lost\nwhile the approval was recorded as `dispatched` and the host waited fifty\nminutes for a reply that could never come. `pane_not_receptive` is deliberately\ndistinct from `pane_lost`: the pane and the agent are both alive, and the next\nstep is a human answering the dialog rather than respawning anything. A pane\nthat cannot be read is *not* a blocker — an unreadable capture is runtime\njitter, and refusing to dispatch on it would stop healthy work.\"\"\"\nassert t.count(old) == 1\np.write_text(t.replace(old, new), encoding=\"utf-8\"); print(\"ok\")\nPY\nsource ~/miniforge3/etc/profile.d/conda.sh && conda activate agentdeck && python -m pytest -q 2>&1 | tail -4",
+    "testCommand": "cd /Users/liuyue/Desktop/Github_repos/multi-agent-explore\npython3 - <<'PY'\nimport pathlib\np = pathlib.Path(\"HISTORY.md\"); t = p.read_text(encoding=\"utf-8\")\nold = \"\"\"- **What**: 粘贴前先取基线画面,粘贴后等画面**真的变了**(粘贴到达的证据),\n  再等它不再变(渲染完毕),然后发回车。判据**刻意不看内容**——pane 会按宽度\n  折行、会把长行截成省略号(同日 codex 页脚就是这样被截没的),按内容匹配很\n  可能永远匹配不上,于是每次派发白等满超时。任一阶段等不到都**不拦**:读取\n  失败是 runtime 抖动,画面一直在动(光标闪烁/spinner)也照常发——回落到原有\n  行为,绝不因为一次读不出来就停掉正常派发。\n- **Impact**: 只加只读探测,私有缓冲、bracketed paste、**恰好一次**回车、\n  缓冲清理、提示词只走 stdin 不进 argv 这些不变量一条没动(既有测试滤掉只读\n  探测后逐条比对仍然通过)。这是把竞态窗口关上,**不是证明粘贴完整**。\n- **Verification**: 先红后绿两轮,第二轮是我自己的错:第一版判据写成\"连续两\n  帧相同即渲染完毕\",而**粘贴尚未落地时两帧本来就相同**——循环立刻返回,回车\n  打在空输入框上,粘贴随后才到,屏幕上留下 `› [Pasted Content 1098 chars]`\n  原封不动等人手动回车。回车跑到了粘贴前面。我把\"没动静\"当成了\"做完了\",\n  正是本仓库一直在消灭的那类错误。补上基线判据的测试专钉这一条。\"\"\"\nnew = \"\"\"- **What**: 粘贴与回车之间静置 `_PASTE_SETTLE_SECONDS`(0.25s)。\n- **为什么不是\"读 pane 确认粘贴到了\"**:试过,而且试了两版,都不成立。\n  第一版判据\"连续两帧相同即渲染完毕\"是**我自己的错**——粘贴尚未落地时两帧\n  本来就相同,循环立刻返回、回车打在空输入框上,粘贴随后才到,屏幕上留下\n  `› [Pasted Content 1098 chars]` 原封不动等人手动回车:回车跑到了粘贴前面。\n  我把\"没动静\"当成了\"做完了\",正是本仓库一直在消灭的那类错误。\n  第二版改成\"先取基线、等画面真的变了再等它稳定\",判据对了,却被一条 daemon\n  验收测试挡下来:**只读探测本身也是可观察行为**,多出来的 `capture-pane`\n  打乱了对端预期的交互顺序。在一条\"往终端打字\"的路径上,连\"看一眼\"都不免费。\n  于是回到不观察、只静置——代价是它**不能证明**粘贴完整,只能把窗口关小。\n- **Impact**: 私有缓冲、bracketed paste、**恰好一次**回车、缓冲清理、提示词\n  只走 stdin 不进 argv 这些不变量一条没动,既有断言全部原样保留(调用序列\n  仍是 4 条)。\n- **Verification**: 先红后绿。测试钉住 paste → settle → enter 的确切顺序。\"\"\"\nassert t.count(old) == 1\np.write_text(t.replace(old, new), encoding=\"utf-8\"); print(\"ok\")\nPY\nsource ~/miniforge3/etc/profile.d/conda.sh && conda activate agentdeck && python -m pytest -q 2>&1 | tail -3",
     "lintCommand": "ruff check",
     "devCommand": null,
     "scripts": {}
@@ -184,6 +184,24 @@
       "path": "src/agentdeck/runtime/readiness.py",
       "accessCount": 1,
       "lastAccessed": 1785926502289,
+      "type": "file"
+    },
+    {
+      "path": "tests/test_conversational_question.py",
+      "accessCount": 1,
+      "lastAccessed": 1785931888865,
+      "type": "file"
+    },
+    {
+      "path": "src/agentdeck/conversational.py",
+      "accessCount": 1,
+      "lastAccessed": 1785931922474,
+      "type": "file"
+    },
+    {
+      "path": "tests/test_provider_answer.py",
+      "accessCount": 1,
+      "lastAccessed": 1785931968715,
       "type": "file"
     }
   ],

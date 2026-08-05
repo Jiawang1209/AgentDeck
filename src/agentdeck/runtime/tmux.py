@@ -3,6 +3,7 @@ from __future__ import annotations
 from contextlib import suppress
 import shutil
 import subprocess
+import time
 import uuid
 
 from agentdeck.models import AgentSpec, RuntimeConfig
@@ -163,6 +164,21 @@ class TmuxBackend:
         )
         return result.stdout
 
+    # 粘贴与回车之间的静置时间。
+    #
+    # 2026-08-05 live:提示词被拆断——一半提交、一半留在输入框,那一步永远停在
+    # `dispatched`。`send_input` 本来做得很讲究(私有缓冲 + bracketed paste,
+    # 换行**不会**被当成回车),坏在最后一步:粘贴完立刻发回车,TUI 还在渲染时
+    # 回车就到了。它和长度相关,提示词一长就撞上。
+    #
+    # 为什么是静置而不是"读 pane 确认粘贴到了":**只读探测本身也是可观察行为**。
+    # 试过之后被一条 daemon 验收测试挡下来——多出来的 `capture-pane` 打乱了对端
+    # 预期的交互顺序。在一条"往终端打字"的路径上,连"看一眼"都不是免费的。
+    #
+    # 所以这里只是把竞态窗口关小,**不是证明粘贴完整**。真正的解法是 worker 走
+    # ACP、不再打字;tmux 退回纯观察面。这一条只让现有传输少丢一些任务。
+    _PASTE_SETTLE_SECONDS = 0.25
+
     def send_input(self, config: RuntimeConfig, pane_id: str, text: str) -> None:
         if not isinstance(text, str):
             raise TypeError("text must be a string")
@@ -175,6 +191,9 @@ class TmuxBackend:
             )
             return
         buffer_name = f"agentdeck-{uuid.uuid4().hex}"
+        # 基线必须取在**动手之前**:load-buffer 之后再拍,读到的已经是"我们
+        # 已经开始做事"的画面。它也是一次真实的 pane 读取——探测的时机本身
+        # 就是可观察行为,不该落在协议不预期的位置。
         try:
             subprocess.run(
                 [
@@ -194,6 +213,7 @@ class TmuxBackend:
                 check=True,
                 timeout=TMUX_COMMAND_TIMEOUT_SECONDS,
             )
+            time.sleep(self._PASTE_SETTLE_SECONDS)
             subprocess.run(
                 submit_command, check=True, timeout=TMUX_COMMAND_TIMEOUT_SECONDS
             )

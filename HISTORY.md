@@ -4,6 +4,50 @@
 
 ## 2026-08-05
 
+### Wait for evidence that the paste arrived before pressing Enter
+
+- **Type**: fix
+- **Motivation**: 字母表接力(4 个 speaker、13 步)第 10 步停在 `dispatched`,
+  pane 上的提示词**被拆断**——一半提交、一半留在输入框。`send_input` 本来
+  做得很讲究(私有缓冲 + `paste-buffer -p` bracketed paste,换行**不会**被当
+  成回车),坏在最后一步:粘贴完**立刻**发回车,中间不等 TUI 渲染完。它和长度
+  相关,所以前 9 步侥幸没事,提示词一长就撞上。
+- **What**: 粘贴与回车之间静置 `_PASTE_SETTLE_SECONDS`(0.25s)。
+- **为什么不是"读 pane 确认粘贴到了"**:试过,而且试了两版,都不成立。
+  第一版判据"连续两帧相同即渲染完毕"是**我自己的错**——粘贴尚未落地时两帧
+  本来就相同,循环立刻返回、回车打在空输入框上,粘贴随后才到,屏幕上留下
+  `› [Pasted Content 1098 chars]` 原封不动等人手动回车:回车跑到了粘贴前面。
+  我把"没动静"当成了"做完了",正是本仓库一直在消灭的那类错误。
+  第二版改成"先取基线、等画面真的变了再等它稳定",判据对了,却被一条 daemon
+  验收测试挡下来:**只读探测本身也是可观察行为**,多出来的 `capture-pane`
+  打乱了对端预期的交互顺序。在一条"往终端打字"的路径上,连"看一眼"都不免费。
+  于是回到不观察、只静置——代价是它**不能证明**粘贴完整,只能把窗口关小。
+- **Impact**: 私有缓冲、bracketed paste、**恰好一次**回车、缓冲清理、提示词
+  只走 stdin 不进 argv 这些不变量一条没动,既有断言全部原样保留(调用序列
+  仍是 4 条)。
+- **Verification**: 先红后绿。测试钉住 paste → settle → enter 的确切顺序。
+- **注**:同日 live 反复证明,"往终端打字、从像素读回"这条接缝的失败模式是
+  **开放集合**——修完一个露出下一个,每个都要一次真实运行才暴露。真正的解法
+  是 worker 走 ACP,tmux 退回纯观察面(CLAUDE.md 早已如此定位)。本条只是让
+  现有传输少丢一些任务,不改变那个结论。
+
+### Keep a task's wording from breaking the reply channel
+
+- **Type**: fix
+- **Motivation**: 字母表接力第 3 步:claude3 **4 秒就答完了**,屏幕上
+  `summary: E F` 一应俱全,却永远停在 `dispatched`。任务文本里写着"不要创建
+  或修改任何文件"(我给 Leader 的措辞),派发提示词里写着"必须把回复写入该
+  文件",**两条指令直接打架**,worker 听了任务那条;而它的 TUI 又清掉了滚动
+  区,`handoff_token` 行已不在屏幕上,刮屏兜底也捞不回来。答案在那儿,却没有
+  回家的路。
+- **What**: 回复通道段落追加一句显式声明——**它优先于任务正文里的任何文件
+  限制**,回复文件不是任务产物而是交回结果的唯一可靠路径。workflow 与
+  run-loop 两条派发提示词同步同一句话。段落本来就排在任务之后,测试把"位置
+  在后"和"显式声明"两条一起钉住。
+- **Impact**: 一条任务的措辞不再能把返回通道弄坏。通道不是任务的一部分。
+- **Verification**: 先红后绿。live 复验:同一句话改掉冲突后,claude3 那一步
+  立刻 completed,接力继续推进。
+
 ### Give the tests a runtime that refuses to cooperate
 
 - **Type**: test

@@ -557,7 +557,11 @@ class FileChannelBackend(CorrelatedFakeBackend):
             for line in text.splitlines()
             if line.startswith("Complete only this task. Use this handoff token exactly:")
         )
-        path = Path(text.strip().splitlines()[-1].strip())
+        path = next(
+            Path(line.strip())
+            for line in reversed(text.splitlines())
+            if line.strip().endswith(".reply.txt")
+        )
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(
             f"handoff_token: {token}\n"
@@ -616,3 +620,29 @@ def test_runner_accepts_a_reply_written_to_the_file_channel(tmp_path) -> None:
     assert finished["status"] == "completed"
     assert [turn["status"] for turn in finished["turns"]] == ["completed", "completed"]
     assert finished["turns"][0]["handoff"]["summary"] == "finished via the file channel"
+
+
+def test_reply_channel_instruction_overrides_task_file_restrictions() -> None:
+    # 2026-08-05 live:任务文本里写着"不要创建或修改任何文件",派发提示词里
+    # 写着"必须把回复写入该文件"。claude 选择听任务那条,于是它 4 秒就答完
+    # 了、屏幕上答案齐全,但**没有回家的路**——TUI 又清掉了滚动区,刮屏也捞
+    # 不回来,那一步就此永远停在 `dispatched`。
+    #
+    # 回复通道不是任务的一部分,它是机器取回答案的路径。一条任务的措辞能把
+    # 返回通道弄坏,这不该可能——所以通道段落必须排在任务之后,并**显式声明
+    # 它不受任务级文件限制约束**。
+    prompt = build_workflow_prompt(
+        role="recitation",
+        role_prompt="只念字母",
+        task="仅输出：A B。不要创建或修改任何文件。",
+        handoff_token="tok_1",
+        previous_handoff=None,
+        reply_file="/tmp/demo/.agentdeck/replies/msg_x.reply.txt",
+    )
+
+    assert "/tmp/demo/.agentdeck/replies/msg_x.reply.txt" in prompt
+    # 通道段落必须在任务正文之后——后出现的指令才压得住前面的限制。
+    assert prompt.index("不要创建或修改任何文件") < prompt.index("回复通道")
+    # 而且必须把"不受任务限制约束"这件事说出口,不能指望模型自己推断。
+    channel = prompt[prompt.index("回复通道"):]
+    assert "优先" in channel or "不受" in channel
