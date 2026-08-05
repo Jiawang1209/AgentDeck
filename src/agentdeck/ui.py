@@ -103,6 +103,21 @@ _PAGE = """<!doctype html>
     margin: 0; font-family: var(--mono); font-size: .78rem; line-height: 1.5;
     white-space: pre-wrap; word-break: break-word; max-height: 22rem; overflow: auto;
   }
+  .row { display: flex; gap: .6rem; padding: .22rem 0; font-size: .82rem; }
+  .row .k { color: var(--muted); min-width: 9rem; flex: 0 0 auto; font-family: var(--mono); font-size: .76rem; }
+  .row .v { min-width: 0; word-break: break-word; font-family: var(--mono); font-size: .76rem; }
+  .list { margin-top: .5rem; border-top: 1px solid var(--line); }
+  .li { padding: .45rem 0; border-bottom: 1px solid var(--line); font-size: .8rem; }
+  .li .t { font-family: var(--mono); font-size: .76rem; }
+  .li .s { color: var(--muted); font-size: .72rem; margin-top: .15rem; }
+  .btns { display: flex; flex-wrap: wrap; gap: .4rem; margin-top: .7rem; }
+  .btn {
+    background: #2c2a27; color: var(--ink); border: 1px solid var(--line);
+    border-radius: 7px; padding: .3rem .65rem; font-size: .76rem; cursor: pointer;
+  }
+  .btn:hover:not(:disabled) { border-color: var(--accent); }
+  .btn:disabled { opacity: .45; cursor: not-allowed; }
+  .btn.run { border-color: var(--accent); }
   .next { margin-top: .6rem; font-family: var(--mono); font-size: .8rem; color: var(--ok); }
 
   /* composer */
@@ -309,6 +324,123 @@ setInterval(refreshControls, 30000);
       el.appendChild(c);
     }
 
+    // 通用结构化渲染:**不给每种 card 硬编码**。标量成行、数组成列表、
+    // controls[] 成按钮。未知卡片也能读,新增 mode 不用改前端——这正是
+    // "GUI 只做契约消费方"的落地方式。
+    const SKIP = ["mode", "title", "controls", "schema_version"];
+
+    function scalar(v) {
+      return v === null || ["string", "number", "boolean"].indexOf(typeof v) >= 0;
+    }
+    function row(parent, k, v) {
+      const r = document.createElement("div");
+      r.className = "row";
+      const kk = document.createElement("span");
+      kk.className = "k";
+      kk.textContent = k;
+      const vv = document.createElement("span");
+      vv.className = "v";
+      vv.textContent = v === null ? "—" : String(v);
+      if (v === false) { vv.classList.add("muted"); }
+      r.appendChild(kk);
+      r.appendChild(vv);
+      parent.appendChild(r);
+    }
+    function itemLine(parent, obj) {
+      const li = document.createElement("div");
+      li.className = "li";
+      const t = document.createElement("div");
+      t.className = "t";
+      t.textContent = obj.label || obj.command || obj.agent_id || obj.name
+        || obj.approval_id || obj.plan_id || obj.event_type || JSON.stringify(obj).slice(0, 80);
+      li.appendChild(t);
+      const bits = ["status", "state", "role", "blocker", "task", "summary", "safety"]
+        .filter(function (k) { return obj[k]; })
+        .map(function (k) { return k + ": " + obj[k]; });
+      if (bits.length) {
+        const s = document.createElement("div");
+        s.className = "s";
+        s.textContent = bits.join("   ");
+        li.appendChild(s);
+      }
+      parent.appendChild(li);
+    }
+    // 按钮的 enabled / blocker / safety **一律照抄 contract**,前端不判断。
+    // 只有带 control_id 的才可点(没有 id 就无法经 /api/execute 执行);
+    // inspect 走 /api/inspect,explicit_* 走 /api/execute 的二步确认。
+    function controlButtons(parent, controls) {
+      const box = document.createElement("div");
+      box.className = "btns";
+      controls.forEach(function (ctl) {
+        const b = document.createElement("button");
+        b.className = "btn" + (ctl.safety === "inspect" ? " run" : "");
+        b.textContent = ctl.label || ctl.kind || "control";
+        b.title = ctl.command || "";
+        const runnable = ctl.enabled && ctl.control_id
+          && ["inspect", "explicit_user", "explicit_runtime"].indexOf(ctl.safety) >= 0;
+        b.disabled = !runnable;
+        if (ctl.blocker) { b.title = ctl.blocker; }
+        if (runnable) {
+          b.addEventListener("click", function () { runControl(ctl); });
+        }
+        box.appendChild(b);
+      });
+      if (box.children.length) { parent.appendChild(box); }
+    }
+    async function runControl(ctl) {
+      const inspect = ctl.safety === "inspect";
+      if (!inspect && !window.confirm("执行这条命令？\n\n" + ctl.command)) { return; }
+      const res = await fetch(inspect ? "/api/inspect" : "/api/execute", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(
+          inspect ? { control_id: ctl.control_id } : { control_id: ctl.control_id, confirmed: true }
+        ),
+      });
+      const el = turn("agent", "AgentDeck");
+      if (res.ok) {
+        const data = await res.json();
+        bubble(el, ctl.label || ctl.command);
+        renderCard(el, "result", data.result !== undefined ? data.result : data);
+      } else {
+        bubble(el, "被拒绝：HTTP " + res.status).classList.add("warn");
+      }
+      if (typeof refreshAll === "function") { refreshAll(); }
+      stream.scrollTop = stream.scrollHeight;
+    }
+
+    function renderCard(el, label, obj) {
+      if (!obj || typeof obj !== "object") { return card(el, label, String(obj)); }
+      const c = document.createElement("div");
+      c.className = "card";
+      const l = document.createElement("div");
+      l.className = "label";
+      l.textContent = obj.title || label;
+      c.appendChild(l);
+      Object.keys(obj).forEach(function (k) {
+        if (SKIP.indexOf(k) >= 0) { return; }
+        const v = obj[k];
+        if (scalar(v)) { row(c, k, v); }
+      });
+      Object.keys(obj).forEach(function (k) {
+        const v = obj[k];
+        if (!Array.isArray(v) || !v.length || k === "controls") { return; }
+        const h = document.createElement("div");
+        h.className = "label";
+        h.style.marginTop = ".7rem";
+        h.textContent = k + " (" + v.length + ")";
+        c.appendChild(h);
+        const list = document.createElement("div");
+        list.className = "list";
+        v.slice(0, 12).forEach(function (item) {
+          if (scalar(item)) { row(list, "", item); } else { itemLine(list, item); }
+        });
+        c.appendChild(list);
+      });
+      if (Array.isArray(obj.controls)) { controlButtons(c, obj.controls); }
+      el.appendChild(c);
+    }
+
     async function ask(text) {
       bubble(turn("user", "你"), text);
       const el = turn("agent", "AgentDeck");
@@ -329,7 +461,7 @@ setInterval(refreshControls, 30000);
           || ("mode: " + (data.mode || "?"));
         const embedded = data.intent_card && data.intent_card.embedded_card;
         if (embedded && data[embedded]) {
-          card(el, embedded, JSON.stringify(data[embedded], null, 2));
+          renderCard(el, embedded, data[embedded]);
         }
         if (data.next_command) {
           const n = document.createElement("div");
