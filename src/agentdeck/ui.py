@@ -121,6 +121,15 @@ _PAGE = """<!doctype html>
   .next { margin-top: .6rem; font-family: var(--mono); font-size: .8rem; color: var(--ok); }
 
   /* composer */
+  #quick {
+    display: flex; flex-wrap: wrap; gap: .4rem; justify-content: center;
+    padding: 0 1.5rem .2rem;
+  }
+  #quick button {
+    background: transparent; color: var(--muted); border: 1px solid var(--line);
+    border-radius: 999px; padding: .28rem .7rem; font-size: .74rem; cursor: pointer;
+  }
+  #quick button:hover { color: var(--ink); border-color: var(--accent); }
   #composer {
     border-top: 1px solid var(--line); padding: 1rem 1.5rem 1.25rem;
     display: flex; gap: .6rem; align-items: flex-end;
@@ -169,6 +178,7 @@ _PAGE = """<!doctype html>
     <span id="whoami" class="muted">Leader · 载入中…</span>
   </div>
   <div id="stream"></div>
+  <div id="quick"></div>
   <form id="composer" autocomplete="off">
     <div class="wrap">
       <textarea id="message" rows="1" placeholder="说点什么…（Enter 发送，Shift+Enter 换行）"></textarea>
@@ -564,6 +574,31 @@ setInterval(refreshControls, 30000);
       }
       loadProviders();
       if (typeof refreshAll === "function") { refreshAll(); }
+    });
+
+    // 快捷入口:每一条都是一句**自然语言**,走的还是同一条 /api/chat。
+    // 它不是新功能面,是让人不必记命令就能进到既有的各个 mode——
+    // "全部能力都在对话里用"的第一步。
+    const QUICK = [
+      "帮助",
+      "查看运行进度",
+      "查看审批",
+      "查看 runtime",
+      "查看队列",
+      "查看账本",
+      "查看产物",
+      "打开工作台",
+    ];
+    const quick = document.getElementById("quick");
+    QUICK.forEach(function (text) {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.textContent = text;
+      b.addEventListener("click", function () {
+        send.disabled = true;
+        ask(text).finally(function () { send.disabled = false; input.focus(); });
+      });
+      quick.appendChild(b);
     });
 
     loadProviders();
