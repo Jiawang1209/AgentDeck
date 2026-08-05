@@ -19,7 +19,7 @@
   },
   "build": {
     "buildCommand": null,
-    "testCommand": "cd /Users/liuyue/Desktop/Github_repos/multi-agent-explore\nsource ~/miniforge3/etc/profile.d/conda.sh && conda activate agentdeck && python -m pytest -q 2>&1 | tail -4",
+    "testCommand": "cd /Users/liuyue/Desktop/Github_repos/multi-agent-explore\nsource ~/miniforge3/etc/profile.d/conda.sh && conda activate agentdeck && python -m pytest -q > /tmp/claude-501/suite.txt 2>&1 &\necho \"--- ProjectView 里有没有 workflow_runs ---\"\ngrep -n \"workflow_runs\" src/agentdeck/models.py src/agentdeck/state.py | grep -i \"project_view\\|def project_view\" | head -3\ngrep -n \"\\\"workflow\" src/agentdeck/models.py | head -5\necho \"--- workbench 里呢 ---\"\ngrep -n \"workflow\" src/agentdeck/cli.py | grep -i \"workbench\\|card\" | head -5",
     "lintCommand": "ruff check",
     "devCommand": null,
     "scripts": {}

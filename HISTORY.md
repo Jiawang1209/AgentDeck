@@ -4,6 +4,26 @@
 
 ## 2026-08-05
 
+### Stop demanding a tmux pane from a worker that speaks a protocol
+
+- **Type**: fix
+- **Motivation**: 2026-08-06 live:两个 claude worker 配成 `transport = "acp"`
+  跑《两小儿辩日》接力,`workflow run` 在步骤循环之前就整体拒绝——
+  `agent is not running: speaker-a; agent is not running: speaker-b; …`。
+  前置检查对**每一步**都要求一个活的 tmux pane,而 ACP worker 根本不用 spawn:
+  它没有 pane,也不该有。传输接缝往前推一步,就露出一处"worker = 一个 tmux
+  pane"的遗留假设。
+- **What**: 前置检查对非 tmux transport 不再要求 binding/pane。**它问的是
+  "有没有 pane",该问的是"够不够得着"**:对协议 worker,可达性来自配置好的
+  `transport_command`(config 层已强制非空),不是一个终端。
+- **Impact**: tmux worker 的前置检查逐字节不变(缺省 transport 就是 tmux)。
+- **Verification**: 先红后绿。测试钉住 ACP plan 的 `blockers == []`、
+  `can_run is True`、且 `pane_id` 为 `[None, None]`——**没有 pane 不是缺陷**。
+  **真实验证**:同一份 7 步计划,两个 claude worker 全走 ACP,**7/7 一次跑通**,
+  零 pane、零 spawn、零按键。全量 5341 passed / 3 skipped。
+- **注**:修的过程中我把 `configured_agents`(一个 set)当 dict 用了 `.get()`,
+  两条既有 preview 测试立刻变红——这次是测试在一分钟内抓住我,而不是等到 live。
+
 ### Close the same silent fallback on the dispatch and approval paths
 
 - **Type**: fix

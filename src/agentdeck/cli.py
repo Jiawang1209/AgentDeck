@@ -21329,7 +21329,8 @@ def _workflow_preview_payload(
 ) -> dict[str, object]:
     plan_id = str(plan_record.get("plan_id") or "")
     steps = authorized_steps(plan_record)
-    configured_agents = {agent.agent_id for agent in config.agents}
+    agent_specs = {agent.agent_id: agent for agent in config.agents}
+    configured_agents = set(agent_specs)
     blockers: list[str] = []
     projected_steps: list[dict[str, object]] = []
     if not steps:
@@ -21344,11 +21345,19 @@ def _workflow_preview_payload(
         binding = store.agent_binding(agent_id) if agent_id else None
         runtime_status = str(binding.get("status") or "configured") if binding else "configured"
         pane_id = str(binding.get("pane_id")) if binding and binding.get("pane_id") else None
+        spec = agent_specs.get(agent_id) if agent_id else None
+        # 走协议的 worker **没有 pane,也不需要有**:它的可达性来自配置好的
+        # `transport_command`(config 已强制非空),不是一个终端。2026-08-06 live:
+        # 两个 ACP worker 让 `workflow run` 在步骤循环之前就以
+        # `agent is not running` 拒绝——问的是"有没有 pane",该问的是"够不够得着"。
+        speaks_protocol = getattr(spec, "transport", "tmux") != "tmux"
         step_blocker = None
         if not agent_id or agent_id not in configured_agents:
             step_blocker = f"unknown agent: {agent_id or '<empty>'}"
         elif not task:
             step_blocker = f"step {item['step']} has an empty task"
+        elif speaks_protocol:
+            step_blocker = None
         elif not binding or runtime_status != "running" or pane_id is None:
             step_blocker = f"agent is not running: {agent_id}"
         if step_blocker:

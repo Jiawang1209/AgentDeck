@@ -15927,3 +15927,44 @@ def test_approval_dispatch_refuses_to_type_at_an_acp_worker(
     after = StateStore(root).load()
     assert after["messages"] == before["messages"], "拒绝之前不许留下任何记录"
     assert after["jobs"] == before["jobs"]
+
+
+def test_workflow_preview_does_not_demand_a_pane_from_an_acp_worker(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    """走协议的 worker 没有 pane,也不需要有。
+
+    2026-08-06 live:两个 claude worker 配成 `transport = "acp"`,`workflow run`
+    却在步骤循环之前就拒绝了——`agent is not running: speaker-a; ...`。前置检查
+    对每一步都要求一个活的 tmux pane,而 ACP worker **根本不用 spawn**。
+    它问的是"有没有 pane",该问的是"够不够得着":对协议 worker 而言,可达性来自
+    配置好的 `transport_command`(config 已强制非空),不是一个终端。
+    """
+    root = prepare_project(tmp_path, monkeypatch)
+    plan = record_two_step_workflow_plan(root)
+    path = root / ".agentdeck" / "config.toml"
+    text = path.read_text(encoding="utf-8")
+    for agent_id in ("planner", "reviewer"):
+        text = text.replace(
+            f'agent_id = "{agent_id}"',
+            f'agent_id = "{agent_id}"\ntransport = "acp"\n'
+            'transport_command = ["fake-acp-adapter"]',
+            1,
+        )
+    path.write_text(text, encoding="utf-8")
+    monkeypatch.setattr(
+        cli,
+        "TmuxBackend",
+        lambda: (_ for _ in ()).throw(AssertionError("preview touched runtime")),
+    )
+
+    exit_code = cli.main(
+        ["workflow", "preview", "--plan-id", str(plan["plan_id"]), "--timeout", "30"]
+    )
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["blockers"] == [], payload["blockers"]
+    assert payload["can_run"] is True
+    # 没有 pane,而且这不是缺陷——协议 worker 本来就不该有。
+    assert [item["pane_id"] for item in payload["steps"]] == [None, None]
