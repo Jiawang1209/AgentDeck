@@ -14,6 +14,7 @@ from .mission_authority import (
     canonical_workflow_authorized_steps,
     canonical_workflow_plan_hash,
 )
+from .dispatch_receptive import classify_pane_receptive, receptive_blocker_message
 from .runtime.base import RuntimeBackend
 from .state import StateStore
 
@@ -413,6 +414,38 @@ def _structured_reply_text(reply: dict[str, str]) -> str:
     return "\n".join(f"{field}: {reply[field]}" for field in fields)
 
 
+def _pending_turn(run_id: str, step_number: int, agent_id: str) -> dict[str, Any]:
+    """一条**尚未派发**的 turn。`message_id` 为 None 正是它的凭据。"""
+    return {
+        "step": step_number,
+        "agent_id": agent_id,
+        "handoff_token": f"{run_id}_step_{step_number}",
+        "status": "pending",
+        "message_id": None,
+        "job_id": None,
+        "reply_id": None,
+        "handoff": None,
+        "artifact_paths": [],
+        "trace_command": None,
+        "started_at": utc_now(),
+        "completed_at": None,
+    }
+
+
+def _pane_receptive_blocker(
+    backend: RuntimeBackend, config: ProjectConfig, agent_id: str, pane_id: str
+) -> str | None:
+    """读取失败(`unverifiable`)一律放行——那是 runtime 抖动,不是拦阻理由;
+    把一次读不出来变成拒绝派发会停掉正常工作。"""
+    try:
+        pane_text = backend.capture_output(config.runtime, pane_id, 200)
+    except Exception:
+        pane_text = None
+    return receptive_blocker_message(
+        classify_pane_receptive(pane_text=pane_text), agent_id, pane_id
+    )
+
+
 def _stop_workflow(
     store: StateStore,
     *,
@@ -421,9 +454,13 @@ def _stop_workflow(
     turn: dict[str, Any],
     turn_status: str,
     reason: str,
+    blocker: str | None = None,
 ) -> dict[str, Any]:
     turn["status"] = turn_status
     turn["completed_at"] = utc_now()
+    if blocker is not None:
+        # 停下时说得出**下一步**,而不只是一个枚举值。
+        turn["blocker"] = blocker
     record = store.update_workflow_run(
         run_id,
         status="stopped",
@@ -539,6 +576,27 @@ def run_sequential_workflow(
         # `can_resume: true` 仍宣称这个 run 还能救。2026-08-05 live 连撞两次。
         undelivered = existing is not None and existing.get("message_id") is None
         if existing is None or undelivered:
+            # 发送之前先问一句:此刻打进去,会落到该落的地方吗。
+            # `send_input` 成功返回**不等于**任务到达——模态框占住键盘时
+            # tmux 一声不吭地把按键吃掉,于是 turn 带着 message_id 建好了,
+            # 而那句话从没到达(2026-08-04 因此丢了五十分钟)。所以
+            # "message_id 是不是 None"盖不住这一类,检查只能在效果之前。
+            receptive_blocker = _pane_receptive_blocker(
+                backend, config, agent_id, pane_id
+            )
+            if receptive_blocker is not None:
+                turn = existing or _pending_turn(run_id, step_number, agent_id)
+                if existing is None:
+                    turns.append(turn)
+                return _stop_workflow(
+                    store,
+                    run_id=run_id,
+                    turns=turns,
+                    turn=turn,
+                    turn_status="pending",
+                    reason="pane_not_receptive",
+                    blocker=receptive_blocker,
+                )
             token = f"{run_id}_step_{step_number}"
             # message_id 必须先铸出来:回复文件以它命名,而 worker 要在提示词
             # 里读到那个路径。`create_dispatch_records` 本来就接受外部 id,

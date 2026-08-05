@@ -4,6 +4,53 @@
 
 ## 2026-08-05
 
+### Give the tests a runtime that refuses to cooperate
+
+- **Type**: test
+- **Motivation**: 2026-08-05 一次真实接力探针一晚上挖出五个 bug,而当时 5306
+  条测试**一条都没抓到**。原因不在数量,在桩——`CorrelatedFakeBackend` 的
+  `pane_exists` 永远 True、`capture_output` 永远吐一份格式完美的回复块。它
+  模拟的是一个从不出错的世界,而真实世界里 pane 会中途消失、会被模态框占住
+  键盘、TUI 会清滚动区、长值会折行、回复会迟到。这些不是边缘情况,是**当晚
+  每一次真跑都会遇到的常态**。
+- **What**: 新增 `tests/adversarial_backends.py`——一个可参数化的
+  `ScriptedPaneBackend`,五个开关各自复现一次现场故障(`vanish_after` /
+  `dialog_open` / `scrollback_cleared` / `wrap_field` / `reply_delay_polls`),
+  每个开关的注释写明它复现的是哪一次,后来的人才不会顺手"简化"掉。
+  `tests/test_workflow_adversarial.py` 用它跑 workflow,每条断言要求的都是
+  同一件事:**要么干完,要么如实说出没干完**,绝不接受静默地不工作。
+- **Impact**: 今晚四个已修 bug 从此有了永久回归钉;桩自身还带一条自检
+  (折行块必须真的折行,否则那条测试测的是空气)。
+- **Verification**: 第一次跑就红了两条。一条是我的桩语义写错(`vanish_after=1`
+  让 pane 在第 1 步等待期间就消失,AgentDeck 行为其实正确),改为断言真正要守
+  的性质——**绝不谎报**;另一条是**真发现**,见下一条。全量 5312 passed。
+
+### Never type a task into a pane a dialog owns
+
+- **Type**: fix
+- **Motivation**: 上面那组对抗性桩第一次跑就抓到一个今晚没修干净的洞:
+  按键被模态框吃掉时,`send_input` **成功返回**(tmux 一声不吭),于是 turn
+  带着 `message_id` 被建好,而那句话从没到达。今晚刚修的守卫判据是
+  "`message_id is None` = 从没送出去"——**它盖不住这一类**。这正是
+  2026-08-04 丢掉五十分钟那次的形状:任务消失、审批记成 `dispatched`、
+  宿主等一个永远不会来的回复。`dispatch` 与 `approval dispatch` 两条路径
+  早有这道检查,sequential workflow 没有。
+- **What**: 派发前调用接收性检查,`blocked` 即拒发并以新的闭合 stop reason
+  `pane_not_receptive` 停下,turn 保持 `message_id: null`(什么都没发)并带上
+  说得出下一步的 blocker。它与 `pane_lost` **刻意分开**:pane 和 agent 都活
+  着,下一步是人去把那道框按掉,不是重启任何东西。`unverifiable`(pane 读不
+  出来)**不拦**——那是 runtime 抖动,把一次读取失败变成拒绝派发会停掉正常
+  工作。三条派发路径的 blocker 文案收进纯模块
+  `dispatch_receptive.receptive_blocker_message()` 单一来源,否则同一件事会
+  在三处漂成三种说法;cli 侧行为逐字节不变(36 条 dispatch 测试原样通过)。
+- **Impact**: workflow 不再往收不下任务的 pane 里打字。检查发生在**效果之
+  前**——按键一旦离开就收不回来,这是本仓库"契约校验必须发生在效果之前"的
+  同一条规则。
+- **Verification**: 先红后绿。红的时候 `swallowed` 里躺着整段任务提示词——
+  2026-08-04 那五十分钟,现在是一条单元测试。绿之后同一个 run 在框被关掉后
+  续跑完成,且"不重复派发"守卫未被放宽。契约文档、闭合 stop reason 已同步。
+  全量 5312 passed / 3 skipped。
+
 ### Collect workflow replies from the file channel, not off the screen
 
 - **Type**: fix

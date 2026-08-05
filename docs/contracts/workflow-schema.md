@@ -75,3 +75,17 @@ The engine stops before dispatching any later step on agent/runtime loss, timeou
 Audit events include `workflow_started`, `workflow_step_dispatched`, `workflow_step_completed`, `workflow_stopped`, `workflow_resumed`, `workflow_completed`, and `workflow_contract_failed`. Events store compact provenance, not full prompts or secrets.
 
 The foreground runner never spawns agents, calls the Leader provider, acknowledges inbox items, or changes worker tool/file permissions. A tmux send failure is persisted as `stopped` with `pane_lost`; the CLI does not leave the workflow in a false `running` state.
+
+Before every dispatch the runner asks whether the pane can receive the task at
+all, and refuses to send when a modal dialog owns the keyboard — a first-run
+directory trust prompt or a pending authorization box. That run stops with
+`pane_not_receptive` and a blocker naming the next step, and the turn keeps
+`message_id: null` because nothing was sent. The check must happen *before* the
+effect: `send_input` returning successfully does **not** mean the task arrived —
+tmux eats the keystrokes without an error, which is how a dispatch was once lost
+while the approval was recorded as `dispatched` and the host waited fifty
+minutes for a reply that could never come. `pane_not_receptive` is deliberately
+distinct from `pane_lost`: the pane and the agent are both alive, and the next
+step is a human answering the dialog rather than respawning anything. A pane
+that cannot be read is *not* a blocker — an unreadable capture is runtime
+jitter, and refusing to dispatch on it would stop healthy work.

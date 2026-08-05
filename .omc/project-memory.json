@@ -19,7 +19,7 @@
   },
   "build": {
     "buildCommand": null,
-    "testCommand": "source ~/miniforge3/etc/profile.d/conda.sh && conda activate agentdeck && python -m pytest -q 2>&1 | tail -3",
+    "testCommand": "python3 - <<'PY'\nimport pathlib\np = pathlib.Path(\"docs/contracts/workflow-schema.md\"); t = p.read_text(encoding=\"utf-8\")\nold = \"A tmux send failure is persisted as `stopped` with `pane_lost`; the CLI does not leave the workflow in a false `running` state.\"\nnew = \"\"\"A tmux send failure is persisted as `stopped` with `pane_lost`; the CLI does not leave the workflow in a false `running` state.\n\nBefore every dispatch the runner asks whether the pane can receive the task at\nall, and refuses to send when a modal dialog owns the keyboard — a first-run\ndirectory trust prompt or a pending authorization box. That run stops with\n`pane_not_receptive` and a blocker naming the next step, and the turn keeps\n`message_id: null` because nothing was sent. The check must happen *before* the\neffect: `send_input` returning successfully does **not** mean the task arrived —\ntmux eats the keystrokes without an error, which is how a dispatch was once lost\nwhile the approval was recorded as `dispatched` and the host waited fifty\nminutes for a reply that could never come. `pane_not_receptive` is deliberately\ndistinct from `pane_lost`: the pane and the agent are both alive, and the next\nstep is a human answering the dialog rather than respawning anything. A pane\nthat cannot be read is *not* a blocker — an unreadable capture is runtime\njitter, and refusing to dispatch on it would stop healthy work.\"\"\"\nassert t.count(old) == 1\np.write_text(t.replace(old, new), encoding=\"utf-8\"); print(\"ok\")\nPY\nsource ~/miniforge3/etc/profile.d/conda.sh && conda activate agentdeck && python -m pytest -q 2>&1 | tail -4",
     "lintCommand": "ruff check",
     "devCommand": null,
     "scripts": {}
@@ -115,6 +115,12 @@
       "type": "file"
     },
     {
+      "path": "tests/test_workflow_adversarial.py",
+      "accessCount": 3,
+      "lastAccessed": 1785930587740,
+      "type": "file"
+    },
+    {
       "path": "tests/test_ui_server.py",
       "accessCount": 2,
       "lastAccessed": 1785915200013,
@@ -136,6 +142,12 @@
       "path": "HISTORY.md",
       "accessCount": 2,
       "lastAccessed": 1785925370174,
+      "type": "file"
+    },
+    {
+      "path": "tests/adversarial_backends.py",
+      "accessCount": 2,
+      "lastAccessed": 1785930451608,
       "type": "file"
     },
     {

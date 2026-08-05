@@ -83,3 +83,25 @@ def classify_pane_receptive(*, pane_text: str | None) -> dict[str, Any]:
     # 认得出是活动对话框、但认不出是哪一种:仍然拦住。此刻发进去的按键一样
     # 会被吃掉,而"拦错一次"的代价远小于"任务静默丢失五十分钟"。
     return {"state": "blocked", "reason": "pending_box"}
+
+
+def receptive_blocker_message(
+    verdict: dict[str, Any], agent_id: str, pane_id: str
+) -> str | None:
+    """把判定翻成一句**说得出下一步**的话;不是 `blocked` 一律 None。
+
+    文案的单一来源:`agentdeck dispatch`、`approval dispatch` 与 sequential
+    workflow 三条派发路径共用同一句,否则同一件事会在三处漂成三种说法。
+    `unverifiable` 不在这里出现——读取失败是 runtime 抖动,不是拦阻理由。
+    """
+    if verdict.get("state") != "blocked":
+        return None
+    if verdict.get("reason") == "directory_trust":
+        return (
+            f"agent pane is waiting on a directory trust prompt: {agent_id} "
+            f"(pane={pane_id}); run `agentdeck agent trust --confirm`, then respawn it"
+        )
+    return (
+        f"agent pane is waiting on an authorization box: {agent_id} "
+        f"(pane={pane_id}); answer it or grant a delegation before dispatching"
+    )

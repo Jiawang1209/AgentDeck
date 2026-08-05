@@ -164,7 +164,7 @@ from .contracts import (
 )
 from .autonomy import run_loop_gate, select_auto_approvals
 from .branch_custody import classify_branch_custody
-from .dispatch_receptive import classify_pane_receptive
+from .dispatch_receptive import classify_pane_receptive, receptive_blocker_message
 from .startup_trust import classify_startup_trust
 from .delegation_match import is_composite_command, normalize_match
 from .frontdesk import FRONTDESK_ROUTE_SAFETY, classify_frontdesk, frontdesk_goal
@@ -12743,17 +12743,8 @@ def _pane_receptive_blocker(
         pane_text = backend.capture_output(config.runtime, pane_id, 200)
     except Exception:
         pane_text = None
-    verdict = classify_pane_receptive(pane_text=pane_text)
-    if verdict["state"] != "blocked":
-        return None
-    if verdict["reason"] == "directory_trust":
-        return (
-            f"agent pane is waiting on a directory trust prompt: {agent_id} "
-            f"(pane={pane_id}); run `agentdeck agent trust --confirm`, then respawn it"
-        )
-    return (
-        f"agent pane is waiting on an authorization box: {agent_id} "
-        f"(pane={pane_id}); answer it or grant a delegation before dispatching"
+    return receptive_blocker_message(
+        classify_pane_receptive(pane_text=pane_text), agent_id, pane_id
     )
 
 

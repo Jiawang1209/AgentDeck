@@ -4264,6 +4264,9 @@ WORKFLOW_TURN_STATUSES = (
 WORKFLOW_STOP_REASONS = (
     "agent_unavailable",
     "pane_lost",
+    # 2026-08-05:pane 还在、agent 也在,但键盘被模态框占着。它与 `pane_lost`
+    # 必须分开——下一步不同:一个是重启 pane,一个是人去把那道框按掉。
+    "pane_not_receptive",
     "timed_out",
     "invalid_reply",
     "worker_blocked",
