@@ -4,6 +4,33 @@
 
 ## 2026-08-05
 
+### Show the team in the GUI, and stop calling a working ACP worker "not running"
+
+- **Type**: feat
+- **Motivation**: 《两小儿辩日》跑完之后 user 问「能不能在 GUI 里看到每个 agent
+  的工作状态」。查下来发现问题不是"看不到",是**显示了不成立的事**:GUI 右栏
+  只画 `runtime_card.agents[]`,那张卡只懂 tmux,于是把两个刚跑完七步的 ACP
+  worker 画成灰的 `configured`(未运行、无 pane)。
+- **What**: 右栏新增「队伍」面板,每个 worker 一张活动卡,数据**全部来自已有
+  契约**——一个新端点都没加:`worker_lifecycle_card` 给 `lifecycle_stage` /
+  当前 message / 待确认数 / 产物数 / 控件,`worker_transport_card` 给
+  `configured_transport` 与 `readiness` / `blockers`。控件复用既有注册表桥
+  (命令原文换 `control_id`,换不到就画成禁用)。旧的 Agents 面板隐藏但**元素
+  保留**——受保护的脚本块仍会往它写 `innerHTML`,移除会让那一块抛错。
+- **Impact**: ACP worker 不再被渲染成"未运行";`Capture pane output` 如实禁用
+  (它没有 pane,blocker 由卡片自带);transport 直接标在卡上,tmux 与 acp 一眼
+  可分。
+- **Verification**: `node --check` 只证明能解析——今天已因此栽过。**真浏览器
+  实测**:两张卡渲染出 `speaker-a recitation [acp] [inbox_pending] · claude ·
+  在做 msg_4c82e471 · 待确认 4`,四个按钮中 Capture 为禁用,旧面板
+  `display: none`。全量 5341 passed / 3 skipped。
+- **注**:写的时候把 CSS 变量写成了 `--dim` / `--fg`(本页叫 `--muted` / `--ink`),
+  还留了个损坏的颜色值 `#d0a martin`——两者都会**静默失效**,提交前逐条改掉。
+- **仍是缺口**:卡上显示的 `传输 blocked` 来自 daemon 的会话模型,而 workflow
+  的 ACP 运行不登记 `agent_sessions`,所以那句话对这条路径**恒为真**。它是诚实
+  的,但不是有用的——下一刀让 workflow 的 ACP 运行也登记会话。真正替代"盯着
+  终端看"的仍是把 `session/update` 分片持久化下来,那更靠后。
+
 ### Stop demanding a tmux pane from a worker that speaks a protocol
 
 - **Type**: fix

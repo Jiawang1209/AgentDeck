@@ -71,6 +71,30 @@ _PAGE = """<!doctype html>
   .muted { color: var(--muted); } .ok { color: var(--ok); } .warn { color: var(--warn); }
   code { font-family: var(--mono); background: #2c2a27; padding: .1rem .3rem; border-radius: 3px; }
 
+  /* 队伍面板:每个 worker 一张活动卡 */
+  .member {
+    border: 1px solid var(--line); border-radius: 10px;
+    padding: .6rem .7rem; margin-bottom: .5rem; background: var(--panel);
+  }
+  .member .top { display: flex; align-items: baseline; gap: .45rem; flex-wrap: wrap; }
+  .member .who { font-weight: 650; font-size: .92rem; }
+  .member .role { color: var(--muted); font-size: .8rem; }
+  .member .facts { margin-top: .3rem; color: var(--muted); font-size: .78rem; line-height: 1.5; }
+  .member .acts { display: flex; flex-wrap: wrap; gap: .3rem; margin-top: .45rem; }
+  .member .acts button {
+    font: inherit; font-size: .74rem; padding: .16rem .45rem;
+    border: 1px solid var(--line); border-radius: 5px;
+    background: transparent; color: var(--ink); cursor: pointer;
+  }
+  .member .acts button:disabled { opacity: .45; cursor: not-allowed; }
+  .chip {
+    font-size: .68rem; padding: .08rem .34rem; border-radius: 4px;
+    border: 1px solid var(--line); color: var(--muted); white-space: nowrap;
+  }
+  .chip.acp { border-color: transparent; background: rgba(90,140,220,.18); color: #7ba6e8; }
+  .chip.tmux { border-color: transparent; background: rgba(160,160,150,.16); color: #b6b0a6; }
+  .chip.busy { border-color: transparent; background: rgba(217,164,65,.18); color: var(--warn); }
+
   /* 新建任务对话框 */
   #overlay {
     position: fixed; inset: 0; background: rgba(0,0,0,.55);
@@ -287,6 +311,7 @@ _PAGE = """<!doctype html>
 <div id="rail">
   <div id="layout">
     <section class="panel"><h2>概览</h2><div id="overview" class="muted">载入中…</div></section>
+    <section class="panel"><h2>队伍</h2><div id="team" class="muted">载入中…</div></section>
     <section class="panel"><h2>Agents</h2><table id="agents"></table></section>
     <section class="panel"><h2>队列</h2><div id="queues" class="muted"></div></section>
     <section class="panel"><h2>命令面板</h2><table id="controls"></table></section>
@@ -736,6 +761,98 @@ setInterval(refreshControls, 30000);
     // 侧边栏任务列表。标题取 `project_view.plans.items[].task` ——实测确认
     // 字段名是 `task` 而非 `goal`(设计简报原先记错),因此**不需要动端点
     // 白名单**,workbench 载荷里已经有它。
+    // 队伍面板:每个 worker 此刻在做什么。
+    //
+    // 数据**全部来自已有契约**,一个新端点都没加:`worker_lifecycle_card` 给
+    // 生命周期阶段与当前任务,`worker_transport_card` 给配置的传输与就绪度。
+    // 2026-08-06 之前 GUI 只画 `runtime_card.agents[]`——那张卡只懂 tmux,于是
+    // 把两个刚跑完七步的 ACP worker 画成灰的"未运行"。显示了不成立的事。
+    const teamBox = document.getElementById("team");
+
+    function chip(parent, text, cls) {
+      const s = document.createElement("span");
+      s.className = "chip" + (cls ? " " + cls : "");
+      s.textContent = text;
+      parent.appendChild(s);
+      return s;
+    }
+
+    async function loadTeam() {
+      try {
+        const wb = await fetch("/api/workbench").then(function (r) { return r.json(); });
+        const life = ((wb.worker_lifecycle_card || {}).items) || [];
+        const trans = ((wb.worker_transport_card || {}).items) || [];
+        const byId = {};
+        trans.forEach(function (item) { byId[item.agent_id] = item; });
+        teamBox.className = "";
+        teamBox.innerHTML = "";
+        if (!life.length) {
+          teamBox.className = "muted";
+          teamBox.textContent = "还没有配置 worker";
+          return;
+        }
+        life.forEach(function (m) {
+          const tr = byId[m.agent_id] || {};
+          const card = document.createElement("div");
+          card.className = "member";
+
+          const top = document.createElement("div");
+          top.className = "top";
+          const who = document.createElement("span");
+          who.className = "who";
+          who.textContent = m.agent_id;
+          top.appendChild(who);
+          const role = document.createElement("span");
+          role.className = "role";
+          role.textContent = m.role || "";
+          top.appendChild(role);
+          // transport 照抄契约,不猜:配了什么就显示什么。
+          const tp = tr.configured_transport || "tmux";
+          chip(top, tp, tp === "acp" ? "acp" : "tmux");
+          if (m.lifecycle_stage) {
+            chip(top, m.lifecycle_stage, m.lifecycle_stage === "idle" ? "" : "busy");
+          }
+          card.appendChild(top);
+
+          const facts = document.createElement("div");
+          facts.className = "facts";
+          const bits = [];
+          if (m.provider) { bits.push(m.provider); }
+          if (m.active_message_id) { bits.push("在做 " + m.active_message_id.slice(0, 12)); }
+          if (m.pending_inbox_count) { bits.push("待确认 " + m.pending_inbox_count); }
+          if (m.artifact_count) { bits.push("产物 " + m.artifact_count); }
+          // ACP worker 没有 pane,这不是缺陷——别把它渲染成缺陷。
+          if (tp === "tmux") { bits.push(m.pane_id ? "pane " + m.pane_id : "未启动"); }
+          if (tr.readiness) { bits.push("传输 " + tr.readiness); }
+          facts.textContent = bits.join(" · ");
+          card.appendChild(facts);
+
+          // blocker 照抄,不改写措辞。
+          (tr.blockers || []).forEach(function (b) {
+            const w = document.createElement("div");
+            w.className = "facts warn";
+            w.textContent = b;
+            card.appendChild(w);
+          });
+
+          const acts = document.createElement("div");
+          acts.className = "acts";
+          card.appendChild(acts);
+          controlButtons(acts, m.controls || []);
+          teamBox.appendChild(card);
+        });
+        // 旧的 Agents 表只懂 tmux。元素留着(受保护的脚本块仍会写它),
+        // 但不再展示两份互相矛盾的说法。
+        const legacy = document.getElementById("agents");
+        if (legacy && legacy.closest("section")) {
+          legacy.closest("section").style.display = "none";
+        }
+      } catch (err) {
+        teamBox.className = "muted";
+        teamBox.textContent = "队伍状态不可用";
+      }
+    }
+
     const tasksBox = document.getElementById("tasks");
 
     async function loadTasks() {
@@ -807,8 +924,11 @@ setInterval(refreshControls, 30000);
       });
     });
 
-    loadProviders();
     loadTasks();
+    // 队伍面板要等注册表拉完才画:控件按命令原文换 control_id,换不到就画成
+    // 禁用——这是既有的诚实规则,不能因为先画了而绕过它。
+    loadProviders().then(loadTeam, loadTeam);
+    setInterval(loadTeam, 5000);
   })();
 </script>
 """
