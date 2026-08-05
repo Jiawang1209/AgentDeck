@@ -120,6 +120,12 @@ _PAGE = """<!doctype html>
     background: var(--accent); color: #fff; border: 0; border-radius: 10px;
     padding: 0 1.1rem; height: 2.6rem; font: inherit; font-weight: 600; cursor: pointer;
   }
+  #provider {
+    height: 2.6rem; background: var(--panel); color: var(--ink);
+    border: 1px solid var(--line); border-radius: 10px; padding: 0 .6rem;
+    font: inherit; font-size: .82rem; max-width: 13rem; cursor: pointer;
+  }
+  #provider:focus { outline: none; border-color: var(--accent); }
   #send:disabled { opacity: .5; cursor: default; }
 
   /* 右栏:既有面板 */
@@ -147,6 +153,7 @@ _PAGE = """<!doctype html>
   <form id="composer" autocomplete="off">
     <div class="wrap">
       <textarea id="message" rows="1" placeholder="说点什么…（Enter 发送，Shift+Enter 换行）"></textarea>
+      <select id="provider" title="Leader 推理后端"></select>
       <button id="send" type="submit">发送</button>
     </div>
   </form>
@@ -349,6 +356,72 @@ setInterval(refreshControls, 30000);
         form.requestSubmit();
       }
     });
+
+    // Leader 后端选择器。**全部来自契约**:选项来自控件注册表的
+    // scope=provider / kind=set_provider(它们带 control_id,可经 /api/execute
+    // 执行),当前项来自 provider_health.provider。前端不判断谁可用、不硬编码
+    // 任何 provider 名单——那是 contract 的职责。
+    //
+    // 只收 set_provider:guarded_set_provider 是"预检后切"的另一种意图,
+    // setup_provider 是 `export ...`(不以 agentdeck 开头,/api/execute 按设计
+    // 拒绝),二者都不该混进一个"选后端"的下拉里。
+    const picker = document.getElementById("provider");
+    let providerOptions = [];
+
+    async function loadProviders() {
+      try {
+        const [controls, workbench] = await Promise.all([
+          fetch("/api/controls").then(function (r) { return r.json(); }),
+          fetch("/api/workbench").then(function (r) { return r.json(); }),
+        ]);
+        const health = workbench.provider_health || {};
+        providerOptions = (controls.items || []).filter(function (i) {
+          return i.scope === "provider" && i.kind === "set_provider" && i.control_id;
+        });
+        picker.innerHTML = "";
+        const current = document.createElement("option");
+        current.value = "";
+        current.textContent = (health.provider || "?") + " · " + (health.model || "?");
+        picker.appendChild(current);
+        providerOptions.forEach(function (item) {
+          const opt = document.createElement("option");
+          opt.value = item.control_id;
+          opt.textContent = item.label || item.command;
+          if (!item.enabled) { opt.disabled = true; opt.textContent += " — " + (item.blocker || ""); }
+          picker.appendChild(opt);
+        });
+      } catch (err) {
+        picker.innerHTML = "<option>后端列表不可用</option>";
+      }
+    }
+
+    picker.addEventListener("change", async function () {
+      const id = picker.value;
+      if (!id) { return; }
+      const item = providerOptions.find(function (i) { return i.control_id === id; });
+      picker.value = "";
+      if (!item) { return; }
+      // 切换 Leader 后端是配置写操作(safety=explicit_user),走既有的二步确认:
+      // 对话框展示**完整命令原文**,取消即零执行。
+      if (!window.confirm("执行这条命令？\n\n" + item.command)) { return; }
+      const res = await fetch("/api/execute", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ control_id: id, confirmed: true }),
+      });
+      const el = turn("agent", "AgentDeck");
+      if (res.ok) {
+        bubble(el, "已切换 Leader 后端");
+        card(el, "command", item.command);
+      } else {
+        const b = bubble(el, "切换被拒绝：HTTP " + res.status);
+        b.classList.add("warn");
+      }
+      loadProviders();
+      if (typeof refreshAll === "function") { refreshAll(); }
+    });
+
+    loadProviders();
   })();
 </script>
 """

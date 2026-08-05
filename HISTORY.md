@@ -4,6 +4,28 @@
 
 ## 2026-08-05
 
+### Put a contract-driven backend picker beside the composer
+
+- **Type**: feat
+- **Motivation**: user 要求发送键旁边能选接入的模型(API / claude cli /
+  codex cli)。AgentDeck 早就有这套东西——缺的只是把它露出来。
+- **What**: composer 里加 `<select id="provider">`。选项**全部来自契约**:
+  控件注册表里 `scope=provider` / `kind=set_provider` 的条目(它们带
+  `control_id`,可经既有 `/api/execute` 执行),当前项来自
+  `provider_health.provider`/`.model`。切换走既有二步确认——对话框展示
+  **完整命令原文**,取消即零执行。
+- **Impact**: **前端不判断任何东西**:哪个可选、哪个禁用、禁用理由,全部照抄
+  contract。实测即为佐证——当前 provider(Codex CLI)在下拉里是 disabled 且
+  文案为 `already current provider`,那是注册表自己的状态流进界面,不是前端
+  算的。刻意只收 `set_provider`:`guarded_set_provider` 是"预检后切"的另一种
+  意图,`setup_provider` 是 `export ...`(不以 `agentdeck ` 开头,`/api/execute`
+  按设计拒绝),二者混进"选后端"的下拉只会是噪音。既有 4639 字节脚本块**仍
+  未被触碰**,新逻辑追加在自己的 script 里。
+- **Verification**: 15 条 UI 测试全过。**live 实测**:选择器落在 composer 内、
+  7 个既有 id 零缺失、两个 script 块并存;注册表列出 5 个后端,当前项正确
+  disabled 并带 blocker。
+
+
 ### Turn the web page into a conversation-first shell
 
 - **Type**: feat
