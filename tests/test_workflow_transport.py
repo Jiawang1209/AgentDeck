@@ -138,3 +138,121 @@ def test_a_mixed_plan_stops_at_the_acp_step_after_the_tmux_step_ran(tmp_path) ->
     assert stopped["stop_reason"] == "transport_unsupported"
     assert stopped["turns"][0]["status"] == "completed"
     assert len(backend.sent) == 1
+
+
+class FakeAcpWorkerTransport:
+    """按 AcpWorkerTransport 的真实接口造的替身。
+
+    真实实现在 daemon/transports.py:构造只要 argv/workspace/prompt,
+    `admit()` 返回 `SubmittedReceipt`(**送达回执**——tmux 那条路上没有的东西),
+    `complete()` 返回 `TransportResult`。ACP 的完成判据是协议给的
+    `stop_reason == "end_turn"`,不是从屏幕上猜的。
+    """
+
+    instances: list["FakeAcpWorkerTransport"] = []
+
+    def __init__(self, *, argv, workspace, prompt, **_kwargs) -> None:
+        self.argv = argv
+        self.workspace = workspace
+        self.prompt = prompt
+        self.admitted: list[dict] = []
+        self.completed: list[dict] = []
+        FakeAcpWorkerTransport.instances.append(self)
+
+    async def admit(self, attempt):
+        from agentdeck.daemon.supervisor import SubmittedReceipt
+
+        self.admitted.append(dict(attempt))
+        return SubmittedReceipt(
+            receipt_id=f"acp:{attempt['attempt_id']}:sess",
+            dispatch_key=str(attempt["dispatch_key"]),
+            summary="ACP session admitted",
+        )
+
+    async def complete(self, attempt, receipt):
+        from agentdeck.daemon.supervisor import TransportResult
+
+        self.completed.append(dict(attempt))
+        token = str(attempt["dispatch_key"])
+        return TransportResult(
+            stop_reason="end_turn",
+            validated=True,
+            reply={
+                "handoff_token": token,
+                "status": "completed",
+                "summary": "done over acp",
+                "verification": "protocol",
+                "risks": "none",
+                "next_steps": "continue",
+            },
+        )
+
+
+def test_an_acp_worker_is_driven_over_the_protocol_not_the_keyboard(tmp_path) -> None:
+    """配了 ACP 的 worker 走协议:一个字都不打进 pane,结果由协议交回。
+
+    这一步的 handoff token 必须是 `dispatch_key`——真实 `AcpWorkerTransport`
+    正是拿它去 `parse_correlated_reply` 里做关联的(而那个解析器就是
+    workflow 自己的,两边本来就说同一种回复格式)。
+    """
+    FakeAcpWorkerTransport.instances.clear()
+    config, store, run_id = _project(tmp_path, acp_agent="planner")
+    backend = ScriptedPaneBackend(deliver_via="file")
+
+    finished = run_sequential_workflow(
+        config=config,
+        store=store,
+        backend=backend,
+        run_id=run_id,
+        poll_interval=0,
+        sleeper=lambda _seconds: None,
+        acp_worker_transport=FakeAcpWorkerTransport,
+    )
+
+    assert finished["status"] == "completed"
+    # ACP 那一步:pane 上一个字都没有。tmux 那一步照旧。
+    assert len(backend.sent) == 1
+    assert len(FakeAcpWorkerTransport.instances) == 1
+    acp = FakeAcpWorkerTransport.instances[0]
+    assert acp.argv == ("fake-acp-adapter",)
+    # 送达回执确实被取过——这正是 tmux 路上缺的那一步。
+    assert len(acp.admitted) == 1 and len(acp.completed) == 1
+    token = acp.admitted[0]["dispatch_key"]
+    assert token.startswith("dsp_") and len(token) == 36
+    assert f"Use this handoff token exactly: {token}" in acp.prompt
+    turn = finished["turns"][0]
+    assert turn["handoff"]["summary"] == "done over acp"
+    assert turn["handoff_token"] == token
+
+
+def test_an_acp_turn_that_does_not_end_the_turn_is_not_taken_as_done(tmp_path) -> None:
+    """协议没说 `end_turn`,就不算完成——不猜。"""
+    FakeAcpWorkerTransport.instances.clear()
+
+    class Interrupted(FakeAcpWorkerTransport):
+        async def complete(self, attempt, receipt):
+            from agentdeck.daemon.supervisor import TransportResult
+
+            result = await super().complete(attempt, receipt)
+            return TransportResult(
+                stop_reason="max_tokens",
+                validated=result.validated,
+                reply=result.reply,
+            )
+
+    config, store, run_id = _project(tmp_path, acp_agent="planner")
+    backend = ScriptedPaneBackend(deliver_via="file")
+
+    stopped = run_sequential_workflow(
+        config=config,
+        store=store,
+        backend=backend,
+        run_id=run_id,
+        poll_interval=0,
+        sleeper=lambda _seconds: None,
+        acp_worker_transport=Interrupted,
+    )
+
+    assert stopped["status"] == "stopped"
+    assert stopped["stop_reason"] == "invalid_reply"
+    assert backend.sent == []

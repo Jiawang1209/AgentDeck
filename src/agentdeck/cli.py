@@ -239,6 +239,7 @@ from .state import (
     validate_execution_snapshot,
     worker_runtime_identity_hash,
 )
+from .daemon.transports import AcpWorkerTransport
 from .workflow import authorized_steps, run_sequential_workflow, workflow_plan_hash
 from .daemon.client import DaemonClient, DaemonClientError, DaemonUnavailable, admit_confirmed_mission, connect_or_start, govern_mission, install_bounded_daemon_stdio_from_env
 from .daemon.lifecycle import (
@@ -21583,6 +21584,10 @@ def workflow_run_command(args: argparse.Namespace) -> int:
             store=store,
             backend=TmuxBackend(),
             run_id=run_id,
+            # 配了 `transport = "acp"` 的 worker 走协议,不走键盘。传入真实驱动
+            # 才有这条路;不传就仍按 `transport_unsupported` 停下——绝不静默
+            # 回落到往 pane 里打字(CLAUDE.md 明文)。
+            acp_worker_transport=AcpWorkerTransport,
         )
         payload = _workflow_execution_payload(result, mode="workflow_run")
     except KeyboardInterrupt:
@@ -21668,6 +21673,10 @@ def workflow_resume_command(args: argparse.Namespace) -> int:
             store=store,
             backend=TmuxBackend(),
             run_id=args.run_id,
+            # 配了 `transport = "acp"` 的 worker 走协议,不走键盘。传入真实驱动
+            # 才有这条路;不传就仍按 `transport_unsupported` 停下——绝不静默
+            # 回落到往 pane 里打字(CLAUDE.md 明文)。
+            acp_worker_transport=AcpWorkerTransport,
         )
         payload = _workflow_execution_payload(result, mode="workflow_resume")
     except KeyboardInterrupt:

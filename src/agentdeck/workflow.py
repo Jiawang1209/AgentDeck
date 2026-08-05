@@ -1,15 +1,17 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 import time
-from collections.abc import Callable
+import uuid
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
 from pathlib import Path
 
-from .models import EventRecord, ProjectConfig, new_id, utc_now
+from .models import AgentSpec, EventRecord, ProjectConfig, new_id, utc_now
 from .mission_authority import (
     canonical_workflow_authorized_steps,
     canonical_workflow_plan_hash,
@@ -415,6 +417,64 @@ def _structured_reply_text(reply: dict[str, str]) -> str:
     return "\n".join(f"{field}: {reply[field]}" for field in fields)
 
 
+def _record_step_reply(
+    store: StateStore,
+    *,
+    run_id: str,
+    turns: list[dict[str, Any]],
+    turn: dict[str, Any],
+    step_number: int,
+    agent_id: str,
+    reply: dict[str, str],
+) -> dict[str, Any]:
+    """把一份已校验的 worker 回复入账,并把 turn 推进到该状态。
+
+    tmux 与 ACP 两条传输**共用**这一段:回复怎么拿回来的不同(一个从屏幕/文件
+    刮,一个由协议交回),但拿回来之后的入账、产物登记、compact handoff 和
+    trace 入口必须完全一样——否则同一件事会长出两套账。
+    """
+    recorded = store.record_reply(
+        agent_id, str(turn["message_id"]), _structured_reply_text(reply)
+    )
+    artifact_paths = [
+        str(item.get("path"))
+        for item in recorded.get("artifacts", [])
+        if item.get("path")
+    ]
+    handoff = build_compact_handoff(
+        step=step_number,
+        agent_id=agent_id,
+        reply=reply,
+        reply_id=str(recorded["reply_id"]),
+        artifact_paths=artifact_paths,
+    )
+    turn.update(
+        {
+            "status": reply["status"],
+            "reply_id": recorded["reply_id"],
+            "handoff": handoff,
+            "artifact_paths": artifact_paths,
+            "trace_command": f"agentdeck trace --id {recorded['reply_id']}",
+            "completed_at": utc_now(),
+        }
+    )
+    store.update_workflow_run(run_id, turns=turns, current_step=step_number + 1)
+    if reply["status"] == "completed":
+        store.append_event(
+            EventRecord.create(
+                "workflow_step_completed",
+                {
+                    "run_id": run_id,
+                    "step": step_number,
+                    "agent_id": agent_id,
+                    "message_id": turn["message_id"],
+                    "reply_id": recorded["reply_id"],
+                },
+            )
+        )
+    return handoff
+
+
 def _pending_turn(run_id: str, step_number: int, agent_id: str) -> dict[str, Any]:
     """一条**尚未派发**的 turn。`message_id` 为 None 正是它的凭据。"""
     return {
@@ -483,6 +543,175 @@ def _stop_workflow(
     return record
 
 
+def _drive_acp_step(
+    store: StateStore,
+    *,
+    run_id: str,
+    turns: list[dict[str, Any]],
+    existing: dict[str, Any] | None,
+    step: Mapping[str, Any],
+    step_number: int,
+    agent: AgentSpec,
+    previous_handoff: dict[str, Any] | None,
+    transport_factory: Callable[..., Any],
+    workspace: str | Path,
+) -> dict[str, Any]:
+    """把一步交给 ACP worker:请求进去,响应回来,中间没有键盘也没有屏幕。
+
+    与 tmux 那条路的三处**实质**差别:
+
+    1. handoff token 就是 `dispatch_key`——真实 `AcpWorkerTransport` 正是拿它
+       去 `parse_correlated_reply` 做关联(而那个解析器就是本模块的,两边本来
+       就说同一种回复格式)。
+    2. `admit()` 给出**送达回执**。tmux 那条路上没有这个东西:那边的
+       "dispatched" 只表示"我们朝那个 pane 打了字",不表示对方收到了。
+    3. 完成由协议宣布(`stop_reason == "end_turn"`),不是从屏幕上猜的。判据与
+       daemon 侧 `_canonical_transport_result` 一致;协议没这么说就不算完成,
+       绝不推断。
+
+    入账之后完全复用 `_record_step_reply`——回复怎么拿回来的不同,拿回来之后
+    的账必须一样。
+    """
+    token = f"dsp_{uuid.uuid4().hex}"
+    prompt = build_workflow_prompt(
+        role=str(step.get("role") or agent.role),
+        role_prompt=agent.role_prompt,
+        task=str(step.get("task") or ""),
+        handoff_token=token,
+        previous_handoff=previous_handoff,
+    )
+    message_id = new_id("msg")
+    dispatch = store.create_dispatch_records(
+        "leader",
+        agent.agent_id,
+        str(step.get("task") or ""),
+        prompt,
+        # ACP worker 没有 pane。这里记的是协议通道,不是终端。
+        f"acp:{agent.agent_id}",
+        message_id=message_id,
+    )
+    turn = existing or _pending_turn(run_id, step_number, agent.agent_id)
+    turn.update(
+        {
+            "handoff_token": token,
+            "status": "dispatched",
+            "message_id": dispatch["message"]["message_id"],
+            "job_id": dispatch["job"]["job_id"],
+            "trace_command": f"agentdeck trace --id {dispatch['message']['message_id']}",
+        }
+    )
+    if existing is None:
+        turns.append(turn)
+    store.update_workflow_run(
+        run_id, status="running", current_step=step_number, turns=turns, stop_reason=None
+    )
+    attempt = {
+        "attempt_id": f"{run_id}_step_{step_number}",
+        "agent_id": agent.agent_id,
+        "dispatch_key": token,
+        "configured_transport": "acp",
+    }
+    transport = transport_factory(
+        argv=tuple(agent.transport_command),
+        workspace=workspace,
+        prompt=prompt,
+    )
+
+    async def drive() -> Any:
+        receipt = await transport.admit(attempt)
+        store.append_event(
+            EventRecord.create(
+                "workflow_step_dispatched",
+                {
+                    "run_id": run_id,
+                    "step": step_number,
+                    "agent_id": agent.agent_id,
+                    "message_id": turn["message_id"],
+                    # 送达回执:tmux 那条路上没有的证据。
+                    "receipt_id": receipt.receipt_id,
+                    "transport": "acp",
+                },
+            )
+        )
+        return await transport.complete(attempt, receipt)
+
+    try:
+        result = asyncio.run(drive())
+    except Exception as error:  # transport 自己的异常层级由 daemon 定义
+        return {
+            "stopped": True,
+            "record": _stop_workflow(
+                store,
+                run_id=run_id,
+                turns=turns,
+                turn=turn,
+                turn_status="failed",
+                reason="transport_failed",
+                blocker=f"ACP worker transport failed: {agent.agent_id} ({type(error).__name__})",
+            ),
+        }
+    if (
+        not getattr(result, "validated", False)
+        or getattr(result, "stop_reason", None) != "end_turn"
+        or not isinstance(getattr(result, "reply", None), dict)
+    ):
+        return {
+            "stopped": True,
+            "record": _stop_workflow(
+                store,
+                run_id=run_id,
+                turns=turns,
+                turn=turn,
+                turn_status="failed",
+                reason="invalid_reply",
+                blocker=(
+                    "ACP turn did not end with a validated reply: "
+                    f"{agent.agent_id} (stop_reason={getattr(result, 'stop_reason', None)!r})"
+                ),
+            ),
+        }
+    reply = dict(result.reply)
+    try:
+        validate_correlated_workflow_reply(reply, token)
+    except ValueError as error:
+        return {
+            "stopped": True,
+            "record": _stop_workflow(
+                store,
+                run_id=run_id,
+                turns=turns,
+                turn=turn,
+                turn_status="failed",
+                reason="invalid_reply",
+                blocker=f"ACP reply is not correlated: {agent.agent_id} ({error})",
+            ),
+        }
+    handoff = _record_step_reply(
+        store,
+        run_id=run_id,
+        turns=turns,
+        turn=turn,
+        step_number=step_number,
+        agent_id=agent.agent_id,
+        reply=reply,
+    )
+    if reply["status"] != "completed":
+        return {
+            "stopped": True,
+            "record": _stop_workflow(
+                store,
+                run_id=run_id,
+                turns=turns,
+                turn=turn,
+                turn_status=reply["status"],
+                reason=(
+                    "worker_blocked" if reply["status"] == "blocked" else "worker_failed"
+                ),
+            ),
+        }
+    return {"stopped": False, "handoff": handoff}
+
+
 def run_sequential_workflow(
     *,
     config: ProjectConfig,
@@ -492,6 +721,7 @@ def run_sequential_workflow(
     poll_interval: float = 0.25,
     monotonic: Callable[[], float] = time.monotonic,
     sleeper: Callable[[float], None] = time.sleep,
+    acp_worker_transport: Callable[..., Any] | None = None,
 ) -> dict[str, Any]:
     record = store.workflow_run_by_id(run_id)
     steps = list(record.get("authorized_steps") or [])
@@ -529,6 +759,23 @@ def run_sequential_workflow(
         # 本切片先去掉**静默**:非 tmux transport 一律停下并说清楚,一个字都不
         # 往那个 pane 里打。真正驱动 ACP 派发是下一刀(daemon/transports.py 的
         # `AcpWorkerTransport` 已经实现并通过端到端验收,workflow 还没接上)。
+        if agent is not None and agent.transport == "acp" and acp_worker_transport is not None:
+            outcome = _drive_acp_step(
+                store,
+                run_id=run_id,
+                turns=turns,
+                existing=existing,
+                step=step,
+                step_number=step_number,
+                agent=agent,
+                previous_handoff=previous_handoff,
+                transport_factory=acp_worker_transport,
+                workspace=config.root,
+            )
+            if outcome.get("stopped"):
+                return outcome["record"]
+            previous_handoff = outcome["handoff"]
+            continue
         if agent is not None and agent.transport != "tmux":
             turn = existing or _pending_turn(run_id, step_number, agent_id)
             if existing is None:
@@ -729,51 +976,16 @@ def run_sequential_workflow(
                     reason="invalid_reply",
                 )
             if reply is not None:
-                recorded = store.record_reply(
-                    agent_id,
-                    str(turn["message_id"]),
-                    _structured_reply_text(reply),
-                )
-                artifact_paths = [
-                    str(item.get("path"))
-                    for item in recorded.get("artifacts", [])
-                    if item.get("path")
-                ]
-                handoff = build_compact_handoff(
-                    step=step_number,
+                handoff = _record_step_reply(
+                    store,
+                    run_id=run_id,
+                    turns=turns,
+                    turn=turn,
+                    step_number=step_number,
                     agent_id=agent_id,
                     reply=reply,
-                    reply_id=str(recorded["reply_id"]),
-                    artifact_paths=artifact_paths,
-                )
-                turn.update(
-                    {
-                        "status": reply["status"],
-                        "reply_id": recorded["reply_id"],
-                        "handoff": handoff,
-                        "artifact_paths": artifact_paths,
-                        "trace_command": f"agentdeck trace --id {recorded['reply_id']}",
-                        "completed_at": utc_now(),
-                    }
-                )
-                store.update_workflow_run(
-                    run_id,
-                    turns=turns,
-                    current_step=step_number + 1,
                 )
                 if reply["status"] == "completed":
-                    store.append_event(
-                        EventRecord.create(
-                            "workflow_step_completed",
-                            {
-                                "run_id": run_id,
-                                "step": step_number,
-                                "agent_id": agent_id,
-                                "message_id": turn["message_id"],
-                                "reply_id": recorded["reply_id"],
-                            },
-                        )
-                    )
                     previous_handoff = handoff
                     break
                 reason = (

@@ -4,6 +4,39 @@
 
 ## 2026-08-05
 
+### Drive an ACP worker over the protocol instead of the keyboard
+
+- **Type**: feat
+- **Motivation**: 上一刀只去掉了静默——配了 `transport = "acp"` 的 worker 不再
+  被偷偷当成 tmux,但也还跑不了。这一刀让它真的跑起来,用的是**已经存在并通过
+  端到端验收**的 `daemon/transports.py::AcpWorkerTransport`,不是新造轮子。
+- **What**: `run_sequential_workflow` 新增可选 `acp_worker_transport` 驱动;
+  `_drive_acp_step()` 铸一个 `dispatch_key`(`dsp_` + 32 hex)作为该步的 handoff
+  token、构造 transport、在 `asyncio.run` 里 `admit()` → `complete()`。
+  与 tmux 路径的三处**实质**差别:(1) token 就是 `dispatch_key`——真实
+  `AcpWorkerTransport` 正是拿它去 `parse_correlated_reply` 做关联,而那个解析器
+  就是 workflow 自己的,两边本来就说同一种回复格式;(2) `admit()` 给出**送达
+  回执**,并写进 `workflow_step_dispatched` 事件——tmux 那条路上没有这个东西,
+  那边的 "dispatched" 只表示"我们朝那个 pane 打了字";(3) 完成由协议宣布
+  (`stop_reason == "end_turn"`),判据与 daemon 侧 `_canonical_transport_result`
+  一致,协议没这么说就不算完成,绝不推断。
+  回复入账抽出 `_record_step_reply()` 供两条传输**共用**:怎么拿回来的不同,
+  拿回来之后的账必须一样,否则同一件事会长出两套。
+  CLI 两个调用点(`workflow run` / `workflow resume`)传入真实驱动;不传驱动时
+  仍按 `transport_unsupported` 停下,绝不静默回落。
+- **Impact**: tmux 路径逐字节不变。ACP 路径上,今天挖出的六个 bug 整个类别不
+  存在:没有粘贴、没有回车、没有会被模态框吃掉的按键、答案不在屏幕上因而不会
+  被清屏冲掉、"发过了"与"送到了"由回执区分。
+- **Verification**: 先红后绿,五条测试:ACP worker 一个字都不进 pane 且 token
+  是 dispatch_key、送达回执确实被取过、协议没说 `end_turn` 就不算完成(记
+  `invalid_reply`)、tmux 路径不受影响、混合 plan 停在正确的那一步。
+  全量 5335 passed / 3 skipped。
+- **注**:适配器是**第三方壳**桥接**官方 agent**——claude 侧
+  `@agentclientprotocol/claude-agent-acp`(原 `@zed-industries/`),codex 侧
+  `@agentclientprotocol/codex-acp`(`@zed-industries/codex-acp` 已弃用,新版建在
+  Codex App Server 之上)。二者都必须由人类自行安装并认证,AgentDeck 绝不代装
+  ——版本与认证不在我们手里,这正是 CLAUDE.md 那条规矩的理由。
+
 ### Stop silently typing at a worker that is configured to speak a protocol
 
 - **Type**: fix
