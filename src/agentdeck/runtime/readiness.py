@@ -51,6 +51,12 @@ _CODEX_DIRECTORY_CHROME = re.compile(
 _CODEX_CONTEXT_FOOTER = re.compile(
     r"^\s*(?:\[[^\]\r\n]+\]\s+context:\s*\d+%\s+left(?:\s+usage:[^\r\n]+)?|"
     r"\S[^\r\n]*\s+·\s+\d+%\s+left|"
+    # codex v0.146.0:页脚改成 `<model> <effort> <speed> · <dir> · <branch> ·
+    # Context 0% …`——没有 `left`,而且常被终端宽度截断成省略号。2026-08-05
+    # live 上三个 pane 里 claude 判 ready、两个 codex 永远判 starting,就是
+    # 这条没匹配上;消费者是 M2 Mission daemon,假阴性等于 codex worker 永远
+    # 不就绪。省略号可有可无,截断与否都是同一块页脚。
+    r"\S[^\r\n]*\s+·\s*context\s+\d+%\s*(?:…|\.\.\.)?|"
     r"context\s+[█░]+\s*\d+%\s*│\s*usage\s+[█░]+\s*\d+%"
     r"(?:\s+\(resets in [^)\r\n]+\))?"
     r"(?:\s*│\s*weekly\s+[█░]+\s*\d+%"

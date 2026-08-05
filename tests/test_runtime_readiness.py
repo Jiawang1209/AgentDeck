@@ -1236,3 +1236,43 @@ def test_pane_check_finishing_at_deadline_times_out_without_using_result(
     assert backend.checked == ["%1"]
     assert backend.captured == []
     assert backend.sent == []
+
+
+# 2026-08-05 live:codex v0.146.0 的空闲屏被判成 `starting`,而同屏的 claude
+# 判 `ready`。页脚格式变了——旧版是 `[model] Context: 100% left` / `model ·
+# 100% left`,新版写成 `<model> <effort> <speed> · <dir> · <branch> ·
+# Context 0% …`:没有 `left`,而且末尾被终端宽度截断成省略号。
+# 消费者是 M2 Mission daemon,所以这个假阴性意味着在真实 codex 上 daemon 会
+# 认为 worker 永远没就绪。以下 fixture 逐字取自现场 pane。
+CODEX_0146_READY_SCREEN = (
+    "╭─────────────────────────────────────────────────────────╮\n"
+    "│ >_ OpenAI Codex (v0.146.0)                              │\n"
+    "│                                                         │\n"
+    "│ model:     gpt-5.6-sol medium   fast   /model to change │\n"
+    "│ directory: ~/Desktop/agentdeck-chushibiao               │\n"
+    "╰─────────────────────────────────────────────────────────╯\n"
+    "  Tip: Try the Desktop app. Run 'codex app' or visit\n"
+    "  https://chatgpt.com/codex?app-landing-page=true\n"
+    "› Implement {feature}\n"
+    "  gpt-5.6-sol medium fast · ~/Desktop/agentdeck-chushibiao · main · Context 0% …"
+)
+
+
+def test_codex_0146_idle_screen_is_ready() -> None:
+    assert classify_worker_readiness("codex-cli", CODEX_0146_READY_SCREEN).status == "ready"
+
+
+def test_codex_0146_idle_screen_without_footer_is_not_ready() -> None:
+    # 页脚仍然是必需证据:少了它就不是"空闲且已加载完",不能放行。
+    screen = CODEX_0146_READY_SCREEN.rsplit("\n", 1)[0]
+
+    assert classify_worker_readiness("codex-cli", screen).status == "starting"
+
+
+def test_codex_0146_busy_prompt_is_not_ready() -> None:
+    # 有人正在输入(占位提示被真实内容取代)时不算空闲。
+    screen = CODEX_0146_READY_SCREEN.replace(
+        "› Implement {feature}", "› 只输出《出师表》第 1 句"
+    )
+
+    assert classify_worker_readiness("codex-cli", screen).status == "starting"

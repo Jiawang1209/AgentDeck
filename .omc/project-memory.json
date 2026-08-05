@@ -19,7 +19,7 @@
   },
   "build": {
     "buildCommand": null,
-    "testCommand": "source ~/miniforge3/etc/profile.d/conda.sh && conda activate agentdeck && python -m pytest -q 2>&1 | tail -8",
+    "testCommand": "source ~/miniforge3/etc/profile.d/conda.sh && conda activate agentdeck && python -m pytest -q 2>&1 | tail -3",
     "lintCommand": "ruff check",
     "devCommand": null,
     "scripts": {}
@@ -133,6 +133,12 @@
       "type": "file"
     },
     {
+      "path": "src/agentdeck/workflow.py",
+      "accessCount": 2,
+      "lastAccessed": 1785927396741,
+      "type": "file"
+    },
+    {
       "path": "src/agentdeck/ui.py",
       "accessCount": 1,
       "lastAccessed": 1785915239018,
@@ -160,6 +166,12 @@
       "path": "tests/test_leader_plan_schema.py",
       "accessCount": 1,
       "lastAccessed": 1785924928630,
+      "type": "file"
+    },
+    {
+      "path": "src/agentdeck/runtime/readiness.py",
+      "accessCount": 1,
+      "lastAccessed": 1785926502289,
       "type": "file"
     }
   ],

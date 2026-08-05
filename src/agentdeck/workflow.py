@@ -478,7 +478,13 @@ def run_sequential_workflow(
                 reason="pane_lost",
             )
 
-        if existing is None:
+        # "不重复派发"这条守卫必须认**任务有没有送出去过**,而不是"有没有这条
+        # turn 记录"。`pane_lost` / `agent_unavailable` 建的 turn 从未走到
+        # send_input,`message_id` 因此是 None——把它当成"已派发"会让每次
+        # resume 都去等一个从没问出口的问题,烧满超时后原地不动,而
+        # `can_resume: true` 仍宣称这个 run 还能救。2026-08-05 live 连撞两次。
+        undelivered = existing is not None and existing.get("message_id") is None
+        if existing is None or undelivered:
             token = f"{run_id}_step_{step_number}"
             prompt = build_workflow_prompt(
                 role=str(step.get("role") or agent.role),
@@ -504,7 +510,10 @@ def run_sequential_workflow(
                 "started_at": utc_now(),
                 "completed_at": None,
             }
-            turns.append(turn)
+            if undelivered:
+                turns[turns.index(existing)] = turn
+            else:
+                turns.append(turn)
             store.update_workflow_run(
                 run_id,
                 status="running",

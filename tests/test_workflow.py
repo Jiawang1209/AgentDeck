@@ -414,3 +414,81 @@ def test_runner_resume_waits_for_existing_token_without_duplicate_dispatch(
         "completed",
         "completed",
     ]
+
+
+class LatePaneBackend(CorrelatedFakeBackend):
+    """pane 先不在,后来才起来——重建 runtime 之后 resume 的真实情形。"""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.panes_up = False
+
+    def pane_exists(self, _config, _pane_id: str) -> bool:
+        return self.panes_up
+
+
+def test_runner_resume_dispatches_a_turn_that_was_never_delivered(tmp_path) -> None:
+    # 2026-08-05 live:pane 在第 1 步之前整个没了,run 以 `pane_lost` 停下并
+    # 记了一条 turn。重建 pane 之后连续两次 resume 都只是干等满超时——因为
+    # "不重复派发"这条守卫认的是**turn 记录是否存在**,而不是"这个任务到底
+    # 有没有送出去过"。那条 turn 的 `message_id` 是 None:它从没被派发过。
+    #
+    # 于是 run 永久卡死,而 `can_resume: true` 一直宣称它还能救——账本说了一
+    # 件不成立的事。不重复派发仍然要守(重发会让 worker 收到同一份任务两次),
+    # 但判据必须是"送出去过没有",不是"有没有这条记录"。
+    root = tmp_path / "repo"
+    root.mkdir()
+    (root / ".git").mkdir()
+    write_default_config(root)
+    config = load_config(root)
+    store = StateStore(root)
+    state = store.load()
+    for agent_id, pane_id in (("planner", "%1"), ("reviewer", "%2")):
+        state["agents"][agent_id] = {
+            "agent_id": agent_id,
+            "pane_id": pane_id,
+            "session_name": "agentdeck",
+            "cwd": str(root),
+            "status": "running",
+        }
+    store.save(state)
+    plan = store.record_plan(
+        "Prepare and review evidence", "fake", "fake-plan", PLAN["plan"]
+    )
+    run = store.create_workflow_run(
+        plan_id=str(plan["plan_id"]),
+        plan_hash=workflow_plan_hash(plan),
+        timeout_seconds=30,
+        authorized_steps=authorized_steps(plan),
+    )
+    backend = LatePaneBackend()
+
+    stopped = run_sequential_workflow(
+        config=config,
+        store=store,
+        backend=backend,
+        run_id=str(run["run_id"]),
+        poll_interval=0,
+        sleeper=lambda _seconds: None,
+    )
+
+    assert stopped["stop_reason"] == "pane_lost"
+    assert backend.sent == []
+    assert stopped["turns"][0]["message_id"] is None
+
+    backend.panes_up = True
+    resumed = run_sequential_workflow(
+        config=config,
+        store=store,
+        backend=backend,
+        run_id=str(run["run_id"]),
+        poll_interval=0,
+        sleeper=lambda _seconds: None,
+    )
+
+    # 从没送达的那一步现在真的被送出去了,run 得以继续。
+    assert backend.sent, "resume must dispatch a turn that was never delivered"
+    assert resumed["status"] == "completed"
+    assert [turn["status"] for turn in resumed["turns"]] == ["completed", "completed"]
+    # 每一步仍然只被派发一次——"不重复派发"这条守卫没有被放宽。
+    assert len(backend.sent) == 2

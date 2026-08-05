@@ -4,6 +4,50 @@
 
 ## 2026-08-05
 
+### Dispatch a workflow turn that was never actually delivered
+
+- **Type**: fix
+- **Motivation**: live 接力跑到一半 tmux session 整个没了,run 以 `pane_lost`
+  停在第 1 步。重建 pane 之后**连续两次** `workflow resume` 都只是干等满
+  240 秒然后报 `timed_out`,pane 里干干净净——任务根本没发出去过。原因是
+  "不重复派发"这条守卫认的是**turn 记录是否存在**,而不是"这个任务到底送
+  出去过没有"。`pane_lost` / `agent_unavailable` 建的 turn 从未走到
+  `send_input`,`message_id` 因此是 `None`,却被当成"已派发"。于是 run 永久
+  卡死,而 `can_resume: true` 一直宣称它还能救——账本说了一件不成立的事。
+- **What**: 派发条件从 `existing is None` 改为"没有 turn **或** 该 turn
+  `message_id is None`";重派时就地替换该 turn 而不是追加,步骤顺序不变。
+  handoff token 本来就是 `{run_id}_step_{n}` 确定性生成,复用不产生歧义。
+- **Impact**: 因 runtime 丢失而从未送达的步骤现在可以真正续跑。"不重复派发"
+  没有被放宽:已派发(`message_id` 非空)的 turn 仍然只等回复,绝不重发——
+  重发会让 worker 收到同一份任务两次。
+- **Verification**: 先红后绿。新测试用 `LatePaneBackend`(pane 先不在、后来
+  才起来)复现:修复前 resume 直接去 `capture_output` 等回复而 `sent` 为空,
+  正是"等一个从没问出口的问题";修复后该步真的被送出,run 跑完,且
+  `len(backend.sent) == 2`(每步仍只派发一次)。既有
+  `..._resume_waits_for_existing_token_without_duplicate_dispatch` 未放宽。
+  **真实验证**:用那个卡死的 live run(`wfr_be77837dd9f3`)直接续跑,第 1 步
+  被派出,接力自行推进到第 5 步。全量 5303 passed / 3 skipped。
+
+### Recognize the Codex v0.146.0 idle screen as ready
+
+- **Type**: fix
+- **Motivation**: live 三个 pane 同屏,claude 判 `ready`,两个 codex 永远判
+  `starting`。`_CODEX_CONTEXT_FOOTER` 的三个分支要的都是 `N% left` 那种写法
+  (`[model] Context: 100% left` / `model · 100% left` / 进度条式),而 codex
+  v0.146.0 的页脚是 `<model> <effort> <speed> · <dir> · <branch> · Context
+  0% …`:没有 `left`,且常被终端宽度截断成省略号。消费者是 M2 Mission
+  daemon,所以这个假阴性等于在真实 codex 上 worker 永远不就绪。
+- **What**: 给页脚模式加一个分支 `\S…\s+·\s*context\s+\d+%\s*(?:…|\.\.\.)?`。
+  顺序检查(header → model → directory → prompt → footer)和"必须有页脚"的
+  要求都不放宽。
+- **Impact**: 真实 codex v0.146.0 pane 现在能被判为 ready;旧版页脚格式行为
+  逐字节不变。
+- **Verification**: 先红后绿,fixture 逐字取自现场 pane。配套两条负例钉住
+  没有页脚、以及有人正在输入时**仍然**不算 ready。live 复验:同一批 pane
+  从 `starting` 翻为 `ready`。全量 5303 passed / 3 skipped。
+- **注**:先前我差点直接把这个检测器接到派发路径上当闸——真接了会拦掉每一次
+  codex 派发。查证之后才动手,这一步没省。
+
 ### Stop capping every plan at the number of configured agents
 
 - **Type**: fix
