@@ -1,7 +1,7 @@
 {
-  "tool_name": "mcp__plugin_oh-my-claudecode_t__lsp_diagnostics",
-  "tool_input_preview": "{\"file\":\"/Users/liuyue/Desktop/Github_repos/multi-agent-explore/src/agentdeck/state.py\"}",
-  "error": "Language server 'ty' not found.\nInstall with: Install ty from https://github.com/astral-sh/ty",
-  "timestamp": "2026-07-08T03:30:52.041Z",
-  "retry_count": 2
+  "tool_name": "Bash",
+  "tool_input_preview": "{\"command\":\"source ~/miniforge3/etc/profile.d/conda.sh && conda activate agentdeck && cd ~/Desktop/agentdeck-chushibiao\\nagentdeck workflow status --plan-id pln_df5505462b61 2>&1 | python3 -c \\\"\\nimpo...",
+  "error": "Exit code 1\nTraceback (most recent call last):\n  File \"<string>\", line 3, in <module>\n  File \"/Users/liuyue/miniforge3/envs/agentdeck/lib/python3.12/json/__init__.py\", line 293, in load\n    return loads(fp.read(),\n           ^^^^^^^^^^^^^^^^\n  File \"/Users/liuyue/miniforge3/envs/agentdeck/lib/python3.12/json/__init__.py\", line 346, in loads\n    return _default_decoder.decode(s)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/liuyue/miniforge3/envs/agentdeck/lib/python3.12/json/decoder.py\", ...",
+  "timestamp": "2026-08-05T10:02:21.069Z",
+  "retry_count": 1
 }

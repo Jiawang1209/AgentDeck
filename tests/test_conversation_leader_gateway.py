@@ -22,6 +22,7 @@ from agentdeck.semantic_authority import extract_semantic_authority, semantic_au
 from agentdeck.providers import LeaderPlanRequest, LeaderPlanResult
 from agentdeck.providers.cli_subprocess import CliLeaderProviderError
 from agentdeck.providers.plan_schema import (
+    LEADER_PLAN_MAX_STEPS,
     ProviderPlanValidationError,
     build_leader_generation_provenance,
     build_leader_plan_schema,
@@ -850,31 +851,32 @@ def test_orchestrator_resolves_legacy_authority_before_validating_plan(tmp_path:
         name = "fake"
 
         def plan(self, _request: LeaderPlanRequest) -> dict[str, object]:
+            # 2026-08-05:这条测试测的是"authority 先解析、再校验",超限只是
+            # 它借用的载体。原来的载体是 4 步 > 3 个 agent——但那个 4 步计划
+            # (planner 两次、reviewer 两次)**正是一次接力**,现在是合法计划。
+            # 载体换成越过 schema 硬上限,意图不变。
             plan = _plan()
+            roles = {"planner": "planning", "reviewer": "review"}
+            ids = list(roles)
             plan["steps"] = [
-                *plan["steps"],
                 {
-                    "step": 3,
-                    "agent_id": "planner",
-                    "role": "planning",
-                    "task": "extra plan pass",
+                    "step": index + 1,
+                    "agent_id": ids[index % len(ids)],
+                    "role": roles[ids[index % len(ids)]],
+                    "task": f"extra pass {index + 1}",
                     "risk": "review",
                     "requires_approval": True,
-                },
-                {
-                    "step": 4,
-                    "agent_id": "reviewer",
-                    "role": "review",
-                    "task": "extra review pass",
-                    "risk": "review",
-                    "requires_approval": True,
-                },
+                }
+                for index in range(LEADER_PLAN_MAX_STEPS + 1)
             ]
             return plan
 
     with pytest.raises(
         ProviderPlanValidationError,
-        match="provider plan must include between 1 and 3 steps",
+        match=(
+            "provider plan must include between 1 and "
+            f"{LEADER_PLAN_MAX_STEPS} steps"
+        ),
     ):
         LeaderOrchestrator(config, LegacyProvider()).plan_result(
             "structured mission task"

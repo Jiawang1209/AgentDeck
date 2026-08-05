@@ -21,6 +21,7 @@ from agentdeck.models import AgentSpec
 from agentdeck.providers import LeaderPlanRequest, LeaderPlanResult
 from agentdeck.providers.cli_subprocess import CliLeaderProviderError, CodexCliProvider
 from agentdeck.providers.plan_schema import (
+    LEADER_PLAN_MAX_STEPS,
     build_leader_generation_provenance,
     build_leader_plan_schema,
 )
@@ -623,4 +624,4 @@ def test_gateway_keeps_valid_legacy_derived_authority(
         "planner",
         "reviewer",
     ]
-    assert candidate.leader_generation["step_count"] == 2
+    assert candidate.leader_generation["step_count"] == LEADER_PLAN_MAX_STEPS

@@ -2110,6 +2110,82 @@ def test_leader_plan_passes_loaded_skill_context_to_provider_without_dispatching
     assert state["jobs"] == []
 
 
+def _relay_plan(agent_roles: dict[str, str], count: int) -> dict[str, object]:
+    ids = list(agent_roles)
+    return {
+        "goal": "轮流接力",
+        "summary": "三个 agent 轮流,每人一句",
+        "steps": [
+            {
+                "step": index + 1,
+                "agent_id": ids[index % len(ids)],
+                "role": agent_roles[ids[index % len(ids)]],
+                "task": f"只说第 {index + 1} 句",
+                "risk": "low",
+                "requires_approval": True,
+            }
+            for index in range(count)
+        ],
+    }
+
+
+def test_leader_plan_lets_the_leader_choose_more_steps_than_agents(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    # 2026-08-05 live 发现:让三个 agent 轮流一人一句背《出师表》,连着两次
+    # 都只拿到 3 步。不是模型偷懒——`leader_plan_authority` 在调用方不传
+    # authority 时把 `step_count` 取成**配置的 agent 数量**,schema 于是
+    # `maxItems: 3`,超出的步骤被 validator 挡掉。
+    #
+    # "一个任务需要几步"和"你恰好配了几个 agent"本来就是不相干的两个量。
+    # 把它们焊在一起,等于假定每个 agent 只上场一次(planner 规划 → coder
+    # 实现 → reviewer 审查那种一趟过的流水线)。接力、辩论、多轮返工都需要
+    # 同一个 agent 反复上场,在这个默认值下**根本表达不出来**——而且是静默
+    # 截断,计划看上去很正常,只是短了。
+    #
+    # 步数该由 Leader 按任务决定,上限就是 schema 本来的硬上限。
+    root = prepare_project_with_default_leader(tmp_path, monkeypatch)
+    agent_roles = {agent.agent_id: agent.role for agent in cli.load_config(root).agents}
+    assert len(agent_roles) < 8
+
+    class RelayProvider(FakeLeaderProvider):
+        name = "deepseek"
+
+        def plan(self, request):
+            return _relay_plan(agent_roles, 8)
+
+    monkeypatch.setattr(cli, "leader_provider", lambda name: RelayProvider())
+
+    exit_code = cli.main(["leader", "plan", "--task", "轮流接力背诵"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    steps = payload["plan"]["steps"]
+    assert [step["step"] for step in steps] == list(range(1, 9))
+    # 同一个 agent 反复上场,正是接力的定义。
+    assert len(set(step["agent_id"] for step in steps)) == len(agent_roles)
+
+
+def test_leader_plan_still_refuses_a_plan_past_the_schema_ceiling(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    # 放开默认值不等于没有上限:64 是 schema 的硬上限,越过必须拒绝且零写。
+    root = prepare_project_with_default_leader(tmp_path, monkeypatch)
+    agent_roles = {agent.agent_id: agent.role for agent in cli.load_config(root).agents}
+
+    class TooManyStepsProvider(FakeLeaderProvider):
+        name = "deepseek"
+
+        def plan(self, request):
+            return _relay_plan(agent_roles, 65)
+
+    monkeypatch.setattr(cli, "leader_provider", lambda name: TooManyStepsProvider())
+
+    assert cli.main(["leader", "plan", "--task", "越界"]) != 0
+    capsys.readouterr()
+    assert StateStore(root).load()["plans"] == []
+
+
 def test_leader_plan_persists_loaded_skill_provenance_for_project_view(
     tmp_path, monkeypatch, capsys
 ) -> None:

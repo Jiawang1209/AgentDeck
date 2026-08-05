@@ -4,6 +4,38 @@
 
 ## 2026-08-05
 
+### Stop capping every plan at the number of configured agents
+
+- **Type**: fix
+- **Motivation**: live 让 planner/coder/reviewer 轮流一人一句背《出师表》,
+  连着两次都只拿到 3 步。不是模型偷懒——`leader_plan_authority` 在调用方
+  不传 authority 时把 `step_count` 取成**配置的 agent 数量**,schema 于是
+  `maxItems: 3`,validator 报 `provider plan must include between 1 and 3
+  steps`。"一个任务需要几步"和"你恰好配了几个 agent"本来就是不相干的两个
+  量,把它们焊在一起等于假定每个 agent 只上场一次(planner 规划 → coder
+  实现 → reviewer 审查那种一趟过的流水线)。接力、辩论、多轮返工都需要同一
+  个 agent 反复上场,在这个默认值下**根本表达不出来**,而且是静默截断——
+  计划看着完全正常,只是短了。
+  user 的原话:"那肯定是 leader 自己设置计划的啊 …… 就这么不智能吗?"——
+  他是对的,加一个 `--steps` 参数是绕路不是修理。
+- **What**: 新增单一来源 `LEADER_PLAN_MAX_STEPS = 64`(原本就是硬上限,只是
+  两处写成字面量),把不传 authority 时的默认 `count` 从 `len(config.agents)`
+  改为该上限。roster 默认仍是全部配置 worker,`--steps` 之类的新参数**没有
+  加**——步数由 Leader 按任务决定。
+- **Impact**: 同一个 agent 现在可以在一份计划里反复上场。上限、越界拒绝、
+  显式 authority 路径、审批门、step 顺序守卫全部不变;`maxItems` 进入 schema
+  hash,故 provider prompt 里的步数上限文案随之变为 64。
+- **Verification**: 先红后绿。新测试 `test_leader_plan_lets_the_leader_
+  choose_more_steps_than_agents` 让 provider 返回 8 步接力计划,修复前正是
+  live 那句 `must include between 1 and 3 steps`;配套 `..._still_refuses_a_
+  plan_past_the_schema_ceiling` 钉住 65 步仍拒且零写。七处钉住旧默认的既有
+  测试逐条核对后改为引用常量;其中 `test_orchestrator_resolves_legacy_
+  authority_before_validating_plan` 的意图是"authority 先解析再校验",它借用
+  的 4 步载体(planner 两次、reviewer 两次)**恰恰就是一次接力**,现在合法,
+  故换成越过硬上限的载体、意图不变。全量 5299 passed / 3 skipped。
+  live 复验:同一句自然语言任务,不带任何步数参数,Leader 给出 **25 步**
+  轮流接力计划。
+
 ### Stop swallowing the Enter that Chinese input methods use to pick a word
 
 - **Type**: fix

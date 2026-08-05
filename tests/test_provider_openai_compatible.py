@@ -16,6 +16,7 @@ from agentdeck.providers import (
     leader_provider,
 )
 from agentdeck.providers.cli_subprocess import CliLeaderProvider, CliLeaderProviderError
+from agentdeck.providers.plan_schema import LEADER_PLAN_MAX_STEPS
 
 
 class FakeResponse:
@@ -484,7 +485,7 @@ def test_deepseek_provider_uses_deepseek_env_and_openai_compatible_plan_shape(tm
     assert "负责需求澄清、任务拆解、架构方案和风险识别" in body["messages"][0]["content"]
     assert "Step numbers must be 1..n without duplicates or gaps." in body["messages"][0]["content"]
     assert (
-        "Plan between 1 and 3 steps; use only as many steps as the task actually needs."
+        f"Plan between 1 and {LEADER_PLAN_MAX_STEPS} steps; use only as many steps as the task actually needs."
         in body["messages"][0]["content"]
     )
     assert "Use only listed worker agent_id values and copy each worker role exactly." in body["messages"][0]["content"]
@@ -585,7 +586,7 @@ def test_codex_cli_provider_runs_non_interactive_command_and_parses_json_plan(
     assert "Do not reuse worker tmux panes or claim a dedicated Leader pane" in str(seen["input"])
     assert "Step numbers must be 1..n without duplicates or gaps." in str(seen["input"])
     assert (
-        "Plan between 1 and 3 steps; use only as many steps as the task actually needs."
+        f"Plan between 1 and {LEADER_PLAN_MAX_STEPS} steps; use only as many steps as the task actually needs."
         in str(seen["input"])
     )
     assert "Use only listed worker agent_id values and copy each worker role exactly." in str(seen["input"])
@@ -1000,7 +1001,7 @@ def test_openai_compatible_provider_posts_chat_completion_and_parses_json_plan(t
     assert body["messages"][0]["role"] == "system"
     assert "Step numbers must be 1..n without duplicates or gaps." in body["messages"][0]["content"]
     assert (
-        "Plan between 1 and 3 steps; use only as many steps as the task actually needs."
+        f"Plan between 1 and {LEADER_PLAN_MAX_STEPS} steps; use only as many steps as the task actually needs."
         in body["messages"][0]["content"]
     )
     assert "Use only listed worker agent_id values and copy each worker role exactly." in body["messages"][0]["content"]

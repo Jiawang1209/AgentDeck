@@ -19,6 +19,12 @@ if TYPE_CHECKING:
 
 
 LEADER_PLAN_SCHEMA_VERSION = "leader-plan/v1"
+# 一份 plan 允许的最大步数,也是调用方不指定 authority 时的默认上限。
+# 2026-08-05 之前默认取的是**配置的 agent 数量**——那等于假定每个 agent 只
+# 上场一次。接力、辩论、多轮返工都需要同一个 agent 反复上场,在那个默认值下
+# 会被 validator 静默截断成"计划看着正常,只是短了"。步数由 Leader 按任务
+# 决定,这里只兜住硬上限。
+LEADER_PLAN_MAX_STEPS = 64
 LEADER_CONSTRAINT_MODES = frozenset(
     {"local", "json_object", "prompt_only", "native_json_schema"}
 )
@@ -59,13 +65,13 @@ def leader_plan_authority(request: LeaderPlanRequest) -> tuple[tuple[str, ...], 
         raise ProviderPlanValidationError("authority_invalid")
     if selected is None:
         selected = tuple(agent.agent_id for agent in request.config.agents)
-        count = len(request.config.agents)
+        count = LEADER_PLAN_MAX_STEPS
     configured = {agent.agent_id for agent in request.config.agents}
     if (
         type(selected) is not tuple
         or type(count) is not int
         or count < 2
-        or count > 64
+        or count > LEADER_PLAN_MAX_STEPS
         or len(selected) < 2
         or any(type(item) is not str or not item or item not in configured for item in selected)
         or len(set(selected)) != len(selected)
@@ -329,7 +335,7 @@ def _validate_explicit_authority(
         type(selected_agent_ids) is not tuple
         or type(step_count) is not int
         or step_count < 2
-        or step_count > 64
+        or step_count > LEADER_PLAN_MAX_STEPS
         or len(selected_agent_ids) < 2
         or any(
             type(item) is not str

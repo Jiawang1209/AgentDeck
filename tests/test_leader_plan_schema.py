@@ -12,6 +12,7 @@ from agentdeck.models import AgentSpec, LeaderConfig, ProjectConfig, RuntimeConf
 from agentdeck.providers.base import LeaderPlanRequest, LeaderPlanResult
 from agentdeck.providers.plan_schema import (
     LEADER_PLAN_DIAGNOSTIC_CODES,
+    LEADER_PLAN_MAX_STEPS,
     LEADER_PLAN_SCHEMA_VERSION,
     SEMANTIC_LEADER_PLAN_SCHEMA_VERSION,
     ProviderPlanValidationError,
@@ -1118,7 +1119,10 @@ def test_invalid_authority_is_reported_without_leaking_type_errors(
 def test_default_authority_uses_all_configured_workers() -> None:
     request = _request(selected_agent_ids=None, step_count=None)
 
-    assert leader_plan_authority(request) == (("planner", "reviewer", "builder"), 3)
+    assert leader_plan_authority(request) == (
+        ("planner", "reviewer", "builder"),
+        LEADER_PLAN_MAX_STEPS,
+    )
 
 
 def _valid_plan() -> dict[str, object]:
@@ -1322,7 +1326,7 @@ def test_generation_provenance_supports_schema_free_local_legacy_mode() -> None:
         "attempt_count": 1,
         "regeneration_used": False,
         "selected_agent_ids": ["planner", "reviewer", "builder"],
-        "step_count": 3,
+        "step_count": LEADER_PLAN_MAX_STEPS,
     }
 
 
