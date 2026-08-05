@@ -150,6 +150,11 @@ _PAGE = """<!doctype html>
   .btn:disabled { opacity: .45; cursor: not-allowed; }
   .btn.run { border-color: var(--accent); }
   .next { margin-top: .6rem; font-family: var(--mono); font-size: .8rem; color: var(--ok); }
+  .fallback {
+    margin-bottom: .5rem; padding: .5rem .7rem; border-radius: 8px;
+    background: #2a2118; border: 1px solid #4a3a22; color: var(--warn);
+    font-size: .78rem; line-height: 1.5;
+  }
 
   /* composer */
   #quick {
@@ -512,6 +517,18 @@ setInterval(refreshControls, 30000);
           return;
         }
         const data = await res.json();
+        // 未匹配到已知意图时如实说出来。`route_source` 区分两者:`local_rule`
+        // 是短语命中了某个 mode,`state_review` 是什么都没匹配上、于是按当前
+        // 状态给了个默认回复。把后者当成"对你这句话的答复"呈现,就是把一件
+        // 不成立的事说成成立——这个项目在别处一直在消灭这类事。
+        const ic = data.intent_card || {};
+        if (ic.route_source === "state_review") {
+          const warn = document.createElement("div");
+          warn.className = "fallback";
+          warn.textContent = "没有匹配到已知意图。下面不是对这句话的回答，"
+            + "而是按当前项目状态给出的默认汇报。试试「帮助」看可用的说法。";
+          el.insertBefore(warn, b);
+        }
         b.textContent = (data.leader_explanation && data.leader_explanation.summary)
           || ("mode: " + (data.mode || "?"));
         const embedded = data.intent_card && data.intent_card.embedded_card;
