@@ -46,25 +46,118 @@ def run_cli_json(root: Path, argv: list[str]) -> object:
 
 _PAGE = """<!doctype html>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>AgentDeck</title>
 <style>
-  body { font-family: ui-monospace, monospace; margin: 1.5rem; background: #111; color: #ddd; }
-  h1 { font-size: 1.2rem; } h2 { font-size: 1rem; border-bottom: 1px solid #333; padding-bottom: .3rem; }
-  table { border-collapse: collapse; width: 100%; font-size: .85rem; }
-  td, th { border: 1px solid #333; padding: .25rem .5rem; text-align: left; vertical-align: top; }
-  .muted { color: #888; } .ok { color: #7c6; } .warn { color: #ec5; }
-  code { background: #222; padding: 0 .3rem; }
-  #layout { display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; }
+  :root {
+    --bg: #1b1a18; --panel: #232220; --line: #35332f; --ink: #e9e6e0;
+    --muted: #97918a; --accent: #c96442; --ok: #7fb069; --warn: #d9a441;
+    --mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; height: 100vh; display: grid; grid-template-columns: minmax(0,1fr) 26rem;
+    background: var(--bg); color: var(--ink); font-family: var(--sans); font-size: 14px;
+  }
+  h1 { font-size: .95rem; font-weight: 600; margin: 0; }
+  h2 {
+    font-size: .72rem; font-weight: 600; text-transform: uppercase; letter-spacing: .06em;
+    color: var(--muted); margin: 1.25rem 0 .5rem;
+  }
+  h2:first-child { margin-top: 0; }
+  .muted { color: var(--muted); } .ok { color: var(--ok); } .warn { color: var(--warn); }
+  code { font-family: var(--mono); background: #2c2a27; padding: .1rem .3rem; border-radius: 3px; }
+
+  /* 主区:对话 */
+  #main { display: flex; flex-direction: column; min-width: 0; }
+  #topbar {
+    display: flex; align-items: center; gap: .6rem;
+    padding: .85rem 1.5rem; border-bottom: 1px solid var(--line);
+  }
+  #dot { width: .5rem; height: .5rem; border-radius: 50%; background: var(--accent); }
+  #stream { flex: 1; overflow-y: auto; padding: 1.5rem; }
+  #stream:empty::before {
+    content: "问点什么，或者说「帮助」"; color: var(--muted);
+  }
+  .turn { max-width: 46rem; margin: 0 auto 1.5rem; }
+  .turn .who {
+    font-size: .7rem; text-transform: uppercase; letter-spacing: .06em;
+    color: var(--muted); margin-bottom: .4rem;
+  }
+  .turn.user .bubble {
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: 10px; padding: .7rem .9rem; white-space: pre-wrap;
+  }
+  .turn.agent .bubble { line-height: 1.6; }
+  .card {
+    margin-top: .75rem; background: var(--panel); border: 1px solid var(--line);
+    border-radius: 10px; padding: .75rem .9rem;
+  }
+  .card .label {
+    font-size: .68rem; text-transform: uppercase; letter-spacing: .06em;
+    color: var(--muted); margin-bottom: .45rem;
+  }
+  .card pre {
+    margin: 0; font-family: var(--mono); font-size: .78rem; line-height: 1.5;
+    white-space: pre-wrap; word-break: break-word; max-height: 22rem; overflow: auto;
+  }
+  .next { margin-top: .6rem; font-family: var(--mono); font-size: .8rem; color: var(--ok); }
+
+  /* composer */
+  #composer {
+    border-top: 1px solid var(--line); padding: 1rem 1.5rem 1.25rem;
+    display: flex; gap: .6rem; align-items: flex-end;
+  }
+  #composer .wrap { flex: 1; max-width: 46rem; margin: 0 auto; display: flex; gap: .6rem; }
+  #message {
+    flex: 1; resize: none; min-height: 2.6rem; max-height: 9rem;
+    background: var(--panel); color: var(--ink); border: 1px solid var(--line);
+    border-radius: 10px; padding: .7rem .9rem; font: inherit;
+  }
+  #message:focus { outline: none; border-color: var(--accent); }
+  #send {
+    background: var(--accent); color: #fff; border: 0; border-radius: 10px;
+    padding: 0 1.1rem; height: 2.6rem; font: inherit; font-weight: 600; cursor: pointer;
+  }
+  #send:disabled { opacity: .5; cursor: default; }
+
+  /* 右栏:既有面板 */
+  #rail {
+    border-left: 1px solid var(--line); background: #191817;
+    overflow-y: auto; padding: 1.1rem 1.25rem;
+  }
+  #layout { display: block; }
+  table { border-collapse: collapse; width: 100%; font-family: var(--mono); font-size: .74rem; }
+  td, th {
+    border-bottom: 1px solid var(--line); padding: .3rem .4rem;
+    text-align: left; vertical-align: top;
+  }
+  th { color: var(--muted); font-weight: 500; }
+  #result {
+    font-family: var(--mono); font-size: .74rem; white-space: pre-wrap;
+    word-break: break-word; max-height: 16rem; overflow: auto; margin: 0;
+  }
+  button { font: inherit; }
 </style>
-<h1>AgentDeck <span class="muted">read-only workbench</span></h1>
-<div id="layout">
-  <div>
+
+<div id="main">
+  <div id="topbar"><span id="dot"></span><h1>AgentDeck</h1></div>
+  <div id="stream"></div>
+  <form id="composer" autocomplete="off">
+    <div class="wrap">
+      <textarea id="message" rows="1" placeholder="说点什么…（Enter 发送，Shift+Enter 换行）"></textarea>
+      <button id="send" type="submit">发送</button>
+    </div>
+  </form>
+</div>
+
+<div id="rail">
+  <div id="layout">
     <h2>Overview</h2><div id="overview" class="muted">loading…</div>
     <h2>Agents</h2><table id="agents"></table>
     <h2>Queues</h2><div id="queues" class="muted"></div>
-    <h2>Controls <span class="muted">(inspect runnable, others copy only)</span></h2><table id="controls"></table>
-  </div>
-  <div>
+    <h2>Controls</h2><table id="controls"></table>
     <h2>Inspect result</h2><pre id="result" class="muted">click a Run button…</pre>
     <h2>Events</h2><table id="events"></table>
   </div>
@@ -163,6 +256,100 @@ refreshWorkbench(); refreshControls(); refreshEvents();
 setInterval(refreshWorkbench, 5000);
 setInterval(refreshEvents, 5000);
 setInterval(refreshControls, 30000);
+</script>
+
+<script>
+  // ④a:对话回路。卡片此刻按原样 JSON 呈现——结构化渲染是 ④b,
+  // 在那之前先把形态跑通,免得对着猜出来的数据形状做样式。
+  (function () {
+    const stream = document.getElementById("stream");
+    const form = document.getElementById("composer");
+    const input = document.getElementById("message");
+    const send = document.getElementById("send");
+
+    function turn(who, label) {
+      const el = document.createElement("div");
+      el.className = "turn " + who;
+      const w = document.createElement("div");
+      w.className = "who";
+      w.textContent = label;
+      el.appendChild(w);
+      stream.appendChild(el);
+      stream.scrollTop = stream.scrollHeight;
+      return el;
+    }
+    function bubble(el, text) {
+      const b = document.createElement("div");
+      b.className = "bubble";
+      b.textContent = text;
+      el.appendChild(b);
+      return b;
+    }
+    function card(el, label, text) {
+      const c = document.createElement("div");
+      c.className = "card";
+      const l = document.createElement("div");
+      l.className = "label";
+      l.textContent = label;
+      const p = document.createElement("pre");
+      p.textContent = text;
+      c.appendChild(l);
+      c.appendChild(p);
+      el.appendChild(c);
+    }
+
+    async function ask(text) {
+      bubble(turn("user", "你"), text);
+      const el = turn("agent", "AgentDeck");
+      const b = bubble(el, "…");
+      try {
+        const res = await fetch("/api/chat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ message: text }),
+        });
+        if (!res.ok) {
+          b.textContent = "请求被拒绝：HTTP " + res.status;
+          b.classList.add("warn");
+          return;
+        }
+        const data = await res.json();
+        b.textContent = (data.leader_explanation && data.leader_explanation.summary)
+          || ("mode: " + (data.mode || "?"));
+        const embedded = data.intent_card && data.intent_card.embedded_card;
+        if (embedded && data[embedded]) {
+          card(el, embedded, JSON.stringify(data[embedded], null, 2));
+        }
+        if (data.next_command) {
+          const n = document.createElement("div");
+          n.className = "next";
+          n.textContent = "下一步  " + data.next_command;
+          el.appendChild(n);
+        }
+        if (typeof refreshAll === "function") { refreshAll(); }
+      } catch (err) {
+        b.textContent = "请求失败：" + err;
+        b.classList.add("warn");
+      } finally {
+        stream.scrollTop = stream.scrollHeight;
+      }
+    }
+
+    form.addEventListener("submit", function (event) {
+      event.preventDefault();
+      const text = input.value.trim();
+      if (!text) { return; }
+      input.value = "";
+      send.disabled = true;
+      ask(text).finally(function () { send.disabled = false; input.focus(); });
+    });
+    input.addEventListener("keydown", function (event) {
+      if (event.key === "Enter" && !event.shiftKey) {
+        event.preventDefault();
+        form.requestSubmit();
+      }
+    });
+  })();
 </script>
 """
 

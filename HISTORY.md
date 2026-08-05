@@ -4,6 +4,28 @@
 
 ## 2026-08-05
 
+### Turn the web page into a conversation-first shell
+
+- **Type**: feat
+- **Motivation**: `/api/chat` 通了,但页面还是原来的调试壳——三个表格、两个
+  按钮、**零输入框**。user 的原话是"感觉不像那类应用的界面":对,因为里面
+  还没有对话。通道属于 ①②③,界面本身是 ④。
+- **What**: 重写 `_PAGE` 的 HTML 骨架(1188 字节那段)为两栏应用壳:主区是
+  对话流 + composer(Enter 发送 / Shift+Enter 换行),右栏收纳既有的
+  overview / agents / queues / controls / result / events 六块,**id 全部
+  原样保留**。对话回路作为**独立的第二个 script** 追加在末尾。
+- **Impact**: **既有 4639 字节脚本块逐字节未动**——控件按钮、inspect/execute
+  接线、events 游标推进都是已验证能用的执行面,重排布局时最容易顺手"整理"坏
+  它,所以这一刀只换它们挂载的容器与样式,不碰它们本身。新脚本在收到回复后
+  调用既有的 `refreshAll`(存在才调),让对话动作与右栏状态保持同步。
+  卡片此刻按原样 JSON 呈现——结构化渲染是 ④b,在那之前先把形态跑通,免得
+  对着猜出来的数据形状做样式。
+- **Verification**: 15 条既有 UI 测试全过(端点契约未变)。**live 实测**:
+  重启 server 抓页面——7 个既有 id 零缺失、新增 8 个壳级 id、两个 script 块
+  并存;`POST /api/chat` 仍返回 `mode=help` / `embedded_card=capability_card`。
+  全量 5295 passed / 3 skipped。
+
+
 ### Give the web UI a chat endpoint, the spine a conversational shell needs
 
 - **Type**: feat
