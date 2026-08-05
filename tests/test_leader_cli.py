@@ -4146,7 +4146,10 @@ def test_leader_chat_continue_embeds_trace_card_for_reply_waiting(
     assert state_after["jobs"] == state_before["jobs"]
     assert state_after["replies"] == []
     assert state_after["inbox"]["planner"][0]["status"] == "acked"
-    assert fake.captured == []
+    # 派发现在会在发送**之前**只读一次 pane(确认它接不接得了任务),所以
+    # "整个测试零读取"不再是正确的代理。本测试要守的是**被测的只读面**
+    # 没有读 pane——把读取数绑到派发数即可,只读面一读,等式立刻破。
+    assert len(fake.captured) == len(fake.sent)
 
 
 def test_leader_chat_inspects_runtime_without_mutating_state(tmp_path, monkeypatch, capsys) -> None:
@@ -5774,7 +5777,10 @@ def test_leader_chat_capture_reply_intent_suggests_explicit_command_without_capt
         ],
     }
     assert cli.validate_leader_chat_contract(payload) == {"ok": True, "errors": []}
-    assert fake.captured == []
+    # 派发现在会在发送**之前**只读一次 pane(确认它接不接得了任务),所以
+    # "整个测试零读取"不再是正确的代理。本测试要守的是**被测的只读面**
+    # 没有读 pane——把读取数绑到派发数即可,只读面一读,等式立刻破。
+    assert len(fake.captured) == len(fake.sent)
 
     state_after = StateStore(root).load()
     assert state_after["chat_turns"][0]["mode"] == "capture"
@@ -5791,7 +5797,9 @@ def test_leader_chat_capture_reply_intent_suggests_explicit_command_without_capt
     assert payload["mode"] == "capture"
     assert payload["next_command"] == expected_command
     assert payload["intent_card"]["controls"][-1]["label"] == "Capture reply"
-    assert fake.captured == []
+    # 派发现在会在发送**之前**只读一次 pane;本测试守的是被测的只读面
+    # 没有读 pane,把读取数绑到派发数即可。
+    assert len(fake.captured) == len(fake.sent)
 
 
 def test_leader_chat_capture_current_reply_uses_latest_waiting_review_without_capturing(
@@ -5837,7 +5845,10 @@ def test_leader_chat_capture_current_reply_uses_latest_waiting_review_without_ca
         "blocker": None,
     }
     assert cli.validate_leader_chat_contract(payload) == {"ok": True, "errors": []}
-    assert fake.captured == []
+    # 派发现在会在发送**之前**只读一次 pane(确认它接不接得了任务),所以
+    # "整个测试零读取"不再是正确的代理。本测试要守的是**被测的只读面**
+    # 没有读 pane——把读取数绑到派发数即可,只读面一读,等式立刻破。
+    assert len(fake.captured) == len(fake.sent)
 
     state_after = StateStore(root).load()
     assert state_after["chat_turns"][-1]["mode"] == "capture"

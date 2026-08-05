@@ -164,6 +164,7 @@ from .contracts import (
 )
 from .autonomy import run_loop_gate, select_auto_approvals
 from .branch_custody import classify_branch_custody
+from .dispatch_receptive import classify_pane_receptive
 from .startup_trust import classify_startup_trust
 from .delegation_match import is_composite_command, normalize_match
 from .frontdesk import FRONTDESK_ROUTE_SAFETY, classify_frontdesk, frontdesk_goal
@@ -12724,6 +12725,38 @@ def _record_worktree_provenance(
         )
 
 
+def _pane_receptive_blocker(
+    config: ProjectConfig, backend: object, agent_id: str, pane_id: str
+) -> str | None:
+    """派发之前先问一句:此刻发进去,会落到该落的地方吗。
+
+    按键一旦离开就收不回来,所以这道检查必须在**任何写之前**——本仓库自己的
+    规则是"契约校验必须发生在效果之前"。2026-08-04 现场就是反例:pane 冻在
+    首次信任框上,派发照常发送,按键落进对话框,任务丢失而审批被记成
+    `dispatched`,宿主随后对着一个永远不会来的回复等了 300 个 wave、五十分钟。
+    全程没有任何东西可检测——屏上连框都没有了。
+
+    `unverifiable`(capture 失败)**不拦**:那是本仓库一贯当作 runtime 抖动
+    处理的情形,把一次读取失败变成拒绝派发会停掉正常工作。
+    """
+    try:
+        pane_text = backend.capture_output(config.runtime, pane_id, 200)
+    except Exception:
+        pane_text = None
+    verdict = classify_pane_receptive(pane_text=pane_text)
+    if verdict["state"] != "blocked":
+        return None
+    if verdict["reason"] == "directory_trust":
+        return (
+            f"agent pane is waiting on a directory trust prompt: {agent_id} "
+            f"(pane={pane_id}); run `agentdeck agent trust --confirm`, then respawn it"
+        )
+    return (
+        f"agent pane is waiting on an authorization box: {agent_id} "
+        f"(pane={pane_id}); answer it or grant a delegation before dispatching"
+    )
+
+
 def dispatch_command(args: argparse.Namespace) -> int:
     config, store, exit_code = _load_project_or_error()
     if config is None or store is None:
@@ -12736,6 +12769,10 @@ def dispatch_command(args: argparse.Namespace) -> int:
     if binding is None:
         return exit_code
     pane_id = str(binding["pane_id"])
+    blocker = _pane_receptive_blocker(config, TmuxBackend(), agent.agent_id, pane_id)
+    if blocker is not None:
+        print(blocker, file=sys.stderr)
+        return 1
     skill_loads = _loaded_skill_records_for_agent(store, agent.agent_id)
     prompt_skill_context = _dispatch_prompt_skill_context(skill_loads)
     message_id = new_id("msg")
@@ -20904,6 +20941,11 @@ def _dispatch_approved_approval(
     if not binding or not binding.get("pane_id"):
         raise RuntimeError(f"agent is not spawned: {agent_id}")
     pane_id = str(binding["pane_id"])
+    # 宿主走的正是这条路径:2026-08-04 那次派发落进了信任对话框,任务丢失、
+    # 审批却记成 dispatched,宿主随后空转 300 个 wave。拦在这里、在任何写之前。
+    receptive_blocker = _pane_receptive_blocker(config, backend, agent_id, pane_id)
+    if receptive_blocker is not None:
+        raise RuntimeError(receptive_blocker)
     task = str(approval.get("task", ""))
     skill_loads = _loaded_skill_records_for_agent(store, agent.agent_id)
     prompt_skill_context = _dispatch_prompt_skill_context(skill_loads)

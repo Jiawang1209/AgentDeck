@@ -6580,7 +6580,10 @@ def test_continue_surfaces_dispatched_step_waiting_for_reply(tmp_path, monkeypat
     assert payload["action_detail_command"] is None
     assert StateStore(root).load() == state_before
     assert fake.sent
-    assert fake.captured == []
+    # 派发现在会在发送**之前**只读一次 pane(确认它接不接得了任务),所以
+    # "整个测试零读取"不再是正确的代理。本测试要守的是**被测的只读面**
+    # 没有读 pane——把读取数绑到派发数即可,只读面一读,等式立刻破。
+    assert len(fake.captured) == len(fake.sent)
 
 
 def test_workbench_surfaces_capture_reply_operator_for_dispatched_step_waiting_for_reply(
@@ -6637,7 +6640,10 @@ def test_workbench_surfaces_capture_reply_operator_for_dispatched_step_waiting_f
     assert registry_item["kind"] == "capture_reply"
     assert registry_item["card"] == "operator_card"
     assert StateStore(root).load() == state_before
-    assert fake.captured == []
+    # 派发现在会在发送**之前**只读一次 pane(确认它接不接得了任务),所以
+    # "整个测试零读取"不再是正确的代理。本测试要守的是**被测的只读面**
+    # 没有读 pane——把读取数绑到派发数即可,只读面一读,等式立刻破。
+    assert len(fake.captured) == len(fake.sent)
 
 
 def test_capture_reply_records_full_output_path_as_artifact(tmp_path, monkeypatch, capsys) -> None:

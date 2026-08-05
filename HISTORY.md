@@ -4,6 +4,31 @@
 
 ## 2026-08-05
 
+### Refuse to dispatch into a pane that cannot receive the task (step 2 of 2 — closed)
+
+- **Type**: fix
+- **Motivation**: 关闭上一条。判定模块已就位,但没接上就等于不存在——
+  2026-08-04 那 50 分钟的空转依旧会原样重演。
+- **What**: 两处派发点都接上 `_pane_receptive_blocker()`,都在**第一个写操作
+  之前**:`dispatch` 命令拒绝并退 1(零发送、零记录),宿主走的
+  `_dispatch_approved_approval` 按该函数既有风格 `raise`(调用方已有降级处理)。
+  blocker 直接给出补救路径——信任框指向 `agentdeck agent trust --confirm`,
+  授权框指向"先答复或先 grant"。
+- **Impact**: 那条因果链现在断在第一环:pane 冻着 → **派发被拒绝** →
+  不会有"记成 dispatched 却从未送达"的任务 → 宿主不会对着不可能的回复空转。
+  `unverifiable`(capture 失败)仍不拦,维持既有 runtime 抖动语义。
+- **Verification**: 5 条既有测试的代理断言 `fake.captured == []` 被重新划定
+  范围——它们守的是"被测的**只读面**不读 pane",而派发现在合法地多读一次;
+  换成 `len(fake.captured) == len(fake.sent)` 后**更强**:只读面一旦读 pane,
+  等式立刻破。全量 5292 passed / 3 skipped。
+- **过程记一笔**: 上一轮收手的理由——"`test_leader_cli.py:1768` 现象与模型
+  不符"——**是我自己的记账错误**:那行属于
+  `test_run_task_creates_plan_and_pending_approvals_without_dispatching`,
+  它测的正是"不派发",自然零读取,而且当时**通过了**;我把 grep 出的 8 个行号
+  与 5 个失败测试名对错了位。收手本身不算错(在说不通的地方停下是对的),
+  但停之前该先核对那条测试到底在不在失败名单里。
+
+
 ### Classify whether a pane can receive a dispatch (step 1 of 2 — NOT yet wired)
 
 - **Type**: feat
