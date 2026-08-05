@@ -57,9 +57,11 @@ _PAGE = """<!doctype html>
   }
   * { box-sizing: border-box; }
   body {
-    margin: 0; height: 100vh; display: grid; grid-template-columns: minmax(0,1fr) 26rem;
+    margin: 0; height: 100vh; display: grid;
+    grid-template-columns: 15rem minmax(0,1fr) 24rem;
     background: var(--bg); color: var(--ink); font-family: var(--sans); font-size: 14px;
   }
+  @media (max-width: 1100px) { body { grid-template-columns: 13rem minmax(0,1fr); } #rail { display: none; } }
   h1 { font-size: .95rem; font-weight: 600; margin: 0; }
   h2 {
     font-size: .72rem; font-weight: 600; text-transform: uppercase; letter-spacing: .06em;
@@ -68,6 +70,35 @@ _PAGE = """<!doctype html>
   h2:first-child { margin-top: 0; }
   .muted { color: var(--muted); } .ok { color: var(--ok); } .warn { color: var(--warn); }
   code { font-family: var(--mono); background: #2c2a27; padding: .1rem .3rem; border-radius: 3px; }
+
+  /* 侧边栏:任务 */
+  #sidebar {
+    border-right: 1px solid var(--line); background: #161514;
+    display: flex; flex-direction: column; min-width: 0;
+  }
+  #sidehead { padding: .85rem .9rem; border-bottom: 1px solid var(--line); }
+  #newtask {
+    width: 100%; background: transparent; color: var(--ink);
+    border: 1px solid var(--line); border-radius: 8px; padding: .45rem .7rem;
+    font: inherit; font-size: .82rem; cursor: pointer; text-align: left;
+  }
+  #newtask:hover { border-color: var(--accent); }
+  #tasks { flex: 1; overflow-y: auto; padding: .5rem .55rem 1rem; }
+  #tasks .cap {
+    font-size: .68rem; text-transform: uppercase; letter-spacing: .06em;
+    color: var(--muted); padding: .5rem .35rem .3rem;
+  }
+  .task {
+    display: block; width: 100%; text-align: left; background: transparent;
+    color: var(--ink); border: 0; border-radius: 7px; padding: .45rem .5rem;
+    cursor: pointer; font: inherit;
+  }
+  .task:hover { background: #201f1d; }
+  .task .tt {
+    font-size: .79rem; line-height: 1.35;
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+  }
+  .task .tm { font-size: .68rem; color: var(--muted); margin-top: .18rem; font-family: var(--mono); }
 
   /* 主区:对话 */
   #main { display: flex; flex-direction: column; min-width: 0; }
@@ -171,6 +202,11 @@ _PAGE = """<!doctype html>
   }
   button { font: inherit; }
 </style>
+
+<div id="sidebar">
+  <div id="sidehead"><button id="newtask" type="button">＋  新建任务</button></div>
+  <div id="tasks"><div class="cap">任务</div></div>
+</div>
 
 <div id="main">
   <div id="topbar">
@@ -621,7 +657,54 @@ setInterval(refreshControls, 30000);
       quick.appendChild(b);
     });
 
+    // 侧边栏任务列表。标题取 `project_view.plans.items[].task` ——实测确认
+    // 字段名是 `task` 而非 `goal`(设计简报原先记错),因此**不需要动端点
+    // 白名单**,workbench 载荷里已经有它。
+    const tasksBox = document.getElementById("tasks");
+
+    async function loadTasks() {
+      try {
+        const wb = await fetch("/api/workbench").then(function (r) { return r.json(); });
+        const items = ((wb.project_view || {}).plans || {}).items || [];
+        tasksBox.innerHTML = "";
+        const cap = document.createElement("div");
+        cap.className = "cap";
+        cap.textContent = "任务 (" + items.length + ")";
+        tasksBox.appendChild(cap);
+        items.slice().reverse().forEach(function (plan) {
+          const b = document.createElement("button");
+          b.className = "task";
+          b.type = "button";
+          const tt = document.createElement("div");
+          tt.className = "tt";
+          tt.textContent = plan.task || plan.plan_id;
+          const tm = document.createElement("div");
+          tm.className = "tm";
+          tm.textContent = (plan.status || "?") + " · " + (plan.plan_id || "").slice(0, 12);
+          b.appendChild(tt);
+          b.appendChild(tm);
+          b.title = plan.plan_id || "";
+          // 点任务 = 问它的进度。走的还是同一条 /api/chat,不新增动作面。
+          b.addEventListener("click", function () {
+            send.disabled = true;
+            ask("查看运行进度 " + plan.plan_id)
+              .finally(function () { send.disabled = false; });
+          });
+          tasksBox.appendChild(b);
+        });
+      } catch (err) {
+        tasksBox.innerHTML = "<div class=\"cap\">任务列表不可用</div>";
+      }
+    }
+
+    document.getElementById("newtask").addEventListener("click", function () {
+      input.value = "开始运行 ";
+      input.focus();
+      input.setSelectionRange(input.value.length, input.value.length);
+    });
+
     loadProviders();
+    loadTasks();
   })();
 </script>
 """
