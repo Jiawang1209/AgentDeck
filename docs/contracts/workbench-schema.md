@@ -73,6 +73,32 @@ The contract command returns:
 
 Use `agentdeck contract workbench --example` to include a stable GUI-ready snapshot fixture.
 
+## Worker transcript
+
+Each `worker_lifecycle_card.items[]` carries `transcript_message_id` and
+`transcript_command`. Both are `null` when no forensic transcript was recorded
+for that worker, and the matching `kind=transcript` control is disabled with a
+blocker rather than offered as a dead button.
+
+A transcript is what an ACP turn actually did — which tool was called, what
+command ran, what was said — written to `.agentdeck/transcripts/<message_id>.jsonl`
+as the turn streams. It sits **outside** the ledger on purpose: `state.json`
+holds the authoritative conclusions and is rewritten whole, while a transcript
+is a stream that can contain whatever the worker read. The whole directory can
+be deleted without affecting `state.json`, and a write failure never fails the
+worker's work.
+
+The command behind the control is `agentdeck transcript --message-id <id>
+[--limit N]`. It returns a **bounded tail** — a turn can run to hundreds of
+updates and the useful end is the recent one — and states `total_lines` and
+`omitted` so a caller can tell how much it is not seeing. With no transcript it
+exits non-zero rather than printing an empty shell that reads like "nothing
+happened".
+
+The control points at the most recent message for that worker that actually has
+a transcript, not strictly the active one: a forensic record is most useful
+after the fact.
+
 ## Snapshot
 
 `agentdeck workbench` returns:

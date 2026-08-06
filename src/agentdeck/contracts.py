@@ -3669,6 +3669,10 @@ WORKBENCH_WORKER_LIFECYCLE_ITEM_FIELDS = (
     "inbox_command",
     "terminal_command",
     "capture_command",
+    # 取证记录:它当时到底调了哪个工具、跑了什么命令、说了什么。
+    # 没有记录时为 null——契约要说得出"这里可能没有",而不是让调用方自己猜。
+    "transcript_message_id",
+    "transcript_command",
     "controls",
 )
 
@@ -18062,6 +18066,8 @@ def workbench_example() -> dict[str, object]:
                     "inbox_command": "agentdeck inbox --agent planner",
                     "terminal_command": "agentdeck agent terminal --agent planner",
                     "capture_command": "agentdeck agent capture --agent planner --lines 200",
+                    "transcript_message_id": None,
+                    "transcript_command": None,
                     "controls": [
                         {
                             "kind": "trace",
@@ -18113,6 +18119,8 @@ def workbench_example() -> dict[str, object]:
                     "inbox_command": "agentdeck inbox --agent coder",
                     "terminal_command": "agentdeck agent terminal --agent coder",
                     "capture_command": "agentdeck agent capture --agent coder --lines 200",
+                    "transcript_message_id": None,
+                    "transcript_command": None,
                     "controls": [
                         {
                             "kind": "trace",
@@ -18164,6 +18172,8 @@ def workbench_example() -> dict[str, object]:
                     "inbox_command": "agentdeck inbox --agent reviewer",
                     "terminal_command": "agentdeck agent terminal --agent reviewer",
                     "capture_command": "agentdeck agent capture --agent reviewer --lines 200",
+                    "transcript_message_id": None,
+                    "transcript_command": None,
                     "controls": [
                         {
                             "kind": "trace",

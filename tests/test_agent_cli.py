@@ -8305,6 +8305,8 @@ def test_contract_workbench_discovers_schema_for_gui_clients(capsys) -> None:
         "inbox_command",
         "terminal_command",
         "capture_command",
+        "transcript_message_id",
+        "transcript_command",
         "controls",
     ]
     assert payload["review_gate_card_fields"] == [

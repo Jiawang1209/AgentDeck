@@ -2852,6 +2852,9 @@ def test_workbench_contract_response_includes_example_without_drift(tmp_path: Pa
     assert example["worker_lifecycle_card"]["by_stage"]["inbox_pending"] == 1
     assert set(example["worker_lifecycle_card"]["items"][0]) == set(WORKBENCH_WORKER_LIFECYCLE_ITEM_FIELDS)
     assert example["worker_lifecycle_card"]["items"][0] == {
+        # 取证记录:没有就是 null——契约要说得出"这里可能没有",别让调用方猜。
+        "transcript_message_id": None,
+        "transcript_command": None,
         "agent_id": "planner",
         "role": "planner",
         "provider": "codex",
