@@ -4,6 +4,32 @@
 
 ## 2026-08-05
 
+### Reach the transcript from the GUI without widening the endpoint whitelist
+
+- **Type**: feat
+- **Motivation**: 取证记录落盘了,但 GUI 读不到——它只有 workbench / events /
+  controls 三个只读端点,读不了任意文件。
+- **What**: 三步接通,**一条端点白名单都没动**。① transcript 改按 `message_id`
+  命名(账本主句柄,也是卡片和 `agentdeck trace` 已经在用的 id;按 dispatch_key
+  命名的话界面拿到的 id 关联不上文件)。② 新增只读 `agentdeck transcript
+  --message-id <id> [--limit N]`:**有界**——一轮可能几百条,全吐给界面没有意义,
+  而查错最有用的永远是尾部;取了多少、`omitted` 多少都写在响应里,与 transcript
+  自己"截断必须出声"同规;没有记录就非 0 退出并说明,不打印空壳让人以为查过了。
+  ③ worker 卡新增 `kind=transcript` / `safety=inspect` 控件,紧挨 `trace`——
+  两者都是"看发生了什么",trace 给链路,transcript 给过程。它随注册表自动可达,
+  `/api/inspect` 能执行任何 enabled 的 inspect 控件,GUI 侧零改动。
+- **一处设计修正**: 控件最初只指向"当前活跃消息",于是按钮几乎永远是灰的——
+  而取证记录**最有用的时候恰恰是事后**。改为:先看活跃消息,没有记录就回退到该
+  agent 最近一条**留下过记录**的消息。仍然是"有记录才给按钮",不给死按钮。
+- **Verification**: 单元测试八条。**真实验证**:`POST /api/inspect` 拿回
+  `mode=acp_transcript`、20 行、逐字含 `"孔子东游，见两小儿辩斗，问其故。"`。
+  全量 5351 passed / 3 skipped。
+- **注**:改动让注册表条目从 129 增至 132,十二条钉住计数/顺序/下标的既有测试
+  因此变红。逐条核对后更新——它们钉的是快照,而快照确实合理增长了。
+- **我的两个错**:①单测直接调控件构造器,绕过了卡片本身,于是卡片里
+  `store` 未定义要到 live 才炸——**测了零件没测整体**。②改签名时又假设了
+  `dict[str, Any]`,断言当场挡下,一个字都没写进去——这次断言起了作用。
+
 ### Keep a deletable forensic transcript of every ACP turn
 
 - **Type**: feat

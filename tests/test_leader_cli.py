@@ -30,7 +30,7 @@ from agentdeck.semantic_authority import semantic_authority_hash
 from agentdeck.semantic_planning import compile_worker_task
 
 
-EXPECTED_CONTROL_REGISTRY_ITEM_COUNT = 129
+EXPECTED_CONTROL_REGISTRY_ITEM_COUNT = 132
 FIRST_CONFLICT_CANDIDATE_SECRET = "FIRST_CONFLICT_CANDIDATE_SECRET"
 REQUIRED_TARGET_VERIFICATION_SECRET = "REQUIRED_TARGET_VERIFICATION_SECRET"
 CANDIDATE_ONLY_PROPOSAL_TARGET = "candidate-only-notes-secret.md"

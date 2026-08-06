@@ -26,7 +26,7 @@ def _lines(path: Path) -> list[dict]:
 
 
 def test_transcript_records_what_the_worker_actually_did(tmp_path) -> None:
-    t = AcpTranscript(tmp_path, dispatch_key="dsp_" + "a" * 32, agent_id="coder")
+    t = AcpTranscript(tmp_path, message_id="msg_aaaaaaaaaaaa", agent_id="coder")
 
     t.append(0, "text", {"role": "agent", "content": {"type": "text", "text": "开始改 README"}})
     t.append(1, "tool_call", {"title": "Bash", "kind": "execute", "raw_input": {"command": "pytest -q"}})
@@ -43,7 +43,7 @@ def test_transcript_records_what_the_worker_actually_did(tmp_path) -> None:
 
 def test_an_oversized_payload_is_truncated_out_loud(tmp_path) -> None:
     """截断必须说出来。悄悄截断会让人以为自己看到了全部。"""
-    t = AcpTranscript(tmp_path, dispatch_key="dsp_" + "b" * 32, agent_id="coder")
+    t = AcpTranscript(tmp_path, message_id="msg_bbbbbbbbbbbb", agent_id="coder")
 
     t.append(0, "tool_result", {"raw_output": "x" * (MAX_TRANSCRIPT_LINE_BYTES * 2)})
 
@@ -54,7 +54,7 @@ def test_an_oversized_payload_is_truncated_out_loud(tmp_path) -> None:
 
 
 def test_a_normal_line_is_not_marked_truncated(tmp_path) -> None:
-    t = AcpTranscript(tmp_path, dispatch_key="dsp_" + "c" * 32, agent_id="coder")
+    t = AcpTranscript(tmp_path, message_id="msg_cccccccccccc", agent_id="coder")
 
     t.append(0, "text", {"role": "agent", "content": {"type": "text", "text": "短"}})
 
@@ -63,7 +63,7 @@ def test_a_normal_line_is_not_marked_truncated(tmp_path) -> None:
 
 def test_a_write_failure_never_breaks_the_run(tmp_path) -> None:
     """取证记录写不下去是磁盘的事,不该让 worker 的活失败。"""
-    t = AcpTranscript(tmp_path, dispatch_key="dsp_" + "d" * 32, agent_id="coder")
+    t = AcpTranscript(tmp_path, message_id="msg_dddddddddddd", agent_id="coder")
     t.path.parent.mkdir(parents=True, exist_ok=True)
     t.path.write_text("", encoding="utf-8")
     t.path.chmod(0o400)
@@ -76,7 +76,94 @@ def test_a_write_failure_never_breaks_the_run(tmp_path) -> None:
 
 def test_the_file_lives_outside_the_ledger(tmp_path) -> None:
     """删掉整个目录不该影响 state.json——这是它能被安心写下去的前提。"""
-    t = AcpTranscript(tmp_path, dispatch_key="dsp_" + "e" * 32, agent_id="coder")
+    t = AcpTranscript(tmp_path, message_id="msg_eeeeeeeeeeee", agent_id="coder")
 
     assert t.path.parent == tmp_path / ".agentdeck" / "transcripts"
     assert "state" not in t.path.parts
+
+
+def test_transcript_cli_reads_the_tail_and_says_it_did(tmp_path, monkeypatch, capsys) -> None:
+    """GUI 只有三个只读端点,读不了任意文件——所以取证记录得由一条只读命令供出。
+
+    它必须**有界**:一轮几百条 update 全吐给界面没有意义,而且查错时最有用的
+    永远是尾部。取多少、丢了多少,都要说出来——这与 transcript 自己"截断必须
+    出声"是同一条规矩。
+    """
+    from agentdeck import cli
+    from agentdeck.config import write_default_config
+
+    root = tmp_path / "repo"
+    root.mkdir()
+    (root / ".git").mkdir()
+    write_default_config(root)
+    monkeypatch.chdir(root)
+
+    t = AcpTranscript(root, message_id="msg_abc123abc123", agent_id="coder")
+    for i in range(30):
+        t.append(i, "text", {"role": "agent", "content": {"type": "text", "text": f"第{i}句"}})
+    t.finish("end_turn")
+
+    exit_code = cli.main(["transcript", "--message-id", "msg_abc123abc123", "--limit", "5"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["mode"] == "acp_transcript"
+    assert payload["message_id"] == "msg_abc123abc123"
+    assert payload["agent_id"] == "coder"
+    assert len(payload["lines"]) == 5
+    # 尾部:最后一条是 finish。
+    assert payload["lines"][-1]["event"] == "finish"
+    # 丢了多少必须说出来。
+    assert payload["total_lines"] == 32
+    assert payload["omitted"] == 27
+
+
+def test_transcript_cli_is_honest_when_there_is_none(tmp_path, monkeypatch, capsys) -> None:
+    """没有记录就说没有,不要打印一个空壳让人以为查过了。"""
+    from agentdeck import cli
+    from agentdeck.config import write_default_config
+
+    root = tmp_path / "repo"
+    root.mkdir()
+    (root / ".git").mkdir()
+    write_default_config(root)
+    monkeypatch.chdir(root)
+
+    exit_code = cli.main(["transcript", "--message-id", "msg_nothinghere"])
+
+    assert exit_code != 0
+    assert "msg_nothinghere" in capsys.readouterr().err
+
+
+def test_worker_card_offers_the_transcript_only_when_one_exists(tmp_path) -> None:
+    """按钮要么真能点开东西,要么如实禁用——不给死按钮。
+
+    GUI 侧不改端点白名单:`/api/inspect` 能执行注册表里任何 enabled 的 inspect
+    控件,所以取证记录经这条控件暴露就够了。
+    """
+    from agentdeck.cli import _worker_lifecycle_controls
+
+    with_transcript = _worker_lifecycle_controls(
+        trace_command="agentdeck trace --id msg_x",
+        inbox_command="agentdeck inbox --agent coder",
+        terminal_command="agentdeck agent terminal --agent coder",
+        capture_command="agentdeck agent capture --agent coder --lines 200",
+        can_capture=False,
+        transcript_command="agentdeck transcript --message-id msg_x",
+    )
+    item = next(c for c in with_transcript if c["kind"] == "transcript")
+    assert item["enabled"] is True
+    assert item["safety"] == "inspect"
+    assert item["command"] == "agentdeck transcript --message-id msg_x"
+
+    without = _worker_lifecycle_controls(
+        trace_command=None,
+        inbox_command="agentdeck inbox --agent coder",
+        terminal_command="agentdeck agent terminal --agent coder",
+        capture_command="agentdeck agent capture --agent coder --lines 200",
+        can_capture=False,
+        transcript_command=None,
+    )
+    item = next(c for c in without if c["kind"] == "transcript")
+    assert item["enabled"] is False
+    assert item["blocker"]

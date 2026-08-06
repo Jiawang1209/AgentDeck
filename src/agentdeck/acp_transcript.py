@@ -46,16 +46,16 @@ def _encode(value: object) -> bytes:
 class AcpTranscript:
     """一个 turn 一份 append-only JSONL。"""
 
-    def __init__(self, root: str | Path, *, dispatch_key: str, agent_id: str) -> None:
-        if not isinstance(dispatch_key, str) or not dispatch_key:
-            raise ValueError("dispatch_key must be a non-empty string")
+    def __init__(self, root: str | Path, *, message_id: str, agent_id: str) -> None:
+        if not isinstance(message_id, str) or not message_id:
+            raise ValueError("message_id must be a non-empty string")
         if not isinstance(agent_id, str) or not agent_id:
             raise ValueError("agent_id must be a non-empty string")
         self.path = (
-            Path(root) / ".agentdeck" / TRANSCRIPT_DIRNAME / f"{dispatch_key}.jsonl"
+            Path(root) / ".agentdeck" / TRANSCRIPT_DIRNAME / f"{message_id}.jsonl"
         )
         self.agent_id = agent_id
-        self.dispatch_key = dispatch_key
+        self.message_id = message_id
         self.write_failed = False
         self._started = False
 
@@ -76,7 +76,7 @@ class AcpTranscript:
             {
                 "event": "start",
                 "agent_id": self.agent_id,
-                "dispatch_key": self.dispatch_key,
+                "message_id": self.message_id,
                 "at": utc_now(),
             }
         )

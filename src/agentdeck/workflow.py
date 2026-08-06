@@ -615,6 +615,10 @@ def _drive_acp_step(
         "agent_id": agent.agent_id,
         "dispatch_key": token,
         "configured_transport": "acp",
+        # 取证记录按 message_id 命名:那是账本的主句柄,也是 `agentdeck trace`
+        # 和 worker 卡片上已经在用的那个 id。按 dispatch_key 命名的话,界面上
+        # 拿到的 id 关联不上文件。
+        "message_id": turn["message_id"],
     }
     # 流式分片的去处。不给就走传输层自己的内存版(用完即丢),给了就落库——
     # 「这个 agent 此刻在做什么」只能从这条流上回答,最终那句 summary 回答不了。

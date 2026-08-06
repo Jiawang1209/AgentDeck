@@ -163,7 +163,7 @@ from .contracts import (
     validate_mission_scheduler_contract,
 )
 from .autonomy import run_loop_gate, select_auto_approvals
-from .acp_transcript import AcpTranscript
+from .acp_transcript import TRANSCRIPT_DIRNAME, AcpTranscript
 from .branch_custody import classify_branch_custody
 from .dispatch_receptive import (
     classify_pane_receptive,
@@ -2003,7 +2003,7 @@ class _TranscribingAcpWorkerSink(_DaemonAcpWorkerSink):
         super().__init__(**kwargs)
         self.transcript = AcpTranscript(
             root,
-            dispatch_key=str(kwargs["attempt"]["dispatch_key"]),
+            message_id=str(kwargs["attempt"]["message_id"]),
             agent_id=kwargs["agent"].agent_id,
         )
 
@@ -2597,6 +2597,58 @@ def _leader_status_payload(project_view: dict[str, object]) -> dict[str, object]
     }
 
 
+def transcript_command(args: argparse.Namespace) -> int:
+    """一个 ACP turn 的取证记录,只读。
+
+    GUI 只有三个只读端点、读不了任意文件,所以这份记录必须由一条命令供出——
+    它随后经注册表以 `safety=inspect` 控件暴露,不必动端点白名单。
+
+    **有界**:一轮可能几百条 update,全吐给界面没有意义,而查错最有用的永远是
+    尾部。取了多少、丢了多少都要说出来,与 transcript 自己"截断必须出声"同规。
+    """
+    root = project_root()
+    path = (
+        Path(root) / ".agentdeck" / TRANSCRIPT_DIRNAME / f"{args.message_id}.jsonl"
+    )
+    if not path.exists():
+        # 没有就说没有,不要打印一个空壳让人以为查过了。
+        print(f"no transcript recorded for {args.message_id}", file=sys.stderr)
+        return 1
+    try:
+        raw = path.read_text(encoding="utf-8").splitlines()
+    except OSError as error:
+        print(f"transcript is unreadable: {args.message_id} ({error})", file=sys.stderr)
+        return 1
+    lines: list[dict[str, object]] = []
+    for item in raw:
+        if not item.strip():
+            continue
+        try:
+            lines.append(json.loads(item))
+        except ValueError:
+            # 半行(写到一半被中断)不该让整份记录读不出来。
+            continue
+    limit = max(1, int(args.limit))
+    tail = lines[-limit:]
+    agent_id = next(
+        (str(row.get("agent_id")) for row in lines if row.get("event") == "start"),
+        None,
+    )
+    payload = {
+        "mode": "acp_transcript",
+        "message_id": args.message_id,
+        "agent_id": agent_id,
+        "path": str(path),
+        "total_lines": len(lines),
+        "omitted": max(0, len(lines) - len(tail)),
+        "lines": tail,
+        "trace_command": f"agentdeck trace --id {args.message_id}",
+        "safety": "inspect",
+    }
+    print(json.dumps(payload, indent=2, sort_keys=True, ensure_ascii=False))
+    return 0
+
+
 def artifacts_command(_args: argparse.Namespace) -> int:
     config, store, exit_code = _load_project_or_error()
     if config is None or store is None:
@@ -3171,7 +3223,7 @@ def _workbench_snapshot_payload(
     mission_card = _workbench_mission_card(project_view, config, store)
     terminal_session_card = _workbench_terminal_session_card(config, runtime_card)
     role_card = _workbench_role_card(project_view)
-    worker_lifecycle_card = _workbench_worker_lifecycle_card(project_view)
+    worker_lifecycle_card = _workbench_worker_lifecycle_card(project_view, store.root)
     review_gate_card = _workbench_review_gate_card(project_view)
     release_preview_card = _workbench_release_preview_card(review_gate_card, project_view)
     role_topology_card = _workbench_role_topology_card(project_view, review_gate_card)
@@ -4460,7 +4512,9 @@ def _workbench_role_card(project_view: dict[str, object]) -> dict[str, object]:
     }
 
 
-def _workbench_worker_lifecycle_card(project_view: dict[str, object]) -> dict[str, object]:
+def _workbench_worker_lifecycle_card(
+    project_view: dict[str, object], root: str | Path | None = None
+) -> dict[str, object]:
     agents = project_view.get("agents", [])
     messages = project_view.get("messages") if isinstance(project_view.get("messages"), dict) else {}
     jobs = project_view.get("jobs") if isinstance(project_view.get("jobs"), dict) else {}
@@ -4500,6 +4554,33 @@ def _workbench_worker_lifecycle_card(project_view: dict[str, object]) -> dict[st
             )
             trace_id = active_message_id or active_job.get("job_id") or latest_reply.get("reply_id") or inbox_head.get("inbox_id")
             trace_command = f"agentdeck trace --id {trace_id}" if trace_id else None
+            # 记录存在才给按钮。这是一次只读的文件存在性检查——卡片本来就只读,
+            # 但**没有记录时给个能点的按钮**才是真问题:点开一片空白,等于告诉
+            # 人"查过了、没东西",而实际是"从来没记过"。
+            # 取证记录最有用的时候恰恰是**事后**——活干完了才回头查为什么。
+            # 所以这里不是只看"当前活跃消息":那样按钮几乎永远是灰的,功能等于
+            # 没有。先看活跃的,没有就回退到这个 agent 最近一条**留下过记录**
+            # 的消息。仍然是"有记录才给按钮",不给死按钮。
+            transcript_message_id = None
+            if root is not None:
+                base = Path(root) / ".agentdeck" / TRANSCRIPT_DIRNAME
+                candidates = [active_message_id] if active_message_id else []
+                candidates += [
+                    str(item.get("message_id"))
+                    for item in reversed(message_items)
+                    if isinstance(item, dict)
+                    and item.get("to_agent") == agent_id
+                    and item.get("message_id")
+                ]
+                for candidate in candidates:
+                    if candidate and (base / f"{candidate}.jsonl").exists():
+                        transcript_message_id = candidate
+                        break
+            transcript_command = (
+                f"agentdeck transcript --message-id {transcript_message_id}"
+                if transcript_message_id
+                else None
+            )
             inbox_command = f"agentdeck inbox --agent {agent_id}"
             terminal_command = f"agentdeck agent terminal --agent {agent_id}"
             capture_command = f"agentdeck agent capture --agent {agent_id} --lines 200"
@@ -4519,12 +4600,15 @@ def _workbench_worker_lifecycle_card(project_view: dict[str, object]) -> dict[st
                 "inbox_command": inbox_command,
                 "terminal_command": terminal_command,
                 "capture_command": capture_command,
+                "transcript_message_id": transcript_message_id,
+                "transcript_command": transcript_command,
                 "controls": _worker_lifecycle_controls(
                     trace_command=trace_command,
                     inbox_command=inbox_command,
                     terminal_command=terminal_command,
                     capture_command=capture_command,
                     can_capture=runtime_status == "running" and pane_id is not None,
+                    transcript_command=transcript_command,
                 ),
             }
             items.append(item)
@@ -4626,6 +4710,7 @@ def _worker_lifecycle_controls(
     terminal_command: str,
     capture_command: str,
     can_capture: bool,
+    transcript_command: str | None = None,
 ) -> list[dict[str, object]]:
     return [
         _control(
@@ -4635,6 +4720,16 @@ def _worker_lifecycle_controls(
             safety="inspect",
             enabled=trace_command is not None,
             blocker=None if trace_command is not None else "no active task",
+        ),
+        _control(
+            # 取证记录:它当时到底调了哪个工具、跑了什么命令、说了什么。
+            # 账本存的是结论,这条通往过程。没有记录就如实禁用——不给死按钮。
+            kind="transcript",
+            label="Read transcript",
+            command=transcript_command,
+            safety="inspect",
+            enabled=transcript_command is not None,
+            blocker=None if transcript_command is not None else "no transcript recorded",
         ),
         _control(
             kind="inbox",
@@ -24918,6 +25013,15 @@ def build_parser() -> argparse.ArgumentParser:
 
     artifacts = subparsers.add_parser("artifacts", help="List recoverable worker artifacts")
     artifacts.set_defaults(func=artifacts_command)
+
+    transcript = subparsers.add_parser(
+        "transcript", help="Read the forensic transcript of one ACP turn"
+    )
+    transcript.add_argument("--message-id", required=True, help="Dispatched message id")
+    transcript.add_argument(
+        "--limit", type=int, default=40, help="How many trailing lines to return"
+    )
+    transcript.set_defaults(func=transcript_command)
 
     daemon = subparsers.add_parser("daemon", help="Inspect and control the project daemon")
     daemon_subparsers = daemon.add_subparsers(dest="daemon_command", required=True)

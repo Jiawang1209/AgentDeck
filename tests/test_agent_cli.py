@@ -9032,10 +9032,14 @@ def test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without
         "inbox_command": "agentdeck inbox --agent planner",
         "terminal_command": "agentdeck agent terminal --agent planner",
         "capture_command": "agentdeck agent capture --agent planner --lines 200",
+        "transcript_message_id": None,
+        "transcript_command": None,
         "controls": lifecycle_items["planner"]["controls"],
     }
     assert [control["kind"] for control in lifecycle_items["planner"]["controls"]] == [
         "trace",
+        # 取证记录紧挨 trace:两者都是"看发生了什么"——trace 给链路,transcript 给过程。
+        "transcript",
         "inbox",
         "terminal",
         "capture",
@@ -9048,7 +9052,7 @@ def test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without
         "enabled": True,
         "blocker": None,
     }
-    assert lifecycle_items["planner"]["controls"][3] == {
+    assert lifecycle_items["planner"]["controls"][4] == {
         "kind": "capture",
         "label": "Capture pane output",
         "command": "agentdeck agent capture --agent planner --lines 200",
@@ -10829,7 +10833,7 @@ def test_controls_filters_by_scope_and_enabled_without_mutating_state(tmp_path, 
         "control_id": None,
         "enabled_only": True,
         "active_filter_keys": ["scope", "enabled_only"],
-        "item_count_before_filter": 129,
+        "item_count_before_filter": 132,
     }
     assert payload["item_count"] == len(payload["items"])
     assert payload["group_count"] == len(payload["groups"])
@@ -10965,7 +10969,7 @@ def test_controls_surfaces_terminal_session_select_pane_controls_when_filtered(
         "control_id": None,
         "enabled_only": True,
         "active_filter_keys": ["scope", "enabled_only"],
-        "item_count_before_filter": 128,
+        "item_count_before_filter": 131,
     }
     assert [item["kind"] for item in payload["items"]] == [
         "attach_session",
@@ -11008,7 +11012,7 @@ def test_controls_filters_by_query_without_mutating_state(tmp_path, monkeypatch,
         "control_id": None,
         "enabled_only": False,
         "active_filter_keys": ["query"],
-        "item_count_before_filter": 129,
+        "item_count_before_filter": 132,
     }
     assert payload["item_count"] == len(payload["items"])
     assert payload["group_count"] == len(payload["groups"])
@@ -11047,7 +11051,7 @@ def test_controls_filters_by_control_id_without_mutating_state(tmp_path, monkeyp
         "control_id": control_id,
         "enabled_only": False,
         "active_filter_keys": ["control_id"],
-        "item_count_before_filter": 129,
+        "item_count_before_filter": 132,
     }
     assert payload["item_count"] == 1
     assert payload["items"] == [selected_item]
@@ -11080,7 +11084,7 @@ def test_controls_reports_unmatched_control_id_selection_without_mutating_state(
         "control_id": "missing:control",
         "enabled_only": False,
         "active_filter_keys": ["control_id"],
-        "item_count_before_filter": 129,
+        "item_count_before_filter": 132,
     }
     assert payload["item_count"] == 0
     assert payload["items"] == []
@@ -11119,7 +11123,7 @@ def test_controls_reports_filtered_out_control_id_selection_without_mutating_sta
         "control_id": disabled_item["control_id"],
         "enabled_only": True,
         "active_filter_keys": ["control_id", "enabled_only"],
-        "item_count_before_filter": 129,
+        "item_count_before_filter": 132,
     }
     assert payload["items"] == []
     assert payload["groups"] == []

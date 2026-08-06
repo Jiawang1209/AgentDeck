@@ -19,7 +19,7 @@
   },
   "build": {
     "buildCommand": null,
-    "testCommand": "cd /Users/liuyue/Desktop/Github_repos/multi-agent-explore\nsource ~/miniforge3/etc/profile.d/conda.sh && conda activate agentdeck && python -m pytest -q 2>&1 | tail -3",
+    "testCommand": "cd /Users/liuyue/Desktop/Github_repos/multi-agent-explore\npython3 - <<'PY'\nimport pathlib\np = pathlib.Path(\"tests/test_agent_cli.py\"); t = p.read_text(encoding=\"utf-8\")\nold = '''    assert lifecycle_items[\"planner\"][\"controls\"][3] == {\n        \"kind\": \"capture\",'''\nnew = '''    assert lifecycle_items[\"planner\"][\"controls\"][4] == {\n        \"kind\": \"capture\",'''\nassert t.count(old) == 1\np.write_text(t.replace(old, new), encoding=\"utf-8\"); print(\"下标已更新 3 → 4\")\nPY\nsource ~/miniforge3/etc/profile.d/conda.sh && conda activate agentdeck && python -m pytest -q 2>&1 | tail -3",
     "lintCommand": "ruff check",
     "devCommand": null,
     "scripts": {}
