@@ -1,6 +1,88 @@
 # AgentDeck Current Development State
 
-Updated: 2026-08-04
+Updated: 2026-08-06
+
+> **下一刀:走开段(`run-loop` / `goal` / `run-loop-host`)仍然只能走 tmux ——
+> 而这一刀开工前需要 user 先拍板一个岔路(2026-08-06 收工时停在这里)**
+>
+> **为什么它是下一刀**:2026-08-05 那一夜挖出的九个 bug 全部出自 tmux 打字路径,
+> 而**跑一夜无人值守**正是这些命令的用途。workflow 已经能按 `agent.transport`
+> 分流到 ACP 并 live 验证通过(字母表 13/13、两小儿辩日 7/7,零 pane 输入),
+> 走开段却还没有——它们只是**拒绝**非 tmux transport,不静默 fallback(这条边界
+> 是对的,别去掉)。
+>
+> **已核实的接缝(不要重新推导)**:
+> - `src/agentdeck/cli.py:12958` `dispatch_command()` —— 单条派发,拒绝点在这。
+> - `src/agentdeck/cli.py:21135` `_dispatch_approved_approval()` —— **一个函数
+>   挡住五条命令**:`approval dispatch`、`approval dispatch-ready`、`run-loop`、
+>   `run-loop --all`、`run-loop-host`(以及经 host 起来的 `goal start`)。
+>   换句话说走开段只有**一个**接缝要改,不是五个。
+>
+> **真实的设计冲突(这是要拍板的原因)**:
+> ```
+> dispatch  发出去就返回,回复稍后由文件通道摄入   ← run-loop 的 wave 模型
+> ACP       complete() 阻塞到这一轮跑完            ← 请求/响应
+> ```
+> daemon 已经解掉了这个冲突,解法是**常驻进程 + 事件循环**:一轮 ACP 跑在
+> `asyncio.create_task` 里、进 `_worker_tasks` 集合监管,写入排给单一权威写者
+> (`daemon/service.py`:`_worker_tasks` 2193、`submit_mutation` 2231、
+> `submit_worker_cleanup` 2239、`create_task`+`add` 2303–2304、
+> `active_worker_task_count` 2712)。
+> `run-loop` 是一次性 CLI,**没有事件循环**,ACP 在那里只能阻塞——那会改掉
+> "发出去就返回"的既有契约语义。`run-loop-host` **是**常驻的(detached 子进程
+> 跑 wave),所以它能承载,但它里面**没有**监管器。
+>
+> **岔路(user 拍板,我不代选)**:
+>
+> | | run-loop-host | Mission daemon |
+> | --- | --- | --- |
+> | 常驻 | ✅ | ✅ |
+> | 事件循环 + worker 监管 | ❌ | ✅ |
+> | ACP worker | ❌ | ✅ 已验收 |
+> | 送达回执 / 权限请求 | ❌ | ✅ |
+> | user 今天的肌肉记忆 | ✅ `goal` / `run-loop-host` | ❌ |
+>
+> - **A. 教 `run-loop-host` 说 ACP** —— 要在它里面再造一个 asyncio 监管器,
+>   而 daemon 里已经有一个。等于第二份同样的东西。
+> - **B. 让 Mission daemon 成为真实工作的自主路径** —— ACP、回执、权限门、
+>   监管器都现成。代价是 `goal` / `run-loop-host` 那套入口要重新对齐。
+>
+> 我倾向 **B**:2026-08-05 一整天证明了"复用已有的"比"再写一份"可靠得多
+> (ACP 传输、sink、解析器全是复用换来的)。但这是**产品方向**的决定,
+> 牵涉未来所有自主开发跑在哪条路上,不该顺手做掉。
+>
+> **建议的判断方式**:动手前先**用 daemon 跑一次真实的多步开发任务**,看它
+> 今天到底好不好用,让 user 有实感再拍板,而不是照着上面这张表选。
+>
+> **同批未完成(次要)**:
+> - tmux 与 ACP 的干净对照数字还没拿到。2026-08-05 那 4 次 tmux 运行是
+>   **边测边改**跑出来的,**不能当基线**;要在冻结版本上重跑两组。
+> - Leader-as-agent(对话窗口本身就是一个能干活的 agent,只在明确要求时才
+>   展开多智能体编排)—— user 的原始诉求,查过,没建。
+>
+> ---
+>
+> **2026-08-05/06 这一段落地了什么(17 个 commit,全部本地未 push,全量
+> 5351 passed / 3 skipped)**:
+> - **让 workflow 说 ACP**:按 `agent.transport` 显式分流(`083b1a46`
+> `f6d6168c` `99e65d78`),复用 daemon 早就有的 `AcpWorkerTransport`、
+> `admit()` 送达回执与 store-backed sink——引擎此前从没用过它们。
+> 完成判据因此从"从屏幕上猜"(`structured_reply`)变成"协议告诉的"
+> (`stop_reason == "end_turn"`)。
+> - **关掉同一处静默 fallback 的其余两面**(`61ea9e64`)与"向说协议的 worker
+> 索要 tmux pane"(`5da2c055`)。
+> - **GUI 队伍面板**(`cdd7816c` `782fb554`):worker 生命周期 + 传输 + 协议脉搏
+> 三源合一;顺手修掉 IME 组字期间 Enter 被当成发送(此前"实测"只验了结构、
+> 从没验过那段 JS 真的跑起来)。
+> - **取证记录**(`7b9c315a` `81005ed0` `01b42fa8` `963d043d`):每个 ACP turn
+> 一份可删的 `.agentdeck/transcripts/<message_id>.jsonl`,截断出声、写失败不
+> 影响运行;`agentdeck transcript --message-id` 只读读取尾部;worker 卡新增
+> `kind=transcript` 控件,GUI 零改动即可达。
+> **user 的方向纠正记在这里**:背字母、背古文都是**验能力的探针**,不是产品
+> 形态;一切需求围绕**开发 / 数据分析**场景——所以"只看不存"的想法被否掉了。
+> - **对抗性测试家族**(`tests/adversarial_backends.py`):pane 消失、对话框
+> 挡住、滚屏被清、字段折行、回复延迟。5306 个既有测试一个都没抓到那九个 bug,
+> 因为假件永远配合。它第一次跑就是红的。
 
 > **未完成的下一刀:让启动指引以 trust 优先(2026-08-04,已尝试并主动撤回)**
 >

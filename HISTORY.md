@@ -2,6 +2,29 @@
 
 本文件记录 AgentDeck 每一次开发内容。约束：每次新增功能、文档规则、项目骨架、运行环境或用户可见行为变化，都必须同步更新本文件，并在同一次 commit 中提交。
 
+## 2026-08-06
+
+### Write down the fork the walk-away path is standing at
+
+- **Type**: docs
+- **Motivation**: 收工前把下一刀记下来,而它开工前需要 user 先拍板——不记下来
+  明天要重新推导一遍;直接开工则是替 user 做了产品方向的决定。
+- **What**: `docs/handoff/current-development-state.md` 置顶新增一节。记下三件事:
+  ①**接缝只有一个**——`_dispatch_approved_approval()`(`cli.py:21135`)一个函数
+  挡住 `approval dispatch` / `dispatch-ready` / `run-loop` / `run-loop --all` /
+  `run-loop-host`(含经 host 起来的 `goal start`)五条命令,单条派发另在
+  `dispatch_command()`(`cli.py:12958`);②**冲突是真的**——`dispatch` 发出去就
+  返回,ACP 的 `complete()` 阻塞到这一轮跑完,而 `run-loop` 是一次性 CLI、没有
+  事件循环;daemon 的解法是常驻进程 + `asyncio.create_task` + `_worker_tasks`
+  监管(`daemon/service.py` 2193/2231/2239/2303/2712);③**岔路**——A 在
+  `run-loop-host` 里再造一个监管器(daemon 已有一个),B 让 Mission daemon 成为
+  真实工作的自主路径(ACP / 回执 / 权限门 / 监管器全现成,代价是入口重新对齐)。
+  记了倾向(B)和理由,没有代选;建议先用 daemon 跑一次真实多步任务再判断。
+- **同批记下的未完成**: tmux 与 ACP 的干净对照数字(2026-08-05 那 4 次是边测边改
+  跑出来的,**不能当基线**);Leader-as-agent(查过,没建)。
+- **Impact**: 纯文档,零行为变化。
+- **Verification**: 文中每条行号与函数名都是本次 grep 现查的,不是回忆。
+
 ## 2026-08-05
 
 ### Reach the transcript from the GUI without widening the endpoint whitelist
