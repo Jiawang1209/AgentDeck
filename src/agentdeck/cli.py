@@ -163,6 +163,7 @@ from .contracts import (
     validate_mission_scheduler_contract,
 )
 from .autonomy import run_loop_gate, select_auto_approvals
+from .acp_transcript import AcpTranscript
 from .branch_custody import classify_branch_custody
 from .dispatch_receptive import (
     classify_pane_receptive,
@@ -1629,12 +1630,13 @@ def _workflow_acp_sink_factory(store: StateStore) -> Callable[..., Any]:
     """
 
     def build(*, agent: AgentSpec, attempt: Mapping[str, object], workspace: object) -> Any:
-        return _DaemonAcpWorkerSink(
+        return _TranscribingAcpWorkerSink(
             service=_DirectMutationWriter(),
             store=store,
             attempt=attempt,
             agent=agent,
             workspace=Path(str(workspace)),
+            root=store.root,
         )
 
     return build
@@ -1983,6 +1985,39 @@ class _DaemonAcpWorkerSink:
         operation = self.begin_disconnect(reason)
         if inspect.isawaitable(operation):
             await operation
+
+
+class _TranscribingAcpWorkerSink(_DaemonAcpWorkerSink):
+    """在账本之外,再留一份可删的取证记录。
+
+    账本存的是**结论**(结构化回复、产物 hash、判定),而每条 update 落库时被
+    `_daemon_acp_update_digest` 压成 `{byte_count, content_hash}`——查错需要的
+    「它调了哪个工具、跑了什么命令」正好在那一步丢掉。这里在同一处把**原始
+    payload** 另写一份旁路 JSONL。
+
+    账本行为**逐字节不变**:只是多写一个文件,写失败也只置标记,绝不让 worker
+    的活失败。整个 `.agentdeck/transcripts/` 删掉不影响 `state.json`。
+    """
+
+    def __init__(self, *, root: str | Path, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self.transcript = AcpTranscript(
+            root,
+            dispatch_key=str(kwargs["attempt"]["dispatch_key"]),
+            agent_id=kwargs["agent"].agent_id,
+        )
+
+    async def append_update(
+        self, native_session_id: str, kind: str, payload: dict[str, Any]
+    ) -> object:
+        sequence = self.sequence
+        record = await super().append_update(native_session_id, kind, payload)
+        self.transcript.append(sequence, kind, payload)
+        return record
+
+    async def finish(self, stop_reason: str) -> None:
+        await super().finish(stop_reason)
+        self.transcript.finish(stop_reason)
 
 
 def _derived_entity_state(state: dict[str, Any], entity_type: str, entity_id: str, base: str) -> str:

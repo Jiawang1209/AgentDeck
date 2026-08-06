@@ -4,6 +4,35 @@
 
 ## 2026-08-05
 
+### Keep a deletable forensic transcript of every ACP turn
+
+- **Type**: feat
+- **Motivation**: user 纠正了我一个方向性错误:背字母、背古文都是**验能力的探针**,
+  不是产品形态,而我却围着"看一段朗读"在设计,甚至建议过"只看不存"。按真实场景
+  (开发 / 数据分析,跑一夜无人值守)重新对齐后,那个建议等于零——**第 47 步出问题
+  时你在睡觉**,只看不存意味着永远查不回来。
+  账本里已有权威结论(任务原文、结构化回复、产物 hash、复审判定、worker 自己的
+  git commit);缺的是**中间过程**:调了哪个工具、跑了什么命令、说了什么。
+  2026-08-05 那九个 bug,每一个都是靠手动还原现场查出来的。
+- **What**: 新增 `acp_transcript.AcpTranscript`——一个 turn 一份 append-only
+  JSONL,落在 `.agentdeck/transcripts/<dispatch_key>.jsonl`。
+  `_TranscribingAcpWorkerSink` 子类在 `append_update` 同一处把**原始 payload**
+  另写一份(账本那份仍是 `{byte_count, content_hash}` 摘要,行为逐字节不变)。
+  三条硬性质:**有界**(单条 16 KiB 封顶,截断必须写出 `truncated` /
+  `original_bytes` / `payload_head`,绝不静默截断);**可删**(整个目录删掉不影响
+  `state.json`);**写失败不影响运行**(只置 `write_failed`,取证记录写不下去是磁盘
+  的事,不该让 worker 的活失败)。
+- **Impact**: 「它当时到底做了什么」第一次有了答案,而"绝不留存 provider 原文"
+  那条纪律**没有被破**——它管的是账本,这份记录在账本之外。模式仓库已有两处
+  先例:`run-loop-host` 的 `host.log`、worker 回复的文件通道。
+- **Verification**: 五条单元测试先红后绿(内容留存、截断出声、正常不误标、写失败
+  不抛、位置在账本外)。**真实运行**:`completed`,transcript 里逐字留下
+  `"text": "孔子东游，见两小儿辩斗，问其故"`,并附带账本里看不到的
+  `usage_update {used: 30735}`。全量 5348 passed / 3 skipped。
+- **我的一个错**:插 import 时用了 `.replace()` 却没断言锚点存在——锚点不在,
+  replace 静默什么都没做,`import agentdeck.cli` 照样通过(NameError 只在调用时
+  触发),直到 live 运行才炸。**没断言就当成功**,正是这一整天在修的那类毛病。
+
 ### Put the protocol pulse on the team card, and stop a reload from proposing a config change
 
 - **Type**: feat

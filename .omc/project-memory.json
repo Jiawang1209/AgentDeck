@@ -209,6 +209,18 @@
       "accessCount": 1,
       "lastAccessed": 1785944867184,
       "type": "file"
+    },
+    {
+      "path": "tests/test_acp_transcript.py",
+      "accessCount": 1,
+      "lastAccessed": 1785974768215,
+      "type": "file"
+    },
+    {
+      "path": "src/agentdeck/acp_transcript.py",
+      "accessCount": 1,
+      "lastAccessed": 1785974812805,
+      "type": "file"
     }
   ],
   "userDirectives": []
